@@ -190,3 +190,46 @@ h2 {
   color: #6B7280;
   line-height: 1.6;
 }
+
+/* Global Sidebar Styles */
+.db-sidebar {
+  width: 240px;
+  min-height: 100vh;
+  background: #050B1A;
+  display: flex;
+  flex-direction: column;
+  padding: 32px 20px;
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  height: 100vh;
+}
+.db-logo { display: flex; align-items: center; gap: 10px; margin-bottom: 48px; }
+.db-logo-dot { width: 10px; height: 10px; border-radius: 50%; background: #00D1B2; }
+.db-logo-name { font-weight: 800; font-size: 20px; color: #fff; }
+.db-nav { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+.db-nav-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px; border-radius: 10px;
+  background: transparent; border: none; cursor: pointer;
+  color: #8899AA; font-size: 14px; font-weight: 500; font-family: 'Inter', sans-serif;
+  text-align: left; transition: background 0.2s, color 0.2s;
+}
+.db-nav-item:hover { background: rgba(255,255,255,0.06); color: #fff; }
+.db-nav-active { background: rgba(0,209,178,0.12) !important; color: #00D1B2 !important; }
+.db-sidebar-footer {
+  display: flex; align-items: center; gap: 12px;
+  padding: 16px 8px; border-top: 1px solid rgba(255,255,255,0.08);
+}
+.db-avatar {
+  width: 38px; height: 38px; border-radius: 50%;
+  background: linear-gradient(135deg, #FF4D6D, #7C3AED);
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 700; font-size: 13px; color: #fff;
+}
+.db-user-name { font-size: 13px; font-weight: 600; color: #fff; }
+.db-user-role { font-size: 11px; color: #6B7280; }
+
+@media (max-width: 900px) {
+  .db-sidebar { display: none; }
+}

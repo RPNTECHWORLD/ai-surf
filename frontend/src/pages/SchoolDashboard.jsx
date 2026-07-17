@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import Sidebar from '../components/Sidebar';
 
 const API = 'http://localhost:8000';
 
@@ -73,31 +74,7 @@ const SchoolDashboard = () => {
   return (
     <div className="db-page">
       {/* Sidebar */}
-      <aside className="db-sidebar">
-        <div className="db-logo" onClick={() => navigate('/')} style={{ cursor: 'pointer' }}>
-          <span className="db-logo-dot" />
-          <span className="db-logo-name">AiSurf</span>
-        </div>
-        <nav className="db-nav">
-          {[
-            { label: 'Dashboard', path: '/dashboard', active: true, icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /></svg> },
-            { label: 'Instructors', path: '/instructors', active: false, icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg> },
-            { label: 'Register School', path: '/register', active: false, icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><polyline points="9 22 9 12 15 12 15 22" /></svg> },
-          ].map((item) => (
-            <button key={item.label} className={`db-nav-item${item.active ? ' db-nav-active' : ''}`} onClick={() => navigate(item.path)}>
-              {item.icon}
-              {item.label}
-            </button>
-          ))}
-        </nav>
-        <div className="db-sidebar-footer">
-          <div className="db-avatar">SJ</div>
-          <div>
-            <div className="db-user-name">School Admin</div>
-            <div className="db-user-role">Owner</div>
-          </div>
-        </div>
-      </aside>
+      <Sidebar />
 
       {/* Main */}
       <main className="db-main">
@@ -189,48 +166,6 @@ const SchoolDashboard = () => {
           background: #F0EEE9;
           font-family: 'Inter', sans-serif;
         }
-
-        /* Sidebar */
-        .db-sidebar {
-          width: 240px;
-          min-height: 100vh;
-          background: #050B1A;
-          display: flex;
-          flex-direction: column;
-          padding: 32px 20px;
-          position: sticky;
-          top: 0;
-          align-self: flex-start;
-          height: 100vh;
-        }
-        .db-logo {
-          display: flex; align-items: center; gap: 10px; margin-bottom: 48px;
-        }
-        .db-logo-dot { width: 10px; height: 10px; border-radius: 50%; background: #00D1B2; }
-        .db-logo-name { font-weight: 800; font-size: 20px; color: #fff; }
-        .db-nav { display: flex; flex-direction: column; gap: 4px; flex: 1; }
-        .db-nav-item {
-          display: flex; align-items: center; gap: 12px;
-          padding: 12px 14px; border-radius: 10px;
-          background: transparent; border: none; cursor: pointer;
-          color: #8899AA; font-size: 14px; font-weight: 500; font-family: 'Inter', sans-serif;
-          text-align: left;
-          transition: background 0.2s, color 0.2s;
-        }
-        .db-nav-item:hover { background: rgba(255,255,255,0.06); color: #fff; }
-        .db-nav-active { background: rgba(0,209,178,0.12) !important; color: #00D1B2 !important; }
-        .db-sidebar-footer {
-          display: flex; align-items: center; gap: 12px;
-          padding: 16px 8px; border-top: 1px solid rgba(255,255,255,0.08);
-        }
-        .db-avatar {
-          width: 38px; height: 38px; border-radius: 50%;
-          background: linear-gradient(135deg, #FF4D6D, #7C3AED);
-          display: flex; align-items: center; justify-content: center;
-          font-weight: 700; font-size: 13px; color: #fff;
-        }
-        .db-user-name { font-size: 13px; font-weight: 600; color: #fff; }
-        .db-user-role { font-size: 11px; color: #6B7280; }
 
         /* Main */
         .db-main { flex: 1; padding: 40px 48px; overflow-y: auto; }
