@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 
-const API = 'http://localhost:8000';
+const API = 'http://54.242.160.238:8000';
 
 const StatCard = ({ value, label, icon, color }) => (
   <div className="db-stat-card">

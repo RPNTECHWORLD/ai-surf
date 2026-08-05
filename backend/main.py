@@ -31,7 +31,33 @@ if DATABASE_URL.startswith("postgres://"):
 if DATABASE_URL.startswith("sqlite"):
     engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 else:
-    engine = create_engine(DATABASE_URL)
+    if "amazonaws.com" in DATABASE_URL:
+        from urllib.parse import urlparse
+        from sqlalchemy import event
+        import boto3
+        
+        parsed = urlparse(DATABASE_URL)
+        db_host = parsed.hostname
+        db_port = parsed.port or 5432
+        db_user = parsed.username or "postgres"
+        db_name = parsed.path.lstrip("/")
+        
+        # Create connection URI without static password
+        connection_uri = f"postgresql+psycopg2://{db_user}@{db_host}:{db_port}/{db_name}"
+        engine = create_engine(connection_uri, connect_args={"sslmode": "require"})
+        
+        @event.listens_for(engine, "do_connect")
+        def provide_token(dialect, conn_rec, cargs, cparams):
+            client = boto3.client("rds", region_name=os.getenv("AWS_REGION", "us-east-1"))
+            token = client.generate_db_auth_token(
+                DBHostname=db_host,
+                Port=db_port,
+                DBUsername=db_user,
+                Region=os.getenv("AWS_REGION", "us-east-1")
+            )
+            cparams["password"] = token
+    else:
+        engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 

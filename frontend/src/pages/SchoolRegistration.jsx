@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-const API = 'http://localhost:8000';
+const API = 'http://54.242.160.238:8000';
 
 const SchoolRegistration = () => {
   const navigate = useNavigate();

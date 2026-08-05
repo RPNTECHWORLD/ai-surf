@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 
-const API = 'http://localhost:8000';
+const API = 'http://54.242.160.238:8000';
 
 const fitnessColors = { Elite: '#00D1B2', Advanced: '#7C3AED', Intermediate: '#F59E0B', Beginner: '#6B7280' };
 

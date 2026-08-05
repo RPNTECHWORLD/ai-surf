@@ -1,0 +1,131 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template to deploy Python FastAPI backend on EC2 with RDS IAM Authentication'
+
+Parameters:
+  S3BucketName:
+    Type: String
+    Description: Name of the S3 bucket where aisurf-backend.zip is stored
+    Default: 'aisurf-media-uploads-149051628601'
+  S3ObjectKey:
+    Type: String
+    Description: Key of the backend zip file in S3
+    Default: 'aisurf-backend.zip'
+  InstanceType:
+    Type: String
+    Default: 't3.micro'
+    Description: EC2 instance type
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+    Description: Automatically fetches the latest Amazon Linux 2023 AMI
+
+Resources:
+  BackendInstanceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - 'arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess'
+      Policies:
+        - PolicyName: RDSConnectPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 'rds-db:connect'
+                Resource: !Sub 'arn:aws:rds-db:${AWS::Region}:${AWS::AccountId}:dbuser:*/postgres'
+
+  BackendInstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Roles:
+        - !Ref BackendInstanceRole
+
+  BackendSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Allow traffic on port 8000 for FastAPI and port 22 for SSH'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8000
+          ToPort: 8000
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+  BackendInstance:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref LatestAmiId
+      IamInstanceProfile: !Ref BackendInstanceProfile
+      SecurityGroupIds:
+        - !GetAtt BackendSecurityGroup.GroupId
+      Tags:
+        - Key: Name
+          Value: aisurf-backend-server
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          # Update and install Python 3.11 + unzip
+          dnf update -y
+          dnf install -y python3.11 python3.11-pip unzip
+          
+          # Setup directories
+          cd /home/ec2-user
+          aws s3 cp s3://${S3BucketName}/${S3ObjectKey} backend.zip
+          
+          # Unzip backend
+          unzip backend.zip -d backend
+          chown -R ec2-user:ec2-user backend
+          
+          # Setup virtual environment and dependencies
+          cd backend
+          sudo -u ec2-user python3.11 -m venv .venv
+          sudo -u ec2-user .venv/bin/pip install --upgrade pip
+          sudo -u ec2-user .venv/bin/pip install -r requirements.txt
+          
+          # Write environment variables
+          sudo -u ec2-user bash -c 'cat <<EOF > .env
+          AWS_S3_BUCKET_NAME=${S3BucketName}
+          AWS_REGION=${AWS::Region}
+          DATABASE_URL=postgresql://postgres@database-2.cluster-ckl2omi0klbx.us-east-1.rds.amazonaws.com:5432/postgres
+          EOF'
+          
+          # Setup systemd service to run FastAPI via uvicorn
+          cat <<EOF > /etc/systemd/system/aisurf-backend.service
+          [Unit]
+          Description=AI Surf FastAPI Backend Service
+          After=network.target
+          
+          [Service]
+          User=ec2-user
+          WorkingDirectory=/home/ec2-user/backend
+          ExecStart=/home/ec2-user/backend/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+          Restart=always
+          
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          
+          # Reload systemd and start service
+          systemctl daemon-reload
+          systemctl start aisurf-backend
+          systemctl enable aisurf-backend
+
+Outputs:
+  PublicIp:
+    Description: 'Public IP of the Backend Instance'
+    Value: !GetAtt BackendInstance.PublicIp
+  BackendUrl:
+    Description: 'URL of the backend API'
+    Value: !Sub 'http://${BackendInstance.PublicIp}:8000'
