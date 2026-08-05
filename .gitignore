@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# SQLite database — local only, do not commit
+*.db
+aisurf.db
+backend/aisurf.db
+backend/surfing.db
+
+# Uploaded media (video footage) - local only, do not commit
+backend/uploads/
+
+# Node
+node_modules/
+dist/
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.DS_Store

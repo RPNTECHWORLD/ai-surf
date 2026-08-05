@@ -1,2 +1,8 @@
 fastapi
 uvicorn
+sqlalchemy
+psycopg2-binary
+boto3
+botocore[crt]
+python-multipart
+python-dotenv

@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
+const API = 'http://localhost:8000';
+
 const SchoolRegistration = () => {
   const navigate = useNavigate();
   const [formData, setFormData] = useState({
@@ -15,6 +17,7 @@ const SchoolRegistration = () => {
   });
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -23,9 +26,37 @@ const SchoolRegistration = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
-    await new Promise((r) => setTimeout(r, 1200));
+    setErrorMsg('');
+    try {
+      const res = await fetch(`${API}/api/schools`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: formData.schoolName,
+          owner: formData.ownerName,
+          email: formData.email,
+          phone: formData.phone,
+          country: formData.country,
+          city: formData.city,
+          instructor_count: formData.instructorCount,
+          website: formData.website,
+        }),
+      });
+      if (res.ok) {
+        localStorage.setItem('activeSchool', JSON.stringify({
+          name: formData.schoolName,
+          owner: formData.ownerName,
+          email: formData.email,
+        }));
+        setSubmitted(true);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setErrorMsg(data.detail || 'Registration failed. Please try again.');
+      }
+    } catch (err) {
+      setErrorMsg('Could not connect to the server. Please check your connection.');
+    }
     setLoading(false);
-    setSubmitted(true);
   };
 
   return (
@@ -73,7 +104,7 @@ const SchoolRegistration = () => {
               </svg>
             </div>
             <h3 className="reg-success-title">You're on the list!</h3>
-            <p className="reg-success-sub">We'll reach out within 24 hours to set up your school's account.</p>
+            <p className="reg-success-sub">Your school has been registered. We'll reach out within 24 hours to set up your account.</p>
             <button className="btn-primary reg-success-btn" onClick={() => navigate('/dashboard')}>
               Go to Dashboard
             </button>
@@ -82,6 +113,11 @@ const SchoolRegistration = () => {
           <>
             <h3 className="reg-form-title">Register your school</h3>
             <p className="reg-form-sub">Fill in the details below to get started.</p>
+
+            {errorMsg && (
+              <div className="reg-error">{errorMsg}</div>
+            )}
+
             <form className="reg-form" onSubmit={handleSubmit}>
               <div className="reg-form-row">
                 <div className="reg-field">
@@ -230,6 +266,11 @@ const SchoolRegistration = () => {
           color: #6B7280;
           margin-bottom: 36px;
         }
+        .reg-error {
+          background: rgba(244, 63, 94, 0.08); border: 1px solid rgba(244, 63, 94, 0.25);
+          border-radius: 10px; padding: 12px 16px; color: #F43F5E;
+          font-size: 14px; margin-bottom: 20px; font-weight: 500;
+        }
         .reg-form { display: flex; flex-direction: column; gap: 20px; }
         .reg-form-row { display: flex; gap: 20px; }
         .reg-field { display: flex; flex-direction: column; gap: 8px; flex: 1; }
@@ -261,6 +302,7 @@ const SchoolRegistration = () => {
           align-items: center;
           justify-content: center;
           gap: 8px;
+          min-height: 52px;
         }
         .reg-submit:disabled { opacity: 0.7; cursor: not-allowed; }
         .reg-spinner {

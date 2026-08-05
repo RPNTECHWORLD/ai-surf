@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 const Stats = () => {
   const [stats, setStats] = useState([
     { value: "500+", label: "SURF SCHOOLS" },
-    { value: "12,000+", label: "ATHLETES" },
+    { value: "12,000+", label: "STUDENTS" },
     { value: "98%", label: "SATISFACTION RATE" },
     { value: "45", label: "COUNTRIES" }
   ]);
