@@ -265,12 +265,14 @@ const Sessions = () => {
         
         /* Table Column */
         .ses-table-container {
-          flex: 1; background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 16px; overflow: hidden;
+          flex: 1; background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 16px; 
+          overflow-y: auto; max-height: calc(100vh - 240px);
         }
         .ses-table { width: 100%; border-collapse: collapse; }
         .ses-table th {
           text-align: left; padding: 20px; font-size: 13px; font-weight: 700;
           color: rgba(255, 255, 255, 0.6); text-transform: uppercase; background: #050B1A;
+          position: sticky; top: 0; z-index: 1;
         }
         .ses-table td { padding: 20px; vertical-align: middle; }
         .ses-td-primary { font-size: 15px; font-weight: 600; color: #050B1A; line-height: 1.5; }

@@ -460,6 +460,21 @@ def seed_database(db: OrmSession):
 with SessionLocal() as _db:
     seed_database(_db)
     
+    # Auto-patch: Reset PostgreSQL primary key sequences to prevent duplicate key violations on new signups
+    if _db.bind.dialect.name == "postgresql":
+        from sqlalchemy import text
+        try:
+            _db.execute(text("SELECT setval('students_id_seq', COALESCE((SELECT MAX(id) FROM students), 1));"))
+            _db.execute(text("SELECT setval('instructors_id_seq', COALESCE((SELECT MAX(id) FROM instructors), 1));"))
+            _db.execute(text("SELECT setval('schools_id_seq', COALESCE((SELECT MAX(id) FROM schools), 1));"))
+            _db.execute(text("SELECT setval('users_id_seq', COALESCE((SELECT MAX(id) FROM users), 1));"))
+            _db.execute(text("SELECT setval('sessions_id_seq', COALESCE((SELECT MAX(id) FROM sessions), 1));"))
+            _db.commit()
+            print("PostgreSQL sequences synchronized successfully.")
+        except Exception as e:
+            _db.rollback()
+            print(f"Failed to synchronize PostgreSQL sequences: {e}")
+
     # Auto-patch: Update legacy links to the user's local uploaded MP4 video file
     youtube_to_mp4 = {
         "https://www.youtube.com/watch?v=demo1": "http://localhost:8000/uploads/c041fea3-b7ed-40d0-ad1e-2c1e14ee6e4d.mp4",
@@ -1464,3 +1479,159 @@ def get_features():
         {"icon": "users", "title": "Competition Hub",
          "description": "Organize, judge, and live-stream local competitions with pro-grade tools."},
     ]
+
+
+@app.get("/api/competitions/data")
+def get_competitions_data(db: OrmSession = Depends(get_db)):
+    from sqlalchemy import text
+    
+    # 1. Fetch upcoming events (excluding finished ones)
+    upcoming_events = []
+    try:
+        events = db.execute(text("""
+            SELECT id, name, location, start_date 
+            FROM events 
+            WHERE status NOT IN ('Finished', 'Finished - Result Published') 
+            ORDER BY start_date ASC 
+            LIMIT 5
+        """)).fetchall()
+        for ev in events:
+            upcoming_events.append({
+                "id": ev[0],
+                "name": ev[1],
+                "locationDate": f"{ev[2] or 'No Location'} • {ev[3] or 'No Date'}",
+                "badges": [
+                    {"text": "Reef Break", "color": "#F59E0B"},
+                    {"text": "Advanced", "color": "#F43F5E"}
+                ]
+            })
+    except Exception as e:
+        print(f"Error fetching upcoming events: {e}")
+
+    # 2. Fetch live event and heat competitors
+    live_event_name = ""
+    live_event_location = ""
+    live_heat_name = ""
+    heat_competitors = []
+    has_live_event = False
+    try:
+        # Get event that is currently Ongoing or Live
+        live_ev = db.execute(text("""
+            SELECT id, name, location 
+            FROM events 
+            WHERE status IN ('Ongoing', 'Live', 'ongoing', 'live') 
+            LIMIT 1
+        """)).fetchone()
+        
+        if live_ev:
+            has_live_event = True
+            live_event_name = live_ev[1]
+            live_event_location = live_ev[2] or "Unknown Location"
+            
+            # Find active heat
+            heat = db.execute(text("""
+                SELECT id, round, heat_number 
+                FROM heats 
+                WHERE event_id = :event_id AND status IN ('Ongoing', 'Live', 'ongoing', 'live', 'running') 
+                LIMIT 1
+            """), {"event_id": live_ev[0]}).fetchone()
+            
+            # Fallback to first heat
+            if not heat:
+                heat = db.execute(text("""
+                    SELECT id, round, heat_number 
+                    FROM heats 
+                    WHERE event_id = :event_id 
+                    ORDER BY heat_number ASC 
+                    LIMIT 1
+                """), {"event_id": live_ev[0]}).fetchone()
+                
+            if heat:
+                live_heat_name = f"Round: {heat[1]}, Heat: {heat[2]}"
+                heat_id = heat[0]
+                
+                surfer_rows = db.execute(text("""
+                    SELECT s.name, hs.rank, hs.seed 
+                    FROM heat_surfers hs 
+                    JOIN surfers s ON hs.surfer_id = s.id 
+                    WHERE hs.heat_id = :heat_id
+                    ORDER BY hs.rank ASC
+                """), {"heat_id": heat_id}).fetchall()
+                
+                for idx, row in enumerate(surfer_rows):
+                    rank_num = row[1]
+                    rank_suffix = (
+                        f"{rank_num}st" if rank_num == 1 else 
+                        f"{rank_num}nd" if rank_num == 2 else 
+                        f"{rank_num}rd" if rank_num == 3 else 
+                        f"{rank_num}th" if rank_num else "—"
+                    )
+                    heat_competitors.append({
+                        "name": row[0],
+                        "rank": rank_suffix,
+                        "seed": str(row[2] or ""),
+                        "highlight": idx == 0
+                    })
+    except Exception as e:
+        print(f"Error fetching live event/heat: {e}")
+
+    # 3. Past results (completed events)
+    past_results = []
+    try:
+        completed_events = db.execute(text("""
+            SELECT id, name, location FROM events 
+            WHERE status IN ('Finished', 'Finished - Result Published') 
+            ORDER BY start_date DESC 
+            LIMIT 5
+        """)).fetchall()
+        for ev in completed_events:
+            # Query top score from this event
+            top_score_row = db.execute(text("""
+                SELECT s.score 
+                FROM scores s 
+                JOIN heats h ON s.heat_id = h.id 
+                WHERE h.event_id = :event_id 
+                ORDER BY s.score DESC 
+                LIMIT 1
+            """), {"event_id": ev[0]}).fetchone()
+            score_val = f"{top_score_row[0]:.2f}" if top_score_row and top_score_row[0] else "—"
+            
+            # Query winner name
+            winner_row = db.execute(text("""
+                SELECT surf.name 
+                FROM scores s 
+                JOIN heats h ON s.heat_id = h.id 
+                JOIN surfers surf ON s.surfer_id = surf.id 
+                WHERE h.event_id = :event_id 
+                ORDER BY s.score DESC 
+                LIMIT 1
+            """), {"event_id": ev[0]}).fetchone()
+            placement = f"Winner: {winner_row[0]}" if winner_row else "Completed"
+            
+            past_results.append({
+                "event": ev[1],
+                "placement": placement,
+                "score": score_val,
+                "highlightPlace": True
+            })
+    except Exception as e:
+        print(f"Error fetching completed events: {e}")
+
+    if not past_results:
+        past_results = [
+            {"event": "Quiksilver Young Guns", "placement": "1st", "score": "16.42", "highlightPlace": True},
+            {"event": "Trestles Junior Open", "placement": "3rd", "score": "14.10", "highlightPlace": False},
+            {"event": "Rip Curl GromSearch", "placement": "SF", "score": "12.50", "highlightPlace": False}
+        ]
+
+    return {
+        "hasLiveEvent": has_live_event,
+        "liveEventName": live_event_name,
+        "liveEventLocation": live_event_location,
+        "liveHeatName": live_heat_name,
+        "upcomingEvents": upcoming_events,
+        "heatCompetitors": heat_competitors,
+        "pastResults": past_results
+    }
+
+

@@ -49,4 +49,11 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
 ###changes_on_03-08-26
  1.aws s3 created
  2. sqllite changed into postgressql
- 3. 
+ 
+
+ ###changes_on_06-08-2026
+ 1. athlete changed into student
+ 2. work in aws
+ 3. connecting the login page 
+ 4. connect the event 
+

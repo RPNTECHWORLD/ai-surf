@@ -445,7 +445,9 @@ window.fetch = async function (input, init) {
       let matchingUser = null;
       
       // Seeded accounts check
-      if (email === 'admin@aisurf.com' && password === 'admin123') {
+      if (email === 'rpntechworld@gmail.com' && password === '12345678') {
+        matchingUser = { id: 99, email: 'rpntechworld@gmail.com', role: 'admin', name: 'System Admin', image: '' };
+      } else if (email === 'admin@aisurf.com' && password === 'admin123') {
         matchingUser = { id: 99, email: 'admin@aisurf.com', role: 'admin', name: 'System Admin', image: '' };
       } else {
         // Check coaches

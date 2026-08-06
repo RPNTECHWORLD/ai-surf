@@ -1,29 +1,30 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import Sidebar from '../components/Sidebar';
 
+const API = 'http://54.242.160.238:8000';
+
 const Competitions = () => {
-  const upcomingEvents = [1, 2, 3, 4].map((id) => ({
-    id,
-    name: 'Pipeline Pro Junior',
-    locationDate: 'North Shore, Oahu • June 15',
-    badges: [
-      { text: 'Reef Break', color: '#F59E0B' },
-      { text: 'Advanced', color: '#F43F5E' }
-    ]
-  }));
+  const [data, setData] = useState({
+    upcomingEvents: [],
+    heatCompetitors: [],
+    pastResults: []
+  });
+  const [loading, setLoading] = useState(true);
 
-  const heatCompetitors = [
-    { name: 'Chloe Kim', rank: '2nd', seed: '4', highlight: true },
-    { name: 'Sierra Kerr', rank: '1st', seed: '1', highlight: false },
-    { name: 'Caitlin Simmers', rank: '3rd', seed: '7', highlight: false },
-    { name: 'Erin Brooks', rank: '4th', seed: '12', highlight: false }
-  ];
+  useEffect(() => {
+    fetch(`${API}/api/competitions/data`)
+      .then(r => r.json())
+      .then(d => {
+        setData(d);
+        setLoading(false);
+      })
+      .catch((err) => {
+        console.error('Failed to load competitions:', err);
+        setLoading(false);
+      });
+  }, []);
 
-  const pastResults = [
-    { event: 'Quiksilver Young Guns', placement: '1st', score: '16.42', highlightPlace: true },
-    { event: 'Trestles Junior Open', placement: '3rd', score: '14.10', highlightPlace: false },
-    { event: 'Rip Curl GromSearch', placement: 'SF', score: '12.50', highlightPlace: false }
-  ];
+  const { upcomingEvents, heatCompetitors, pastResults } = data;
 
   return (
     <div className="cmp-page">
@@ -69,46 +70,56 @@ const Competitions = () => {
           <div className="cmp-col-right">
             
             {/* Live Competition Card */}
-            <div className="cmp-live-card">
-              
-              <div className="cmp-live-header-row">
-                <div className="cmp-live-titles">
-                  <span className="cmp-live-badge">LIVE COMPETITION</span>
-                  <h1 className="cmp-live-main-title">Gold Coast Junior Open 2025</h1>
-                  <p className="cmp-live-sub">Snapper Rocks, QLD • Australia</p>
+            {data.hasLiveEvent ? (
+              <div className="cmp-live-card">
+                <div className="cmp-live-header-row">
+                  <div className="cmp-live-titles">
+                    <span className="cmp-live-badge">LIVE COMPETITION</span>
+                    <h1 className="cmp-live-main-title">{data.liveEventName}</h1>
+                    <p className="cmp-live-sub">{data.liveEventLocation}</p>
+                  </div>
+                  
+                  <div className="cmp-live-countdown">
+                    <span className="cmp-countdown-label">HEAT COUNTDOWN</span>
+                    <div className="cmp-countdown-time">04:12:00</div>
+                  </div>
                 </div>
-                
-                <div className="cmp-live-countdown">
-                  <span className="cmp-countdown-label">HEAT COUNTDOWN</span>
-                  <div className="cmp-countdown-time">04:12:00</div>
-                </div>
-              </div>
 
-              <div className="cmp-heat-section">
-                <h3 className="cmp-heat-title">Chloe's Heat: Round 2, Heat 4</h3>
-                
-                <div className="cmp-heat-table-wrapper">
-                  <table className="cmp-heat-table">
-                    <thead>
-                      <tr>
-                        <th style={{ textAlign: 'left' }}>Competitor</th>
-                        <th style={{ textAlign: 'right' }}>Rank</th>
-                        <th style={{ textAlign: 'right' }}>Seed</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {heatCompetitors.map((comp, i) => (
-                        <tr key={i}>
-                          <td style={{ textAlign: 'left', color: '#FFF' }}>{comp.name}</td>
-                          <td style={{ textAlign: 'right', color: comp.highlight ? '#0D9488' : '#FFF' }}>{comp.rank}</td>
-                          <td style={{ textAlign: 'right', color: 'rgba(255,255,255,0.6)' }}>{comp.seed}</td>
+                <div className="cmp-heat-section">
+                  <h3 className="cmp-heat-title">{data.liveHeatName}</h3>
+                  
+                  <div className="cmp-heat-table-wrapper">
+                    <table className="cmp-heat-table">
+                      <thead>
+                        <tr>
+                          <th style={{ textAlign: 'left' }}>Competitor</th>
+                          <th style={{ textAlign: 'right' }}>Rank</th>
+                          <th style={{ textAlign: 'right' }}>Seed</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {heatCompetitors.map((comp, i) => (
+                          <tr key={i}>
+                            <td style={{ textAlign: 'left', color: '#FFF' }}>{comp.name}</td>
+                            <td style={{ textAlign: 'right', color: comp.highlight ? '#0D9488' : '#FFF' }}>{comp.rank}</td>
+                            <td style={{ textAlign: 'right', color: 'rgba(255,255,255,0.6)' }}>{comp.seed}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
-            </div>
+            ) : (
+              <div className="cmp-live-card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', minHeight: '260px', textAlign: 'center' }}>
+                <span className="cmp-live-badge" style={{ marginBottom: '16px' }}>LIVE COMPETITION</span>
+                <h2 style={{ color: '#FFF', fontFamily: 'Outfit', fontSize: '24px', margin: '0 0 12px 0' }}>No Live Competitions</h2>
+                <p style={{ color: 'rgba(255,255,255,0.6)', margin: 0, fontSize: '15px' }}>
+                  There are no active events running right now. <br />
+                  Check the upcoming schedule on the left or view past history below!
+                </p>
+              </div>
+            )}
 
             {/* Competition History */}
             <div className="cmp-history-card">
