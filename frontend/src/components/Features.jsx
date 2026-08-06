@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 
-// Simple SVG Icons since we don't have lucide-react installed by default
+// Simple SVG Icons
 const icons = {
   camera: (
     <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -54,21 +54,24 @@ const Features = () => {
   ]);
 
   useEffect(() => {
-    // Optionally fetch features from backend
     fetch('http://localhost:8000/api/features')
       .then(res => res.json())
-      .then(data => setFeatures(data))
-      .catch(err => console.error("Could not fetch features, using fallback data", err));
+      .then(data => {
+        if (Array.isArray(data)) {
+          setFeatures(data);
+        }
+      })
+      .catch(err => console.error("Using fallback features data", err));
   }, []);
 
   return (
     <section className="features-section">
       <h2>Precision Engineered Coaching</h2>
       <div className="features-grid">
-        {features.map((feature, index) => (
+        {Array.isArray(features) && features.map((feature, index) => (
           <div key={index} className="feature-card">
             <div className="feature-icon-wrapper">
-              {icons[feature.icon]}
+              {icons[feature.icon] || icons.camera}
             </div>
             <h3 className="feature-title">{feature.title}</h3>
             <p className="feature-description">{feature.description}</p>

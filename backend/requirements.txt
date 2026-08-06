@@ -1,2 +1,11 @@
 fastapi
 uvicorn
+sqlalchemy
+psycopg2-binary
+pydantic
+email-validator
+python-jose[cryptography]
+python-multipart
+boto3
+bcrypt
+passlib

@@ -9,16 +9,19 @@ const Stats = () => {
   ]);
 
   useEffect(() => {
-    // Optionally fetch stats from the backend
     fetch('http://localhost:8000/api/stats')
       .then(res => res.json())
-      .then(data => setStats(data))
-      .catch(err => console.error("Could not fetch stats, using fallback data", err));
+      .then(data => {
+        if (Array.isArray(data)) {
+          setStats(data);
+        }
+      })
+      .catch(err => console.error("Using fallback stats data", err));
   }, []);
 
   return (
     <section className="stats-section">
-      {stats.map((stat, index) => (
+      {Array.isArray(stats) && stats.map((stat, index) => (
         <div key={index} className="stat-item">
           <div className="stat-value">{stat.value}</div>
           <div className="stat-label">{stat.label}</div>

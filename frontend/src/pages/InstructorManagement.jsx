@@ -16,21 +16,16 @@ const InstructorManagement = () => {
 
   useEffect(() => {
     fetch(`${API}/api/instructors`)
-      .then((r) => r.json())
-      .then((data) => setInstructors(data))
-      .catch(() => setInstructors([
-        { id: 1, name: 'Kai Lenny', age: 30, gender: 'Male', fitness_level: 'Elite', experience: '12 Years', certifications: ['ISA Level 2', 'CPR'], image: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=100' },
-        { id: 2, name: 'Bethany Hamilton', age: 34, gender: 'Female', fitness_level: 'Elite', experience: '15 Years', certifications: ['ISA Level 3', 'First Aid'], image: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=100' },
-        { id: 3, name: 'Kolohe Andino', age: 28, gender: 'Male', fitness_level: 'Advanced', experience: '8 Years', certifications: ['ISA Level 1', 'CPR'], image: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100' },
-        { id: 4, name: 'Carissa Moore', age: 31, gender: 'Female', fitness_level: 'Elite', experience: '14 Years', certifications: ['ISA Level 3', 'First Aid', 'Water Safety'], image: 'https://images.unsplash.com/photo-1573497019940-1c28c88b4f3e?auto=format&fit=crop&q=80&w=100' },
-      ]))
+      .then((r) => r.ok ? r.json() : Promise.reject())
+      .then((data) => setInstructors(Array.isArray(data) ? data : []))
+      .catch(() => setInstructors([]))
       .finally(() => setLoading(false));
   }, []);
 
-  const filtered = instructors.filter((i) =>
-    i.name.toLowerCase().includes(search.toLowerCase()) ||
-    i.fitness_level.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = Array.isArray(instructors) ? instructors.filter((i) =>
+    (i.name || '').toLowerCase().includes(search.toLowerCase()) ||
+    (i.fitness_level || '').toLowerCase().includes(search.toLowerCase())
+  ) : [];
 
   const openModal = (instructor) => { setSelected(instructor); setShowModal(true); };
   const closeModal = () => { setShowModal(false); setSelected(null); };
