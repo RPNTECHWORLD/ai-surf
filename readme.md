@@ -57,3 +57,8 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
  3. connecting the login page 
  4. connect the event 
 
+
+ ###changes_on_12-08-2026
+ 1. create the school dashboard 
+ 2. deployed aquaticxspotes on aws
+

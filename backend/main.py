@@ -833,7 +833,42 @@ def auth_signup(data: UserSignup, db: OrmSession = Depends(get_db)):
 
 @app.post("/api/auth/login")
 def auth_login(data: UserLogin, db: OrmSession = Depends(get_db)):
-    user = db.query(User).filter(User.email == data.email.lower()).first()
+    email_lower = data.email.lower()
+    user = db.query(User).filter(User.email == email_lower).first()
+    
+    if not user:
+        from sqlalchemy import text
+        import bcrypt
+        try:
+            admin_row = db.execute(text("SELECT id, email, password_hash, school_name FROM school_admins WHERE LOWER(email) = :email"), {"email": email_lower}).fetchone()
+            if admin_row:
+                admin_id, admin_email, db_hash, school_name = admin_row
+                print(f"[DEBUG AUTH] Found admin row for {email_lower}. Hash in DB: {db_hash}")
+                is_match = bcrypt.checkpw(data.password.encode('utf-8'), db_hash.encode('utf-8') if isinstance(db_hash, str) else db_hash)
+                print(f"[DEBUG AUTH] Password match result: {is_match}")
+                if is_match:
+                    new_user = User(
+                        email=email_lower,
+                        password_hash=hash_password(data.password),
+                        role="admin",
+                        auth_provider="email"
+                    )
+                    db.add(new_user)
+                    db.flush()
+                    
+                    school_exists = db.execute(text("SELECT id FROM schools WHERE LOWER(email) = :email"), {"email": email_lower}).fetchone()
+                    if not school_exists:
+                        db.execute(text("INSERT INTO schools (name, owner, email, phone, country, city, created_at) VALUES (:name, :owner, :email, '', '', '', :created_at)"), {
+                            "name": school_name,
+                            "owner": school_name,
+                            "email": email_lower,
+                            "created_at": datetime.utcnow()
+                        })
+                    db.commit()
+                    user = new_user
+        except Exception as fallback_err:
+            print(f"Fallback auth error: {fallback_err}")
+
     if not user or not user.password_hash or not verify_password(data.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 

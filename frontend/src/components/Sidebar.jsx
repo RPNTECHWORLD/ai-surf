@@ -1,19 +1,53 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 
+const API = 'http://54.242.160.238:8000';
+
 const Sidebar = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [user, setUser] = useState(null);
-  const [isOpen, setIsOpen] = useState(false);
+  const [school, setSchool] = useState(null);
+  const [stats, setStats] = useState(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
-    const saved = localStorage.getItem('user');
-    if (saved) {
+    // Load user profile context
+    const savedUser = localStorage.getItem('user');
+    if (savedUser) {
       try {
-        setUser(JSON.parse(saved));
+        setUser(JSON.parse(savedUser));
       } catch (e) {}
     }
+
+    // Load active school profile context
+    const savedSchool = localStorage.getItem('activeSchool');
+    if (savedSchool) {
+      try {
+        setSchool(JSON.parse(savedSchool));
+      } catch (e) {}
+    } else {
+      fetch(`${API}/api/schools`)
+        .then(res => res.json())
+        .then(data => {
+          if (data && data.length > 0) {
+            const latest = data[data.length - 1];
+            setSchool({
+              name: latest.name,
+              owner: latest.owner,
+            });
+          }
+        })
+        .catch(err => console.error("Error fetching school:", err));
+    }
+
+    // Fetch quick stats
+    fetch(`${API}/api/dashboard/stats`)
+      .then(r => r.json())
+      .then(data => setStats(data))
+      .catch(() => {
+        setStats({ active_instructors: 12, active_students: 87, sessions_this_month: 34, upcoming_sessions: 6 });
+      });
   }, []);
 
   const getInitials = (name) => {
@@ -31,184 +65,172 @@ const Sidebar = () => {
   const getNavItems = () => {
     const role = user?.role || 'admin';
     const items = [
-      { label: 'Dashboard', path: '/dashboard', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /></svg> }
+      { label: 'Dashboard', path: '/dashboard' }
     ];
 
     if (role === 'athlete') {
       if (user?.student_id) {
-        items.push({ 
-          label: 'My Profile', 
-          path: `/students/${user.student_id}`, 
-          icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg> 
-        });
+        items.push({ label: 'My Profile', path: `/students/${user.student_id}` });
       }
     } else if (role === 'coach') {
       if (user?.instructor_id) {
-        items.push({ 
-          label: 'My Profile', 
-          path: `/instructors/${user.instructor_id}`, 
-          icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></svg> 
-        });
+        items.push({ label: 'My Profile', path: `/instructors/${user.instructor_id}` });
       }
-      items.push({ 
-        label: 'My Students', 
-        path: '/students', 
-        icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg> 
-      });
+      items.push({ label: 'My Students', path: '/students' });
     } else {
       items.push(
-        { label: 'Instructors', path: '/instructors', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg> },
-        { label: 'Students', path: '/students', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg> }
+        { label: 'Instructors', path: '/instructors' },
+        { label: 'Students', path: '/students' }
       );
     }
 
     items.push(
-      { label: 'Sessions', path: '/sessions', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg> },
-      { label: 'Analytics', path: '/analytics', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10" /><line x1="12" y1="20" x2="12" y2="4" /><line x1="6" y1="20" x2="6" y2="14" /></svg> },
-      { label: 'Competitions', path: '/competitions', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" /><line x1="4" y1="22" x2="4" y2="15" /></svg> },
-      { label: 'Video Analysis', path: '/analysis', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" ry="2" /></svg> }
+      { label: 'Sessions', path: '/sessions' },
+      { label: 'Analytics', path: '/analytics' },
+      { label: 'Competitions', path: '/competitions' }
     );
 
     if (role === 'admin') {
-      items.push({ label: 'Register School', path: '/register', icon: <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /><polyline points="9 22 9 12 15 12 15 22" /></svg> });
+      items.push({ label: 'Register School', path: '/register' });
     }
 
     return items;
   };
 
   const navItems = getNavItems();
+  const isDashboard = location.pathname === '/dashboard';
 
   return (
     <>
-      {/* Mobile Toggle Hamburger Button */}
-      <button 
-        className="db-mobile-nav-toggle"
-        onClick={() => setIsOpen(!isOpen)}
-        aria-label="Toggle Navigation"
-        style={{
-          display: 'none', // Overridden by media queries on small screens
-          position: 'fixed',
-          top: '16px',
-          left: '16px',
-          width: '44px',
-          height: '44px',
-          backgroundColor: '#050B1A',
-          border: '1px solid rgba(255,255,255,0.15)',
-          borderRadius: '8px',
-          color: '#FFFFFF',
-          alignItems: 'center',
-          justifyContent: 'center',
-          cursor: 'pointer',
-          zIndex: 10000,
-          boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
-        }}
-      >
-        {isOpen ? (
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-        ) : (
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
-        )}
-      </button>
-
-      {/* Overlay backing on mobile when open */}
-      {isOpen && (
-        <div 
-          className="db-sidebar-overlay" 
-          onClick={() => setIsOpen(false)} 
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0,0,0,0.5)',
-            backdropFilter: 'blur(4px)',
-            zIndex: 9998,
-          }}
-        />
-      )}
-
-      <aside className={`db-sidebar ${isOpen ? 'db-sidebar-open' : ''}`}>
-        <div className="db-logo" onClick={() => { navigate('/'); setIsOpen(false); }} style={{ cursor: 'pointer' }}>
-          <span className="db-logo-dot" />
-          <span className="db-logo-name">AiSurf</span>
+      {/* Top Header Navigation */}
+      <header className="db-top-header">
+        <div className="db-header-left">
+          <div className="db-logo" onClick={() => navigate('/dashboard')}>
+            <span className="db-logo-name">
+              Wave<span style={{ fontWeight: 400 }}>Coach</span>
+            </span>
+          </div>
         </div>
-        <nav className="db-nav">
+
+        {/* Desktop Navigation Links */}
+        <nav className="db-header-nav">
           {navItems.map((item) => {
             const isActive = location.pathname === item.path || (item.path !== '/dashboard' && location.pathname.startsWith(item.path));
             return (
-              <button 
-                key={item.label} 
-                className={`db-nav-item${isActive ? ' db-nav-active' : ''}`} 
-                onClick={() => {
-                  navigate(item.path);
-                  setIsOpen(false); // Close sidebar on navigate
-                }}
+              <button
+                key={item.label}
+                className={`db-header-nav-item ${isActive ? 'active' : ''}`}
+                onClick={() => navigate(item.path)}
               >
-                {item.icon}
                 {item.label}
               </button>
             );
           })}
         </nav>
-        <div className="db-sidebar-footer">
-          <div 
-            className="db-sidebar-userinfo" 
-            onClick={() => {
-              if (user?.role === 'athlete') navigate(`/students/${user.student_id}`);
-              else if (user?.role === 'coach') navigate(`/instructors/${user.instructor_id}`);
-              setIsOpen(false);
-            }} 
-            style={{ cursor: user?.role !== 'admin' ? 'pointer' : 'default' }}
-          >
-            <div className="db-avatar" style={{ backgroundImage: user?.image ? `url(${user.image})` : 'none', backgroundSize: 'cover', backgroundPosition: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              {!user?.image && getInitials(user?.name)}
+
+        {/* Right Info Section */}
+        <div className="db-header-right">
+          <div className="db-header-userinfo">
+            <div className="db-header-usertext">
+              <div className="db-header-school-name">{school ? school.name : 'North Shore Academy'}</div>
+              <div className="db-header-user-role" style={{ textTransform: 'capitalize' }}>
+                {user ? user.role : 'Administrator'}
+              </div>
             </div>
-            <div>
-              <div className="db-user-name">{user ? user.name : 'Guest User'}</div>
-              <div className="db-user-role" style={{ textTransform: 'capitalize' }}>{user ? user.role : 'Guest'}</div>
+            <div className="db-header-avatar" style={{ backgroundImage: user?.image ? `url(${user.image})` : 'none', backgroundSize: 'cover', backgroundPosition: 'center' }}>
+              {!user?.image && getInitials(user?.name || school?.owner || 'System Admin')}
             </div>
+            <button className="db-header-logout" onClick={handleLogout} title="Log Out">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                <polyline points="16 17 21 12 16 7"></polyline>
+                <line x1="21" y1="12" x2="9" y2="12"></line>
+              </svg>
+            </button>
           </div>
-          <button className="db-logout-btn" onClick={handleLogout} title="Log Out">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-              <polyline points="16 17 21 12 16 7"></polyline>
-              <line x1="21" y1="12" x2="9" y2="12"></line>
-            </svg>
+
+          {/* Mobile Menu Icon Toggle */}
+          <button className="db-mobile-toggle" onClick={() => setMobileMenuOpen(!mobileMenuOpen)}>
+            {mobileMenuOpen ? (
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            ) : (
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+            )}
           </button>
         </div>
+      </header>
 
-      <style>{`
-        .db-sidebar-footer {
-          display: flex !important;
-          justify-content: space-between;
-          align-items: center;
-          width: 100%;
-          padding: 16px 24px;
-        }
-        .db-sidebar-userinfo {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-        }
-        .db-logout-btn {
-          background: transparent;
-          border: none;
-          color: #64748B;
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          padding: 8px;
-          border-radius: 8px;
-          transition: all 0.2s;
-        }
-        .db-logout-btn:hover {
-          background: rgba(244, 63, 94, 0.1);
-          color: #F43F5E;
-        }
-      `}</style>
-      </aside>
+      {/* Mobile Menu Dropdown Navigation */}
+      {mobileMenuOpen && (
+        <div className="db-mobile-menu">
+          {navItems.map((item) => {
+            const isActive = location.pathname === item.path || (item.path !== '/dashboard' && location.pathname.startsWith(item.path));
+            return (
+              <button
+                key={item.label}
+                className={`db-mobile-menu-item ${isActive ? 'active' : ''}`}
+                onClick={() => {
+                  navigate(item.path);
+                  setMobileMenuOpen(false);
+                }}
+              >
+                {item.label}
+              </button>
+            );
+          })}
+          <button className="db-mobile-menu-item logout" onClick={handleLogout}>
+            Log Out
+          </button>
+        </div>
+      )}
+
+      {/* Left Sidebar (QUICK STATS) - Only displayed on Dashboard */}
+      {isDashboard && (
+        <aside className="db-sidebar-stats">
+          <div className="db-sidebar-stats-title">Quick Stats</div>
+          <div className="db-sidebar-stats-list">
+            <div className="db-sidebar-stat-card">
+              <div className="stat-card-left">
+                <span className="stat-card-label">Active Instructors</span>
+                <span className="stat-card-value">{stats?.active_instructors || 0}</span>
+              </div>
+              <div className="stat-card-right" style={{ color: '#00D1B2', background: 'rgba(0, 209, 178, 0.1)' }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /></svg>
+              </div>
+            </div>
+
+            <div className="db-sidebar-stat-card">
+              <div className="stat-card-left">
+                <span className="stat-card-label">Active Students</span>
+                <span className="stat-card-value">{stats?.active_students || 0}</span>
+              </div>
+              <div className="stat-card-right" style={{ color: '#3B82F6', background: 'rgba(59, 130, 246, 0.1)' }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>
+              </div>
+            </div>
+
+            <div className="db-sidebar-stat-card">
+              <div className="stat-card-left">
+                <span className="stat-card-label">Sessions This Month</span>
+                <span className="stat-card-value">{stats?.sessions_this_month || 0}</span>
+              </div>
+              <div className="stat-card-right" style={{ color: '#10B981', background: 'rgba(16, 185, 129, 0.1)' }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12" /></svg>
+              </div>
+            </div>
+
+            <div className="db-sidebar-stat-card">
+              <div className="stat-card-left">
+                <span className="stat-card-label">Upcoming Sessions</span>
+                <span className="stat-card-value">{stats?.upcoming_sessions || 0}</span>
+              </div>
+              <div className="stat-card-right" style={{ color: '#F59E0B', background: 'rgba(245, 158, 11, 0.1)' }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>
+              </div>
+            </div>
+          </div>
+        </aside>
+      )}
     </>
   );
 };

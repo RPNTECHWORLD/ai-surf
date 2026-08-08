@@ -148,18 +148,16 @@ const Sessions = () => {
                           </svg>
                           <button
                              className="ses-btn-view-analysis"
-                             disabled={!session.video_url}
                              style={{
-                               backgroundColor: session.video_url ? '#0D9488' : '#e2e8f0',
-                               color: session.video_url ? '#FFFFFF' : '#94a3b8',
-                               cursor: session.video_url ? 'pointer' : 'not-allowed',
-                               border: session.video_url ? 'none' : '1px solid #cbd5e1'
+                               backgroundColor: '#0D9488',
+                               color: '#FFFFFF',
+                               cursor: 'pointer',
+                               border: 'none'
                              }}
-                             title={session.video_url ? "View AI Video Analysis" : "No video attached"}
+                             title="View AI Video Analysis"
                              onClick={() => {
-                               if (session.video_url) {
-                                 navigate(`/analysis?video=${encodeURIComponent(session.video_url)}&student=${encodeURIComponent(session.student)}&date=${encodeURIComponent(session.date)}`);
-                               }
+                               const videoParam = session.video_url ? `&video=${encodeURIComponent(session.video_url)}` : '';
+                               navigate(`/analysis?student=${encodeURIComponent(session.student)}&date=${encodeURIComponent(session.date)}${videoParam}`);
                              }}
                            >
                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
