@@ -12,6 +12,7 @@ import Sessions from './pages/Sessions';
 import NewSession from './pages/NewSession';
 import Competitions from './pages/Competitions';
 import VideoAnalysis from './pages/VideoAnalysis';
+import CoachingReport from './pages/CoachingReport';
 import AuthPage from './pages/AuthPage';
 
 const PrivateRoute = ({ children }) => {
@@ -39,6 +40,7 @@ function App() {
         <Route path="/sessions/:id/edit" element={<PrivateRoute><NewSession /></PrivateRoute>} />
         <Route path="/competitions" element={<PrivateRoute><Competitions /></PrivateRoute>} />
         <Route path="/analysis" element={<PrivateRoute><VideoAnalysis /></PrivateRoute>} />
+        <Route path="/sessions/report" element={<PrivateRoute><CoachingReport /></PrivateRoute>} />
       </Routes>
     </Router>
   );

@@ -364,14 +364,19 @@ h2 {
 }
 
 /* Page Containers Grid */
-.db-page, .im-page, .sm-page, .ses-page, .an-page, .cmp-page, .va-page, .ip-page, .sp-page, .ns-page {
+.db-page, .im-page, .sm-page, .ses-page, .an-page, .cmp-page, .va-page, .ip-page, .sp-page, .ns-page, .cr-page {
   display: flex !important;
   flex-direction: row !important;
   height: 100vh !important;
   width: 100% !important;
   overflow: hidden !important;
-  background: #F8F6F2 !important;
   box-sizing: border-box !important;
+}
+.db-page, .im-page, .sm-page, .ses-page, .an-page, .cmp-page, .ip-page, .sp-page, .ns-page, .cr-page {
+  background: #F8F6F2 !important;
+}
+.va-page {
+  background: #050B1A !important;
 }
 
 /* Left Stats Sidebar */
@@ -458,15 +463,20 @@ h2 {
   box-sizing: border-box !important;
 }
 
-.im-main, .sm-main, .ses-main, .an-main, .cmp-main, .va-main, .ip-main, .sp-main, .ns-main {
+.im-main, .sm-main, .ses-main, .an-main, .cmp-main, .va-main, .ip-main, .sp-main, .ns-main, .cr-main {
   flex: 1 !important;
   margin-left: 0 !important;
   margin-top: 72px !important;
   height: calc(100vh - 72px) !important;
   overflow-y: auto !important;
   padding: 32px 40px !important;
-  background: #F8F6F2 !important;
   box-sizing: border-box !important;
+}
+.im-main, .sm-main, .ses-main, .an-main, .cmp-main, .ip-main, .sp-main, .ns-main, .cr-main {
+  background: #F8F6F2 !important;
+}
+.va-main {
+  background: #050B1A !important;
 }
 
 /* Global Page Header Styles */
@@ -508,7 +518,7 @@ h2 {
   .db-mobile-toggle {
     display: block;
   }
-  .db-page, .im-page, .sm-page, .ses-page, .an-page, .cmp-page, .va-page, .ip-page, .sp-page, .ns-page {
+  .db-page, .im-page, .sm-page, .ses-page, .an-page, .cmp-page, .va-page, .ip-page, .sp-page, .ns-page, .cr-page {
     flex-direction: column !important;
     height: auto !important;
     overflow: visible !important;
@@ -524,7 +534,7 @@ h2 {
     grid-template-columns: repeat(2, 1fr) !important;
     gap: 12px !important;
   }
-  .db-main, .im-main, .sm-main, .ses-main, .an-main, .cmp-main, .va-main, .ip-main, .sp-main, .ns-main {
+  .db-main, .im-main, .sm-main, .ses-main, .an-main, .cmp-main, .va-main, .ip-main, .sp-main, .ns-main, .cr-main {
     margin-left: 0 !important;
     margin-top: 72px !important;
     width: 100% !important;
