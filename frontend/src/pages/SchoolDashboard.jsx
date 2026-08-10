@@ -19,6 +19,20 @@ const SchoolDashboard = () => {
   const [school, setSchool] = useState(null);
 
   useEffect(() => {
+    const savedUser = localStorage.getItem('user');
+    if (savedUser) {
+      try {
+        const parsedUser = JSON.parse(savedUser);
+        if (parsedUser.role === 'athlete') {
+          navigate(`/students/${parsedUser.student_id || parsedUser.id || 1}`);
+          return;
+        } else if (parsedUser.role === 'coach') {
+          navigate(`/instructors/${parsedUser.instructor_id || parsedUser.id || 1}`);
+          return;
+        }
+      } catch (e) {}
+    }
+
     const savedSchool = localStorage.getItem('activeSchool');
     if (savedSchool) {
       try {

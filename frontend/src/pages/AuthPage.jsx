@@ -50,7 +50,14 @@ const AuthPage = () => {
       owner: user.name,
       email: user.email,
     }));
-    navigate('/dashboard');
+    
+    if (user.role === 'athlete') {
+      navigate(`/students/${user.student_id || user.id || 1}`);
+    } else if (user.role === 'coach') {
+      navigate(`/instructors/${user.instructor_id || user.id || 1}`);
+    } else {
+      navigate('/dashboard');
+    }
   };
 
   const handleSubmit = async (e) => {

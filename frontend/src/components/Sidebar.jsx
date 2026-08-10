@@ -64,18 +64,18 @@ const Sidebar = () => {
 
   const getNavItems = () => {
     const role = user?.role || 'admin';
-    const items = [
-      { label: 'Dashboard', path: '/dashboard' }
-    ];
+    const items = [];
+
+    if (role === 'admin') {
+      items.push({ label: 'Dashboard', path: '/dashboard' });
+    }
 
     if (role === 'athlete') {
-      if (user?.student_id) {
-        items.push({ label: 'My Profile', path: `/students/${user.student_id}` });
-      }
+      const athleteId = user?.student_id || user?.id || user?._id || 1;
+      items.push({ label: 'My Profile', path: `/students/${athleteId}` });
     } else if (role === 'coach') {
-      if (user?.instructor_id) {
-        items.push({ label: 'My Profile', path: `/instructors/${user.instructor_id}` });
-      }
+      const coachId = user?.instructor_id || user?.id || user?._id || 1;
+      items.push({ label: 'My Profile', path: `/instructors/${coachId}` });
       items.push({ label: 'My Students', path: '/students' });
     } else {
       items.push(

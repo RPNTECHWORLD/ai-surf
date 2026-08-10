@@ -461,6 +461,9 @@ h2 {
   padding: 32px 40px !important;
   background: #F8F6F2 !important;
   box-sizing: border-box !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 28px !important;
 }
 
 .im-main, .sm-main, .ses-main, .an-main, .cmp-main, .va-main, .ip-main, .sp-main, .ns-main, .cr-main {
