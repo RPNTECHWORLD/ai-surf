@@ -58,7 +58,21 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
  4. connect the event 
 
 
- ###changes_on_12-08-2026
+ ###changes_on_17-08-2026
  1. create the school dashboard 
  2. deployed aquaticxspotes on aws
+
+ ###changes on 10-08-26
+ 1. Redesigned the entire user interface with premium modern styling, custom design tokens, and smooth layouts.
+ 2. Resolved AWS EC2 backend connection errors and configured CORS policies to allow seamless communication.
+ 3. ui changed fully
+
+
+ ###changes on 11-08-26
+ 1. Made website statistics, instructor profiles, and charts fully dynamic from the database.
+ 2. Aligned dashboard welcome banner counter to show actual scheduled sessions for today.
+ 3. Enabled live competition events and heat results queries directly from the RDS tables.
+ 4. Created a dedicated Superadmin Dashboard at `/rpnsuperadmin` featuring platform statistics.
+ 5. Stored and displayed plaintext coach passwords and database hashes for administrative access.
+ 6. Completed database migrations and successfully redeployed the live AWS EC2 backend.
 

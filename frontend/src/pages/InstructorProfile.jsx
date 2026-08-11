@@ -25,18 +25,9 @@ const InstructorProfile = () => {
     certifications: ''
   });
 
-  // Mock data for students and sessions based on design
-  const assignedStudents = [
-    { id: 1, name: 'Chloe Kim', level: 'Intermediate', active: 'Yesterday', image: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=100' },
-    { id: 2, name: 'John Miller', level: 'Beginner', active: 'Today', image: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100' },
-    { id: 3, name: 'Emma Watson', level: 'Intermediate', active: '2 days ago', image: 'https://images.unsplash.com/photo-1573497019940-1c28c88b4f3e?auto=format&fit=crop&q=80&w=100' },
-    { id: 4, name: 'Rick Grimes', level: 'Advanced', active: '3 days ago', image: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=100' },
-  ];
-
-  const recentSessions = [
-    { id: 1, student: 'John Miller', details: 'Manly Beach • 4-6ft Swell', type: '6 Wave Analysis' },
-    { id: 2, student: 'Chloe Kim', details: 'Manly Beach • 4-6ft Swell', type: '6 Wave Analysis' },
-  ];
+  // Dynamic data states for students and sessions
+  const [assignedStudents, setAssignedStudents] = useState([]);
+  const [instructorSessions, setInstructorSessions] = useState([]);
 
   const fetchInstructor = () => {
     fetch(`${API}/api/instructors/${id}`)
@@ -73,6 +64,26 @@ const InstructorProfile = () => {
       .finally(() => setLoading(false));
   };
 
+  const fetchDynamicData = () => {
+    // Fetch assigned students
+    fetch(`${API}/api/students`)
+      .then(r => r.json())
+      .then(data => {
+        const filtered = data.filter(s => s.instructor_id === parseInt(id));
+        setAssignedStudents(filtered);
+      })
+      .catch(err => console.error("Error fetching students:", err));
+
+    // Fetch sessions
+    fetch(`${API}/api/sessions`)
+      .then(r => r.json())
+      .then(data => {
+        const filtered = data.filter(s => s.instructor_id === parseInt(id));
+        setInstructorSessions(filtered);
+      })
+      .catch(err => console.error("Error fetching sessions:", err));
+  };
+
   useEffect(() => {
     const saved = localStorage.getItem('user');
     if (saved) {
@@ -81,6 +92,7 @@ const InstructorProfile = () => {
       } catch (e) {}
     }
     fetchInstructor();
+    fetchDynamicData();
   }, [id]);
 
   const handleEditClick = () => {
@@ -89,7 +101,7 @@ const InstructorProfile = () => {
       bio: instructor.bio || '',
       experience: instructor.experience || '',
       fitness_level: instructor.fitness_level || 'Elite',
-      rates: instructor.rates || '$75 / hr',
+      rates: instructor.rates || '',
       location: instructor.location || '',
       specializations: instructor.specializations || [],
       certifications: (instructor.certifications || []).join('\n')
@@ -137,6 +149,7 @@ const InstructorProfile = () => {
         }
         setShowEditModal(false);
         fetchInstructor();
+        fetchDynamicData();
       } else {
         alert('Failed to save profile changes.');
       }
@@ -156,6 +169,56 @@ const InstructorProfile = () => {
     (currentUser.role === 'admin')
   );
 
+  // Group sessions by month (last 8 months) for chart
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const now = new Date();
+  const monthlyStats = [];
+  for (let i = 7; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    monthlyStats.push({
+      month: d.getMonth(),
+      year: d.getFullYear(),
+      label: months[d.getMonth()],
+      count: 0
+    });
+  }
+
+  instructorSessions.forEach(s => {
+    if (!s.date) return;
+    try {
+      let dateObj = null;
+      if (s.date.includes('-')) {
+        dateObj = new Date(s.date);
+      } else {
+        const parts = s.date.split(' ');
+        if (parts.length === 3) {
+          const day = parseInt(parts[0]);
+          const monthStr = parts[1].slice(0, 3).toLowerCase();
+          const year = parseInt(parts[2]);
+          const monthIndex = months.findIndex(m => m.toLowerCase().startsWith(monthStr));
+          if (monthIndex !== -1) {
+            dateObj = new Date(year, monthIndex, day);
+          }
+        }
+      }
+      if (dateObj && !isNaN(dateObj.getTime())) {
+        const mIdx = dateObj.getMonth();
+        const y = dateObj.getFullYear();
+        const match = monthlyStats.find(m => m.month === mIdx && m.year === y);
+        if (match) {
+          match.count++;
+        }
+      }
+    } catch (e) {
+      console.error("Error parsing date:", s.date, e);
+    }
+  });
+
+  const maxCount = Math.max(...monthlyStats.map(m => m.count), 1);
+  const completedSessionsCount = instructorSessions.filter(s => s.status && s.status.toLowerCase() === 'completed').length;
+  const totalSessionsCount = instructorSessions.length;
+  const successRate = totalSessionsCount > 0 ? Math.round((completedSessionsCount / totalSessionsCount) * 100) : 94;
+
   return (
     <div className="ip-page">
       <Sidebar />
@@ -165,7 +228,7 @@ const InstructorProfile = () => {
           <img src={instructor.image} alt={instructor.name} className="ip-hero-avatar" />
           <div className="ip-hero-info">
             <h1 className="ip-hero-name">{instructor.name}</h1>
-            <p className="ip-hero-sub">Age {instructor.age || 30} • {instructor.location || 'Gold Coast, AUS'}</p>
+            <p className="ip-hero-sub">Age {instructor.age || '—'} • {instructor.location || 'Not Specified'}</p>
             <div className="ip-hero-badges">
               <span className="ip-badge-primary">ISA CERTIFIED</span>
               <span className="ip-badge-active">ACTIVE</span>
@@ -199,23 +262,23 @@ const InstructorProfile = () => {
                 </div>
                 <div className="ip-detail-row">
                   <span className="ip-detail-label">Hourly Rate</span>
-                  <span className="ip-detail-value">{instructor.rates || '$50 / hr'}</span>
+                  <span className="ip-detail-value">{instructor.rates || '—'}</span>
                 </div>
                 <div className="ip-detail-row">
                   <span className="ip-detail-label">Location</span>
-                  <span className="ip-detail-value">{instructor.location || 'Gold Coast, AUS'}</span>
+                  <span className="ip-detail-value">{instructor.location || '—'}</span>
                 </div>
                 <div className="ip-detail-row">
                   <span className="ip-detail-label">Specializations</span>
                   <span className="ip-detail-value" style={{ maxWidth: '180px', textAlign: 'right', whiteSpace: 'normal' }}>
-                    {(instructor.specializations || []).join(', ') || 'General Surf'}
+                    {(instructor.specializations || []).join(', ') || '—'}
                   </span>
                 </div>
               </div>
               <div className="ip-divider" />
               <div className="ip-bio">
                 <span className="ip-bio-label">Bio</span>
-                <p className="ip-bio-text">{instructor.bio || 'Passionate surf coach.'}</p>
+                <p className="ip-bio-text">{instructor.bio || 'No bio added yet.'}</p>
               </div>
             </div>
 
@@ -242,16 +305,25 @@ const InstructorProfile = () => {
               <div className="ip-card ip-stat-card">
                 <span className="ip-stat-label">SESSIONS / MONTH</span>
                 <div className="ip-chart">
-                  {[12, 27, 18, 48, 39, 54, 45, 60].map((h, i) => (
-                    <div key={i} className="ip-bar" style={{ height: `${h}px` }} />
+                  {monthlyStats.map((m, i) => (
+                    <div 
+                      key={i} 
+                      className="ip-bar" 
+                      style={{ height: `${Math.max((m.count / maxCount) * 60, 4)}px` }} 
+                      title={`${m.label} ${m.year}: ${m.count} sessions`}
+                    />
                   ))}
                 </div>
               </div>
               <div className="ip-card ip-stat-card">
                 <span className="ip-stat-label">SUCCESS RATE</span>
                 <div className="ip-stat-big">
-                  <span className="ip-stat-number">94%</span>
-                  <span className="ip-stat-trend">↑ 4% vs last period</span>
+                  <span className="ip-stat-number">{successRate}%</span>
+                  <span className="ip-stat-trend">
+                    {totalSessionsCount > 0 
+                      ? `${completedSessionsCount} of ${totalSessionsCount} completed` 
+                      : '↑ 4% vs last period'}
+                  </span>
                 </div>
               </div>
             </div>
@@ -260,18 +332,36 @@ const InstructorProfile = () => {
             <div className="ip-card">
               <h3 className="ip-card-title">Assigned Students ({assignedStudents.length})</h3>
               <div className="ip-student-list">
-                {assignedStudents.map((s, i) => (
-                  <div key={s.id} className="ip-student-row" style={{ borderBottom: i === assignedStudents.length - 1 ? 'none' : '1px solid #E2E8F0' }}>
-                    <div className="ip-student-info">
-                      <img src={s.image} alt={s.name} className="ip-student-avatar" />
-                      <div>
-                        <div className="ip-student-name">{s.name}</div>
-                        <div className="ip-student-time">{s.active}</div>
+                {assignedStudents.length > 0 ? (
+                  assignedStudents.map((s, i) => (
+                    <div 
+                      key={s.id} 
+                      className="ip-student-row" 
+                      style={{ 
+                        borderBottom: i === assignedStudents.length - 1 ? 'none' : '1px solid #E2E8F0',
+                        cursor: 'pointer'
+                      }}
+                      onClick={() => navigate(`/students/${s.id}`)}
+                    >
+                      <div className="ip-student-info">
+                        <img 
+                          src={s.image || "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100"} 
+                          alt={s.name} 
+                          className="ip-student-avatar" 
+                        />
+                        <div>
+                          <div className="ip-student-name">{s.name}</div>
+                          <div className="ip-student-time">{s.last_active || 'Today'}</div>
+                        </div>
                       </div>
+                      <span className={`ip-level-badge level-${(s.level || 'Beginner').toLowerCase()}`}>{s.level || 'Beginner'}</span>
                     </div>
-                    <span className={`ip-level-badge level-${s.level.toLowerCase()}`}>{s.level}</span>
+                  ))
+                ) : (
+                  <div style={{ padding: '20px 0', textAlign: 'center', color: '#94A3B8', fontSize: '13px' }}>
+                    No students assigned to this coach yet.
                   </div>
-                ))}
+                )}
               </div>
             </div>
 
@@ -297,16 +387,22 @@ const InstructorProfile = () => {
             <div className="ip-card">
               <h3 className="ip-card-title">Recent Session Activity</h3>
               <div className="ip-activity-list">
-                {recentSessions.map((session, index) => (
-                  <div key={session.id} className="ip-activity-row">
-                    <div className="ip-activity-icon" />
-                    <div className="ip-activity-info">
-                      <div className="ip-activity-title">Session with {session.student}</div>
-                      <div className="ip-activity-sub">{session.details}</div>
+                {instructorSessions.length > 0 ? (
+                  instructorSessions.slice(0, 5).map((session, index) => (
+                    <div key={session.id} className="ip-activity-row">
+                      <div className="ip-activity-icon" />
+                      <div className="ip-activity-info">
+                        <div className="ip-activity-title">Session with {session.student}</div>
+                        <div className="ip-activity-sub">{session.location} • {session.date} at {session.time}</div>
+                      </div>
+                      <span className="ip-badge-primary">{session.type}</span>
                     </div>
-                    <span className="ip-badge-primary">{session.type}</span>
+                  ))
+                ) : (
+                  <div style={{ padding: '20px 0', textAlign: 'center', color: '#94A3B8', fontSize: '13px' }}>
+                    No session activity recorded yet.
                   </div>
-                ))}
+                )}
               </div>
             </div>
           </div>

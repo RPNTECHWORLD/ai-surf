@@ -14,6 +14,7 @@ import Competitions from './pages/Competitions';
 import VideoAnalysis from './pages/VideoAnalysis';
 import CoachingReport from './pages/CoachingReport';
 import AuthPage from './pages/AuthPage';
+import SuperAdminDashboard from './pages/SuperAdminDashboard';
 
 const PrivateRoute = ({ children }) => {
   const token = localStorage.getItem('token');
@@ -41,6 +42,7 @@ function App() {
         <Route path="/competitions" element={<PrivateRoute><Competitions /></PrivateRoute>} />
         <Route path="/analysis" element={<PrivateRoute><VideoAnalysis /></PrivateRoute>} />
         <Route path="/sessions/report" element={<PrivateRoute><CoachingReport /></PrivateRoute>} />
+        <Route path="/rpnsuperadmin" element={<SuperAdminDashboard />} />
       </Routes>
     </Router>
   );

@@ -68,6 +68,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=True)
     password_hash = Column(String, nullable=True)
+    password_plain = Column(String, nullable=True)
     role = Column(String, nullable=False)  # "athlete", "coach", "admin"
     auth_provider = Column(String, default="email")  # "email", "google", "apple"
     social_id = Column(String, nullable=True)
@@ -238,12 +239,89 @@ class MentalLog(Base):
     student_rel = relationship("Student", back_populates="mental_logs")
 
 
+class Surfer(Base):
+    __tablename__ = "surfers"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+
+
+class Event(Base):
+    __tablename__ = "events"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    location = Column(String)
+    start_date = Column(String)
+    status = Column(String)
+
+
+class Heat(Base):
+    __tablename__ = "heats"
+    id = Column(Integer, primary_key=True, index=True)
+    event_id = Column(Integer, ForeignKey("events.id"))
+    round = Column(String)
+    heat_number = Column(Integer)
+    status = Column(String)
+
+
+class HeatSurfer(Base):
+    __tablename__ = "heat_surfers"
+    id = Column(Integer, primary_key=True, index=True)
+    heat_id = Column(Integer, ForeignKey("heats.id"))
+    surfer_id = Column(Integer, ForeignKey("surfers.id"))
+    rank = Column(Integer)
+    seed = Column(Integer)
+
+
+class Score(Base):
+    __tablename__ = "scores"
+    id = Column(Integer, primary_key=True, index=True)
+    heat_id = Column(Integer, ForeignKey("heats.id"))
+    surfer_id = Column(Integer, ForeignKey("surfers.id"))
+    score = Column(Float)
+
+
 # ─── Create tables ────────────────────────────────────────────────────────────
 from sqlalchemy import inspect
 inspector = inspect(engine)
 if "nutrition_logs" not in inspector.get_table_names():
     Base.metadata.drop_all(bind=engine)
 Base.metadata.create_all(bind=engine)
+
+# Seed database
+db = SessionLocal()
+try:
+    from sqlalchemy import text
+    surfer_count = db.execute(text("SELECT COUNT(*) FROM surfers")).fetchone()[0]
+    if surfer_count == 0:
+        db.execute(text("INSERT INTO surfers (id, name) VALUES (1, 'Kai Lenny'), (2, 'Bethany Hamilton'), (3, 'Kolohe Andino'), (4, 'Carissa Moore'), (5, 'Marcus Silva'), (6, 'John Miller'), (7, 'Chloe Kim'), (8, 'Emma Watson'), (9, 'Rick Grimes'), (10, 'Santhosh Kumar')"))
+        db.execute(text("INSERT INTO events (id, name, location, start_date, status) VALUES (1, 'Pipeline Pro 2026', 'Banzai Pipeline, Oahu', '12-18 Feb 2026', 'Upcoming'), (2, 'Gold Coast Surf Festival', 'Snapper Rocks, QLD', '05-12 Mar 2026', 'Upcoming'), (3, 'Maui Surf Classic 2026', 'Honolua Bay, Maui', '07-10 Aug 2026', 'Live'), (4, 'Chiba Pro 2025', 'Chiba, Japan', '15-20 Oct 2025', 'Finished'), (5, 'Huntington Beach Open', 'Huntington Beach, CA', '01-05 Jul 2025', 'Finished')"))
+        db.execute(text("INSERT INTO heats (id, event_id, round, heat_number, status) VALUES (1, 3, 'Quarterfinals', 2, 'Live')"))
+        db.execute(text("INSERT INTO heat_surfers (heat_id, surfer_id, rank, seed) VALUES (1, 1, 1, 1), (1, 3, 2, 4), (1, 10, 3, 10)"))
+        db.execute(text("INSERT INTO scores (heat_id, surfer_id, score) VALUES (1, 1, 16.50), (1, 3, 14.20), (1, 10, 12.10)"))
+        db.commit()
+    
+    # Backfill password_plain for default/existing users
+    db.execute(text("UPDATE users SET password_plain = 'admin123' WHERE email = 'admin@aisurf.com' AND password_plain IS NULL"))
+    db.execute(text("UPDATE users SET password_plain = 'kai123' WHERE email = 'kai@aisurf.com' AND password_plain IS NULL"))
+    db.execute(text("UPDATE users SET password_plain = 'bethany123' WHERE email = 'bethany@aisurf.com' AND password_plain IS NULL"))
+    db.execute(text("UPDATE users SET password_plain = 'kolohe123' WHERE email = 'kolohe@aisurf.com' AND password_plain IS NULL"))
+    db.execute(text("UPDATE users SET password_plain = 'carissa123' WHERE email = 'carissa@aisurf.com' AND password_plain IS NULL"))
+    db.execute(text("UPDATE users SET password_plain = 'marcus123' WHERE email = 'marcus@aisurf.com' AND password_plain IS NULL"))
+    db.execute(text("UPDATE users SET password_plain = 'chloe123' WHERE email = 'chloe@aisurf.com' AND password_plain IS NULL"))
+    db.execute(text("UPDATE users SET password_plain = 'john123' WHERE email = 'john@aisurf.com' AND password_plain IS NULL"))
+    db.execute(text("UPDATE users SET password_plain = 'emma123' WHERE email = 'emma@aisurf.com' AND password_plain IS NULL"))
+    db.execute(text("UPDATE users SET password_plain = 'rick123' WHERE email = 'rick@aisurf.com' AND password_plain IS NULL"))
+    db.execute(text("UPDATE users SET password_plain = 'sarah123' WHERE email = 'sarah@aisurf.com' AND password_plain IS NULL"))
+    db.execute(text("UPDATE users SET password_plain = 'james123' WHERE email = 'james@aisurf.com' AND password_plain IS NULL"))
+    db.execute(text("UPDATE users SET password_plain = 'rpn123' WHERE email = 'rpn@gmail.com' AND password_plain IS NULL"))
+    db.execute(text("UPDATE users SET password_plain = 'test123' WHERE email = 'test@gmail.com' AND password_plain IS NULL"))
+    db.execute(text("UPDATE users SET password_plain = 'tt123' WHERE email = 'tt@gmail.com' AND password_plain IS NULL"))
+    db.commit()
+except Exception as e:
+    print(f"Seeding / backfill info: {e}")
+    db.rollback()
+finally:
+    db.close()
 
 # ─── Security Utilities ───────────────────────────────────────────────────────
 import hmac
@@ -300,6 +378,7 @@ def seed_database(db: OrmSession):
     admin_user = User(
         email="admin@aisurf.com",
         password_hash=hash_password("admin123"),
+        password_plain="admin123",
         role="admin",
         auth_provider="email"
     )
@@ -316,7 +395,7 @@ def seed_database(db: OrmSession):
     ]
 
     for id_val, (name, email, password, age, gender, fit, exp, certs, img, bio, specs, rate, loc) in enumerate(instructor_users_data, 1):
-        u = User(email=email, password_hash=hash_password(password), role="coach", auth_provider="email")
+        u = User(email=email, password_hash=hash_password(password), password_plain=password, role="coach", auth_provider="email")
         db.add(u)
         db.flush()
         inst = Instructor(
@@ -339,7 +418,7 @@ def seed_database(db: OrmSession):
     ]
 
     for id_val, (name, email, password, level, inst_id, img, bio, age, div, stance, stats, logs) in enumerate(student_users_data, 1):
-        u = User(email=email, password_hash=hash_password(password), role="athlete", auth_provider="email")
+        u = User(email=email, password_hash=hash_password(password), password_plain=password, role="athlete", auth_provider="email")
         db.add(u)
         db.flush()
         stud = Student(
@@ -779,6 +858,7 @@ def auth_signup(data: UserSignup, db: OrmSession = Depends(get_db)):
     user = User(
         email=data.email.lower(),
         password_hash=hash_password(data.password),
+        password_plain=data.password,
         role=role,
         auth_provider="email"
     )
@@ -1668,5 +1748,39 @@ def get_competitions_data(db: OrmSession = Depends(get_db)):
         "heatCompetitors": heat_competitors,
         "pastResults": past_results
     }
+
+
+# ─── Super Admin Endpoints ───────────────────────────────────────────────────
+
+class PasswordResetRequest(BaseModel):
+    user_id: int
+    new_password: str
+
+@app.get("/api/superadmin/instructors")
+def get_superadmin_instructors(db: OrmSession = Depends(get_db)):
+    result = []
+    coaches = db.query(User).filter(User.role == "coach").all()
+    for u in coaches:
+        inst = u.instructor
+        name = inst.name if inst else "Unnamed Coach"
+        result.append({
+            "user_id": u.id,
+            "instructor_id": inst.id if inst else None,
+            "name": name,
+            "email": u.email,
+            "password_hash": u.password_hash or "—",
+            "password_plain": u.password_plain or "—"
+        })
+    return result
+
+@app.post("/api/superadmin/reset-password")
+def superadmin_reset_password(data: PasswordResetRequest, db: OrmSession = Depends(get_db)):
+    user = db.query(User).filter(User.id == data.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.password_hash = hash_password(data.new_password)
+    user.password_plain = data.new_password
+    db.commit()
+    return {"message": "Password updated successfully"}
 
 

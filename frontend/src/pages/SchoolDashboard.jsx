@@ -118,7 +118,7 @@ const SchoolDashboard = () => {
               <div className="banner-content">
                 <h2 className="banner-heading">Good morning, {school ? school.name : 'North Shore Academy'}!</h2>
                 <p className="banner-subtext">
-                  You have {stats?.upcoming_sessions || 0} sessions scheduled for today. Surf conditions are 4-6ft and clean.
+                  You have {sessions.length} sessions scheduled for today. Surf conditions are 4-6ft and clean.
                 </p>
               </div>
               <div className="banner-wave-pattern">
