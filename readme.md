@@ -76,3 +76,9 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
  5. Stored and displayed plaintext coach passwords and database hashes for administrative access.
  6. Completed database migrations and successfully redeployed the live AWS EC2 backend.
 
+ ###changes on 12-08-26
+ 1. Implemented Live Heats Integration & Mock Heats Engine with live countdown timers, priority state toggles, and wave scoring logs.
+ 2. Created rule-based AI tactical diagnostics analyzing wave scores to generate strengths, weaknesses, and coaching targets.
+ 3. Integrated mock heat history cards inside student profiles showing expandable detailed wave logs and AI reports.
+ 4. Developed Super Admin panel tabs at `/superadmin` for marketplace items, user reports, AI token usage monitor, and app integration client keys.
+ 5. Configured dynamic API routing fallback to allow local testing while maintaining cloud AWS connection defaults.

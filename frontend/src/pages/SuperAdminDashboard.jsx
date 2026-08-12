@@ -1,9 +1,31 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-const API = 'http://54.242.160.238:8000';
+const API = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' ? 'http://localhost:8000' : 'http://54.242.160.238:8000';
 
 // ── Custom SVG Icon Components (Replaces lucide-react to avoid dependencies) ──
+const IconMarket = ({ size = 14, color = 'currentColor', className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
+    <line x1="3" y1="6" x2="21" y2="6" />
+    <path d="M16 10a4 4 0 0 1-8 0" />
+  </svg>
+);
+
+const IconFlag = ({ size = 14, color = 'currentColor', className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
+    <line x1="4" y1="22" x2="4" y2="15" />
+  </svg>
+);
+
+const IconChart = ({ size = 14, color = 'currentColor', className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <line x1="18" y1="20" x2="18" y2="10" />
+    <line x1="12" y1="20" x2="12" y2="4" />
+    <line x1="6" y1="20" x2="6" y2="14" />
+  </svg>
+);
 const IconActivity = ({ size = 18, color = 'currentColor', className = '' }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
     <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
@@ -74,7 +96,7 @@ const IconLock = ({ size = 14, color = 'currentColor', className = '' }) => (
 
 const SuperAdminDashboard = () => {
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' or 'users'
+  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard', 'users', 'marketplace', 'reports', 'ai_monitoring', 'keys'
   const [coaches, setCoaches] = useState([]);
   const [stats, setStats] = useState(null);
   const [activity, setActivity] = useState([]);
@@ -89,6 +111,19 @@ const SuperAdminDashboard = () => {
   const [successMsg, setSuccessMsg] = useState('');
   const [showPasswordMap, setShowPasswordMap] = useState({}); // maps user_id -> boolean (to show/hide plain password)
 
+  // New Admin States
+  const [marketplace, setMarketplace] = useState([]);
+  const [reports, setReports] = useState([]);
+  const [aiUsage, setAiUsage] = useState(null);
+  const [keys, setKeys] = useState([]);
+
+  // Form states
+  const [newMarketplaceItem, setNewMarketplaceItem] = useState({ title: '', price: '', category: 'Board', description: '' });
+  const [showMarketplaceModal, setShowMarketplaceModal] = useState(false);
+  
+  const [newKey, setNewKey] = useState({ app_name: '', webhook_url: '' });
+  const [showKeyModal, setShowKeyModal] = useState(false);
+
   const loadData = async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
@@ -96,21 +131,31 @@ const SuperAdminDashboard = () => {
     try {
       // 1. Fetch instructors/credentials
       const coachesRes = await fetch(`${API}/api/superadmin/instructors`);
-      if (!coachesRes.ok) throw new Error('Failed to fetch credentials');
-      const coachesData = await coachesRes.json();
-      setCoaches(coachesData);
+      if (coachesRes.ok) setCoaches(await coachesRes.json());
 
       // 2. Fetch dashboard stats
       const statsRes = await fetch(`${API}/api/dashboard/stats`);
-      if (!statsRes.ok) throw new Error('Failed to fetch stats');
-      const statsData = await statsRes.json();
-      setStats(statsData);
+      if (statsRes.ok) setStats(await statsRes.json());
 
       // 3. Fetch recent activity
       const activityRes = await fetch(`${API}/api/dashboard/activity`);
-      if (!activityRes.ok) throw new Error('Failed to fetch activity');
-      const activityData = await activityRes.json();
-      setActivity(activityData);
+      if (activityRes.ok) setActivity(await activityRes.json());
+
+      // 4. Fetch marketplace
+      const marketRes = await fetch(`${API}/api/superadmin/marketplace`);
+      if (marketRes.ok) setMarketplace(await marketRes.json());
+
+      // 5. Fetch user reports
+      const reportsRes = await fetch(`${API}/api/superadmin/reports`);
+      if (reportsRes.ok) setReports(await reportsRes.json());
+
+      // 6. Fetch AI monitoring stats
+      const aiRes = await fetch(`${API}/api/superadmin/ai-monitoring`);
+      if (aiRes.ok) setAiUsage(await aiRes.json());
+
+      // 7. Fetch client keys
+      const keysRes = await fetch(`${API}/api/superadmin/keys`);
+      if (keysRes.ok) setKeys(await keysRes.json());
 
       setError('');
     } catch (err) {
@@ -183,6 +228,104 @@ const SuperAdminDashboard = () => {
     }));
   };
 
+  // Marketplace Actions
+  const handleDeleteMarketplace = async (id) => {
+    if (!window.confirm("Are you sure you want to delete this listing?")) return;
+    try {
+      const res = await fetch(`${API}/api/superadmin/marketplace/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        alert('Listing deleted successfully!');
+        loadData(true);
+      }
+    } catch (e) {}
+  };
+
+  const handleCreateMarketplace = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch(`${API}/api/superadmin/marketplace`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: newMarketplaceItem.title,
+          price: parseFloat(newMarketplaceItem.price),
+          category: newMarketplaceItem.category,
+          description: newMarketplaceItem.description
+        })
+      });
+      if (res.ok) {
+        alert('Listing created successfully!');
+        setNewMarketplaceItem({ title: '', price: '', category: 'Board', description: '' });
+        setShowMarketplaceModal(false);
+        loadData(true);
+      }
+    } catch (e) {}
+  };
+
+  // User Reports Actions
+  const handleUpdateReport = async (id, status) => {
+    try {
+      const res = await fetch(`${API}/api/superadmin/reports/${id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status })
+      });
+      if (res.ok) {
+        loadData(true);
+      }
+    } catch (e) {}
+  };
+
+  const handleDeleteReport = async (id) => {
+    if (!window.confirm("Are you sure you want to delete this report?")) return;
+    try {
+      const res = await fetch(`${API}/api/superadmin/reports/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        loadData(true);
+      }
+    } catch (e) {}
+  };
+
+  // Integration Keys Actions
+  const handleCreateKey = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch(`${API}/api/superadmin/keys`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          app_name: newKey.app_name,
+          webhook_url: newKey.webhook_url
+        })
+      });
+      if (res.ok) {
+        alert('Integration application registered successfully!');
+        setNewKey({ app_name: '', webhook_url: '' });
+        setShowKeyModal(false);
+        loadData(true);
+      }
+    } catch (e) {}
+  };
+
+  const handleToggleKey = async (id) => {
+    try {
+      const res = await fetch(`${API}/api/superadmin/keys/${id}/toggle`, { method: 'POST' });
+      if (res.ok) {
+        loadData(true);
+      }
+    } catch (e) {}
+  };
+
+  const handleDeleteKey = async (id) => {
+    if (!window.confirm("Are you sure you want to delete this integration client?")) return;
+    try {
+      const res = await fetch(`${API}/api/superadmin/keys/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        loadData(true);
+      }
+    } catch (e) {}
+  };
+
   const statsCards = [
     { icon: IconUsers, label: 'Total Instructors', value: stats?.active_instructors ?? 0, color: '#6366f1', sub: 'Active coaches in roster' },
     { icon: IconActivity, label: 'Active Students', value: stats?.active_students ?? 8, color: '#06b6d4', sub: 'Athletes in training' },
@@ -211,6 +354,30 @@ const SuperAdminDashboard = () => {
               onClick={() => setActiveTab('users')}
             >
               <IconUsers size={14} /> Instructors Directory
+            </button>
+            <button 
+              className={`sa-tab-btn ${activeTab === 'marketplace' ? 'active' : ''}`}
+              onClick={() => setActiveTab('marketplace')}
+            >
+              <IconMarket size={14} /> Marketplace
+            </button>
+            <button 
+              className={`sa-tab-btn ${activeTab === 'reports' ? 'active' : ''}`}
+              onClick={() => setActiveTab('reports')}
+            >
+              <IconFlag size={14} /> Reports
+            </button>
+            <button 
+              className={`sa-tab-btn ${activeTab === 'ai_monitoring' ? 'active' : ''}`}
+              onClick={() => setActiveTab('ai_monitoring')}
+            >
+              <IconChart size={14} /> AI Monitor
+            </button>
+            <button 
+              className={`sa-tab-btn ${activeTab === 'keys' ? 'active' : ''}`}
+              onClick={() => setActiveTab('keys')}
+            >
+              <IconLock size={14} /> Client Keys
             </button>
           </div>
         </div>
@@ -438,11 +605,621 @@ const SuperAdminDashboard = () => {
                 </div>
               </div>
             )}
+
+            {/* Marketplace Tab */}
+            {activeTab === 'marketplace' && (
+              <div className="sa-tab-content fade-in">
+                <div className="sa-section-header">
+                  <div>
+                    <h2>Marketplace Listings</h2>
+                    <p>Manage community surfboards, fins, wetsuits, and coaching offers</p>
+                  </div>
+                  <button className="sa-btn-primary" onClick={() => setShowMarketplaceModal(true)}>
+                    + Create Listing
+                  </button>
+                </div>
+
+                <div className="sa-listings-grid">
+                  {marketplace.map((item) => (
+                    <div className="sa-listing-card" key={item.id}>
+                      <div className="sa-card-top">
+                        <span className="sa-listing-cat">{item.category}</span>
+                        <span className="sa-status-dot">{item.status}</span>
+                      </div>
+                      <h4 className="sa-listing-title">{item.title}</h4>
+                      <p className="sa-listing-desc">{item.description || "No description provided."}</p>
+                      <div className="sa-card-bottom">
+                        <span className="sa-listing-price">${item.price.toFixed(2)}</span>
+                        <button className="sa-delete-btn-red" onClick={() => handleDeleteMarketplace(item.id)}>
+                          Delete Listing
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {marketplace.length === 0 && (
+                    <p style={{ gridColumn: '1/-1', textAlign: 'center', padding: '40px', color: '#94a3b8' }}>
+                      No listings registered in the marketplace.
+                    </p>
+                  )}
+                </div>
+
+                {/* Marketplace Modal */}
+                {showMarketplaceModal && (
+                  <div className="sa-modal-overlay">
+                    <div className="sa-modal-card fade-in">
+                      <div className="sa-modal-header">
+                        <h3>Create Marketplace Listing</h3>
+                        <button className="sa-close-btn" onClick={() => setShowMarketplaceModal(false)}>&times;</button>
+                      </div>
+                      <form onSubmit={handleCreateMarketplace} className="sa-modal-form">
+                        <div className="sa-form-group">
+                          <label>Listing Title</label>
+                          <input 
+                            type="text" 
+                            placeholder="e.g. 6'2 Pyzel Shortboard"
+                            value={newMarketplaceItem.title} 
+                            onChange={(e) => setNewMarketplaceItem({...newMarketplaceItem, title: e.target.value})}
+                            required 
+                          />
+                        </div>
+                        <div className="sa-form-row">
+                          <div className="sa-form-group flex-1">
+                            <label>Price ($)</label>
+                            <input 
+                              type="number" 
+                              step="0.01"
+                              placeholder="Price in USD"
+                              value={newMarketplaceItem.price} 
+                              onChange={(e) => setNewMarketplaceItem({...newMarketplaceItem, price: e.target.value})}
+                              required 
+                            />
+                          </div>
+                          <div className="sa-form-group flex-1">
+                            <label>Category</label>
+                            <select 
+                              value={newMarketplaceItem.category} 
+                              onChange={(e) => setNewMarketplaceItem({...newMarketplaceItem, category: e.target.value})}
+                            >
+                              <option value="Board">Surfboard</option>
+                              <option value="Fins">Fins</option>
+                              <option value="Wetsuit">Wetsuit</option>
+                              <option value="Coaching">Coaching</option>
+                            </select>
+                          </div>
+                        </div>
+                        <div className="sa-form-group">
+                          <label>Description (Condition/Details)</label>
+                          <textarea 
+                            rows="3" 
+                            placeholder="Describe item condition, repairs, sizing..."
+                            value={newMarketplaceItem.description} 
+                            onChange={(e) => setNewMarketplaceItem({...newMarketplaceItem, description: e.target.value})}
+                          />
+                        </div>
+                        <div className="sa-modal-actions">
+                          <button type="button" className="sa-btn-cancel" onClick={() => setShowMarketplaceModal(false)}>Cancel</button>
+                          <button type="submit" className="sa-btn-submit">Submit Listing</button>
+                        </div>
+                      </form>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Reports Tab */}
+            {activeTab === 'reports' && (
+              <div className="sa-tab-content fade-in">
+                <div className="sa-section-header">
+                  <div>
+                    <h2>Flagged Content & Reports</h2>
+                    <p>Review community-flagged comments, suspicious activity, and inappropriate behavior</p>
+                  </div>
+                </div>
+
+                <div className="sa-card-main">
+                  <div className="sa-table-responsive">
+                    <table className="sa-table">
+                      <thead>
+                        <tr>
+                          <th>Reporter</th>
+                          <th>Flagged Content Details</th>
+                          <th>Reason / Type</th>
+                          <th>Status</th>
+                          <th style={{ textAlign: 'right' }}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {reports.map((r) => (
+                          <tr key={r.id}>
+                            <td style={{ fontWeight: 700, color: '#1E293B' }}>{r.reporter}</td>
+                            <td className="sa-act-text" style={{ maxWidth: '300px' }}>"{r.content}"</td>
+                            <td>
+                              <span className="sa-reason-badge">{r.reason}</span>
+                            </td>
+                            <td>
+                              <span className={`sa-status-badge status-${r.status.toLowerCase()}`}>{r.status}</span>
+                            </td>
+                            <td style={{ textAlign: 'right' }}>
+                              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                                {r.status === 'Pending' && (
+                                  <>
+                                    <button className="sa-action-btn btn-green" onClick={() => handleUpdateReport(r.id, 'Resolved')}>
+                                      Resolve
+                                    </button>
+                                    <button className="sa-action-btn btn-gray" onClick={() => handleUpdateReport(r.id, 'Dismissed')}>
+                                      Dismiss
+                                    </button>
+                                  </>
+                                )}
+                                <button className="sa-action-btn btn-red" onClick={() => handleDeleteReport(r.id)}>
+                                  Delete
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                        {reports.length === 0 && (
+                          <tr>
+                            <td colSpan="5" style={{ textAlign: 'center', padding: '32px', color: '#94a3b8' }}>
+                              No content reports filed yet.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* AI Monitor Tab */}
+            {activeTab === 'ai_monitoring' && (
+              <div className="sa-tab-content fade-in">
+                <div className="sa-section-header">
+                  <div>
+                    <h2>AI Engine Monitoring</h2>
+                    <p>Track request counters, average latencies, and Gemini model tokens used across the platform</p>
+                  </div>
+                </div>
+
+                {/* API Stats Cards */}
+                <div className="sa-stats-grid">
+                  <div className="sa-stat-card">
+                    <span className="sa-stat-label">Total AI Requests</span>
+                    <div className="sa-stat-value">{aiUsage?.summary?.total_calls ?? 0}</div>
+                    <div className="sa-stat-sub">Cumulative API endpoint triggers</div>
+                  </div>
+                  <div className="sa-stat-card">
+                    <span className="sa-stat-label">Total Tokens Consumed</span>
+                    <div className="sa-stat-value" style={{ color: '#7C3AED' }}>
+                      {aiUsage?.summary?.total_tokens?.toLocaleString() ?? 0}
+                    </div>
+                    <div className="sa-stat-sub">Prompt + Completion token metrics</div>
+                  </div>
+                  <div className="sa-stat-card">
+                    <span className="sa-stat-label">Average Response Time</span>
+                    <div className="sa-stat-value" style={{ color: '#0D9488' }}>
+                      {aiUsage?.summary?.avg_latency_ms ?? 0} ms
+                    </div>
+                    <div className="sa-stat-sub">Latency metrics from backend engine</div>
+                  </div>
+                </div>
+
+                {/* Logs Table */}
+                <div className="sa-card-main">
+                  <div className="sa-card-header">
+                    <h3>Recent AI Request Logs</h3>
+                  </div>
+                  <div className="sa-table-responsive">
+                    <table className="sa-table">
+                      <thead>
+                        <tr>
+                          <th>API Endpoint</th>
+                          <th>Tokens Used</th>
+                          <th>Latency (ms)</th>
+                          <th style={{ textAlign: 'right' }}>Timestamp</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {aiUsage?.logs?.map((log) => (
+                          <tr key={log.id}>
+                            <td style={{ fontFamily: 'monospace', fontWeight: 700, color: '#4F46E5' }}>{log.api_endpoint}</td>
+                            <td>{log.tokens_used} tokens</td>
+                            <td style={{ color: log.latency_ms > 2000 ? '#EF4444' : '#0D9488', fontWeight: 600 }}>
+                              {log.latency_ms} ms
+                            </td>
+                            <td style={{ textAlign: 'right', color: '#64748B' }}>{log.timestamp}</td>
+                          </tr>
+                        ))}
+                        {(!aiUsage?.logs || aiUsage.logs.length === 0) && (
+                          <tr>
+                            <td colSpan="4" style={{ textAlign: 'center', padding: '32px', color: '#94a3b8' }}>
+                              No AI request logs recorded.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Keys Tab */}
+            {activeTab === 'keys' && (
+              <div className="sa-tab-content fade-in">
+                <div className="sa-section-header">
+                  <div>
+                    <h2>App Integration & Client Keys</h2>
+                    <p>Configure credentials and webhook destinations linking WaveCoach with the Live Scoring App</p>
+                  </div>
+                  <button className="sa-btn-primary" onClick={() => setShowKeyModal(true)}>
+                    + Register Client App
+                  </button>
+                </div>
+
+                <div className="sa-card-main">
+                  <div className="sa-table-responsive">
+                    <table className="sa-table">
+                      <thead>
+                        <tr>
+                          <th>Application Name</th>
+                          <th>Client ID</th>
+                          <th>API Secret Key</th>
+                          <th>Webhook Destination</th>
+                          <th>Status</th>
+                          <th style={{ textAlign: 'right' }}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {keys.map((k) => (
+                          <tr key={k.id}>
+                            <td style={{ fontWeight: 700, color: '#0F172A' }}>{k.app_name}</td>
+                            <td>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <code style={{ fontSize: '11px', background: '#F1F5F9', padding: '2px 6px', borderRadius: '4px' }}>{k.client_id}</code>
+                                <button className="sa-icon-btn" onClick={() => copyToClipboard(k.client_id, 'Client ID')}>
+                                  <IconCopy size={12} />
+                                </button>
+                              </div>
+                            </td>
+                            <td>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <code style={{ fontSize: '11px', background: '#F1F5F9', padding: '2px 6px', borderRadius: '4px' }}>{k.api_key.substring(0, 10)}...</code>
+                                <button className="sa-icon-btn" onClick={() => copyToClipboard(k.api_key, 'API Key')}>
+                                  <IconCopy size={12} />
+                                </button>
+                              </div>
+                            </td>
+                            <td style={{ color: '#475569', fontSize: '12px' }}>{k.webhook_url || '—'}</td>
+                            <td>
+                              <span className={`sa-status-badge status-${k.status.toLowerCase()}`}>{k.status}</span>
+                            </td>
+                            <td style={{ textAlign: 'right' }}>
+                              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                                <button 
+                                  className={`sa-action-btn ${k.status === 'Active' ? 'btn-gray' : 'btn-green'}`} 
+                                  onClick={() => handleToggleKey(k.id)}
+                                >
+                                  {k.status === 'Active' ? 'Deactivate' : 'Activate'}
+                                </button>
+                                <button className="sa-action-btn btn-red" onClick={() => handleDeleteKey(k.id)}>
+                                  Delete
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                        {keys.length === 0 && (
+                          <tr>
+                            <td colSpan="6" style={{ textAlign: 'center', padding: '32px', color: '#94a3b8' }}>
+                              No integration keys registered yet.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Key Registration Modal */}
+                {showKeyModal && (
+                  <div className="sa-modal-overlay">
+                    <div className="sa-modal-card fade-in">
+                      <div className="sa-modal-header">
+                        <h3>Register Integration Client</h3>
+                        <button className="sa-close-btn" onClick={() => setShowKeyModal(false)}>&times;</button>
+                      </div>
+                      <form onSubmit={handleCreateKey} className="sa-modal-form">
+                        <div className="sa-form-group">
+                          <label>Integration Application Name</label>
+                          <input 
+                            type="text" 
+                            placeholder="e.g. LiveHeats Scoring Companion"
+                            value={newKey.app_name} 
+                            onChange={(e) => setNewKey({...newKey, app_name: e.target.value})}
+                            required 
+                          />
+                        </div>
+                        <div className="sa-form-group">
+                          <label>Webhook URL (Optional)</label>
+                          <input 
+                            type="url" 
+                            placeholder="e.g. https://api.myclient.com/webhooks"
+                            value={newKey.webhook_url} 
+                            onChange={(e) => setNewKey({...newKey, webhook_url: e.target.value})}
+                          />
+                        </div>
+                        <div className="sa-modal-actions">
+                          <button type="button" className="sa-btn-cancel" onClick={() => setShowKeyModal(false)}>Cancel</button>
+                          <button type="submit" className="sa-btn-submit">Generate Credentials</button>
+                        </div>
+                      </form>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </>
         )}
       </main>
 
       <style>{`
+        .sa-wrapper {
+          min-height: 100vh;
+          background: #F8FAFC;
+          font-family: 'Instrument Sans', sans-serif;
+          color: #0F172A;
+          display: flex;
+          flex-direction: column;
+        }
+
+        /* Button premium */
+        .sa-btn-primary {
+          background: #6366f1;
+          color: #FFF;
+          border: none;
+          border-radius: 10px;
+          padding: 8px 16px;
+          font-size: 13px;
+          font-weight: 700;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .sa-btn-primary:hover {
+          background: #4f46e5;
+        }
+
+        /* Listings */
+        .sa-listings-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+          gap: 24px;
+          margin-top: 10px;
+        }
+        .sa-listing-card {
+          background: #FFF;
+          border: 1px solid #E2E8F0;
+          border-radius: 16px;
+          padding: 20px;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.01);
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .sa-listing-card:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 4px 12px rgba(0,0,0,0.03);
+        }
+        .sa-card-top {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .sa-listing-cat {
+          background: rgba(99,102,241,0.08);
+          color: #6366f1;
+          font-size: 10.5px;
+          font-weight: 700;
+          text-transform: uppercase;
+          padding: 2px 8px;
+          border-radius: 6px;
+        }
+        .sa-status-dot {
+          font-size: 11px;
+          font-weight: 700;
+          color: #0d9488;
+          display: flex;
+          align-items: center;
+          gap: 5px;
+        }
+        .sa-status-dot::before {
+          content: '';
+          display: inline-block;
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          background: #0d9488;
+        }
+        .sa-listing-title {
+          font-family: 'Outfit', sans-serif;
+          font-size: 15px;
+          font-weight: 800;
+          color: #0F172A;
+          margin: 0;
+          line-height: 1.4;
+        }
+        .sa-listing-desc {
+          font-size: 12.5px;
+          color: #64748B;
+          margin: 0;
+          line-height: 1.5;
+          flex-grow: 1;
+        }
+        .sa-card-bottom {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-top: 8px;
+          border-top: 1px solid #F1F5F9;
+          padding-top: 12px;
+        }
+        .sa-listing-price {
+          font-size: 16px;
+          font-weight: 800;
+          color: #0F172A;
+        }
+        .sa-delete-btn-red {
+          background: none;
+          border: none;
+          color: #EF4444;
+          font-size: 12px;
+          font-weight: 700;
+          cursor: pointer;
+          padding: 4px 8px;
+          border-radius: 6px;
+          transition: background 0.2s;
+        }
+        .sa-delete-btn-red:hover {
+          background: #FEE2E2;
+        }
+
+        /* Modal styling */
+        .sa-modal-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(15, 23, 42, 0.4);
+          backdrop-filter: blur(4px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 1000;
+        }
+        .sa-modal-card {
+          background: #FFF;
+          border-radius: 16px;
+          width: 100%;
+          max-width: 480px;
+          padding: 24px;
+          box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);
+        }
+        .sa-modal-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          border-bottom: 1px solid #F1F5F9;
+          padding-bottom: 12px;
+          margin-bottom: 18px;
+        }
+        .sa-modal-header h3 {
+          font-family: 'Outfit', sans-serif;
+          font-size: 16px;
+          font-weight: 800;
+          margin: 0;
+        }
+        .sa-modal-form {
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+        }
+        .sa-form-row {
+          display: flex;
+          gap: 16px;
+        }
+        .flex-1 {
+          flex: 1;
+        }
+        .sa-modal-form input, .sa-modal-form select, .sa-modal-form textarea {
+          width: 100%;
+          padding: 10px 12px;
+          border: 1.5px solid #CBD5E1;
+          border-radius: 8px;
+          font-size: 13.5px;
+          outline: none;
+          box-sizing: border-box;
+          font-family: inherit;
+        }
+        .sa-modal-form input:focus, .sa-modal-form select:focus, .sa-modal-form textarea:focus {
+          border-color: #6366f1;
+        }
+        .sa-modal-actions {
+          display: flex;
+          gap: 10px;
+          margin-top: 8px;
+        }
+
+        /* Badges status */
+        .sa-status-badge {
+          font-size: 11px;
+          font-weight: 700;
+          padding: 3px 8px;
+          border-radius: 6px;
+          text-transform: uppercase;
+        }
+        .sa-status-badge.status-pending {
+          background: #FEF3C7;
+          color: #D97706;
+        }
+        .sa-status-badge.status-resolved {
+          background: #DCFCE7;
+          color: #15803D;
+        }
+        .sa-status-badge.status-dismissed {
+          background: #F1F5F9;
+          color: #64748B;
+        }
+        .sa-status-badge.status-active {
+          background: #DCFCE7;
+          color: #15803D;
+        }
+        .sa-status-badge.status-inactive {
+          background: #FEE2E2;
+          color: #B91C1C;
+        }
+        .sa-reason-badge {
+          background: #FEE2E2;
+          color: #EF4444;
+          font-size: 11px;
+          font-weight: 700;
+          padding: 2px 8px;
+          border-radius: 6px;
+        }
+
+        /* Action buttons table */
+        .sa-action-btn.btn-green {
+          color: #10B981;
+          border-color: rgba(16, 185, 129, 0.2);
+        }
+        .sa-action-btn.btn-green:hover {
+          background: #10B981;
+          color: #FFF;
+          border-color: #10B981;
+        }
+        .sa-action-btn.btn-gray {
+          color: #64748B;
+          border-color: rgba(100, 116, 139, 0.2);
+        }
+        .sa-action-btn.btn-gray:hover {
+          background: #64748B;
+          color: #FFF;
+          border-color: #64748B;
+        }
+        .sa-action-btn.btn-red {
+          color: #EF4444;
+          border-color: rgba(239, 68, 68, 0.2);
+        }
+        .sa-action-btn.btn-red:hover {
+          background: #EF4444;
+          color: #FFF;
+          border-color: #EF4444;
+        }
+
+        /* Original Wrapper Style */
         .sa-wrapper {
           min-height: 100vh;
           background: #F8FAFC;

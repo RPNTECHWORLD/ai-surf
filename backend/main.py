@@ -18,7 +18,7 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 # ─── SQLAlchemy Setup ────────────────────────────────────────────────────────
 from sqlalchemy import (
     create_engine, Column, Integer, String, Text,
-    DateTime, Date, ForeignKey, func
+    DateTime, Date, ForeignKey, func, Float
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, Session as OrmSession
@@ -111,6 +111,9 @@ class Instructor(Base):
     rates = Column(String, nullable=True)
     location = Column(String, nullable=True)
     reviews = Column(Text, nullable=True) # JSON list of reviews
+    languages = Column(Text, default="[\"English\"]")
+    intro_video = Column(String, default="")
+    price = Column(Float, default=100.00)
 
     user_rel = relationship("User", back_populates="instructor")
     students = relationship("Student", back_populates="instructor_rel")
@@ -145,6 +148,7 @@ class Student(Base):
     sc_logs = relationship("SCLog", back_populates="student_rel")
     technical_logs = relationship("TechnicalLog", back_populates="student_rel")
     mental_logs = relationship("MentalLog", back_populates="student_rel")
+    mock_heats = relationship("MockHeat", back_populates="student_rel", cascade="all, delete-orphan")
 
 
 class SurfSession(Base):
@@ -182,7 +186,7 @@ class Badge(Base):
     student_rel = relationship("Student", back_populates="badges")
 
 
-from sqlalchemy import Float
+# Float imported at top
 
 class NutritionLog(Base):
     __tablename__ = "nutrition_logs"
@@ -239,6 +243,38 @@ class MentalLog(Base):
     student_rel = relationship("Student", back_populates="mental_logs")
 
 
+class MockHeat(Base):
+    __tablename__ = "mock_heats"
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.id"), nullable=False)
+    coach_id = Column(Integer, ForeignKey("instructors.id"), nullable=False)
+    date = Column(String, nullable=False)
+    duration_mins = Column(Integer, default=20)
+    status = Column(String, default="Running")  # "Running", "Completed"
+    strategy_focus = Column(Text, default="")
+    strategy_execution = Column(Text, default="")
+    heat_total = Column(Float, default=0.0)
+    priority_status = Column(String, default="Athlete")  # "Athlete", "Opponent"
+    wave_progression = Column(Text, default="[]")  # JSON log of events
+    tactical_strengths = Column(Text, default="[]")  # JSON list of strings
+    tactical_weaknesses = Column(Text, default="[]")  # JSON list of strings
+
+    student_rel = relationship("Student", back_populates="mock_heats")
+    waves = relationship("MockHeatWave", back_populates="heat_rel", cascade="all, delete-orphan")
+
+
+class MockHeatWave(Base):
+    __tablename__ = "mock_heat_waves"
+    id = Column(Integer, primary_key=True, index=True)
+    mock_heat_id = Column(Integer, ForeignKey("mock_heats.id"), nullable=False)
+    wave_number = Column(Integer, nullable=False)
+    score = Column(Float, nullable=False)
+    notes = Column(Text, default="")
+    timestamp = Column(String, default="")  # e.g., "12:35 remaining"
+
+    heat_rel = relationship("MockHeat", back_populates="waves")
+
+
 class Surfer(Base):
     __tablename__ = "surfers"
     id = Column(Integer, primary_key=True, index=True)
@@ -280,12 +316,99 @@ class Score(Base):
     score = Column(Float)
 
 
+class MarketplaceItem(Base):
+    __tablename__ = "marketplace_items"
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    price = Column(Float, nullable=False)
+    category = Column(String)  # Board, Fins, Wetsuit, Coaching
+    description = Column(Text, default="")
+    status = Column(String, default="Active")  # Active, Sold
+
+
+class UserReport(Base):
+    __tablename__ = "user_reports"
+    id = Column(Integer, primary_key=True, index=True)
+    reporter = Column(String, nullable=False)
+    content = Column(Text, nullable=False)
+    reason = Column(String)
+    status = Column(String, default="Pending")  # Pending, Resolved, Dismissed
+
+
+class AIUsage(Base):
+    __tablename__ = "ai_usage"
+    id = Column(Integer, primary_key=True, index=True)
+    api_endpoint = Column(String, nullable=False)
+    tokens_used = Column(Integer, default=0)
+    latency_ms = Column(Integer, default=0)
+    timestamp = Column(String, default="")  # string formatted date
+
+
+class IntegrationKey(Base):
+    __tablename__ = "integration_keys"
+    id = Column(Integer, primary_key=True, index=True)
+    app_name = Column(String, nullable=False)
+    client_id = Column(String, nullable=False)
+    api_key = Column(String, nullable=False)
+    webhook_url = Column(String, default="")
+    status = Column(String, default="Active")  # Active, Inactive
+
+
 # ─── Create tables ────────────────────────────────────────────────────────────
 from sqlalchemy import inspect
 inspector = inspect(engine)
 if "nutrition_logs" not in inspector.get_table_names():
     Base.metadata.drop_all(bind=engine)
 Base.metadata.create_all(bind=engine)
+
+# Alter table for new coach marketplace columns and backfill seeding
+db_migrate = SessionLocal()
+try:
+    from sqlalchemy import text
+    # Postgres ADD COLUMN IF NOT EXISTS / SQLite handle fallback
+    try:
+        db_migrate.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS languages TEXT DEFAULT '[\"English\"]'"))
+        db_migrate.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS intro_video VARCHAR(255) DEFAULT ''"))
+        db_migrate.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS price DOUBLE PRECISION DEFAULT 100.00"))
+        db_migrate.commit()
+    except Exception:
+        db_migrate.rollback()
+        try:
+            db_migrate.execute(text("ALTER TABLE instructors ADD COLUMN languages TEXT DEFAULT '[\"English\"]'"))
+            db_migrate.execute(text("ALTER TABLE instructors ADD COLUMN intro_video VARCHAR(255) DEFAULT ''"))
+            db_migrate.execute(text("ALTER TABLE instructors ADD COLUMN price DOUBLE PRECISION DEFAULT 100.00"))
+            db_migrate.commit()
+        except Exception:
+            db_migrate.rollback()
+
+    # Backfill default values for existing instructors
+    db_migrate.execute(text("UPDATE instructors SET languages = '[\"English\"]' WHERE languages IS NULL"))
+    db_migrate.execute(text("UPDATE instructors SET intro_video = 'https://www.w3schools.com/html/mov_bbb.mp4' WHERE intro_video IS NULL OR intro_video = ''"))
+    db_migrate.execute(text("UPDATE instructors SET price = 150.00 WHERE id = 1 AND (price IS NULL OR price = 100.00)"))
+    db_migrate.execute(text("UPDATE instructors SET price = 200.00 WHERE id = 2 AND (price IS NULL OR price = 100.00)"))
+    db_migrate.execute(text("UPDATE instructors SET price = 120.00 WHERE id = 3 AND (price IS NULL OR price = 100.00)"))
+    db_migrate.execute(text("UPDATE instructors SET price = 180.00 WHERE id = 4 AND (price IS NULL OR price = 100.00)"))
+    db_migrate.execute(text("UPDATE instructors SET price = 80.00 WHERE id = 5 AND (price IS NULL OR price = 100.00)"))
+    
+    # Backfill reviews list with status
+    db_migrate.execute(text("""
+        UPDATE instructors SET reviews = '[{"id": 1, "student_id": 3, "student_name": "Emma Watson", "rating": 5, "comment": "Kai is an incredible coach! He breaks down paddling technique so clearly.", "status": "Approved", "date": "10 Aug 2026"}]' 
+        WHERE id = 1 AND (reviews IS NULL OR reviews = '[]' OR reviews = '')
+    """))
+    db_migrate.execute(text("""
+        UPDATE instructors SET reviews = '[{"id": 1, "student_id": 1, "student_name": "Chloe Kim", "rating": 5, "comment": "Bethany helped me build wave confidence in just one session. Truly inspiring!", "status": "Approved", "date": "11 Aug 2026"}]' 
+        WHERE id = 2 AND (reviews IS NULL OR reviews = '[]' OR reviews = '')
+    """))
+    db_migrate.execute(text("""
+        UPDATE instructors SET reviews = '[{"id": 1, "student_id": 4, "student_name": "Rick Grimes", "rating": 5, "comment": "Excellent focus on competitive priority strategy. Master class!", "status": "Approved", "date": "12 Aug 2026"}]' 
+        WHERE id = 3 AND (reviews IS NULL OR reviews = '[]' OR reviews = '')
+    """))
+    db_migrate.commit()
+except Exception as err:
+    print(f"Migration error: {err}")
+    db_migrate.rollback()
+finally:
+    db_migrate.close()
 
 # Seed database
 db = SessionLocal()
@@ -317,6 +440,53 @@ try:
     db.execute(text("UPDATE users SET password_plain = 'test123' WHERE email = 'test@gmail.com' AND password_plain IS NULL"))
     db.execute(text("UPDATE users SET password_plain = 'tt123' WHERE email = 'tt@gmail.com' AND password_plain IS NULL"))
     db.commit()
+
+    # Seed Marketplace Items
+    market_count = db.execute(text("SELECT COUNT(*) FROM marketplace_items")).fetchone()[0]
+    if market_count == 0:
+        db.execute(text("""
+            INSERT INTO marketplace_items (title, price, category, description, status) VALUES 
+            ('6''2 Channel Islands Al Merrick Shortboard', 520.00, 'Board', 'High performance surfboard, minor dings repaired.', 'Active'),
+            ('FCS II Neo Glass Eco Thruster Fins', 75.00, 'Fins', 'Eco-friendly thruster fin set. Size Medium.', 'Active'),
+            ('Rip Curl Flashbomb 3/2 Chest Zip Wetsuit', 199.00, 'Wetsuit', 'Premium warm wetsuit. Size Large.', 'Active'),
+            ('Waimea Bay Coaching Wave Session (1-on-1)', 150.00, 'Coaching', 'Private video analysis coaching session at Waimea.', 'Active')
+        """))
+        db.commit()
+
+    # Seed User Reports
+    report_count = db.execute(text("SELECT COUNT(*) FROM user_reports")).fetchone()[0]
+    if report_count == 0:
+        db.execute(text("""
+            INSERT INTO user_reports (reporter, content, reason, status) VALUES 
+            ('Marcus Silva', 'Comment on waimea wave feed: "Buy cheap crypto assets at cryptomoon.info"', 'Spam', 'Pending'),
+            ('Chloe Kim', 'Profile picture contains inappropriate background elements.', 'Inappropriate Profile Picture', 'Pending'),
+            ('John Miller', 'Spamming wave results page with consecutive duplicates.', 'Duplicate Content', 'Resolved')
+        """))
+        db.commit()
+
+    # Seed AI Usage Metrics
+    ai_count = db.execute(text("SELECT COUNT(*) FROM ai_usage")).fetchone()[0]
+    if ai_count == 0:
+        db.execute(text("""
+            INSERT INTO ai_usage (api_endpoint, tokens_used, latency_ms, timestamp) VALUES 
+            ('/api/mock-heats/analyze', 1200, 1150, '2026-08-12 10:35'),
+            ('/api/analysis/video', 3200, 3100, '2026-08-12 10:48'),
+            ('/api/mock-heats/analyze', 840, 890, '2026-08-12 11:15'),
+            ('/api/analysis/video', 2900, 2750, '2026-08-12 11:32'),
+            ('/api/dashboard/stats', 450, 480, '2026-08-12 12:05')
+        """))
+        db.commit()
+
+    # Seed Integration Keys
+    keys_count = db.execute(text("SELECT COUNT(*) FROM integration_keys")).fetchone()[0]
+    if keys_count == 0:
+        db.execute(text("""
+            INSERT INTO integration_keys (app_name, client_id, api_key, webhook_url, status) VALUES 
+            ('LiveHeats Integration Hub', 'client_liveheats_8992', 'sk_liveheats_xyz992181abc', 'http://54.242.160.238:8000/api/mock-heats/webhook', 'Active'),
+            ('WSL Scoring Stream Engine', 'client_wsl_stream_7721', 'sk_wsl_scoring_90021_key', '', 'Active'),
+            ('Surfline Forecast Widget Plugin', 'client_surfline_0012', 'sk_surfline_widget_88217', 'https://surfline.com/webhooks/forecast', 'Inactive')
+        """))
+        db.commit()
 except Exception as e:
     print(f"Seeding / backfill info: {e}")
     db.rollback()
@@ -735,6 +905,39 @@ class MentalLogCreate(BaseModel):
     pre_heat_anxiety: int
     focus_level: int
     reflection_notes: Optional[str] = ""
+
+
+class MockHeatCreate(BaseModel):
+    student_id: int
+    coach_id: int
+    duration_mins: Optional[int] = 20
+    strategy_focus: Optional[str] = ""
+
+
+class MockHeatWaveCreate(BaseModel):
+    score: float
+    notes: Optional[str] = ""
+    timestamp: Optional[str] = ""
+
+
+class MockHeatComplete(BaseModel):
+    strategy_execution: Optional[str] = ""
+
+
+class MarketplaceItemCreate(BaseModel):
+    title: str
+    price: float
+    category: str
+    description: Optional[str] = ""
+
+
+class UserReportUpdate(BaseModel):
+    status: str  # "Resolved" or "Dismissed"
+
+
+class IntegrationKeyCreate(BaseModel):
+    app_name: str
+    webhook_url: Optional[str] = ""
 
 
 # ─── Helper ───────────────────────────────────────────────────────────────────
@@ -1262,6 +1465,269 @@ def get_logs_summary(student_id: int, db: OrmSession = Depends(get_db)):
     }
 
 
+# ─── Mock Heats Routes ────────────────────────────────────────────────────────
+
+@app.post("/api/mock-heats")
+def create_mock_heat(data: MockHeatCreate, db: OrmSession = Depends(get_db)):
+    # Verify student and coach exist
+    student = db.query(Student).filter(Student.id == data.student_id).first()
+    coach = db.query(Instructor).filter(Instructor.id == data.coach_id).first()
+    if not student or not coach:
+        raise HTTPException(status_code=404, detail="Student or coach not found")
+    
+    # Complete any active running heats for this student first to be clean
+    active_heats = db.query(MockHeat).filter(
+        MockHeat.student_id == data.student_id,
+        MockHeat.status == "Running"
+    ).all()
+    for ah in active_heats:
+        ah.status = "Completed"
+    
+    today_str = datetime.now().strftime("%d %b %Y")
+    
+    # Initialize mock heat
+    heat = MockHeat(
+        student_id=data.student_id,
+        coach_id=data.coach_id,
+        date=today_str,
+        duration_mins=data.duration_mins or 20,
+        status="Running",
+        strategy_focus=data.strategy_focus or "",
+        heat_total=0.0,
+        priority_status="Athlete",
+        wave_progression=json.dumps([{"time": "Start", "action": "Mock Heat Initiated"}])
+    )
+    db.add(heat)
+    db.commit()
+    db.refresh(heat)
+    
+    # Log activity
+    db.add(ActivityLog(text=f"Coach {coach.name} initiated mock heat with {student.name}", type="session"))
+    db.commit()
+    
+    return {"heat_id": heat.id, "message": "Mock heat started"}
+
+
+@app.get("/api/mock-heats/active/{student_id}")
+def get_active_mock_heat(student_id: int, db: OrmSession = Depends(get_db)):
+    heat = db.query(MockHeat).filter(
+        MockHeat.student_id == student_id,
+        MockHeat.status == "Running"
+    ).order_by(MockHeat.id.desc()).first()
+    if not heat:
+        return {"active": False}
+    
+    # Build details
+    waves = db.query(MockHeatWave).filter(MockHeatWave.mock_heat_id == heat.id).order_by(MockHeatWave.wave_number.asc()).all()
+    
+    return {
+        "active": True,
+        "id": heat.id,
+        "duration_mins": heat.duration_mins,
+        "strategy_focus": heat.strategy_focus,
+        "priority_status": heat.priority_status,
+        "heat_total": heat.heat_total,
+        "wave_progression": json.loads(heat.wave_progression) if heat.wave_progression else [],
+        "waves": [{
+            "wave_number": w.wave_number,
+            "score": w.score,
+            "notes": w.notes,
+            "timestamp": w.timestamp
+        } for w in waves]
+    }
+
+
+@app.post("/api/mock-heats/{heat_id}/waves")
+def log_mock_heat_wave(heat_id: int, data: MockHeatWaveCreate, db: OrmSession = Depends(get_db)):
+    heat = db.query(MockHeat).filter(MockHeat.id == heat_id).first()
+    if not heat:
+        raise HTTPException(status_code=404, detail="Mock heat not found")
+    
+    # Count current waves to get wave number
+    wave_count = db.query(MockHeatWave).filter(MockHeatWave.mock_heat_id == heat_id).count()
+    new_wave_num = wave_count + 1
+    
+    wave = MockHeatWave(
+        mock_heat_id=heat_id,
+        wave_number=new_wave_num,
+        score=data.score,
+        notes=data.notes or "",
+        timestamp=data.timestamp or ""
+    )
+    db.add(wave)
+    db.flush()
+    
+    # Recalculate heat total (sum of top 2 wave scores)
+    all_waves = db.query(MockHeatWave).filter(MockHeatWave.mock_heat_id == heat_id).all()
+    scores = sorted([w.score for w in all_waves], reverse=True)
+    top_2_sum = sum(scores[:2]) if scores else 0.0
+    heat.heat_total = round(top_2_sum, 2)
+    
+    # Append to progression list
+    prog = json.loads(heat.wave_progression) if heat.wave_progression else []
+    prog.append({
+        "time": data.timestamp or f"Wave {new_wave_num}",
+        "action": f"Wave {new_wave_num} Ridden — Score: {data.score}",
+        "score": data.score,
+        "notes": data.notes or ""
+    })
+    heat.wave_progression = json.dumps(prog)
+    db.commit()
+    
+    return {
+        "message": "Wave logged successfully",
+        "wave_number": new_wave_num,
+        "heat_total": heat.heat_total,
+        "wave_progression": prog
+    }
+
+
+@app.post("/api/mock-heats/{heat_id}/priority")
+def toggle_mock_heat_priority(heat_id: int, db: OrmSession = Depends(get_db)):
+    heat = db.query(MockHeat).filter(MockHeat.id == heat_id).first()
+    if not heat:
+        raise HTTPException(status_code=404, detail="Mock heat not found")
+    
+    new_priority = "Opponent" if heat.priority_status == "Athlete" else "Athlete"
+    heat.priority_status = new_priority
+    
+    # Log to progression
+    prog = json.loads(heat.wave_progression) if heat.wave_progression else []
+    prog.append({
+        "time": "Priority Switch",
+        "action": f"Priority switched to {new_priority}"
+    })
+    heat.wave_progression = json.dumps(prog)
+    db.commit()
+    
+    return {"priority_status": new_priority, "wave_progression": prog}
+
+
+@app.post("/api/mock-heats/{heat_id}/complete")
+def complete_mock_heat(heat_id: int, data: MockHeatComplete, db: OrmSession = Depends(get_db)):
+    heat = db.query(MockHeat).filter(MockHeat.id == heat_id).first()
+    if not heat:
+        raise HTTPException(status_code=404, detail="Mock heat not found")
+    
+    heat.status = "Completed"
+    heat.strategy_execution = data.strategy_execution or ""
+    
+    # Log end of heat
+    prog = json.loads(heat.wave_progression) if heat.wave_progression else []
+    prog.append({
+        "time": "00:00",
+        "action": "Mock Heat Completed"
+    })
+    heat.wave_progression = json.dumps(prog)
+    
+    # Automated Data Sync: Add a summary message to Student performance logs
+    student = db.query(Student).filter(Student.id == heat.student_id).first()
+    if student:
+        perf_logs = json.loads(student.performance_logs) if student.performance_logs else []
+        summary_log = f"Mock Heat on {heat.date} — Final Score: {heat.heat_total} (Strategy: {heat.strategy_focus or 'Open'})."
+        if summary_log not in perf_logs:
+            perf_logs.append(summary_log)
+            student.performance_logs = json.dumps(perf_logs)
+            
+    db.commit()
+    
+    return {"message": "Mock heat completed and synced to student profile"}
+
+
+@app.post("/api/mock-heats/{heat_id}/analyze")
+def analyze_mock_heat(heat_id: int, db: OrmSession = Depends(get_db)):
+    heat = db.query(MockHeat).filter(MockHeat.id == heat_id).first()
+    if not heat:
+        raise HTTPException(status_code=404, detail="Mock heat not found")
+    
+    # Simple rule-based AI generator to evaluate strengths and weaknesses
+    waves = db.query(MockHeatWave).filter(MockHeatWave.mock_heat_id == heat_id).all()
+    scores = [w.score for w in waves]
+    avg_score = sum(scores) / len(scores) if scores else 0.0
+    
+    strengths = []
+    weaknesses = []
+    
+    # Analyze scores
+    if not scores:
+        strengths.append("Attempted strategy drills.")
+        weaknesses.append("Did not catch any scoring waves. Improve positioning.")
+    else:
+        if len(scores) >= 4:
+            strengths.append("High wave activity and selection frequency.")
+        else:
+            weaknesses.append("Low wave count. Missed opportunities in the heat window.")
+            
+        if any(s >= 7.5 for s in scores):
+            strengths.append("Capable of generating excellent-range scores (7.5+) on select waves.")
+        
+        if avg_score > 6.0:
+            strengths.append("High baseline scoring floor. Consistently finishing rides.")
+        else:
+            weaknesses.append("Average wave score is low. Work on finishing turns on the inside section.")
+            
+    # Analyze strategy execution
+    exec_text = (heat.strategy_execution or "").lower()
+    focus_text = (heat.strategy_focus or "").lower()
+    
+    if "priority" in focus_text:
+        if "lost" in exec_text or "poor" in exec_text:
+            weaknesses.append("Tactical priority errors. Gave up position too easily.")
+        else:
+            strengths.append("Controlled priority effectively to shut down opponent's wave selection.")
+            
+    if "set" in focus_text or "outside" in focus_text:
+        if "waited" in exec_text or "good selection" in exec_text:
+            strengths.append("Patient heat management. Waited for the best set waves.")
+        else:
+            weaknesses.append("Poor wave selection. Caught average backup waves instead of high-scoring sets.")
+            
+    # Default fallbacks if empty
+    if not strengths:
+        strengths = ["Solid baseline paddling speed", "Good stance adjustment under pressure"]
+    if not weaknesses:
+        weaknesses = ["Pop-up reaction timing on steeper drops", "Priority management in the middle of the heat"]
+        
+    heat.tactical_strengths = json.dumps(strengths)
+    heat.tactical_weaknesses = json.dumps(weaknesses)
+    db.commit()
+    
+    return {
+        "tactical_strengths": strengths,
+        "tactical_weaknesses": weaknesses,
+        "coaching_advice": "Focus on S&C explosive drills to improve pop-up timing. During heats, hold priority on the peak and wait for set-wave backing rather than settling for backup waves."
+    }
+
+
+@app.get("/api/students/{student_id}/mock-heats")
+def get_student_mock_heats(student_id: int, db: OrmSession = Depends(get_db)):
+    heats = db.query(MockHeat).filter(MockHeat.student_id == student_id).order_by(MockHeat.id.desc()).all()
+    
+    result = []
+    for h in heats:
+        waves = db.query(MockHeatWave).filter(MockHeatWave.mock_heat_id == h.id).order_by(MockHeatWave.wave_number.asc()).all()
+        result.append({
+            "id": h.id,
+            "date": h.date,
+            "duration_mins": h.duration_mins,
+            "status": h.status,
+            "strategy_focus": h.strategy_focus,
+            "strategy_execution": h.strategy_execution,
+            "heat_total": h.heat_total,
+            "priority_status": h.priority_status,
+            "wave_progression": json.loads(h.wave_progression) if h.wave_progression else [],
+            "tactical_strengths": json.loads(h.tactical_strengths) if h.tactical_strengths else [],
+            "tactical_weaknesses": json.loads(h.tactical_weaknesses) if h.tactical_weaknesses else [],
+            "waves": [{
+                "wave_number": w.wave_number,
+                "score": w.score,
+                "notes": w.notes,
+                "timestamp": w.timestamp
+            } for w in waves]
+        })
+    return result
+
+
 @app.post("/api/upload-video")
 def upload_video(file: UploadFile = File(...)):
     # Ensure we save it with a safe filename
@@ -1782,5 +2248,128 @@ def superadmin_reset_password(data: PasswordResetRequest, db: OrmSession = Depen
     user.password_plain = data.new_password
     db.commit()
     return {"message": "Password updated successfully"}
+
+
+# ─── New Admin Panel Endpoints ────────────────────────────────────────────────
+
+@app.get("/api/superadmin/marketplace")
+def get_marketplace(db: OrmSession = Depends(get_db)):
+    return db.query(MarketplaceItem).order_by(MarketplaceItem.id.desc()).all()
+
+
+@app.post("/api/superadmin/marketplace")
+def create_marketplace_item(data: MarketplaceItemCreate, db: OrmSession = Depends(get_db)):
+    item = MarketplaceItem(
+        title=data.title,
+        price=data.price,
+        category=data.category,
+        description=data.description,
+        status="Active"
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@app.delete("/api/superadmin/marketplace/{id}")
+def delete_marketplace_item(id: int, db: OrmSession = Depends(get_db)):
+    item = db.query(MarketplaceItem).filter(MarketplaceItem.id == id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    db.delete(item)
+    db.commit()
+    return {"message": "Item deleted successfully"}
+
+
+@app.get("/api/superadmin/reports")
+def get_reports(db: OrmSession = Depends(get_db)):
+    return db.query(UserReport).order_by(UserReport.id.desc()).all()
+
+
+@app.post("/api/superadmin/reports/{id}")
+def update_report_status(id: int, data: UserReportUpdate, db: OrmSession = Depends(get_db)):
+    report = db.query(UserReport).filter(UserReport.id == id).first()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    report.status = data.status
+    db.commit()
+    db.refresh(report)
+    return report
+
+
+@app.delete("/api/superadmin/reports/{id}")
+def delete_report(id: int, db: OrmSession = Depends(get_db)):
+    report = db.query(UserReport).filter(UserReport.id == id).first()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    db.delete(report)
+    db.commit()
+    return {"message": "Report deleted successfully"}
+
+
+@app.get("/api/superadmin/ai-monitoring")
+def get_ai_monitoring(db: OrmSession = Depends(get_db)):
+    logs = db.query(AIUsage).order_by(AIUsage.id.desc()).all()
+    # Summarize stats
+    total_calls = len(logs)
+    total_tokens = sum(l.tokens_used for l in logs)
+    avg_latency = sum(l.latency_ms for l in logs) / total_calls if total_calls > 0 else 0
+    return {
+        "logs": logs,
+        "summary": {
+            "total_calls": total_calls,
+            "total_tokens": total_tokens,
+            "avg_latency_ms": round(avg_latency, 1)
+        }
+    }
+
+
+@app.get("/api/superadmin/keys")
+def get_keys(db: OrmSession = Depends(get_db)):
+    return db.query(IntegrationKey).order_by(IntegrationKey.id.desc()).all()
+
+
+@app.post("/api/superadmin/keys")
+def create_key(data: IntegrationKeyCreate, db: OrmSession = Depends(get_db)):
+    # Generate client id & key
+    import random, string
+    suffix = "".join(random.choices(string.digits, k=4))
+    client_id = f"client_{data.app_name.lower().replace(' ', '_')[:10]}_{suffix}"
+    secret_part = "".join(random.choices(string.ascii_lowercase + string.digits, k=16))
+    api_key = f"sk_{data.app_name.lower().replace(' ', '_')[:4]}_{secret_part}"
+    
+    new_key = IntegrationKey(
+        app_name=data.app_name,
+        client_id=client_id,
+        api_key=api_key,
+        webhook_url=data.webhook_url,
+        status="Active"
+    )
+    db.add(new_key)
+    db.commit()
+    db.refresh(new_key)
+    return new_key
+
+
+@app.post("/api/superadmin/keys/{id}/toggle")
+def toggle_key(id: int, db: OrmSession = Depends(get_db)):
+    k = db.query(IntegrationKey).filter(IntegrationKey.id == id).first()
+    if not k:
+        raise HTTPException(status_code=404, detail="Key not found")
+    k.status = "Inactive" if k.status == "Active" else "Active"
+    db.commit()
+    db.refresh(k)
+    return k
+
+
+@app.delete("/api/superadmin/keys/{id}")
+def delete_key(id: int, db: OrmSession = Depends(get_db)):
+    k = db.query(IntegrationKey).filter(IntegrationKey.id == id).first()
+    if not k:
+        raise HTTPException(status_code=404, detail="Key not found")
+    db.delete(k)
+    db.commit()
+    return {"message": "Key deleted successfully"}
 
 

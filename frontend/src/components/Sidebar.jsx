@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 
-const API = 'http://54.242.160.238:8000';
+const API = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' ? 'http://localhost:8000' : 'http://54.242.160.238:8000';
 
 const Sidebar = () => {
   const navigate = useNavigate();
@@ -87,7 +87,8 @@ const Sidebar = () => {
     items.push(
       { label: 'Sessions', path: '/sessions' },
       { label: 'Analytics', path: '/analytics' },
-      { label: 'Competitions', path: '/competitions' }
+      { label: 'Competitions', path: '/competitions' },
+      { label: 'Athlete Intel', path: '/athlete-intelligence' }
     );
 
     if (role === 'admin') {

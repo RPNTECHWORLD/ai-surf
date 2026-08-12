@@ -2,13 +2,15 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 
-const API = 'http://54.242.160.238:8000';
+const API = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' ? 'http://localhost:8000' : 'http://54.242.160.238:8000';
 
 const StudentProfile = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const [student, setStudent] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [mockHeats, setMockHeats] = useState([]);
+  const [expandedHeatId, setExpandedHeatId] = useState(null);
   
   // Auth state
   const [currentUser, setCurrentUser] = useState(null);
@@ -82,6 +84,13 @@ const StudentProfile = () => {
       .finally(() => setLoading(false));
   };
 
+  const fetchMockHeats = () => {
+    fetch(`${API}/api/students/${id}/mock-heats`)
+      .then(res => res.json())
+      .then(setMockHeats)
+      .catch(() => {});
+  };
+
   useEffect(() => {
     // Get auth user
     const saved = localStorage.getItem('user');
@@ -91,7 +100,12 @@ const StudentProfile = () => {
       } catch (e) {}
     }
     fetchStudent();
+    fetchMockHeats();
   }, [id]);
+
+  const toggleHeatExpand = (heatId) => {
+    setExpandedHeatId(expandedHeatId === heatId ? null : heatId);
+  };
 
   const handleEditClick = () => {
     setEditForm({
@@ -326,6 +340,128 @@ const StudentProfile = () => {
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+
+            {/* Mock Heats History */}
+            <div className="sp-card" style={{ marginTop: '32px' }}>
+              <h2 className="sp-card-title">🏆 Mock Heats & Tactical History</h2>
+              <p style={{ fontSize: '13px', color: '#64748B', margin: '4px 0 16px 0' }}>Log of simulated heats, scores, strategy compliance, and AI tactical insights.</p>
+              
+              <div className="sp-mock-heats-list" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {mockHeats.length === 0 ? (
+                  <p style={{ fontSize: '13px', color: '#94A3B8', margin: 0, padding: '20px 0', textAlign: 'center' }}>No mock heats simulated yet. Initiate one in the Competitions Hub!</p>
+                ) : (
+                  mockHeats.map((heat) => {
+                    const isExpanded = expandedHeatId === heat.id;
+                    
+                    return (
+                      <div 
+                        key={heat.id} 
+                        className="sp-heat-history-item"
+                        style={{
+                          border: '1px solid #E2E8F0',
+                          borderRadius: '16px',
+                          background: isExpanded ? '#F8FAFC' : '#FFF',
+                          transition: 'all 0.3s ease',
+                          overflow: 'hidden'
+                        }}
+                      >
+                        {/* Expandable Header */}
+                        <div 
+                          onClick={() => toggleHeatExpand(heat.id)}
+                          style={{
+                            padding: '20px',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            cursor: 'pointer',
+                            userSelect: 'none'
+                          }}
+                        >
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <span style={{ fontSize: '12px', color: '#64748B', fontWeight: 700 }}>{heat.date} • {heat.duration_mins} mins</span>
+                            <span style={{ fontSize: '14px', color: '#0F172A', fontWeight: 700 }}>Focus: {heat.strategy_focus || 'Open strategy'}</span>
+                          </div>
+                          
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                            <div style={{ textAlign: 'right' }}>
+                              <span style={{ fontSize: '11px', color: '#94A3B8', fontWeight: 700, display: 'block' }}>TOTAL SCORE</span>
+                              <strong style={{ fontSize: '18px', color: '#0D9488', fontFamily: 'Outfit, sans-serif' }}>{heat.heat_total.toFixed(2)}</strong>
+                            </div>
+                            <span style={{ fontSize: '20px', color: '#94A3B8', transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▼</span>
+                          </div>
+                        </div>
+                        
+                        {/* Expanded Content */}
+                        {isExpanded && (
+                          <div style={{ padding: '0 20px 20px 20px', borderTop: '1px solid #E2E8F0', display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '4px' }}>
+                            {/* Waves List */}
+                            <div style={{ marginTop: '12px' }}>
+                              <h4 style={{ fontSize: '13px', color: '#475569', margin: '0 0 10px 0' }}>🌊 Wave Score Progression</h4>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                {heat.waves.length === 0 ? (
+                                  <p style={{ fontSize: '12px', color: '#94A3B8', margin: 0 }}>No wave rides recorded during this heat.</p>
+                                ) : (
+                                  heat.waves.map((w, idx) => (
+                                    <div 
+                                      key={idx} 
+                                      style={{
+                                        display: 'flex',
+                                        justifyContent: 'space-between',
+                                        alignItems: 'center',
+                                        background: '#FFF',
+                                        border: '1.5px solid #E2E8F0',
+                                        padding: '10px 14px',
+                                        borderRadius: '10px'
+                                      }}
+                                    >
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                        <span style={{ fontSize: '12px', color: '#0F172A', fontWeight: 700 }}>Wave {w.wave_number}</span>
+                                        {w.notes && <span style={{ fontSize: '12px', color: '#64748B' }}>"{w.notes}"</span>}
+                                      </div>
+                                      <span style={{ fontSize: '14px', color: '#0D9488', fontWeight: 800 }}>{w.score.toFixed(1)}</span>
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Coach reflections */}
+                            {heat.strategy_execution && (
+                              <div style={{ background: '#FFF', border: '1.5px solid #E2E8F0', padding: '16px', borderRadius: '12px' }}>
+                                <h4 style={{ fontSize: '13px', color: '#475569', margin: '0 0 6px 0' }}>📋 Strategy Execution (Coach Review)</h4>
+                                <p style={{ fontSize: '12px', color: '#334155', margin: 0, lineHeight: 1.5 }}>{heat.strategy_execution}</p>
+                              </div>
+                            )}
+
+                            {/* AI Analysis section */}
+                            {heat.tactical_strengths?.length > 0 && (
+                              <div style={{ background: 'rgba(124, 58, 237, 0.04)', border: '1px solid rgba(124, 58, 237, 0.15)', padding: '18px', borderRadius: '14px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                <span style={{ fontSize: '11px', color: '#7C3AED', fontWeight: 800, letterSpacing: '0.5px' }}>🤖 AI TACTICAL DIAGNOSTICS</span>
+                                
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                                  <div>
+                                    <h5 style={{ fontSize: '12px', color: '#0D9488', margin: '0 0 6px 0' }}>Strengths</h5>
+                                    <ul style={{ paddingLeft: '16px', margin: 0, fontSize: '12px', color: '#475569', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                      {heat.tactical_strengths.map((str, sIdx) => <li key={sIdx}>{str}</li>)}
+                                    </ul>
+                                  </div>
+                                  <div>
+                                    <h5 style={{ fontSize: '12px', color: '#EF4444', margin: '0 0 6px 0' }}>Weaknesses</h5>
+                                    <ul style={{ paddingLeft: '16px', margin: 0, fontSize: '12px', color: '#475569', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                      {heat.tactical_weaknesses.map((weak, wIdx) => <li key={wIdx}>{weak}</li>)}
+                                    </ul>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
           </div>
