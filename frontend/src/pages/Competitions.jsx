@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Sidebar from '../components/Sidebar';
 
-const API = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' ? 'http://localhost:8000' : 'http://54.242.160.238:8000';
+const API = import.meta.env.VITE_API_URL || '';
 
 const Competitions = () => {
   const [activeTab, setActiveTab] = useState('live'); // 'live', 'mock-heat'

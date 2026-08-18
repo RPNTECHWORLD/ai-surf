@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-const API = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' ? 'http://localhost:8000' : 'http://54.242.160.238:8000';
+const API = import.meta.env.VITE_API_URL || '';
 
 // ── Custom SVG Icon Components (Replaces lucide-react to avoid dependencies) ──
 const IconMarket = ({ size = 14, color = 'currentColor', className = '' }) => (

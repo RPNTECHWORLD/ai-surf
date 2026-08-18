@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 
-const API = 'http://54.242.160.238:8000';
+const API = import.meta.env.VITE_API_URL || '';
 
 const conditionColor = (c) => {
   if (c === 'Hard') return '#F43F5E';

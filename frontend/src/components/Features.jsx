@@ -55,7 +55,7 @@ const Features = () => {
 
   useEffect(() => {
     // Optionally fetch features from backend
-    fetch('http://localhost:8000/api/features')
+    fetch('/api/features')
       .then(res => res.json())
       .then(data => setFeatures(data))
       .catch(err => console.error("Could not fetch features, using fallback data", err));

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 
-const API = 'http://54.242.160.238:8000';
+const API = import.meta.env.VITE_API_URL || '';
 
 const InstructorProfile = () => {
   const { id } = useParams();

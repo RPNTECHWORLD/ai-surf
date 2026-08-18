@@ -10,7 +10,7 @@ const Stats = () => {
 
   useEffect(() => {
     // Optionally fetch stats from the backend
-    fetch('http://localhost:8000/api/stats')
+    fetch('/api/stats')
       .then(res => res.json())
       .then(data => setStats(data))
       .catch(err => console.error("Could not fetch stats, using fallback data", err));

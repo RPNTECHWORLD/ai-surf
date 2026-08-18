@@ -1,5 +1,11 @@
 {
   "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
-  ]
+    {
+      "source": "/api/:path*",
+      "destination": "http://aisurf.rpntechworld.com:8000/api/:path*"
+    }
+  ],
+  "env": {
+    "VITE_BACKEND_URL": "http://aisurf.rpntechworld.com:8000"
+  }
 }

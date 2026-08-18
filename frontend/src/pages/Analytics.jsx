@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Sidebar from '../components/Sidebar';
 
-const API = 'http://54.242.160.238:8000';
+const API = import.meta.env.VITE_API_URL || '';
 
 const BADGE_COLORS = {
   WHITE: { bg: '#E2E8F0', text: '#64748B' },
