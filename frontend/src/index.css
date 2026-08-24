@@ -379,37 +379,15 @@ h2 {
   background: #050B1A !important;
 }
 
-/* Left Stats Sidebar */
-.db-sidebar-stats {
-  position: fixed;
-  top: 72px;
-  left: 0;
-  bottom: 0;
-  width: 260px;
-  background: #050B1A;
-  padding: 28px 20px;
-  display: flex;
-  flex-direction: column;
-  z-index: 99;
-  box-sizing: border-box;
+/* Quick Stats - Horizontal Row */
+.db-stats-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px;
 }
-.db-sidebar-stats-title {
-  font-size: 11px;
-  font-weight: 700;
-  color: #4B5E78;
-  text-transform: uppercase;
-  letter-spacing: 1.5px;
-  margin-bottom: 20px;
-  padding-left: 4px;
-}
-.db-sidebar-stats-list {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.db-sidebar-stat-card {
-  background: #111C36;
-  border: 1px solid rgba(255,255,255,0.04);
+.db-stat-card-h {
+  background: #FFFFFF;
+  border: 1px solid rgba(0,0,0,0.06);
   border-radius: 14px;
   padding: 18px 20px;
   display: flex;
@@ -417,11 +395,12 @@ h2 {
   align-items: center;
   transition: all 0.2s;
   box-sizing: border-box;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
 }
-.db-sidebar-stat-card:hover {
+.db-stat-card-h:hover {
   transform: translateY(-2px);
-  border-color: rgba(255,255,255,0.1);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  border-color: rgba(0,0,0,0.1);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.08);
 }
 .stat-card-left {
   display: flex;
@@ -431,14 +410,14 @@ h2 {
 .stat-card-label {
   font-size: 11px;
   font-weight: 700;
-  color: #8E9EBC;
+  color: #6B7280;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 .stat-card-value {
   font-size: 28px;
   font-weight: 800;
-  color: #FFFFFF;
+  color: #0F172A;
   line-height: 1;
 }
 .stat-card-right {
@@ -454,7 +433,7 @@ h2 {
 /* Main content panels positioning */
 .db-main {
   flex: 1 !important;
-  margin-left: 260px !important;
+  margin-left: 0 !important;
   margin-top: 72px !important;
   height: calc(100vh - 72px) !important;
   overflow-y: auto !important;
@@ -526,14 +505,7 @@ h2 {
     height: auto !important;
     overflow: visible !important;
   }
-  .db-sidebar-stats {
-    position: static !important;
-    width: 100% !important;
-    padding: 20px !important;
-    height: auto !important;
-  }
-  .db-sidebar-stats-list {
-    display: grid !important;
+  .db-stats-row {
     grid-template-columns: repeat(2, 1fr) !important;
     gap: 12px !important;
   }
@@ -548,7 +520,7 @@ h2 {
 }
 
 @media (max-width: 640px) {
-  .db-sidebar-stats-list {
+  .db-stats-row {
     grid-template-columns: 1fr !important;
   }
 }

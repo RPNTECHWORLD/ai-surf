@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 
-const API = import.meta.env.VITE_API_URL || '';
+const API = import.meta.env.VITE_API_URL || 'http://54.242.160.238:8000';
 
 const StudentsManagement = () => {
   const navigate = useNavigate();
@@ -12,10 +12,12 @@ const StudentsManagement = () => {
   const [search, setSearch] = useState('');
   const [levelFilter, setLevelFilter] = useState('All');
   const [instructorFilter, setInstructorFilter] = useState('All');
+  const [sessionTimeFilter, setSessionTimeFilter] = useState('All');
   const [showModal, setShowModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     name: '', email: '', level: 'Beginner', instructor_id: '',
+    whatsapp_number: '', course_duration: '3 Days Course', session_time: 'Morning 6:00 AM'
   });
 
   const fetchStudents = () => {
@@ -38,10 +40,12 @@ const StudentsManagement = () => {
 
   const filtered = students.filter(s => {
     const matchSearch = s.name.toLowerCase().includes(search.toLowerCase()) ||
-      s.email.toLowerCase().includes(search.toLowerCase());
+      s.email.toLowerCase().includes(search.toLowerCase()) ||
+      (s.whatsapp_number && s.whatsapp_number.includes(search));
     const matchLevel = levelFilter === 'All' || s.level === levelFilter;
     const matchInstructor = instructorFilter === 'All' || s.instructor === instructorFilter;
-    return matchSearch && matchLevel && matchInstructor;
+    const matchSession = sessionTimeFilter === 'All' || s.session_time === sessionTimeFilter;
+    return matchSearch && matchLevel && matchInstructor && matchSession;
   });
 
   const stats = [
@@ -111,6 +115,12 @@ const StudentsManagement = () => {
             <option value="All">Instructor: All</option>
             {instructors.map(i => <option key={i.id}>{i.name}</option>)}
           </select>
+          <select className="sm-select" value={sessionTimeFilter} onChange={e => setSessionTimeFilter(e.target.value)}>
+            <option value="All">Session: All Slots</option>
+            <option value="Morning 6:00 AM">Morning 6:00 AM (Dawn Patrol)</option>
+            <option value="Morning 8:00 AM">Morning 8:00 AM</option>
+            <option value="Evening 4:00 PM">Evening 4:00 PM</option>
+          </select>
         </div>
 
         {/* Stats */}
@@ -131,10 +141,11 @@ const StudentsManagement = () => {
             <table className="sm-table">
               <thead>
                 <tr>
-                  <th>Student</th>
-                  <th>Level</th>
+                  <th>Student & WhatsApp</th>
+                  <th>Course Progress</th>
+                  <th>Session & Stay</th>
                   <th>Primary Instructor</th>
-                  <th>Last Active</th>
+                  <th>Reminders</th>
                   <th></th>
                 </tr>
               </thead>
@@ -150,25 +161,66 @@ const StudentsManagement = () => {
                         <img src={s.image} alt={s.name} className="sm-student-avatar" onError={e => e.target.style.display='none'} />
                         <div>
                           <div className="sm-student-name">{s.name}</div>
-                          <div className="sm-student-email">{s.email}</div>
+                          <div className="sm-student-email">
+                            {s.whatsapp_number ? `📱 +91 ${s.whatsapp_number}` : s.email}
+                          </div>
                         </div>
                       </div>
                     </td>
                     <td>
-                      <span className={`sm-level-badge level-${s.level.toLowerCase()}`}>{s.level}</span>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                        <span style={{ fontSize: '13px', fontWeight: 700, color: '#0F172A' }}>
+                          Day {s.which_day || 1} of {s.total_days || 3}
+                        </span>
+                        <span style={{ fontSize: '11px', color: '#64748B' }}>
+                          {s.course_duration || '3 Days Course'}
+                        </span>
+                      </div>
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                        <span style={{ fontSize: '12px', fontWeight: 600, color: '#0F172A' }}>
+                          ⏰ {s.session_time || 'Morning 6:00 AM'}
+                        </span>
+                        <span style={{ fontSize: '11px', color: s.staying_at_school === 'Yes' ? '#10B981' : '#64748B' }}>
+                          {s.staying_at_school === 'Yes' ? '🏨 On-site Lodge' : '🚗 Off-site Stay'}
+                        </span>
+                      </div>
                     </td>
                     <td className="sm-instructor-text">{s.instructor || '—'}</td>
-                    <td className="sm-date-text">{s.last_active}</td>
+                    <td>
+                      {s.wa_link ? (
+                        <a 
+                          href={s.wa_link} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          style={{
+                            display: 'inline-flex', alignItems: 'center', gap: '6px',
+                            background: 'rgba(37, 211, 102, 0.12)', color: '#16A34A',
+                            border: '1px solid rgba(37, 211, 102, 0.3)', padding: '6px 12px',
+                            borderRadius: '8px', fontSize: '12px', fontWeight: 700, textDecoration: 'none'
+                          }}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.481 5.236 3.48 8.414-.003 6.557-5.338 11.892-11.893 11.892-1.99-.001-3.951-.5-5.688-1.448l-6.305 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884-.001 2.225.651 3.891 1.746 5.634l-.999 3.648 3.742-.981zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/>
+                          </svg>
+                          <span>WA Chat</span>
+                        </a>
+                      ) : (
+                        <span style={{ fontSize: '11px', color: '#94A3B8' }}>No WA</span>
+                      )}
+                    </td>
                     <td style={{ textAlign: 'right' }}>
-                      <button className="sm-action-btn" onClick={e => { e.stopPropagation(); }}>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+                      <button className="sm-action-btn" onClick={e => { e.stopPropagation(); navigate(`/students/${s.id}`); }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                       </button>
                     </td>
                   </tr>
                 ))}
                 {filtered.length === 0 && !loading && (
                   <tr>
-                    <td colSpan="5" style={{ textAlign: 'center', padding: '40px', color: '#94A3B8' }}>
+                    <td colSpan="6" style={{ textAlign: 'center', padding: '40px', color: '#94A3B8' }}>
                       {students.length === 0 ? 'No students yet — add one above.' : 'No students match your search.'}
                     </td>
                   </tr>

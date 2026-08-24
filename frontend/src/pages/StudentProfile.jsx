@@ -2,7 +2,24 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 
-const API = import.meta.env.VITE_API_URL || '';
+const API = import.meta.env.VITE_API_URL || 'http://54.242.160.238:8000';
+
+const calculateAge = (dobString) => {
+  if (!dobString) return '';
+  try {
+    const today = new Date();
+    const birthDate = new Date(dobString);
+    if (isNaN(birthDate.getTime())) return '';
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const m = today.getMonth() - birthDate.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+      age--;
+    }
+    return age >= 0 ? age : 0;
+  } catch (e) {
+    return '';
+  }
+};
 
 const StudentProfile = () => {
   const { id } = useParams();
@@ -25,7 +42,16 @@ const StudentProfile = () => {
     waves_ridden: 0,
     max_speed: '0 mph',
     avg_session_mins: 0,
-    performance_logs: ''
+    performance_logs: '',
+    whatsapp_number: '',
+    guests_count: 1,
+    course_duration: '3 Days Course',
+    start_date: '',
+    end_date: '',
+    session_time: 'Morning 6:00 AM',
+    staying_at_school: 'Yes',
+    reminder_preference: 'WhatsApp Text',
+    guests_details: []
   });
 
   // Mock data based on Figma design
@@ -93,7 +119,7 @@ const StudentProfile = () => {
 
   useEffect(() => {
     // Get auth user
-    const saved = localStorage.getItem('user');
+    const saved = sessionStorage.getItem('user');
     if (saved) {
       try {
         setCurrentUser(JSON.parse(saved));
@@ -111,13 +137,23 @@ const StudentProfile = () => {
     setEditForm({
       name: student.name || '',
       bio: student.bio || '',
+      dob: student.dob || '',
       age: student.age || '',
       division: student.division || "Men's Open",
       stance: student.stance || 'regular',
       waves_ridden: student.surf_stats?.waves_ridden || 0,
       max_speed: student.surf_stats?.max_speed || '0 mph',
       avg_session_mins: student.surf_stats?.avg_session_mins || 0,
-      performance_logs: (student.performance_logs || []).join('\n')
+      performance_logs: (student.performance_logs || []).join('\n'),
+      whatsapp_number: student.whatsapp_number || '',
+      guests_count: student.guests_count || 1,
+      course_duration: student.course_duration || '3 Days Course',
+      start_date: student.start_date || '',
+      end_date: student.end_date || '',
+      session_time: student.session_time || 'Morning 6:00 AM',
+      staying_at_school: student.staying_at_school || 'Yes',
+      reminder_preference: student.reminder_preference || 'WhatsApp Text',
+      guests_details: student.guests_details || []
     });
     setShowEditModal(true);
   };
@@ -126,7 +162,7 @@ const StudentProfile = () => {
     e.preventDefault();
     setSaving(true);
     try {
-      const token = localStorage.getItem('token');
+      const token = sessionStorage.getItem('token');
       const res = await fetch(`${API}/api/students/${id}`, {
         method: 'PUT',
         headers: {
@@ -136,7 +172,8 @@ const StudentProfile = () => {
         body: JSON.stringify({
           name: editForm.name,
           bio: editForm.bio,
-          age: editForm.age ? parseInt(editForm.age) : null,
+          dob: editForm.dob || '',
+          age: editForm.dob ? calculateAge(editForm.dob) : (editForm.age ? parseInt(editForm.age) : null),
           division: editForm.division,
           stance: editForm.stance,
           surf_stats: {
@@ -144,7 +181,16 @@ const StudentProfile = () => {
             max_speed: editForm.max_speed,
             avg_session_mins: parseInt(editForm.avg_session_mins) || 0
           },
-          performance_logs: editForm.performance_logs.split('\n').filter(l => l.trim() !== '')
+          performance_logs: editForm.performance_logs.split('\n').filter(l => l.trim() !== ''),
+          whatsapp_number: editForm.whatsapp_number,
+          guests_count: parseInt(editForm.guests_count) || 1,
+          course_duration: editForm.course_duration,
+          start_date: editForm.start_date,
+          end_date: editForm.end_date,
+          session_time: editForm.session_time,
+          staying_at_school: editForm.staying_at_school,
+          reminder_preference: editForm.reminder_preference,
+          guests_details: editForm.guests_details || []
         })
       });
 
@@ -152,7 +198,7 @@ const StudentProfile = () => {
         // Update user storage if name changed
         if (currentUser && currentUser.student_id === parseInt(id) && editForm.name !== currentUser.name) {
           const updatedUser = { ...currentUser, name: editForm.name };
-          localStorage.setItem('user', JSON.stringify(updatedUser));
+          sessionStorage.setItem('user', JSON.stringify(updatedUser));
           setCurrentUser(updatedUser);
         }
         setShowEditModal(false);
@@ -205,13 +251,104 @@ const StudentProfile = () => {
         <div className="sp-content">
           {/* Left Column */}
           <div className="sp-col-left">
+            {/* Aquatic Indica Active Course Progress Card */}
+            <div className="sp-card" style={{ background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', color: '#FFFFFF', border: '1px solid rgba(0, 242, 254, 0.25)', position: 'relative', overflow: 'hidden' }}>
+              <div style={{ position: 'absolute', top: '-20px', right: '-20px', width: '120px', height: '120px', background: 'radial-gradient(circle, rgba(0,242,254,0.15) 0%, rgba(0,0,0,0) 70%)', borderRadius: '50%', pointerEvents: 'none' }} />
+              
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <span style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.8px', color: '#00F2FE' }}>
+                  🏄 Aquatic Indica Surf Course
+                </span>
+                <span style={{ 
+                  background: 'rgba(0, 242, 254, 0.12)', color: '#00F2FE', 
+                  border: '1px solid rgba(0, 242, 254, 0.3)', padding: '4px 10px', 
+                  borderRadius: '20px', fontSize: '12px', fontWeight: 700 
+                }}>
+                  {student.course_duration || '3 Days Course'}
+                </span>
+              </div>
+
+              {/* Course Progress Visualizer */}
+              <div style={{ marginBottom: '18px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '6px' }}>
+                  <span style={{ fontSize: '20px', fontWeight: 800, color: '#FFFFFF', fontFamily: 'Outfit, sans-serif' }}>
+                    Day {student.which_day || 1} of {student.total_days || 3}
+                  </span>
+                  <span style={{ fontSize: '13px', color: '#94A3B8', fontWeight: 600 }}>
+                    {student.remaining_days !== undefined ? `${student.remaining_days} Day(s) Left` : 'Active'}
+                  </span>
+                </div>
+                
+                {/* Progress Bar */}
+                <div style={{ width: '100%', height: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', overflow: 'hidden' }}>
+                  <div style={{ 
+                    width: `${Math.min(100, Math.max(10, ((student.which_day || 1) / (student.total_days || 3)) * 100))}%`, 
+                    height: '100%', 
+                    background: 'linear-gradient(90deg, #00F2FE 0%, #4FACFE 100%)',
+                    borderRadius: '4px',
+                    transition: 'width 0.5s ease'
+                  }} />
+                </div>
+              </div>
+
+              {/* Details Grid */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '13px', marginBottom: '18px' }}>
+                <div style={{ background: 'rgba(255,255,255,0.04)', padding: '10px 12px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <span style={{ display: 'block', fontSize: '11px', color: '#94A3B8', fontWeight: 600 }}>SESSION TIME</span>
+                  <strong style={{ color: '#F1F5F9' }}>⏰ {student.session_time || 'Morning 6:00 AM'}</strong>
+                </div>
+                <div style={{ background: 'rgba(255,255,255,0.04)', padding: '10px 12px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <span style={{ display: 'block', fontSize: '11px', color: '#94A3B8', fontWeight: 600 }}>GROUP SIZE</span>
+                  <strong style={{ color: '#F1F5F9' }}>👥 {student.guests_count || 1} {student.guests_count > 1 ? 'Guests' : 'Guest (Solo)'}</strong>
+                </div>
+                <div style={{ background: 'rgba(255,255,255,0.04)', padding: '10px 12px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <span style={{ display: 'block', fontSize: '11px', color: '#94A3B8', fontWeight: 600 }}>STAYING AT SCHOOL</span>
+                  <strong style={{ color: student.staying_at_school === 'Yes' ? '#10B981' : '#F59E0B' }}>
+                    {student.staying_at_school === 'Yes' ? '🏨 Yes (On-site Lodge)' : '🚗 No (Off-site)'}
+                  </strong>
+                </div>
+                <div style={{ background: 'rgba(255,255,255,0.04)', padding: '10px 12px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <span style={{ display: 'block', fontSize: '11px', color: '#94A3B8', fontWeight: 600 }}>REMINDER PREF</span>
+                  <strong style={{ color: '#F1F5F9' }}>💬 {student.reminder_preference || 'WhatsApp Text'}</strong>
+                </div>
+              </div>
+
+              {/* 1-Click WhatsApp Quick Action */}
+              {student.wa_link ? (
+                <a 
+                  href={student.wa_link} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  style={{ 
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                    background: '#25D366', color: '#FFFFFF', padding: '12px 16px', borderRadius: '12px',
+                    textDecoration: 'none', fontWeight: 700, fontSize: '14px',
+                    boxShadow: '0 4px 14px rgba(37, 211, 102, 0.3)', transition: 'transform 0.2s'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
+                  onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.481 5.236 3.48 8.414-.003 6.557-5.338 11.892-11.893 11.892-1.99-.001-3.951-.5-5.688-1.448l-6.305 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884-.001 2.225.651 3.891 1.746 5.634l-.999 3.648 3.742-.981zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/>
+                  </svg>
+                  <span>1-Click WhatsApp Reminder</span>
+                </a>
+              ) : (
+                <div style={{ fontSize: '12px', color: '#94A3B8', textAlign: 'center' }}>
+                  Add WhatsApp number to enable 1-click reminders
+                </div>
+              )}
+            </div>
+
             {/* Student Profile Card */}
             <div className="sp-card">
               <h2 className="sp-card-title">Student Profile</h2>
               <div className="sp-details-list">
                 <div className="sp-detail-row">
                   <span className="sp-detail-label">Age</span>
-                  <span className="sp-detail-value">{student.age || 'N/A'}</span>
+                  <span className="sp-detail-value">
+                    {student.age ? `${student.age} Years` : 'N/A'} {student.dob ? `(DOB: ${student.dob})` : ''}
+                  </span>
                 </div>
                 <div className="sp-detail-row">
                   <span className="sp-detail-label">Stance</span>
@@ -253,6 +390,40 @@ const StudentProfile = () => {
                 </>
               )}
             </div>
+
+            {/* Accompanying Guests Card (When group size > 1) */}
+            {student.guests_details && student.guests_details.length > 0 && (
+              <div className="sp-card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <h2 className="sp-card-title" style={{ margin: 0 }}>👥 Accompanying Guests</h2>
+                  <span style={{ background: '#F1F5F9', color: '#475569', padding: '3px 8px', borderRadius: '12px', fontSize: '11px', fontWeight: 700 }}>
+                    {student.guests_details.length} Registered
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {student.guests_details.map((g, idx) => (
+                    <div key={idx} style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '12px', padding: '14px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                        <strong style={{ fontSize: '14px', color: '#0F172A' }}>{g.name || `Guest ${idx + 2}`}</strong>
+                        <span style={{ 
+                          fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', 
+                          padding: '2px 8px', borderRadius: '4px',
+                          background: g.level === 'Advanced' ? 'rgba(124, 58, 237, 0.1)' : 'rgba(13, 148, 136, 0.1)',
+                          color: g.level === 'Advanced' ? '#7C3AED' : '#0D9488'
+                        }}>
+                          {g.level || 'Beginner'}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', gap: '16px', fontSize: '12px', color: '#64748B' }}>
+                        <span>🎂 Age: <strong>{g.age || 'N/A'}</strong></span>
+                        <span>🏄 Stance: <strong style={{ textTransform: 'capitalize' }}>{g.stance || 'Regular'}</strong></span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Next Session Card */}
             {student.nextSession && (
@@ -484,8 +655,24 @@ const StudentProfile = () => {
                   
                   <div className="sp-form-row">
                     <div className="sp-form-field">
-                      <label>Age</label>
-                      <input type="number" value={editForm.age} onChange={(e) => setEditForm({ ...editForm, age: e.target.value })} />
+                      <label style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span>Date of Birth (DOB)</span>
+                        {editForm.dob && (
+                          <span style={{ color: '#0D9488', fontSize: '11px', fontWeight: 700 }}>
+                            Age: {calculateAge(editForm.dob)} yrs
+                          </span>
+                        )}
+                      </label>
+                      <input 
+                        type="date" 
+                        value={editForm.dob || ''} 
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const cAge = calculateAge(val);
+                          setEditForm({ ...editForm, dob: val, age: cAge });
+                        }} 
+                        max={new Date().toISOString().split('T')[0]} 
+                      />
                     </div>
                     <div className="sp-form-field">
                       <label>Surf Stance</label>
@@ -526,6 +713,120 @@ const StudentProfile = () => {
                       <input type="number" value={editForm.avg_session_mins} onChange={(e) => setEditForm({ ...editForm, avg_session_mins: e.target.value })} />
                     </div>
                   </div>
+
+                  <div className="sp-form-row">
+                    <div className="sp-form-field">
+                      <label>WhatsApp Number</label>
+                      <input type="text" value={editForm.whatsapp_number} onChange={(e) => setEditForm({ ...editForm, whatsapp_number: e.target.value })} placeholder="9876543210" />
+                    </div>
+                    <div className="sp-form-field">
+                      <label>Group Size / Guests</label>
+                      <input type="number" min="1" max="13" value={editForm.guests_count} onChange={(e) => setEditForm({ ...editForm, guests_count: e.target.value })} />
+                    </div>
+                  </div>
+
+                  <div className="sp-form-row">
+                    <div className="sp-form-field">
+                      <label>Course Duration</label>
+                      <select value={editForm.course_duration} onChange={(e) => setEditForm({ ...editForm, course_duration: e.target.value })}>
+                        <option value="3 Days Course">3 Days Course</option>
+                        <option value="5 Days Course">5 Days Course</option>
+                        <option value="7 Days Course">7 Days Course</option>
+                        <option value="10 Days Course">10 Days Course</option>
+                        <option value="1 Day Crash Course">1 Day Crash Course</option>
+                      </select>
+                    </div>
+                    <div className="sp-form-field">
+                      <label>Session Time Slot</label>
+                      <select value={editForm.session_time} onChange={(e) => setEditForm({ ...editForm, session_time: e.target.value })}>
+                        <option value="Morning 6:00 AM">Morning 6:00 AM</option>
+                        <option value="Morning 8:00 AM">Morning 8:00 AM</option>
+                        <option value="Evening 4:00 PM">Evening 4:00 PM</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="sp-form-row">
+                    <div className="sp-form-field">
+                      <label>Start Date</label>
+                      <input type="date" value={editForm.start_date} onChange={(e) => setEditForm({ ...editForm, start_date: e.target.value })} />
+                    </div>
+                    <div className="sp-form-field">
+                      <label>Staying at School?</label>
+                      <select value={editForm.staying_at_school} onChange={(e) => setEditForm({ ...editForm, staying_at_school: e.target.value })}>
+                        <option value="Yes">Yes (On-site)</option>
+                        <option value="No">No (Off-site)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Edit Accompanying Guests */}
+                  {parseInt(editForm.guests_count) > 1 && (
+                    <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '10px', padding: '14px', margin: '8px 0' }}>
+                      <span style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#0F172A', marginBottom: '10px' }}>
+                        Accompanying Guests Profiles ({parseInt(editForm.guests_count) - 1})
+                      </span>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        {Array.from({ length: parseInt(editForm.guests_count) - 1 }).map((_, gIdx) => {
+                          const g = (editForm.guests_details && editForm.guests_details[gIdx]) || {};
+                          return (
+                            <div key={gIdx} style={{ background: '#FFF', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '10px' }}>
+                              <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', display: 'block', marginBottom: '6px' }}>Guest #{gIdx + 2}</span>
+                              <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 0.8fr 1fr 1fr', gap: '6px' }}>
+                                <input 
+                                  type="text" 
+                                  placeholder="Guest Name" 
+                                  value={g.name || ''} 
+                                  onChange={(e) => {
+                                    const updated = [...(editForm.guests_details || [])];
+                                    if (!updated[gIdx]) updated[gIdx] = { name: '', age: '', stance: 'regular', level: 'Beginner' };
+                                    updated[gIdx].name = e.target.value;
+                                    setEditForm({ ...editForm, guests_details: updated });
+                                  }} 
+                                />
+                                <input 
+                                  type="number" 
+                                  placeholder="Age" 
+                                  value={g.age || ''} 
+                                  onChange={(e) => {
+                                    const updated = [...(editForm.guests_details || [])];
+                                    if (!updated[gIdx]) updated[gIdx] = { name: '', age: '', stance: 'regular', level: 'Beginner' };
+                                    updated[gIdx].age = e.target.value;
+                                    setEditForm({ ...editForm, guests_details: updated });
+                                  }} 
+                                />
+                                <select 
+                                  value={g.stance || 'regular'} 
+                                  onChange={(e) => {
+                                    const updated = [...(editForm.guests_details || [])];
+                                    if (!updated[gIdx]) updated[gIdx] = { name: '', age: '', stance: 'regular', level: 'Beginner' };
+                                    updated[gIdx].stance = e.target.value;
+                                    setEditForm({ ...editForm, guests_details: updated });
+                                  }}
+                                >
+                                  <option value="regular">Regular</option>
+                                  <option value="goofy">Goofy</option>
+                                </select>
+                                <select 
+                                  value={g.level || 'Beginner'} 
+                                  onChange={(e) => {
+                                    const updated = [...(editForm.guests_details || [])];
+                                    if (!updated[gIdx]) updated[gIdx] = { name: '', age: '', stance: 'regular', level: 'Beginner' };
+                                    updated[gIdx].level = e.target.value;
+                                    setEditForm({ ...editForm, guests_details: updated });
+                                  }}
+                                >
+                                  <option value="Beginner">Beginner</option>
+                                  <option value="Intermediate">Intermediate</option>
+                                  <option value="Advanced">Advanced</option>
+                                </select>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
 
                   <div className="sp-form-field">
                     <label>Performance Logs (one log per line)</label>

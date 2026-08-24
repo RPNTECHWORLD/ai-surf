@@ -85,7 +85,7 @@ const InstructorProfile = () => {
   };
 
   useEffect(() => {
-    const saved = localStorage.getItem('user');
+    const saved = sessionStorage.getItem('user');
     if (saved) {
       try {
         setCurrentUser(JSON.parse(saved));
@@ -122,7 +122,7 @@ const InstructorProfile = () => {
     e.preventDefault();
     setSaving(true);
     try {
-      const token = localStorage.getItem('token');
+      const token = sessionStorage.getItem('token');
       const res = await fetch(`${API}/api/instructors/${id}`, {
         method: 'PUT',
         headers: {
@@ -144,7 +144,7 @@ const InstructorProfile = () => {
       if (res.ok) {
         if (currentUser && currentUser.instructor_id === parseInt(id) && editForm.name !== currentUser.name) {
           const updatedUser = { ...currentUser, name: editForm.name };
-          localStorage.setItem('user', JSON.stringify(updatedUser));
+          sessionStorage.setItem('user', JSON.stringify(updatedUser));
           setCurrentUser(updatedUser);
         }
         setShowEditModal(false);

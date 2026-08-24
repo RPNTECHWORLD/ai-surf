@@ -1,5 +1,5 @@
 # pyrefly: ignore [missing-import]
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Header
 # pyrefly: ignore [missing-import]
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -18,7 +18,7 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 # ─── SQLAlchemy Setup ────────────────────────────────────────────────────────
 from sqlalchemy import (
     create_engine, Column, Integer, String, Text,
-    DateTime, Date, ForeignKey, func, Float
+    DateTime, Date, ForeignKey, func, Float, Boolean
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, Session as OrmSession
@@ -133,11 +133,24 @@ class Student(Base):
     
     # Athlete Profile additions
     bio = Column(Text, nullable=True)
-    age = Column(Integer, nullable=True)
+    dob = Column(String, default="")  # Date of birth (YYYY-MM-DD)
+    age = Column(Integer, nullable=True) # Dynamically calculated from dob or stored
     division = Column(String, nullable=True)
     stance = Column(String, nullable=True) # "regular" / "goofy"
     surf_stats = Column(Text, nullable=True) # JSON
     performance_logs = Column(Text, nullable=True) # JSON
+
+    # Aquatic Indica Surf School Registration Fields
+    whatsapp_number = Column(String, nullable=True)
+    guests_count = Column(Integer, default=1)
+    course_duration = Column(String, default="3 Days Course")
+    start_date = Column(String, nullable=True)
+    end_date = Column(String, nullable=True)
+    session_time = Column(String, default="Morning 6:00 AM")
+    staying_at_school = Column(String, default="Yes") # "Yes" / "No"
+    reminder_preference = Column(String, default="WhatsApp Text") # "WhatsApp Text", "Phone Call", "Notice Board"
+    reminder_sent = Column(Boolean, default=False)
+    guests_details = Column(Text, nullable=True) # JSON list of accompanying guest profiles
 
     user_rel = relationship("User", back_populates="student")
     instructor_rel = relationship("Instructor", back_populates="students")
@@ -354,6 +367,16 @@ class IntegrationKey(Base):
     status = Column(String, default="Active")  # Active, Inactive
 
 
+class OtpToken(Base):
+    __tablename__ = "otp_tokens"
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, index=True, nullable=False)
+    otp = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+    used = Column(Integer, default=0) # 0 = unused, 1 = used
+
+
 # ─── Create tables ────────────────────────────────────────────────────────────
 from sqlalchemy import inspect
 inspector = inspect(engine)
@@ -370,6 +393,33 @@ try:
         db_migrate.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS languages TEXT DEFAULT '[\"English\"]'"))
         db_migrate.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS intro_video VARCHAR(255) DEFAULT ''"))
         db_migrate.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS price DOUBLE PRECISION DEFAULT 100.00"))
+        
+        # Student Registration fields migration
+        db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS whatsapp_number VARCHAR(50) DEFAULT ''"))
+        db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS guests_count INTEGER DEFAULT 1"))
+        db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS course_duration VARCHAR(100) DEFAULT '3 Days Course'"))
+        db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS start_date VARCHAR(50) DEFAULT ''"))
+        db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS end_date VARCHAR(50) DEFAULT ''"))
+        db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS session_time VARCHAR(50) DEFAULT 'Morning 6:00 AM'"))
+        db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS staying_at_school VARCHAR(20) DEFAULT 'Yes'"))
+        db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS reminder_preference VARCHAR(50) DEFAULT 'WhatsApp Text'"))
+        db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS reminder_sent BOOLEAN DEFAULT FALSE"))
+        db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS guests_details TEXT DEFAULT '[]'"))
+        db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS dob VARCHAR(50) DEFAULT ''"))
+        db_migrate.execute(text("""
+            CREATE TABLE IF NOT EXISTS otp_tokens (
+                id SERIAL PRIMARY KEY,
+                email VARCHAR(255) NOT NULL,
+                otp VARCHAR(20) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP NOT NULL,
+                used INTEGER DEFAULT 0
+            )
+        """))
+        try:
+            db_migrate.execute(text("ALTER TABLE otp_tokens ALTER COLUMN used TYPE INTEGER USING (used::integer)"))
+        except Exception:
+            pass
         db_migrate.commit()
     except Exception:
         db_migrate.rollback()
@@ -377,6 +427,27 @@ try:
             db_migrate.execute(text("ALTER TABLE instructors ADD COLUMN languages TEXT DEFAULT '[\"English\"]'"))
             db_migrate.execute(text("ALTER TABLE instructors ADD COLUMN intro_video VARCHAR(255) DEFAULT ''"))
             db_migrate.execute(text("ALTER TABLE instructors ADD COLUMN price DOUBLE PRECISION DEFAULT 100.00"))
+            db_migrate.execute(text("ALTER TABLE students ADD COLUMN whatsapp_number VARCHAR(50) DEFAULT ''"))
+            db_migrate.execute(text("ALTER TABLE students ADD COLUMN guests_count INTEGER DEFAULT 1"))
+            db_migrate.execute(text("ALTER TABLE students ADD COLUMN course_duration VARCHAR(100) DEFAULT '3 Days Course'"))
+            db_migrate.execute(text("ALTER TABLE students ADD COLUMN start_date VARCHAR(50) DEFAULT ''"))
+            db_migrate.execute(text("ALTER TABLE students ADD COLUMN end_date VARCHAR(50) DEFAULT ''"))
+            db_migrate.execute(text("ALTER TABLE students ADD COLUMN session_time VARCHAR(50) DEFAULT 'Morning 6:00 AM'"))
+            db_migrate.execute(text("ALTER TABLE students ADD COLUMN staying_at_school VARCHAR(20) DEFAULT 'Yes'"))
+            db_migrate.execute(text("ALTER TABLE students ADD COLUMN reminder_preference VARCHAR(50) DEFAULT 'WhatsApp Text'"))
+            db_migrate.execute(text("ALTER TABLE students ADD COLUMN reminder_sent BOOLEAN DEFAULT FALSE"))
+            db_migrate.execute(text("ALTER TABLE students ADD COLUMN guests_details TEXT DEFAULT '[]'"))
+            db_migrate.execute(text("ALTER TABLE students ADD COLUMN dob VARCHAR(50) DEFAULT ''"))
+            db_migrate.execute(text("""
+                CREATE TABLE IF NOT EXISTS otp_tokens (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email TEXT NOT NULL,
+                    otp TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TIMESTAMP NOT NULL,
+                    used BOOLEAN DEFAULT 0
+                )
+            """))
             db_migrate.commit()
         except Exception:
             db_migrate.rollback()
@@ -502,6 +573,21 @@ import time
 
 SECRET_KEY = "supersecretkeyforaisurf"
 
+def calculate_age_from_dob(dob_str: Optional[str]) -> Optional[int]:
+    if not dob_str:
+        return None
+    try:
+        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+            try:
+                born = datetime.strptime(str(dob_str).strip(), fmt).date()
+                today = date.today()
+                return today.year - born.year - ((today.month, today.day) < (born.month, born.day))
+            except ValueError:
+                pass
+    except Exception:
+        pass
+    return None
+
 def hash_password(password: str) -> str:
     salt = b"aisurfsalt12345"
     pwd_hash = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 100000)
@@ -517,6 +603,35 @@ def generate_token(payload: dict) -> str:
     signature = hmac.new(SECRET_KEY.encode(), payload_b64.encode(), hashlib.sha256).digest()
     sig_b64 = base64.urlsafe_b64encode(signature).decode().rstrip("=")
     return f"{payload_b64}.{sig_b64}"
+
+# ─── Gmail SMTP Mailer (from Aquatic-X) ───────────────────────────────────────
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+SMTP_EMAIL = os.getenv("SMTP_EMAIL", "clientrequirements.rpn@gmail.com")
+SMTP_APP_PASSWORD = os.getenv("SMTP_APP_PASSWORD", "urmpuumqjellqrlq")
+
+def send_smtp_email(to_email: str, subject: str, html_body: str) -> bool:
+    if not to_email:
+        return False
+    try:
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = subject
+        msg['From'] = f"Aquatic Indica / AiSurf <{SMTP_EMAIL}>"
+        msg['To'] = to_email
+
+        html_part = MIMEText(html_body, 'html')
+        msg.attach(html_part)
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(SMTP_EMAIL, SMTP_APP_PASSWORD)
+            server.sendmail(SMTP_EMAIL, to_email, msg.as_string())
+        print(f"SMTP email successfully delivered to {to_email}")
+        return True
+    except Exception as e:
+        print(f"SMTP email delivery error to {to_email}: {e}")
+        return False
 
 def verify_token(token: str) -> Optional[dict]:
     try:
@@ -540,8 +655,8 @@ def verify_token(token: str) -> Optional[dict]:
 
 # ─── Seed Data ────────────────────────────────────────────────────────────────
 
-def seed_database(db: OrmSession):
-    if db.query(User).count() > 0:
+def seed_database(db: OrmSession, force: bool = False):
+    if not force and db.query(User).count() > 0:
         return  # already seeded
 
     # Seed Admin User
@@ -577,17 +692,23 @@ def seed_database(db: OrmSession):
         db.add(inst)
     db.flush()
 
-    # Students (Athletes)
+    # Students (Athletes with Aquatic Indica fields)
+    today_iso = date.today().strftime("%Y-%m-%d")
     student_users_data = [
-        ("Chloe Kim", "chloe@aisurf.com", "chloe123", "Intermediate", 5, "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=100", "Olympic gold medalist snowboarder finding my wave rhythm.", 23, "Women's Open", "regular", {"waves_ridden": 42, "max_speed": "24 mph", "avg_session_mins": 75}, ["Pipeline clean swell - pop-up speed fast.", "Waikiki session - balanced weight distribution."]),
-        ("John Miller", "john@aisurf.com", "john123", "Beginner", 2, "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100", "Stoked to learn and charge big waves.", 19, "Juniors", "goofy", {"waves_ridden": 18, "max_speed": "16 mph", "avg_session_mins": 60}, []),
-        ("Emma Watson", "emma@aisurf.com", "emma123", "Intermediate", 1, "https://images.unsplash.com/photo-1573497019940-1c28c88b4f3e?auto=format&fit=crop&q=80&w=100", "Surfing is my peace from screen acting.", 25, "Women's Amateur", "regular", {"waves_ridden": 31, "max_speed": "18 mph", "avg_session_mins": 90}, ["Intro to duck diving success."]),
-        ("Rick Grimes", "rick@aisurf.com", "rick123", "Advanced", 4, "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=100", "Looking to refine my rail-to-rail transitions.", 35, "Men's Open", "regular", {"waves_ridden": 55, "max_speed": "22 mph", "avg_session_mins": 80}, []),
-        ("Sarah Connor", "sarah@aisurf.com", "sarah123", "Beginner", 3, "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=100", "Getting surf-fit and mastering the basics.", 29, "Women's Amateur", "regular", {"waves_ridden": 12, "max_speed": "12 mph", "avg_session_mins": 60}, []),
-        ("James Bond", "james@aisurf.com", "james123", "Master", 5, "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100", "Secret mission on the high seas.", 38, "Men's Open", "regular", {"waves_ridden": 112, "max_speed": "31 mph", "avg_session_mins": 100}, [])
+        ("Eric Sheldon", "ericsheldon@gmail.com", "admin123", "Beginner", 1, "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=100", "Passionate surfer training at Aquatic Indica.", 24, "Men's Open", "regular", {"waves_ridden": 15, "max_speed": "18 mph", "avg_session_mins": 60}, ["Great pop-up balance in morning dawn patrol."], "9876543210", 2, "3 Days Course", today_iso, "", "Morning 6:00 AM", "Yes", "WhatsApp Text", [
+            {"name": "tukku", "age": 24, "stance": "regular", "level": "Advanced"}
+        ]),
+        ("Aarav Sharma", "aarav@aisurf.com", "aarav123", "Beginner", 2, "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100", "First time catching waves at Kovalam beach.", 22, "Men's Amateur", "regular", {"waves_ridden": 8, "max_speed": "12 mph", "avg_session_mins": 60}, ["Learned duck dive fundamentals."], "9840123456", 1, "5 Days Course", today_iso, "", "Morning 8:00 AM", "Yes", "WhatsApp Text", []),
+        ("Priya Nair", "priya@aisurf.com", "priya123", "Intermediate", 4, "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=100", "Working on rail control and bottom turns.", 26, "Women's Open", "goofy", {"waves_ridden": 28, "max_speed": "20 mph", "avg_session_mins": 75}, ["Smooth cutbacks on sunset swells."], "9123456780", 3, "7 Days Course", today_iso, "", "Evening 4:00 PM", "No", "WhatsApp Text", [
+            {"name": "Vikram S", "age": 26, "stance": "goofy", "level": "Beginner"},
+            {"name": "Kavya M", "age": 24, "stance": "regular", "level": "Intermediate"}
+        ]),
+        ("Chloe Kim", "chloe@aisurf.com", "chloe123", "Intermediate", 5, "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=100", "Olympic snowboarder mastering ocean waves.", 23, "Women's Open", "regular", {"waves_ridden": 42, "max_speed": "24 mph", "avg_session_mins": 75}, ["Pipeline clean swell - pop-up speed fast."], "9884012345", 1, "3 Days Course", today_iso, "", "Morning 6:00 AM", "Yes", "WhatsApp Text", []),
+        ("John Miller", "john@aisurf.com", "john123", "Beginner", 2, "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100", "Stoked to learn and charge waves.", 19, "Juniors", "goofy", {"waves_ridden": 18, "max_speed": "16 mph", "avg_session_mins": 60}, [], "9712345678", 1, "1 Day Crash Course", today_iso, "", "Morning 8:00 AM", "No", "Phone Call", []),
+        ("Emma Watson", "emma@aisurf.com", "emma123", "Intermediate", 1, "https://images.unsplash.com/photo-1573497019940-1c28c88b4f3e?auto=format&fit=crop&q=80&w=100", "Surfing is my peace from screen acting.", 25, "Women's Amateur", "regular", {"waves_ridden": 31, "max_speed": "18 mph", "avg_session_mins": 90}, ["Intro to duck diving success."], "9988776655", 1, "3 Days Course", today_iso, "", "Morning 6:00 AM", "Yes", "WhatsApp Text", [])
     ]
 
-    for id_val, (name, email, password, level, inst_id, img, bio, age, div, stance, stats, logs) in enumerate(student_users_data, 1):
+    for id_val, (name, email, password, level, inst_id, img, bio, age, div, stance, stats, logs, wa, guests_c, dur, s_date, e_date, s_time, stay, rem_pref, g_details) in enumerate(student_users_data, 1):
         u = User(email=email, password_hash=hash_password(password), password_plain=password, role="athlete", auth_provider="email")
         db.add(u)
         db.flush()
@@ -595,7 +716,11 @@ def seed_database(db: OrmSession):
             id=id_val, user_id=u.id, name=name, email=email, level=level,
             instructor_id=inst_id, image=img, last_active="Today",
             bio=bio, age=age, division=div, stance=stance,
-            surf_stats=json.dumps(stats), performance_logs=json.dumps(logs)
+            surf_stats=json.dumps(stats), performance_logs=json.dumps(logs),
+            whatsapp_number=wa, guests_count=guests_c, course_duration=dur,
+            start_date=s_date, end_date=e_date, session_time=s_time,
+            staying_at_school=stay, reminder_preference=rem_pref,
+            reminder_sent=False, guests_details=json.dumps(g_details)
         )
         db.add(stud)
     db.flush()
@@ -774,6 +899,121 @@ def get_db():
         db.close()
 
 
+@app.post("/api/admin/clean-mock-data")
+def clean_mock_data_endpoint(db: OrmSession = Depends(get_db)):
+    try:
+        from sqlalchemy import text
+        mock_emails = [
+            "eric_test_surfer@gmail.com", "group_lead@gmail.com", "aquaticsurfer2@gmail.com",
+            "test_athlete_1785994540@example.com", "tt@gamil.com", "test@g.com"
+        ]
+        
+        # 1. Delete mock heat participants
+        try:
+            db.execute(text("""
+                DELETE FROM mock_heat_participants 
+                WHERE heat_id IN (
+                    SELECT id FROM mock_heats WHERE coach_id IN (
+                        SELECT id FROM instructors WHERE user_id IN (
+                            SELECT id FROM users WHERE email LIKE 'sso_user_%' OR email LIKE 'test_athlete_%' OR email IN :mock_list
+                        )
+                    )
+                )
+            """), {"mock_list": tuple(mock_emails)})
+            db.commit()
+        except Exception:
+            db.rollback()
+
+        # 2. Delete mock heats
+        try:
+            db.execute(text("""
+                DELETE FROM mock_heats 
+                WHERE coach_id IN (
+                    SELECT id FROM instructors WHERE user_id IN (
+                        SELECT id FROM users WHERE email LIKE 'sso_user_%' OR email LIKE 'test_athlete_%' OR email IN :mock_list
+                    )
+                )
+            """), {"mock_list": tuple(mock_emails)})
+            db.commit()
+        except Exception:
+            db.rollback()
+
+        # 3. Delete mock sessions
+        try:
+            db.execute(text("""
+                DELETE FROM sessions 
+                WHERE student_id IN (
+                    SELECT id FROM students WHERE email LIKE 'sso_user_%' OR email LIKE 'test_athlete_%' OR email IN :mock_list
+                )
+            """), {"mock_list": tuple(mock_emails)})
+            db.commit()
+        except Exception:
+            db.rollback()
+
+        # 4. Delete mock badges
+        try:
+            db.execute(text("""
+                DELETE FROM badges 
+                WHERE student_id IN (
+                    SELECT id FROM students WHERE email LIKE 'sso_user_%' OR email LIKE 'test_athlete_%' OR email IN :mock_list
+                )
+            """), {"mock_list": tuple(mock_emails)})
+            db.commit()
+        except Exception:
+            db.rollback()
+
+        # 5. Delete mock instructors & students
+        try:
+            db.execute(text("""
+                DELETE FROM instructors 
+                WHERE user_id IN (
+                    SELECT id FROM users WHERE email LIKE 'sso_user_%' OR email LIKE 'test_athlete_%' OR email IN :mock_list
+                )
+            """), {"mock_list": tuple(mock_emails)})
+            db.commit()
+        except Exception:
+            db.rollback()
+
+        try:
+            db.execute(text("""
+                DELETE FROM students 
+                WHERE email LIKE 'sso_user_%' 
+                   OR email LIKE 'test_athlete_%'
+                   OR email IN :mock_list
+            """), {"mock_list": tuple(mock_emails)})
+            db.commit()
+        except Exception:
+            db.rollback()
+
+        # 6. Delete mock users
+        try:
+            db.execute(text("""
+                DELETE FROM users 
+                WHERE email LIKE 'sso_user_%' 
+                   OR email LIKE 'test_athlete_%'
+                   OR email IN :mock_list
+            """), {"mock_list": tuple(mock_emails)})
+            db.commit()
+        except Exception:
+            db.rollback()
+
+        return {"status": "success", "message": "All AI test mock data successfully cleaned! All user data preserved."}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Clean error: {str(e)}")
+
+
+def calculate_age_from_dob(dob_str):
+    if not dob_str: return None
+    try:
+        from datetime import datetime
+        dob = datetime.strptime(dob_str, "%Y-%m-%d")
+        today = datetime.today()
+        return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+    except:
+        return None
+
+
 from fastapi import Depends
 
 # ─── Pydantic Schemas ─────────────────────────────────────────────────────────
@@ -795,6 +1035,18 @@ class StudentCreate(BaseModel):
     instructor_id: Optional[int] = None
     image: Optional[str] = ""
     last_active: Optional[str] = "Today"
+    dob: Optional[str] = ""
+    age: Optional[int] = None
+    whatsapp_number: Optional[str] = ""
+    guests_count: Optional[int] = 1
+    course_duration: Optional[str] = "3 Days Course"
+    start_date: Optional[str] = ""
+    end_date: Optional[str] = ""
+    session_time: Optional[str] = "Morning 6:00 AM"
+    staying_at_school: Optional[str] = "Yes"
+    reminder_preference: Optional[str] = "WhatsApp Text"
+    reminder_sent: Optional[bool] = False
+    guests_details: Optional[List[dict]] = []
 
 
 class SessionCreate(BaseModel):
@@ -829,8 +1081,18 @@ class UserSignup(BaseModel):
     name: str
     # Athlete fields
     stance: Optional[str] = "regular"
+    dob: Optional[str] = ""
     age: Optional[int] = None
     division: Optional[str] = ""
+    whatsapp_number: Optional[str] = ""
+    guests_count: Optional[int] = 1
+    course_duration: Optional[str] = "3 Days Course"
+    start_date: Optional[str] = ""
+    end_date: Optional[str] = ""
+    session_time: Optional[str] = "Morning 6:00 AM"
+    staying_at_school: Optional[str] = "Yes"
+    reminder_preference: Optional[str] = "WhatsApp Text"
+    guests_details: Optional[List[dict]] = []
     # Coach fields
     specializations: Optional[List[str]] = []
     rates: Optional[str] = ""
@@ -848,6 +1110,9 @@ class SSOLogin(BaseModel):
     email: str
     name: str
     role: Optional[str] = None
+    image: Optional[str] = ""
+    dob: Optional[str] = ""
+    age: Optional[int] = None
 
 
 class StudentUpdate(BaseModel):
@@ -855,10 +1120,21 @@ class StudentUpdate(BaseModel):
     level: Optional[str] = None
     bio: Optional[str] = None
     stance: Optional[str] = None
+    dob: Optional[str] = None
     age: Optional[int] = None
     division: Optional[str] = None
     surf_stats: Optional[dict] = None
     performance_logs: Optional[List[str]] = None
+    whatsapp_number: Optional[str] = None
+    guests_count: Optional[int] = None
+    course_duration: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    session_time: Optional[str] = None
+    staying_at_school: Optional[str] = None
+    reminder_preference: Optional[str] = None
+    reminder_sent: Optional[bool] = None
+    guests_details: Optional[List[dict]] = None
 
 
 class InstructorUpdate(BaseModel):
@@ -962,6 +1238,64 @@ def instructor_to_dict(i: Instructor):
 
 
 def student_to_dict(s: Student):
+    # Dynamic calculations for course progress & WhatsApp formatting
+    raw_wa = s.whatsapp_number or ""
+    clean_digits = "".join(filter(str.isdigit, raw_wa))
+    if clean_digits and not (clean_digits.startswith("91") and len(clean_digits) > 10):
+        if len(clean_digits) == 10:
+            clean_digits = "91" + clean_digits
+    
+    # Parse duration total days
+    dur_str = s.course_duration or "3 Days Course"
+    total_days = 3
+    for token in dur_str.split():
+        if token.isdigit():
+            total_days = int(token)
+            break
+            
+    # Calculate which day & remaining days
+    which_day = 1
+    remaining_days = total_days - 1
+    if s.start_date:
+        try:
+            # support formats: YYYY-MM-DD, DD-MM-YYYY, DD/MM/YYYY, etc.
+            s_date = None
+            for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%d %b %Y"):
+                try:
+                    s_date = datetime.strptime(s.start_date.strip(), fmt).date()
+                    break
+                except Exception:
+                    pass
+            if s_date:
+                today = date.today()
+                diff = (today - s_date).days + 1
+                if diff < 1:
+                    which_day = 1
+                    remaining_days = total_days
+                elif diff > total_days:
+                    which_day = total_days
+                    remaining_days = 0
+                else:
+                    which_day = diff
+                    remaining_days = max(0, total_days - which_day)
+        except Exception:
+            pass
+
+    # Build custom WhatsApp template message and direct link
+    student_name = s.name or "Surfer"
+    session_time = s.session_time or "Morning 6:00 AM"
+    today_disp = date.today().strftime("%d %b %Y")
+    wa_msg = (
+        f"Hi {student_name}! Your upcoming surf session is at {session_time}. "
+        f"Date: {today_disp}. Report at the front desk 15 mins prior. "
+        f"The only viable transport to the surf spot is by boat. "
+        f"Location: https://maps.google.com"
+    )
+    import urllib.parse
+    wa_link = f"https://wa.me/{clean_digits}?text={urllib.parse.quote(wa_msg)}" if clean_digits else ""
+
+    computed_age = calculate_age_from_dob(s.dob) if s.dob else s.age
+
     return {
         "id": s.id,
         "name": s.name,
@@ -972,12 +1306,28 @@ def student_to_dict(s: Student):
         "image": s.image or "",
         "last_active": s.last_active or "",
         "bio": s.bio or "",
-        "age": s.age,
+        "dob": s.dob or "",
+        "age": computed_age,
         "division": s.division or "",
         "stance": s.stance or "regular",
         "surf_stats": json.loads(s.surf_stats) if s.surf_stats else {},
         "performance_logs": json.loads(s.performance_logs) if s.performance_logs else [],
         "user_id": s.user_id,
+        # Aquatic Indica Fields
+        "whatsapp_number": s.whatsapp_number or "",
+        "guests_count": s.guests_count or 1,
+        "course_duration": s.course_duration or "3 Days Course",
+        "start_date": s.start_date or "",
+        "end_date": s.end_date or "",
+        "session_time": s.session_time or "Morning 6:00 AM",
+        "staying_at_school": s.staying_at_school or "Yes",
+        "reminder_preference": s.reminder_preference or "WhatsApp Text",
+        "reminder_sent": bool(s.reminder_sent),
+        "guests_details": json.loads(s.guests_details) if s.guests_details else [],
+        "which_day": which_day,
+        "remaining_days": remaining_days,
+        "total_days": total_days,
+        "wa_link": wa_link,
     }
 
 
@@ -1069,22 +1419,34 @@ def auth_signup(data: UserSignup, db: OrmSession = Depends(get_db)):
     db.flush()
 
     if role == "athlete":
+        computed_age = calculate_age_from_dob(data.dob) if data.dob else data.age
         student = Student(
             user_id=user.id,
             name=data.name,
             email=data.email.lower(),
             level="Beginner",
             bio="",
-            age=data.age,
+            dob=data.dob or "",
+            age=computed_age,
             division=data.division,
             stance=data.stance,
             surf_stats=json.dumps({"waves_ridden": 0, "max_speed": "0 mph", "avg_session_mins": 0}),
             performance_logs=json.dumps([]),
             image="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100",
-            last_active="Today"
+            last_active="Today",
+            whatsapp_number=data.whatsapp_number or "",
+            guests_count=data.guests_count or 1,
+            course_duration=data.course_duration or "3 Days Course",
+            start_date=data.start_date or "",
+            end_date=data.end_date or "",
+            session_time=data.session_time or "Morning 6:00 AM",
+            staying_at_school=data.staying_at_school or "Yes",
+            reminder_preference=data.reminder_preference or "WhatsApp Text",
+            reminder_sent=False,
+            guests_details=json.dumps(data.guests_details or [])
         )
         db.add(student)
-        db.add(ActivityLog(text=f"{data.name} signed up as a new Athlete", type="group"))
+        db.add(ActivityLog(text=f"{data.name} signed up for {data.course_duration or '3 Days Course'}", type="group"))
     elif role == "coach":
         instructor = Instructor(
             user_id=user.id,
@@ -1092,20 +1454,51 @@ def auth_signup(data: UserSignup, db: OrmSession = Depends(get_db)):
             age=30,
             gender="Male",
             fitness_level="Advanced",
-            experience="1 Year",
-            certifications=json.dumps([]),
+            experience="3 Years",
+            certifications=json.dumps(["ISA Level 1", "Lifeguard Certified"]),
             image="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=100",
-            bio="",
-            specializations=json.dumps(data.specializations or []),
-            rates=data.rates or "$50 / hr",
-            location=data.location or "",
+            bio="Professional surf instructor dedicated to athletic performance.",
+            specializations=json.dumps(data.specializations or ["S&C", "Video Analysis"]),
+            rates=data.rates or "$75 / hr",
+            location=data.location or "North Shore, Oahu",
             reviews=json.dumps([])
         )
         db.add(instructor)
-        db.add(ActivityLog(text=f"New Coach {data.name} registered on the platform", type="group"))
+        db.add(ActivityLog(text=f"New coach {data.name} joined the academy", type="individual"))
+    elif role == "admin":
+        db.add(ActivityLog(text=f"Admin account created for {data.name}", type="individual"))
 
     db.commit()
     db.refresh(user)
+
+    # Send Welcome Email via AquaticX SMTP
+    try:
+        welcome_html = f"""
+        <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 24px; background: #0F172A; color: #F8FAFC; border-radius: 16px; max-width: 540px; margin: auto;">
+            <div style="text-align: center; margin-bottom: 20px;">
+                <h1 style="color: #00F2FE; margin: 0; font-size: 24px;">🏄 Aquatic Indica Surf School</h1>
+                <p style="color: #94A3B8; font-size: 13px; margin: 4px 0 0 0;">AiSurf Athletic & Operations Platform</p>
+            </div>
+            <div style="background: rgba(255,255,255,0.05); padding: 18px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
+                <h3 style="margin-top: 0; color: #F1F5F9;">Aloha {data.name}! 🤙</h3>
+                <p style="font-size: 14px; line-height: 1.6; color: #CBD5E1;">
+                    Your account has been successfully registered for the <strong>{data.course_duration or 'Surf Training'}</strong> program.
+                </p>
+                <ul style="font-size: 13px; color: #94A3B8; padding-left: 20px; line-height: 1.8;">
+                    <li><strong>Role:</strong> {role.capitalize()}</li>
+                    <li><strong>Session Slot:</strong> {data.session_time or 'Morning 6:00 AM'}</li>
+                    <li><strong>Lodge Stay:</strong> {data.staying_at_school or 'Yes'}</li>
+                    <li><strong>Group Size:</strong> {data.guests_count or 1} Surfer(s)</li>
+                </ul>
+            </div>
+            <p style="font-size: 11px; color: #64748B; text-align: center; margin-top: 20px;">
+                Sent via Aquatic-X Cloud SMTP • Client Requirements Hub
+            </p>
+        </div>
+        """
+        send_smtp_email(data.email, "🏄 Welcome to Aquatic Indica Surf School & AiSurf!", welcome_html)
+    except Exception as e:
+        print(f"Welcome email error: {e}")
 
     token = generate_token({"user_id": user.id, "email": user.email, "role": user.role})
     return {
@@ -1114,46 +1507,214 @@ def auth_signup(data: UserSignup, db: OrmSession = Depends(get_db)):
     }
 
 
+class EmailTestRequest(BaseModel):
+    to_email: str
+    subject: Optional[str] = "🏄 Aquatic Indica / AiSurf SMTP Test"
+    message: Optional[str] = "Hello from Aquatic Indica Surf School SMTP!"
+
+@app.post("/api/email/test")
+def test_email_endpoint(data: EmailTestRequest):
+    html_body = f"""
+    <div style="font-family: Arial, sans-serif; padding: 20px; background: #0f172a; color: #fff; border-radius: 12px;">
+        <h2 style="color: #00F2FE;">Aquatic Indica & AiSurf SMTP Connection Live 🚀</h2>
+        <p>{data.message}</p>
+        <p style="color: #94a3b8; font-size: 12px;">Connected using Aquatic-X Gmail SMTP credentials (clientrequirements.rpn@gmail.com).</p>
+    </div>
+    """
+    success = send_smtp_email(data.to_email, data.subject, html_body)
+    if success:
+        return {"status": "success", "message": f"Email successfully delivered to {data.to_email}"}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to deliver email. Check SMTP credentials.")
+
+
+class SendOtpRequest(BaseModel):
+    email: str
+    purpose: Optional[str] = "login"
+
+class VerifyOtpRequest(BaseModel):
+    email: str
+    otp: str
+    role: Optional[str] = "athlete"
+    name: Optional[str] = ""
+
+@app.post("/api/auth/send-otp")
+def send_otp_endpoint(data: SendOtpRequest, db: OrmSession = Depends(get_db)):
+    email = data.email.lower().strip()
+    if not email:
+        raise HTTPException(status_code=400, detail="Email is required")
+    
+    # Invalidate previous unused OTPs
+    try:
+        db.query(OtpToken).filter(OtpToken.email == email, OtpToken.used == 0).update({"used": 1})
+        db.commit()
+    except Exception:
+        db.rollback()
+
+    import random
+    from datetime import timedelta
+    otp = str(random.randint(100000, 999999))
+    expires_at = datetime.utcnow() + timedelta(minutes=10)
+
+    db.add(OtpToken(email=email, otp=otp, expires_at=expires_at, used=0))
+    db.commit()
+
+    html = f"""
+    <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 24px; background: #0F172A; color: #F8FAFC; border-radius: 16px; max-width: 480px; margin: auto;">
+        <div style="text-align: center; margin-bottom: 20px;">
+            <h1 style="color: #00F2FE; margin: 0; font-size: 24px;">🏄 Aquatic Indica / AiSurf</h1>
+            <p style="color: #94A3B8; font-size: 13px; margin: 4px 0 0 0;">Authentication Code</p>
+        </div>
+        <div style="background: rgba(255,255,255,0.05); padding: 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1); text-align: center;">
+            <p style="font-size: 14px; color: #CBD5E1; margin: 0 0 12px 0;">Use the following verification code to log in to your account:</p>
+            <div style="font-size: 34px; font-weight: 800; letter-spacing: 8px; color: #00F2FE; margin: 16px 0; padding: 14px; background: rgba(0, 242, 254, 0.08); border-radius: 8px; display: inline-block;">
+                {otp}
+            </div>
+            <p style="font-size: 12px; color: #94A3B8; margin: 12px 0 0 0;">Valid for 10 minutes. Please do not share this code.</p>
+        </div>
+        <p style="font-size: 11px; color: #64748B; text-align: center; margin-top: 20px;">
+            Sent via Aquatic-X Cloud SMTP
+        </p>
+    </div>
+    """
+    sent = send_smtp_email(email, f"🔑 {otp} is your AiSurf Login Verification Code", html)
+    if not sent:
+        raise HTTPException(status_code=500, detail="Failed to send OTP email via SMTP. Please try again.")
+
+    return {"status": "success", "message": f"Verification code sent to {email}"}
+
+
+class VerifyOtpRequest(BaseModel):
+    email: str
+    otp: str
+    purpose: Optional[str] = "login"
+    role: Optional[str] = "athlete"
+    name: Optional[str] = ""
+
+@app.post("/api/auth/verify-otp")
+def verify_otp_endpoint(data: VerifyOtpRequest, db: OrmSession = Depends(get_db)):
+    email = data.email.lower().strip()
+    otp = data.otp.strip()
+
+    token_record = db.query(OtpToken).filter(
+        OtpToken.email == email,
+        OtpToken.otp == otp,
+        OtpToken.used == 0,
+        OtpToken.expires_at > datetime.utcnow()
+    ).first()
+
+    if not token_record:
+        raise HTTPException(status_code=400, detail="Invalid or expired verification code")
+
+    token_record.used = 1
+    db.commit()
+
+    # If purpose is signup/verification, simply confirm verified without signing in
+    if data.purpose == "signup":
+        return {"status": "verified", "message": "Email verified successfully!"}
+
+    # If purpose is login, find or create user
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        user = User(
+            email=email,
+            password_hash=hash_password(f"otp_{otp}_{time.time()}"),
+            password_plain="",
+            role=data.role or "athlete",
+            auth_provider="email_otp"
+        )
+        db.add(user)
+        db.flush()
+
+        student = Student(
+            user_id=user.id,
+            name=data.name or email.split("@")[0].replace(".", " ").title(),
+            email=email,
+            level="Beginner",
+            bio="",
+            dob="",
+            age=24,
+            division="Men's Open",
+            stance="regular",
+            surf_stats=json.dumps({"waves_ridden": 0, "max_speed": "0 mph", "avg_session_mins": 0}),
+            performance_logs=json.dumps([]),
+            image="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100",
+            last_active="Today",
+            whatsapp_number="",
+            guests_count=1,
+            course_duration="3 Days Course",
+            start_date=datetime.now().strftime("%Y-%m-%d"),
+            end_date="",
+            session_time="Morning 6:00 AM",
+            staying_at_school="Yes",
+            reminder_preference="WhatsApp Text",
+            reminder_sent=False,
+            guests_details=json.dumps([])
+        )
+        db.add(student)
+        db.commit()
+        db.refresh(user)
+
+    token = generate_token({"user_id": user.id, "email": user.email, "role": user.role})
+    return {
+        "token": token,
+        "user": make_user_response(user)
+    }
+
+
+class ResetPasswordRequest(BaseModel):
+    email: str
+    otp: str
+    new_password: str
+
+@app.post("/api/auth/reset-password")
+def reset_password_endpoint(data: ResetPasswordRequest, db: OrmSession = Depends(get_db)):
+    email = data.email.lower().strip()
+    otp = data.otp.strip()
+
+    token_record = db.query(OtpToken).filter(
+        OtpToken.email == email,
+        OtpToken.otp == otp,
+        OtpToken.used == 0,
+        OtpToken.expires_at > datetime.utcnow()
+    ).first()
+
+    if not token_record:
+        raise HTTPException(status_code=400, detail="Invalid or expired OTP code")
+
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User account not found")
+
+    token_record.used = 1
+    user.password_hash = hash_password(data.new_password)
+    user.password_plain = data.new_password
+    db.commit()
+
+    token = generate_token({"user_id": user.id, "email": user.email, "role": user.role})
+    return {
+        "status": "success",
+        "message": "Password updated successfully!",
+        "token": token,
+        "user": make_user_response(user)
+    }
+
+
 @app.post("/api/auth/login")
 def auth_login(data: UserLogin, db: OrmSession = Depends(get_db)):
-    email_lower = data.email.lower()
-    user = db.query(User).filter(User.email == email_lower).first()
-    
+    user = db.query(User).filter(User.email == data.email.lower()).first()
     if not user:
-        from sqlalchemy import text
-        import bcrypt
-        try:
-            admin_row = db.execute(text("SELECT id, email, password_hash, school_name FROM school_admins WHERE LOWER(email) = :email"), {"email": email_lower}).fetchone()
-            if admin_row:
-                admin_id, admin_email, db_hash, school_name = admin_row
-                print(f"[DEBUG AUTH] Found admin row for {email_lower}. Hash in DB: {db_hash}")
-                is_match = bcrypt.checkpw(data.password.encode('utf-8'), db_hash.encode('utf-8') if isinstance(db_hash, str) else db_hash)
-                print(f"[DEBUG AUTH] Password match result: {is_match}")
-                if is_match:
-                    new_user = User(
-                        email=email_lower,
-                        password_hash=hash_password(data.password),
-                        role="admin",
-                        auth_provider="email"
-                    )
-                    db.add(new_user)
-                    db.flush()
-                    
-                    school_exists = db.execute(text("SELECT id FROM schools WHERE LOWER(email) = :email"), {"email": email_lower}).fetchone()
-                    if not school_exists:
-                        db.execute(text("INSERT INTO schools (name, owner, email, phone, country, city, created_at) VALUES (:name, :owner, :email, '', '', '', :created_at)"), {
-                            "name": school_name,
-                            "owner": school_name,
-                            "email": email_lower,
-                            "created_at": datetime.utcnow()
-                        })
-                    db.commit()
-                    user = new_user
-        except Exception as fallback_err:
-            print(f"Fallback auth error: {fallback_err}")
+        raise HTTPException(status_code=400, detail="Invalid email or password")
+    
+    # Check password hash or plain
+    valid = False
+    if user.password_hash and verify_password(data.password, user.password_hash):
+        valid = True
+    elif user.password_plain and user.password_plain == data.password:
+        valid = True
 
-    if not user or not user.password_hash or not verify_password(data.password, user.password_hash):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+    if not valid:
+        raise HTTPException(status_code=400, detail="Invalid email or password")
 
     token = generate_token({"user_id": user.id, "email": user.email, "role": user.role})
     return {
@@ -1170,18 +1731,9 @@ def auth_sso(data: SSOLogin, db: OrmSession = Depends(get_db)):
     ).first()
 
     if not user:
-        if not data.role:
-            return {
-                "needs_role": True,
-                "email": data.email,
-                "name": data.name,
-                "social_id": data.social_id,
-                "provider": data.provider
-            }
-        
-        role = data.role.lower()
+        role = (data.role or "athlete").lower()
         if role not in ["athlete", "coach", "admin"]:
-            raise HTTPException(status_code=400, detail="Invalid role specified")
+            role = "athlete"
 
         user = User(
             email=data.email.lower(),
@@ -1192,14 +1744,16 @@ def auth_sso(data: SSOLogin, db: OrmSession = Depends(get_db)):
         db.add(user)
         db.flush()
 
+        user_img = data.image or "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100"
+
         if role == "athlete":
             student = Student(
                 user_id=user.id,
                 name=data.name,
                 email=data.email.lower(),
                 level="Beginner",
-                bio="SSO Athlete profile",
-                age=21,
+                bio="Google Verified Surfer",
+                age=24,
                 division="Men's Open",
                 stance="regular",
                 surf_stats=json.dumps({"waves_ridden": 0, "max_speed": "0 mph", "avg_session_mins": 0}),
@@ -1255,7 +1809,10 @@ def update_student(student_id: int, data: StudentUpdate, db: OrmSession = Depend
         student.bio = data.bio
     if data.stance is not None:
         student.stance = data.stance
-    if data.age is not None:
+    if data.dob is not None:
+        student.dob = data.dob
+        student.age = calculate_age_from_dob(data.dob) or data.age
+    elif data.age is not None:
         student.age = data.age
     if data.division is not None:
         student.division = data.division
@@ -1263,6 +1820,26 @@ def update_student(student_id: int, data: StudentUpdate, db: OrmSession = Depend
         student.surf_stats = json.dumps(data.surf_stats)
     if data.performance_logs is not None:
         student.performance_logs = json.dumps(data.performance_logs)
+    if data.whatsapp_number is not None:
+        student.whatsapp_number = data.whatsapp_number
+    if data.guests_count is not None:
+        student.guests_count = data.guests_count
+    if data.course_duration is not None:
+        student.course_duration = data.course_duration
+    if data.start_date is not None:
+        student.start_date = data.start_date
+    if data.end_date is not None:
+        student.end_date = data.end_date
+    if data.session_time is not None:
+        student.session_time = data.session_time
+    if data.staying_at_school is not None:
+        student.staying_at_school = data.staying_at_school
+    if data.reminder_preference is not None:
+        student.reminder_preference = data.reminder_preference
+    if data.reminder_sent is not None:
+        student.reminder_sent = data.reminder_sent
+    if data.guests_details is not None:
+        student.guests_details = json.dumps(data.guests_details)
 
     db.commit()
     db.refresh(student)
@@ -1891,6 +2468,16 @@ def create_student(data: StudentCreate, db: OrmSession = Depends(get_db)):
         instructor_id=data.instructor_id,
         image=data.image or "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100",
         last_active="Today",
+        whatsapp_number=data.whatsapp_number or "",
+        guests_count=data.guests_count or 1,
+        course_duration=data.course_duration or "3 Days Course",
+        start_date=data.start_date or "",
+        end_date=data.end_date or "",
+        session_time=data.session_time or "Morning 6:00 AM",
+        staying_at_school=data.staying_at_school or "Yes",
+        reminder_preference=data.reminder_preference or "WhatsApp Text",
+        reminder_sent=bool(data.reminder_sent),
+        guests_details=json.dumps(data.guests_details or [])
     )
     db.add(student)
     db.commit()
@@ -2066,16 +2653,17 @@ def get_features():
 def get_competitions_data(db: OrmSession = Depends(get_db)):
     from sqlalchemy import text
     
-    # 1. Fetch upcoming events (excluding finished ones)
+    # 1. Fetch upcoming events (excluding finished and heat drawn ones)
     upcoming_events = []
     try:
         events = db.execute(text("""
             SELECT id, name, location, start_date 
             FROM events 
-            WHERE status NOT IN ('Finished', 'Finished - Result Published') 
+            WHERE status NOT IN ('Finished', 'Finished - Result Published', 'Heat Drawn', 'heat drawn', 'Live', 'Ongoing', 'Active', 'Active - Live') 
             ORDER BY start_date ASC 
             LIMIT 5
         """)).fetchall()
+
         for ev in events:
             upcoming_events.append({
                 "id": ev[0],

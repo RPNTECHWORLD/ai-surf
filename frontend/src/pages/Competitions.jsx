@@ -68,7 +68,7 @@ const Competitions = () => {
       .catch(() => {});
 
     // 3. Load user context
-    const saved = localStorage.getItem('user');
+    const saved = sessionStorage.getItem('user');
     if (saved) {
       try {
         const u = JSON.parse(saved);
@@ -275,6 +275,9 @@ const Competitions = () => {
   };
 
   const { upcomingEvents = [], heatCompetitors = [], pastResults = [] } = data || {};
+  const visibleUpcomingEvents = upcomingEvents.filter(
+    (ev) => !['heat drawn', 'finished', 'finished - result published', 'live', 'ongoing'].includes((ev.status || '').toLowerCase())
+  );
 
   return (
     <div className="cmp-page">
@@ -311,8 +314,12 @@ const Competitions = () => {
               <h2 className="cmp-section-title">Upcoming Events</h2>
               
               <div className="cmp-events-list">
-                {upcomingEvents.map((event) => (
-                  <div key={event.id} className="cmp-event-card">
+                {visibleUpcomingEvents.length === 0 ? (
+                  <div style={{ color: '#94a3b8', fontSize: '13px', padding: '16px 0' }}>No upcoming registration events</div>
+                ) : (
+                  visibleUpcomingEvents.map((event) => (
+                    <div key={event.id} className="cmp-event-card">
+
                     <div className="cmp-event-info">
                       <div className="cmp-event-name">{event.name}</div>
                       <div className="cmp-event-loc">{event.locationDate}</div>
@@ -331,8 +338,9 @@ const Competitions = () => {
                     </div>
                     <button className="cmp-btn-register">Register Now</button>
                   </div>
-                ))}
+                )))}
               </div>
+
             </div>
 
             {/* Right Column: Live & History */}

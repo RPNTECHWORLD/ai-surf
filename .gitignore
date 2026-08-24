@@ -25,3 +25,7 @@ dist/
 .vscode/
 .idea/
 *.DS_Store
+
+# Temporary scratch and zip files
+scratch/
+*.zip

@@ -18,7 +18,7 @@ import SuperAdminDashboard from './pages/SuperAdminDashboard';
 import AthleteIntelligence from './pages/AthleteIntelligence';
 
 const PrivateRoute = ({ children }) => {
-  const token = localStorage.getItem('token');
+  const token = sessionStorage.getItem('token');
   return token ? children : <Navigate to="/auth" replace />;
 };
 

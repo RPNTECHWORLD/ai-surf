@@ -72,7 +72,7 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
  1. Made website statistics, instructor profiles, and charts fully dynamic from the database.
  2. Aligned dashboard welcome banner counter to show actual scheduled sessions for today.
  3. Enabled live competition events and heat results queries directly from the RDS tables.
- 4. Created a dedicated Superadmin Dashboard at `/rpnsuperadmin` featuring platform statistics.
+ 4. Created a dedicated Superadmin Dashboard at rpnsuperadmin featuring platform statistics.
  5. Stored and displayed plaintext coach passwords and database hashes for administrative access.
  6. Completed database migrations and successfully redeployed the live AWS EC2 backend.
 
@@ -80,5 +80,13 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
  1. Implemented Live Heats Integration & Mock Heats Engine with live countdown timers, priority state toggles, and wave scoring logs.
  2. Created rule-based AI tactical diagnostics analyzing wave scores to generate strengths, weaknesses, and coaching targets.
  3. Integrated mock heat history cards inside student profiles showing expandable detailed wave logs and AI reports.
- 4. Developed Super Admin panel tabs at `/superadmin` for marketplace items, user reports, AI token usage monitor, and app integration client keys.
+ 4. Developed Super Admin panel tabs at superadmin for marketplace items, user reports, AI token usage monitor, and app integration client keys.
  5. Configured dynamic API routing fallback to allow local testing while maintaining cloud AWS connection defaults.
+
+ ###changes on 24-08-26
+ 1. Built Email OTP Login & 3-Step Registration System with real email verification.
+ 2. Replaced Division dropdown with Gender dropdown in signup form.
+ 3. Moved Quick Stats from left sidebar to horizontal row at top of dashboard.
+ 4. Switched auth storage from localStorage to sessionStorage - each browser tab has independent login.
+ 5. Added OTP verification gate - signup blocked until email is verified first.
+ 

@@ -78,7 +78,7 @@ const AthleteIntelligence = () => {
   };
 
   useEffect(() => {
-    const saved = localStorage.getItem('user');
+    const saved = sessionStorage.getItem('user');
     if (saved) {
       try {
         const u = JSON.parse(saved);
@@ -97,7 +97,7 @@ const AthleteIntelligence = () => {
       .then(data => {
         setStudents(data);
         // Default select first student if role is coach/admin
-        const savedUser = JSON.parse(localStorage.getItem('user'));
+        const savedUser = JSON.parse(sessionStorage.getItem('user'));
         if (savedUser && savedUser.role !== 'athlete' && data.length > 0) {
           setSelectedStudentId(data[0].id.toString());
         }

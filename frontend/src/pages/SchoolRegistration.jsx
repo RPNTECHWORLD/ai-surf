@@ -43,7 +43,7 @@ const SchoolRegistration = () => {
         }),
       });
       if (res.ok) {
-        localStorage.setItem('activeSchool', JSON.stringify({
+        sessionStorage.setItem('activeSchool', JSON.stringify({
           name: formData.schoolName,
           owner: formData.ownerName,
           email: formData.email,
