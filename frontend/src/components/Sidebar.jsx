@@ -12,26 +12,31 @@ const Sidebar = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
-    // Load user profile context
+    let userSchoolName = null;
     const savedUser = sessionStorage.getItem('user');
     if (savedUser) {
       try {
-        setUser(JSON.parse(savedUser));
+        const parsed = JSON.parse(savedUser);
+        setUser(parsed);
+        if (parsed.school_name) userSchoolName = parsed.school_name;
       } catch (e) {}
     }
 
-    // Load active school profile context
     const savedSchool = sessionStorage.getItem('activeSchool');
     if (savedSchool) {
       try {
-        setSchool(JSON.parse(savedSchool));
+        const parsedSchool = JSON.parse(savedSchool);
+        if (userSchoolName) parsedSchool.name = userSchoolName;
+        setSchool(parsedSchool);
       } catch (e) {}
+    } else if (userSchoolName) {
+      setSchool({ name: userSchoolName });
     } else {
       fetch(`${API}/api/schools`)
         .then(res => res.json())
         .then(data => {
           if (data && data.length > 0) {
-            const latest = data[data.length - 1];
+            const latest = data[0]; // first registered school or user matching
             setSchool({
               name: latest.name,
               owner: latest.owner,
@@ -135,11 +140,11 @@ const Sidebar = () => {
             <div className="db-header-usertext">
               <div className="db-header-school-name">{school ? school.name : 'North Shore Academy'}</div>
               <div className="db-header-user-role" style={{ textTransform: 'capitalize' }}>
-                {user ? user.role : 'Administrator'}
+                {user ? (user.role === 'admin' ? 'School Admin' : user.role) : 'School Admin'}
               </div>
             </div>
             <div className="db-header-avatar" style={{ backgroundImage: user?.image ? `url(${user.image})` : 'none', backgroundSize: 'cover', backgroundPosition: 'center' }}>
-              {!user?.image && getInitials(user?.name || school?.owner || 'System Admin')}
+              {!user?.image && getInitials(user?.name || school?.owner || 'School Admin')}
             </div>
             <button className="db-header-logout" onClick={handleLogout} title="Log Out">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

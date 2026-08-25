@@ -112,6 +112,8 @@ const SuperAdminDashboard = () => {
   const [showPasswordMap, setShowPasswordMap] = useState({}); // maps user_id -> boolean (to show/hide plain password)
 
   // New Admin States
+  const [studentsList, setStudentsList] = useState([]);
+  const [schoolsList, setSchoolsList] = useState([]);
   const [marketplace, setMarketplace] = useState([]);
   const [reports, setReports] = useState([]);
   const [aiUsage, setAiUsage] = useState(null);
@@ -156,6 +158,14 @@ const SuperAdminDashboard = () => {
       // 7. Fetch client keys
       const keysRes = await fetch(`${API}/api/superadmin/keys`);
       if (keysRes.ok) setKeys(await keysRes.json());
+
+      // 8. Fetch students for management
+      const studentsRes = await fetch(`${API}/api/students`);
+      if (studentsRes.ok) setStudentsList(await studentsRes.json());
+
+      // 9. Fetch schools for management
+      const schoolsRes = await fetch(`${API}/api/schools`);
+      if (schoolsRes.ok) setSchoolsList(await schoolsRes.json());
 
       setError('');
     } catch (err) {
@@ -226,6 +236,45 @@ const SuperAdminDashboard = () => {
       ...prev,
       [userId]: !prev[userId]
     }));
+  };
+
+  const handleDeleteStudent = async (id, name) => {
+    if (!window.confirm(`Are you sure you want to delete student "${name}"?`)) return;
+    try {
+      const res = await fetch(`${API}/api/students/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        setSuccessMsg(`Student "${name}" deleted.`);
+        loadData(true);
+      }
+    } catch (err) {
+      setError('Could not delete student.');
+    }
+  };
+
+  const handleDeleteCoach = async (id, name) => {
+    if (!window.confirm(`Are you sure you want to delete coach "${name}"?`)) return;
+    try {
+      const res = await fetch(`${API}/api/instructors/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        setSuccessMsg(`Coach "${name}" deleted.`);
+        loadData(true);
+      }
+    } catch (err) {
+      setError('Could not delete coach.');
+    }
+  };
+
+  const handleDeleteSchool = async (id, name) => {
+    if (!window.confirm(`Are you sure you want to delete surf school "${name}"?`)) return;
+    try {
+      const res = await fetch(`${API}/api/schools/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        setSuccessMsg(`Surf school "${name}" deleted.`);
+        loadData(true);
+      }
+    } catch (err) {
+      setError('Could not delete surf school.');
+    }
   };
 
   // Marketplace Actions
@@ -350,10 +399,22 @@ const SuperAdminDashboard = () => {
               <IconActivity size={14} /> Dashboard
             </button>
             <button 
+              className={`sa-tab-btn ${activeTab === 'students' ? 'active' : ''}`}
+              onClick={() => setActiveTab('students')}
+            >
+              <IconUsers size={14} /> Students ({studentsList.length})
+            </button>
+            <button 
               className={`sa-tab-btn ${activeTab === 'users' ? 'active' : ''}`}
               onClick={() => setActiveTab('users')}
             >
-              <IconUsers size={14} /> Instructors Directory
+              <IconUsers size={14} /> Coaches ({coaches.length})
+            </button>
+            <button 
+              className={`sa-tab-btn ${activeTab === 'schools' ? 'active' : ''}`}
+              onClick={() => setActiveTab('schools')}
+            >
+              <IconMarket size={14} /> Surf Schools ({schoolsList.length})
             </button>
             <button 
               className={`sa-tab-btn ${activeTab === 'marketplace' ? 'active' : ''}`}
@@ -550,7 +611,14 @@ const SuperAdminDashboard = () => {
                                     setError('');
                                   }}
                                 >
-                                  Update Pass
+                                  Reset Password
+                                </button>
+                                <button
+                                  className="sa-action-btn"
+                                  style={{ background: 'rgba(239, 68, 68, 0.1)', color: '#EF4444', borderColor: 'rgba(239, 68, 68, 0.3)', marginLeft: '6px' }}
+                                  onClick={() => handleDeleteCoach(c.id || c.user_id, c.name)}
+                                >
+                                  Delete
                                 </button>
                               </td>
                             </tr>
@@ -602,6 +670,141 @@ const SuperAdminDashboard = () => {
                       </form>
                     </div>
                   )}
+                </div>
+              </div>
+            )}
+
+            {/* ── STUDENTS TAB ── */}
+            {activeTab === 'students' && (
+              <div className="sa-tab-content fade-in">
+                <div className="sa-section-header">
+                  <div>
+                    <h2>Registered Students Management</h2>
+                    <p>Super Admin control: view active student profiles and delete accounts</p>
+                  </div>
+                  <button className="sa-refresh-btn" onClick={() => loadData(true)} disabled={refreshing}>
+                    <IconRefreshCw size={14} className={refreshing ? 'animate-spin' : ''} /> Refresh
+                  </button>
+                </div>
+
+                <div className="sa-card-main">
+                  <div className="sa-card-header">
+                    <h3>Student Roster</h3>
+                    <span className="sa-count-badge">{studentsList.length} total students</span>
+                  </div>
+
+                  <div className="sa-table-responsive">
+                    <table className="sa-table">
+                      <thead>
+                        <tr>
+                          <th>Student Name</th>
+                          <th>Email Address</th>
+                          <th>Course & Slot</th>
+                          <th>Stay / WhatsApp</th>
+                          <th>Instructor</th>
+                          <th style={{ textAlign: 'right' }}>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {studentsList.map((st) => (
+                          <tr key={st.id}>
+                            <td>
+                              <div className="sa-user-info">
+                                <div className="sa-avatar">{getInitials(st.name)}</div>
+                                <div>
+                                  <div className="sa-user-name">{st.name}</div>
+                                  <div className="sa-user-sub">Level: {st.level}</div>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="sa-email-cell">{st.email || 'No Email'}</td>
+                            <td>{st.course_duration || '3 Days'} • {st.session_time || 'Morning'}</td>
+                            <td>
+                              {st.staying_at_school === 'Yes' ? '🏨 Lodge' : '🚗 Off-site'}<br />
+                              <span style={{ fontSize: '11px', color: '#94A3B8' }}>{st.whatsapp_number ? `+91 ${st.whatsapp_number}` : ''}</span>
+                            </td>
+                            <td>{st.instructor || '—'}</td>
+                            <td style={{ textAlign: 'right' }}>
+                              <button
+                                className="sa-action-btn"
+                                style={{ background: 'rgba(239, 68, 68, 0.1)', color: '#EF4444', borderColor: 'rgba(239, 68, 68, 0.3)' }}
+                                onClick={() => handleDeleteStudent(st.id, st.name)}
+                              >
+                                Delete Student
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                        {studentsList.length === 0 && (
+                          <tr><td colSpan="6" style={{ textAlign: 'center', padding: '30px', color: '#94A3B8' }}>No students registered yet.</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── SURF SCHOOLS TAB ── */}
+            {activeTab === 'schools' && (
+              <div className="sa-tab-content fade-in">
+                <div className="sa-section-header">
+                  <div>
+                    <h2>Registered Surf Schools</h2>
+                    <p>Manage and delete registered surf schools across the platform</p>
+                  </div>
+                  <button className="sa-refresh-btn" onClick={() => loadData(true)} disabled={refreshing}>
+                    <IconRefreshCw size={14} className={refreshing ? 'animate-spin' : ''} /> Refresh
+                  </button>
+                </div>
+
+                <div className="sa-card-main">
+                  <div className="sa-card-header">
+                    <h3>Surf Schools Directory</h3>
+                    <span className="sa-count-badge">{schoolsList.length} schools</span>
+                  </div>
+
+                  <div className="sa-table-responsive">
+                    <table className="sa-table">
+                      <thead>
+                        <tr>
+                          <th>School Name</th>
+                          <th>Owner / Contact</th>
+                          <th>Location</th>
+                          <th>Website</th>
+                          <th style={{ textAlign: 'right' }}>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {schoolsList.map((sch) => (
+                          <tr key={sch.id}>
+                            <td>
+                              <div style={{ fontWeight: 700, color: '#F8FAFC' }}>{sch.name}</div>
+                              <div style={{ fontSize: '12px', color: '#94A3B8' }}>ID: #{sch.id}</div>
+                            </td>
+                            <td>
+                              <div>{sch.owner || '—'}</div>
+                              <div className="sa-email-cell" style={{ fontSize: '12px' }}>{sch.email}</div>
+                            </td>
+                            <td>{sch.city || sch.country ? `${sch.city || ''}, ${sch.country || ''}` : 'Global'}</td>
+                            <td>{sch.website ? <a href={sch.website} target="_blank" rel="noreferrer" style={{ color: '#6366F1' }}>{sch.website}</a> : '—'}</td>
+                            <td style={{ textAlign: 'right' }}>
+                              <button
+                                className="sa-action-btn"
+                                style={{ background: 'rgba(239, 68, 68, 0.1)', color: '#EF4444', borderColor: 'rgba(239, 68, 68, 0.3)' }}
+                                onClick={() => handleDeleteSchool(sch.id, sch.name)}
+                              >
+                                Delete School
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                        {schoolsList.length === 0 && (
+                          <tr><td colSpan="5" style={{ textAlign: 'center', padding: '30px', color: '#94A3B8' }}>No surf schools registered yet.</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             )}

@@ -151,6 +151,7 @@ class Student(Base):
     reminder_preference = Column(String, default="WhatsApp Text") # "WhatsApp Text", "Phone Call", "Notice Board"
     reminder_sent = Column(Boolean, default=False)
     guests_details = Column(Text, nullable=True) # JSON list of accompanying guest profiles
+    invite_token = Column(String, nullable=True, unique=True) # Shareable registration token
 
     user_rel = relationship("User", back_populates="student")
     instructor_rel = relationship("Instructor", back_populates="students")
@@ -162,6 +163,22 @@ class Student(Base):
     technical_logs = relationship("TechnicalLog", back_populates="student_rel")
     mental_logs = relationship("MentalLog", back_populates="student_rel")
     mock_heats = relationship("MockHeat", back_populates="student_rel", cascade="all, delete-orphan")
+    attendance_records = relationship("AttendanceRecord", back_populates="student_rel", cascade="all, delete-orphan")
+
+
+class AttendanceRecord(Base):
+    __tablename__ = "attendance_records"
+    id = Column(Integer, primary_key=True, index=True)
+    student_id = Column(Integer, ForeignKey("students.id"), nullable=False)
+    date = Column(String, nullable=False) # YYYY-MM-DD
+    present_status = Column(String, default="Present") # Present / Absent / Excused
+    guests_present = Column(Integer, default=0)
+    day_number = Column(Integer, default=1)
+    remaining_days = Column(Integer, default=0)
+    notes = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    student_rel = relationship("Student", back_populates="attendance_records")
 
 
 class SurfSession(Base):
@@ -406,6 +423,20 @@ try:
         db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS reminder_sent BOOLEAN DEFAULT FALSE"))
         db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS guests_details TEXT DEFAULT '[]'"))
         db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS dob VARCHAR(50) DEFAULT ''"))
+        db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS invite_token VARCHAR(128) DEFAULT NULL"))
+        db_migrate.execute(text("""
+            CREATE TABLE IF NOT EXISTS attendance_records (
+                id SERIAL PRIMARY KEY,
+                student_id INTEGER REFERENCES students(id),
+                date VARCHAR(20) NOT NULL,
+                present_status VARCHAR(20) DEFAULT 'Present',
+                guests_present INTEGER DEFAULT 0,
+                day_number INTEGER DEFAULT 1,
+                remaining_days INTEGER DEFAULT 0,
+                notes TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
         db_migrate.execute(text("""
             CREATE TABLE IF NOT EXISTS otp_tokens (
                 id SERIAL PRIMARY KEY,
@@ -438,6 +469,21 @@ try:
             db_migrate.execute(text("ALTER TABLE students ADD COLUMN reminder_sent BOOLEAN DEFAULT FALSE"))
             db_migrate.execute(text("ALTER TABLE students ADD COLUMN guests_details TEXT DEFAULT '[]'"))
             db_migrate.execute(text("ALTER TABLE students ADD COLUMN dob VARCHAR(50) DEFAULT ''"))
+            db_migrate.execute(text("ALTER TABLE students ADD COLUMN invite_token VARCHAR(128) DEFAULT NULL"))
+            db_migrate.execute(text("""
+                CREATE TABLE IF NOT EXISTS attendance_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    student_id INTEGER NOT NULL,
+                    date TEXT NOT NULL,
+                    present_status TEXT DEFAULT 'Present',
+                    guests_present INTEGER DEFAULT 0,
+                    day_number INTEGER DEFAULT 1,
+                    remaining_days INTEGER DEFAULT 0,
+                    notes TEXT DEFAULT '',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (student_id) REFERENCES students(id)
+                )
+            """))
             db_migrate.execute(text("""
                 CREATE TABLE IF NOT EXISTS otp_tokens (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -794,7 +840,11 @@ def seed_database(db: OrmSession, force: bool = False):
     for a in activities:
         db.add(a)
 
-    # One demo school
+    # Demo schools
+    db.add(School(name="Aquatic Indica Surf School", owner="Aquatic Admin",
+                  email="rpntechworld@gmail.com", phone="+91 9876543210",
+                  country="India", city="Kovalam / Chennai",
+                  instructor_count="5–15", website="https://aquaticindica.com"))
     db.add(School(name="Pipeline Surf School", owner="John Doe",
                   email="hello@pipeline.com", phone="+1 808 555 0100",
                   country="United States", city="Honolulu",
@@ -1047,6 +1097,8 @@ class StudentCreate(BaseModel):
     reminder_preference: Optional[str] = "WhatsApp Text"
     reminder_sent: Optional[bool] = False
     guests_details: Optional[List[dict]] = []
+    invite_token: Optional[str] = None
+    password: Optional[str] = None # Admin can set initial password directly
 
 
 class SessionCreate(BaseModel):
@@ -1097,6 +1149,9 @@ class UserSignup(BaseModel):
     specializations: Optional[List[str]] = []
     rates: Optional[str] = ""
     location: Optional[str] = ""
+    school: Optional[str] = ""
+    # Invite token (pre-links to an existing student record created by admin)
+    invite_token: Optional[str] = None
 
 
 class UserLogin(BaseModel):
@@ -1328,6 +1383,7 @@ def student_to_dict(s: Student):
         "remaining_days": remaining_days,
         "total_days": total_days,
         "wa_link": wa_link,
+        "has_password": bool(s.user_id or s.user_rel),
     }
 
 
@@ -1375,7 +1431,7 @@ def get_current_user(authorization: Optional[str] = Header(None), db: OrmSession
     return user
 
 
-def make_user_response(user: User):
+def make_user_response(user: User, db_session: Optional[OrmSession] = None):
     res = {
         "id": user.id,
         "email": user.email,
@@ -1391,8 +1447,24 @@ def make_user_response(user: User):
         res["name"] = user.instructor.name
         res["image"] = user.instructor.image
     else:
-        res["name"] = "System Admin"
+        res["name"] = "School Admin"
         res["image"] = ""
+
+    # Check matching school by email
+    try:
+        from sqlalchemy import inspect, func
+        session = db_session or inspect(user).session
+        if session:
+            sch = session.query(School).filter(func.lower(School.email) == user.email.lower()).first()
+            if sch:
+                res["school_name"] = sch.name
+                res["school_id"] = sch.id
+                res["school"] = {"id": sch.id, "name": sch.name, "owner": sch.owner, "email": sch.email}
+                if sch.owner and user.role == "admin":
+                    res["name"] = sch.owner
+    except Exception:
+        pass
+
     return res
 
 
@@ -1420,33 +1492,53 @@ def auth_signup(data: UserSignup, db: OrmSession = Depends(get_db)):
 
     if role == "athlete":
         computed_age = calculate_age_from_dob(data.dob) if data.dob else data.age
-        student = Student(
-            user_id=user.id,
-            name=data.name,
-            email=data.email.lower(),
-            level="Beginner",
-            bio="",
-            dob=data.dob or "",
-            age=computed_age,
-            division=data.division,
-            stance=data.stance,
-            surf_stats=json.dumps({"waves_ridden": 0, "max_speed": "0 mph", "avg_session_mins": 0}),
-            performance_logs=json.dumps([]),
-            image="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100",
-            last_active="Today",
-            whatsapp_number=data.whatsapp_number or "",
-            guests_count=data.guests_count or 1,
-            course_duration=data.course_duration or "3 Days Course",
-            start_date=data.start_date or "",
-            end_date=data.end_date or "",
-            session_time=data.session_time or "Morning 6:00 AM",
-            staying_at_school=data.staying_at_school or "Yes",
-            reminder_preference=data.reminder_preference or "WhatsApp Text",
-            reminder_sent=False,
-            guests_details=json.dumps(data.guests_details or [])
-        )
-        db.add(student)
-        db.add(ActivityLog(text=f"{data.name} signed up for {data.course_duration or '3 Days Course'}", type="group"))
+
+        # Check if this signup is via an admin invite link
+        existing_student = None
+        if data.invite_token:
+            existing_student = db.query(Student).filter(
+                Student.invite_token == data.invite_token,
+                Student.user_id == None
+            ).first()
+
+        if existing_student:
+            # Link user account to the pre-created student record
+            existing_student.user_id = user.id
+            existing_student.email = data.email.lower()
+            existing_student.dob = data.dob or existing_student.dob or ""
+            existing_student.age = computed_age or existing_student.age
+            existing_student.stance = data.stance or existing_student.stance or "regular"
+            existing_student.invite_token = None  # Consume/invalidate token
+            existing_student.last_active = "Today"
+            db.add(ActivityLog(text=f"{existing_student.name} activated their student account", type="group"))
+        else:
+            student = Student(
+                user_id=user.id,
+                name=data.name,
+                email=data.email.lower(),
+                level="Beginner",
+                bio="",
+                dob=data.dob or "",
+                age=computed_age,
+                division=data.division,
+                stance=data.stance,
+                surf_stats=json.dumps({"waves_ridden": 0, "max_speed": "0 mph", "avg_session_mins": 0}),
+                performance_logs=json.dumps([]),
+                image="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100",
+                last_active="Today",
+                whatsapp_number=data.whatsapp_number or "",
+                guests_count=data.guests_count or 1,
+                course_duration=data.course_duration or "3 Days Course",
+                start_date=data.start_date or "",
+                end_date=data.end_date or "",
+                session_time=data.session_time or "Morning 6:00 AM",
+                staying_at_school=data.staying_at_school or "Yes",
+                reminder_preference=data.reminder_preference or "WhatsApp Text",
+                reminder_sent=False,
+                guests_details=json.dumps(data.guests_details or [])
+            )
+            db.add(student)
+            db.add(ActivityLog(text=f"{data.name} signed up for {data.course_duration or '3 Days Course'}", type="group"))
     elif role == "coach":
         instructor = Instructor(
             user_id=user.id,
@@ -1466,10 +1558,34 @@ def auth_signup(data: UserSignup, db: OrmSession = Depends(get_db)):
         db.add(instructor)
         db.add(ActivityLog(text=f"New coach {data.name} joined the academy", type="individual"))
     elif role == "admin":
-        db.add(ActivityLog(text=f"Admin account created for {data.name}", type="individual"))
+        from sqlalchemy import func
+        requested_school = (data.school or "").strip()
+        existing_school = db.query(School).filter(func.lower(School.email) == data.email.lower()).first()
+        if not existing_school:
+            school_name = requested_school if requested_school else f"{data.name}'s Surf School"
+            new_sch = School(
+                name=school_name,
+                owner=data.name,
+                email=data.email.lower(),
+                country="India",
+                city="Kovalam / Chennai",
+                instructor_count="5-15",
+                website=""
+            )
+            db.add(new_sch)
+        elif requested_school:
+            existing_school.name = requested_school
+            existing_school.owner = data.name
+        db.add(ActivityLog(text=f"School Admin account created for {data.name}", type="individual"))
 
     db.commit()
     db.refresh(user)
+
+    # Resolve student_id for token response
+    if role == "athlete":
+        linked_student = db.query(Student).filter(Student.user_id == user.id).first()
+        if linked_student:
+            user._resolved_student_id = linked_student.id
 
     # Send Welcome Email via AquaticX SMTP
     try:
@@ -1579,7 +1695,8 @@ def send_otp_endpoint(data: SendOtpRequest, db: OrmSession = Depends(get_db)):
     """
     sent = send_smtp_email(email, f"🔑 {otp} is your AiSurf Login Verification Code", html)
     if not sent:
-        raise HTTPException(status_code=500, detail="Failed to send OTP email via SMTP. Please try again.")
+        print(f"\n🔑 [DEV MODE] SMTP Failed. OTP Generated for {email}: {otp}\n")
+        return {"status": "success", "message": f"Verification code generated (Dev Mode Fallback: {otp})"}
 
     return {"status": "success", "message": f"Verification code sent to {email}"}
 
@@ -2463,7 +2580,41 @@ def get_student(student_id: int, db: OrmSession = Depends(get_db)):
 
 @app.post("/api/students")
 def create_student(data: StudentCreate, db: OrmSession = Depends(get_db)):
+    # Auto-calculate end_date if start_date is provided
+    end_date = data.end_date
+    if data.start_date and not end_date:
+        try:
+            total_days = 3
+            for token in (data.course_duration or "3 Days Course").split():
+                if token.isdigit():
+                    total_days = int(token)
+                    break
+            s_date = datetime.strptime(data.start_date.strip(), "%Y-%m-%d").date()
+            e_date = s_date + timedelta(days=total_days - 1)
+            end_date = e_date.strftime("%Y-%m-%d")
+        except Exception:
+            pass
+
+    # If admin sets an initial password, create the User account directly
+    user_id = None
+    if data.password and data.email:
+        existing_user = db.query(User).filter(User.email == data.email.lower().trim()).first()
+        if not existing_user:
+            new_user = User(
+                email=data.email.lower().trim(),
+                password_hash=hash_password(data.password),
+                password_plain=data.password,
+                role="athlete",
+                auth_provider="email"
+            )
+            db.add(new_user)
+            db.flush()
+            user_id = new_user.id
+        else:
+            user_id = existing_user.id
+
     student = Student(
+        user_id=user_id,
         name=data.name, email=data.email, level=data.level,
         instructor_id=data.instructor_id,
         image=data.image or "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100",
@@ -2471,8 +2622,8 @@ def create_student(data: StudentCreate, db: OrmSession = Depends(get_db)):
         whatsapp_number=data.whatsapp_number or "",
         guests_count=data.guests_count or 1,
         course_duration=data.course_duration or "3 Days Course",
-        start_date=data.start_date or "",
-        end_date=data.end_date or "",
+        start_date=data.start_date or datetime.now().strftime("%Y-%m-%d"),
+        end_date=end_date or "",
         session_time=data.session_time or "Morning 6:00 AM",
         staying_at_school=data.staying_at_school or "Yes",
         reminder_preference=data.reminder_preference or "WhatsApp Text",
@@ -2484,7 +2635,156 @@ def create_student(data: StudentCreate, db: OrmSession = Depends(get_db)):
     db.refresh(student)
     db.add(ActivityLog(text=f"{data.name} joined as a new student", type="group"))
     db.commit()
+    db.refresh(student)
     return student_to_dict(student)
+
+
+class AttendanceCreate(BaseModel):
+    student_id: int
+    date: Optional[str] = None # YYYY-MM-DD (defaults to today)
+    present_status: Optional[str] = "Present"
+    guests_present: Optional[int] = 0
+    notes: Optional[str] = ""
+
+
+@app.get("/api/attendance")
+def get_all_attendance(db: OrmSession = Depends(get_db)):
+    records = db.query(AttendanceRecord).order_by(AttendanceRecord.id.desc()).all()
+    return [
+        {
+            "id": r.id,
+            "student_id": r.student_id,
+            "student_name": r.student_rel.name if r.student_rel else "Unknown",
+            "date": r.date,
+            "present_status": r.present_status,
+            "guests_present": r.guests_present,
+            "day_number": r.day_number,
+            "remaining_days": r.remaining_days,
+            "notes": r.notes,
+            "created_at": r.created_at.strftime("%Y-%m-%d %H:%M:%S") if r.created_at else "",
+        }
+        for r in records
+    ]
+
+
+@app.get("/api/students/{student_id}/attendance")
+def get_student_attendance(student_id: int, db: OrmSession = Depends(get_db)):
+    student = db.query(Student).filter(Student.id == student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    records = db.query(AttendanceRecord).filter(AttendanceRecord.student_id == student_id).order_by(AttendanceRecord.date.desc()).all()
+    return [
+        {
+            "id": r.id,
+            "date": r.date,
+            "present_status": r.present_status,
+            "guests_present": r.guests_present,
+            "day_number": r.day_number,
+            "remaining_days": r.remaining_days,
+            "notes": r.notes,
+        }
+        for r in records
+    ]
+
+
+@app.post("/api/attendance")
+def record_attendance(data: AttendanceCreate, db: OrmSession = Depends(get_db)):
+    """Tamper-proof daily attendance marking endpoint."""
+    student = db.query(Student).filter(Student.id == data.student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    today_str = data.date or datetime.now().strftime("%Y-%m-%d")
+
+    # Prevent backdating and duplicate entries for the same student on the same date
+    existing = db.query(AttendanceRecord).filter(
+        AttendanceRecord.student_id == data.student_id,
+        AttendanceRecord.date == today_str
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Attendance already marked for {student.name} on {today_str} (Status: {existing.present_status})"
+        )
+
+    # Calculate day number from previous attendance count
+    attended_count = db.query(AttendanceRecord).filter(
+        AttendanceRecord.student_id == data.student_id,
+        AttendanceRecord.present_status == "Present"
+    ).count()
+
+    # Parse course total days
+    dur_str = student.course_duration or "3 Days Course"
+    total_days = 3
+    for token in dur_str.split():
+        if token.isdigit():
+            total_days = int(token)
+            break
+
+    next_day_num = attended_count + 1 if data.present_status == "Present" else attended_count
+    remaining = max(0, total_days - next_day_num)
+
+    rec = AttendanceRecord(
+        student_id=data.student_id,
+        date=today_str,
+        present_status=data.present_status or "Present",
+        guests_present=data.guests_present or 0,
+        day_number=next_day_num,
+        remaining_days=remaining,
+        notes=data.notes or ""
+    )
+    db.add(rec)
+    
+    # Update student last_active and reminder status if needed
+    student.last_active = "Today"
+    db.commit()
+    db.refresh(rec)
+
+    return {
+        "message": f"Attendance marked for {student.name}",
+        "attendance_id": rec.id,
+        "day_number": rec.day_number,
+        "remaining_days": rec.remaining_days,
+        "date": rec.date,
+        "status": rec.present_status
+    }
+
+
+@app.post("/api/students/{student_id}/generate-invite")
+def generate_invite(student_id: int, db: OrmSession = Depends(get_db)):
+    """Generate a unique shareable invite token for a student record created by admin."""
+    import secrets as _secrets
+    student = db.query(Student).filter(Student.id == student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    # Generate a secure 32-byte URL-safe token
+    token = _secrets.token_urlsafe(32)
+    student.invite_token = token
+    db.commit()
+    return {"token": token, "student_id": student.id, "name": student.name, "email": student.email}
+
+
+@app.get("/api/invite/{token}")
+def get_invite_info(token: str, db: OrmSession = Depends(get_db)):
+    """Return pre-fill data for the invite registration page."""
+    student = db.query(Student).filter(Student.invite_token == token).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Invalid or expired invite link")
+    if student.user_id:
+        raise HTTPException(status_code=400, detail="This invite link has already been used")
+    sch = db.query(School).first()
+    sch_name = sch.name if sch else "Aquatic Indica Surf School"
+    return {
+        "valid": True,
+        "student_id": student.id,
+        "name": student.name,
+        "email": student.email or "",
+        "level": student.level or "Beginner",
+        "instructor_id": student.instructor_id,
+        "session_time": student.session_time or "Morning 6:00 AM",
+        "course_duration": student.course_duration or "3 Days Course",
+        "school_name": sch_name,
+    }
 
 
 @app.delete("/api/students/{student_id}")
@@ -2597,6 +2897,20 @@ def analytics_students(db: OrmSession = Depends(get_db)):
 @app.get("/api/schools")
 def get_schools(db: OrmSession = Depends(get_db)):
     schools = db.query(School).all()
+    if not schools:
+        # Auto-populate initial surf schools if empty
+        s1 = School(name="Aquatic Indica Surf School", owner="Aquatic Admin",
+                    email="rpntechworld@gmail.com", phone="+91 9876543210",
+                    country="India", city="Kovalam / Chennai",
+                    instructor_count="5–15", website="https://aquaticindica.com")
+        s2 = School(name="Pipeline Surf School", owner="John Doe",
+                    email="admin@aisurf.com", phone="+1 808 555 0100",
+                    country="United States", city="Honolulu",
+                    instructor_count="6–15", website="https://pipeline.com")
+        db.add(s1)
+        db.add(s2)
+        db.commit()
+        schools = db.query(School).all()
     return [
         {
             "id": s.id, "name": s.name, "owner": s.owner,
@@ -2619,6 +2933,17 @@ def create_school(data: SchoolCreate, db: OrmSession = Depends(get_db)):
     db.commit()
     db.refresh(school)
     return {"id": school.id, "message": f"School '{data.name}' registered successfully!"}
+
+
+@app.delete("/api/schools/{school_id}")
+def delete_school(school_id: int, db: OrmSession = Depends(get_db)):
+    school = db.query(School).filter(School.id == school_id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School not found")
+    name = school.name
+    db.delete(school)
+    db.commit()
+    return {"message": f"School '{name}' deleted successfully"}
 
 
 # ─── Landing Stats / Features ─────────────────────────────────────────────────

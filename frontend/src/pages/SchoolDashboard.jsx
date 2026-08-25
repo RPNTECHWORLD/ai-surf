@@ -19,10 +19,12 @@ const SchoolDashboard = () => {
   const [school, setSchool] = useState(null);
 
   useEffect(() => {
+    let userSchoolName = null;
     const savedUser = sessionStorage.getItem('user');
     if (savedUser) {
       try {
         const parsedUser = JSON.parse(savedUser);
+        if (parsedUser.school_name) userSchoolName = parsedUser.school_name;
         if (parsedUser.role === 'athlete') {
           navigate(`/students/${parsedUser.student_id || parsedUser.id || 1}`);
           return;
@@ -36,8 +38,12 @@ const SchoolDashboard = () => {
     const savedSchool = sessionStorage.getItem('activeSchool');
     if (savedSchool) {
       try {
-        setSchool(JSON.parse(savedSchool));
+        const parsedSchool = JSON.parse(savedSchool);
+        if (userSchoolName) parsedSchool.name = userSchoolName;
+        setSchool(parsedSchool);
       } catch (e) {}
+    } else if (userSchoolName) {
+      setSchool({ name: userSchoolName });
     } else {
       fetch(`${API}/api/schools`)
         .then(res => res.json())

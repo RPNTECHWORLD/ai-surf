@@ -13,12 +13,30 @@ const StudentsManagement = () => {
   const [levelFilter, setLevelFilter] = useState('All');
   const [instructorFilter, setInstructorFilter] = useState('All');
   const [sessionTimeFilter, setSessionTimeFilter] = useState('All');
+  const [stayFilter, setStayFilter] = useState('All');
   const [showModal, setShowModal] = useState(false);
+  const [modalInvite, setModalInvite] = useState(null); // link shown inside the add-student modal after creation
+  const [attendanceModal, setAttendanceModal] = useState(null); // student object to mark attendance
+  const [attSaving, setAttSaving] = useState(false);
+  const [attError, setAttError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [form, setForm] = useState({
-    name: '', email: '', level: 'Beginner', instructor_id: '',
-    whatsapp_number: '', course_duration: '3 Days Course', session_time: 'Morning 6:00 AM'
+    name: '', email: '', password: '', level: 'Beginner', instructor_id: '',
+    whatsapp_number: '', course_duration: '3 Days Course', session_time: 'Morning 6:00 AM',
+    start_date: new Date().toISOString().split('T')[0], staying_at_school: 'Yes'
   });
+
+  const closeModal = () => {
+    setShowModal(false);
+    setModalInvite(null);
+    setCopied(false);
+    setForm({
+      name: '', email: '', password: '', level: 'Beginner', instructor_id: '',
+      whatsapp_number: '', course_duration: '3 Days Course', session_time: 'Morning 6:00 AM',
+      start_date: new Date().toISOString().split('T')[0], staying_at_school: 'Yes'
+    });
+  };
 
   const fetchStudents = () => {
     fetch(`${API}/api/students`)
@@ -45,7 +63,8 @@ const StudentsManagement = () => {
     const matchLevel = levelFilter === 'All' || s.level === levelFilter;
     const matchInstructor = instructorFilter === 'All' || s.instructor === instructorFilter;
     const matchSession = sessionTimeFilter === 'All' || s.session_time === sessionTimeFilter;
-    return matchSearch && matchLevel && matchInstructor && matchSession;
+    const matchStay = stayFilter === 'All' || (stayFilter === 'Lodge' ? s.staying_at_school === 'Yes' : s.staying_at_school === 'No');
+    return matchSearch && matchLevel && matchInstructor && matchSession && matchStay;
   });
 
   const stats = [
@@ -66,14 +85,34 @@ const StudentsManagement = () => {
         body: JSON.stringify({
           name: form.name,
           email: form.email,
+          password: form.password || undefined,
           level: form.level,
           instructor_id: form.instructor_id ? parseInt(form.instructor_id) : null,
+          whatsapp_number: form.whatsapp_number,
+          course_duration: form.course_duration,
+          session_time: form.session_time,
+          start_date: form.start_date,
+          staying_at_school: form.staying_at_school,
         }),
       });
       if (res.ok) {
-        setShowModal(false);
-        setForm({ name: '', email: '', level: 'Beginner', instructor_id: '' });
+        const newStudent = await res.json();
         fetchStudents();
+        const baseUrl = window.location.origin;
+        let inviteToken = `inv_${Date.now()}`;
+        try {
+          const invRes = await fetch(`${API}/api/students/${newStudent.id}/generate-invite`, { method: 'POST' });
+          if (invRes.ok) {
+            const invData = await invRes.json();
+            if (invData.token) inviteToken = invData.token;
+          }
+        } catch (err) {}
+
+        setModalInvite({
+          name: form.name,
+          email: form.email,
+          link: `${baseUrl}/auth?invite=${inviteToken}`,
+        });
       }
     } catch (err) {}
     setSaving(false);
@@ -121,6 +160,11 @@ const StudentsManagement = () => {
             <option value="Morning 8:00 AM">Morning 8:00 AM</option>
             <option value="Evening 4:00 PM">Evening 4:00 PM</option>
           </select>
+          <select className="sm-select" value={stayFilter} onChange={e => setStayFilter(e.target.value)}>
+            <option value="All">Stay: All</option>
+            <option value="Lodge">On-site Lodge</option>
+            <option value="Offsite">Off-site Stay</option>
+          </select>
         </div>
 
         {/* Stats */}
@@ -145,7 +189,8 @@ const StudentsManagement = () => {
                   <th>Course Progress</th>
                   <th>Session & Stay</th>
                   <th>Primary Instructor</th>
-                  <th>Reminders</th>
+                  <th>Attendance</th>
+                  <th>Invite</th>
                   <th></th>
                 </tr>
               </thead>
@@ -189,28 +234,49 @@ const StudentsManagement = () => {
                     </td>
                     <td className="sm-instructor-text">{s.instructor || '—'}</td>
                     <td>
-                      {s.wa_link ? (
-                        <a 
-                          href={s.wa_link} 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          style={{
-                            display: 'inline-flex', alignItems: 'center', gap: '6px',
-                            background: 'rgba(37, 211, 102, 0.12)', color: '#16A34A',
-                            border: '1px solid rgba(37, 211, 102, 0.3)', padding: '6px 12px',
-                            borderRadius: '8px', fontSize: '12px', fontWeight: 700, textDecoration: 'none'
-                          }}
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.481 5.236 3.48 8.414-.003 6.557-5.338 11.892-11.893 11.892-1.99-.001-3.951-.5-5.688-1.448l-6.305 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884-.001 2.225.651 3.891 1.746 5.634l-.999 3.648 3.742-.981zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/>
-                          </svg>
-                          <span>WA Chat</span>
-                        </a>
-                      ) : (
-                        <span style={{ fontSize: '11px', color: '#94A3B8' }}>No WA</span>
-                      )}
+                      <button
+                        className="sm-invite-btn"
+                        style={{ background: 'rgba(16, 185, 129, 0.08)', color: '#10B981', borderColor: 'rgba(16, 185, 129, 0.25)' }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setAttendanceModal(s);
+                        }}
+                      >
+                        ✓ Mark Daily
+                      </button>
                     </td>
+                    <td style={{ textAlign: 'right' }}>
+                        {!s.user_id && (
+                          <button
+                            className="sm-invite-btn"
+                            title="Generate & copy invite link"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              try {
+                                const invRes = await fetch(`${API}/api/students/${s.id}/generate-invite`, { method: 'POST' });
+                                if (invRes.ok) {
+                                  const invData = await invRes.json();
+                                  const baseUrl = window.location.origin;
+                                  setModalInvite({
+                                    name: s.name,
+                                    email: s.email,
+                                    link: `${baseUrl}/auth?invite=${invData.token}`,
+                                  });
+                                }
+                              } catch (err) {}
+                            }}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                            Invite
+                          </button>
+                        )}
+                        {s.user_id && (
+                          <span style={{ fontSize: '11px', color: '#10B981', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                            Joined
+                          </span>
+                        )}
+                      </td>
                     <td style={{ textAlign: 'right' }}>
                       <button className="sm-action-btn" onClick={e => { e.stopPropagation(); navigate(`/students/${s.id}`); }}>
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
@@ -231,42 +297,167 @@ const StudentsManagement = () => {
         </div>
       </main>
 
-      {/* Add Student Modal */}
+      {/* Direct Invite Link Modal */}
       {showModal && (
-        <div className="sm-modal-overlay" onClick={() => setShowModal(false)}>
-          <div className="sm-modal" onClick={e => e.stopPropagation()}>
+        <div className="sm-modal-overlay" onClick={closeModal}>
+          <div className="sm-modal sm-invite-modal" onClick={e => e.stopPropagation()}>
             <div className="sm-modal-header">
-              <h3 className="sm-modal-title">Add New Student</h3>
-              <button className="sm-modal-close" onClick={() => setShowModal(false)}>
+              <h3 className="sm-modal-title">📬 Student Registration Link</h3>
+              <button className="sm-modal-close" onClick={closeModal}>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               </button>
             </div>
-            <form onSubmit={handleAdd} className="sm-modal-form">
-              <div className="sm-field">
-                <label>Full Name</label>
-                <input type="text" placeholder="e.g. Alex Torres" value={form.name} onChange={e => setForm({...form, name: e.target.value})} required />
+
+            <div className="invite-success-banner" style={{ background: 'rgba(13, 148, 136, 0.08)', border: '1px solid rgba(13, 148, 136, 0.25)' }}>
+              <div className="invite-success-icon" style={{ background: '#0D9488', color: '#FFF' }}>🏄</div>
+              <div>
+                <div className="invite-success-title" style={{ color: '#0F172A' }}>{modalInvite?.schoolName || 'Surf School'} Registration Link</div>
+                <div className="invite-success-sub" style={{ color: '#475569' }}>Share this link with students. When they register, they will automatically be assigned to your school!</div>
               </div>
-              <div className="sm-field">
-                <label>Email Address</label>
-                <input type="email" placeholder="alex@example.com" value={form.email} onChange={e => setForm({...form, email: e.target.value})} required />
+            </div>
+
+            <div className="invite-link-section" style={{ marginTop: '16px' }}>
+              <div style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>Official Registration Link</div>
+              <div className="invite-link-box">
+                <input
+                  type="text"
+                  readOnly
+                  value={modalInvite?.link || `${window.location.origin}/auth`}
+                  className="invite-link-input"
+                  onClick={e => e.target.select()}
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  className={`invite-copy-btn ${copied ? 'copied' : ''}`}
+                  onClick={() => {
+                    navigator.clipboard.writeText(modalInvite?.link || `${window.location.origin}/auth`);
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2500);
+                  }}
+                >
+                  {copied ? '✓ Copied!' : 'Copy Link'}
+                </button>
               </div>
-              <div className="sm-field">
-                <label>Skill Level</label>
-                <select value={form.level} onChange={e => setForm({...form, level: e.target.value})}>
-                  {levels.map(l => <option key={l}>{l}</option>)}
-                </select>
+            </div>
+
+            <div className="invite-actions" style={{ marginTop: '20px', display: 'flex', gap: '10px' }}>
+              <a
+                href={`https://wa.me/?text=${encodeURIComponent(`Aloha! Here is your official registration link for ${modalInvite?.schoolName}: ${modalInvite?.link}`)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="invite-action-btn invite-wa"
+                style={{ flex: 1, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+              >
+                💬 WhatsApp Share
+              </a>
+              <button
+                type="button"
+                className="sm-btn-primary"
+                style={{ flex: 1 }}
+                onClick={() => {
+                  closeModal();
+                  window.open(modalInvite?.link, '_blank');
+                }}
+              >
+                Open Signup Page ↗
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Daily Attendance Modal — Tamper-Proof Attendance Marking */}
+      {attendanceModal && (
+        <div className="sm-modal-overlay" onClick={() => setAttendanceModal(null)}>
+          <div className="sm-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '440px' }}>
+            <div className="sm-modal-header">
+              <h3 className="sm-modal-title">📋 Mark Attendance</h3>
+              <button className="sm-modal-close" onClick={() => setAttendanceModal(null)}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+
+            <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '12px', padding: '14px', marginBottom: '16px' }}>
+              <div style={{ fontWeight: 700, fontSize: '15px', color: '#0F172A' }}>{attendanceModal.name}</div>
+              <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>
+                Course: {attendanceModal.course_duration || '3 Days Course'} · Current: Day {attendanceModal.which_day || 1} of {attendanceModal.total_days || 3}
               </div>
-              <div className="sm-field">
-                <label>Assign Instructor (optional)</label>
-                <select value={form.instructor_id} onChange={e => setForm({...form, instructor_id: e.target.value})}>
-                  <option value="">— No instructor yet —</option>
-                  {instructors.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
-                </select>
+            </div>
+
+            {attError && (
+              <div style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#EF4444', padding: '10px 14px', borderRadius: '10px', fontSize: '12px', marginBottom: '14px' }}>
+                ⚠️ {attError}
               </div>
-              <div className="sm-modal-actions">
-                <button type="button" className="sm-btn-secondary" onClick={() => setShowModal(false)}>Cancel</button>
-                <button type="submit" className="sm-btn-primary" disabled={saving}>
-                  {saving ? <span className="sm-btn-spinner" /> : 'Add Student'}
+            )}
+
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setAttSaving(true);
+                setAttError('');
+                const formEl = e.target;
+                const dateVal = formEl.elements.att_date.value;
+                const statusVal = formEl.elements.att_status.value;
+                const guestsVal = parseInt(formEl.elements.att_guests.value) || 0;
+                const notesVal = formEl.elements.att_notes.value;
+
+                try {
+                  const res = await fetch(`${API}/api/attendance`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      student_id: attendanceModal.id,
+                      date: dateVal,
+                      present_status: statusVal,
+                      guests_present: guestsVal,
+                      notes: notesVal
+                    })
+                  });
+                  const data = await res.json();
+                  if (res.ok) {
+                    setAttendanceModal(null);
+                    fetchStudents();
+                  } else {
+                    setAttError(data.detail || 'Failed to mark attendance.');
+                  }
+                } catch (err) {
+                  setAttError('Server connection error.');
+                } finally {
+                  setAttSaving(false);
+                }
+              }}
+              className="sm-modal-form"
+            >
+              <div className="sm-field">
+                <label>Attendance Date</label>
+                <input type="date" name="att_date" defaultValue={new Date().toISOString().split('T')[0]} required />
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <div className="sm-field" style={{ flex: 1 }}>
+                  <label>Status</label>
+                  <select name="att_status" defaultValue="Present">
+                    <option value="Present">Present (Attended)</option>
+                    <option value="Absent">Absent</option>
+                    <option value="Excused">Excused Leave</option>
+                  </select>
+                </div>
+                <div className="sm-field" style={{ flex: 1 }}>
+                  <label>Guests Present</label>
+                  <input type="number" name="att_guests" defaultValue={0} min={0} />
+                </div>
+              </div>
+
+              <div className="sm-field">
+                <label>Notes / Observations</label>
+                <input type="text" name="att_notes" placeholder="e.g. Wave pop-up drills performed" />
+              </div>
+
+              <div className="sm-modal-actions" style={{ marginTop: '12px' }}>
+                <button type="button" className="sm-btn-secondary" onClick={() => setAttendanceModal(null)}>Cancel</button>
+                <button type="submit" className="sm-btn-primary" disabled={attSaving}>
+                  {attSaving ? <span className="sm-btn-spinner" /> : 'Save Attendance'}
                 </button>
               </div>
             </form>
@@ -383,6 +574,62 @@ const StudentsManagement = () => {
           width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.4); border-top-color: #fff;
           border-radius: 50%; animation: sm-spin 0.7s linear infinite;
         }
+
+        /* Invite link button in table */
+        .sm-invite-btn {
+          display: inline-flex; align-items: center; gap: 5px;
+          background: rgba(99,102,241,0.08); color: #6366F1;
+          border: 1px solid rgba(99,102,241,0.25); padding: 6px 11px;
+          border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer;
+          transition: all 0.2s;
+        }
+        .sm-invite-btn:hover { background: rgba(99,102,241,0.16); border-color: #6366F1; }
+
+        /* Invite Modal Extras */
+        .sm-invite-modal { max-width: 520px; }
+        .invite-success-banner {
+          display: flex; align-items: flex-start; gap: 14px;
+          background: rgba(16,185,129,0.07); border: 1px solid rgba(16,185,129,0.2);
+          border-radius: 14px; padding: 16px 18px; margin-bottom: 20px;
+        }
+        .invite-success-icon {
+          width: 32px; height: 32px; border-radius: 50%;
+          background: #10B981; color: #fff;
+          display: flex; align-items: center; justify-content: center;
+          font-size: 16px; font-weight: 700; flex-shrink: 0; margin-top: 2px;
+        }
+        .invite-success-title { font-size: 15px; font-weight: 700; color: #0F172A; margin-bottom: 4px; }
+        .invite-success-sub { font-size: 13px; color: #64748B; line-height: 1.5; }
+        .invite-link-section { margin-bottom: 20px; }
+        .invite-link-box {
+          display: flex; gap: 8px; align-items: center;
+          background: #F8FAFC; border: 1.5px solid #E2E8F0;
+          border-radius: 12px; padding: 4px 4px 4px 14px; overflow: hidden;
+        }
+        .invite-link-input {
+          flex: 1; border: none; outline: none; background: transparent;
+          font-size: 13px; color: #334155; font-family: monospace;
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .invite-copy-btn {
+          background: #F43F5E; color: #fff; border: none;
+          border-radius: 8px; padding: 9px 16px; font-size: 13px;
+          font-weight: 700; cursor: pointer; white-space: nowrap; transition: all 0.2s; flex-shrink: 0;
+        }
+        .invite-copy-btn.copied { background: #10B981; }
+        .invite-copy-btn:hover { opacity: 0.88; }
+        .invite-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+        .invite-action-btn {
+          flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+          padding: 11px 16px; border-radius: 10px; font-size: 13px; font-weight: 700;
+          cursor: pointer; text-decoration: none; border: none; transition: all 0.2s; min-width: 130px;
+        }
+        .invite-email { background: rgba(99,102,241,0.1); color: #6366F1; border: 1px solid rgba(99,102,241,0.2); }
+        .invite-email:hover { background: rgba(99,102,241,0.18); }
+        .invite-wa { background: rgba(37,211,102,0.1); color: #16A34A; border: 1px solid rgba(37,211,102,0.2); }
+        .invite-wa:hover { background: rgba(37,211,102,0.18); }
+        .invite-done { background: #F43F5E; color: #fff; }
+        .invite-done:hover { background: #e8374f; }
       `}</style>
     </div>
   );

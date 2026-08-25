@@ -42,6 +42,150 @@ const Competitions = () => {
 
   const [toastMsg, setToastMsg] = useState('');
 
+  // AquaticX Multi-Surfer Heat Engine States
+  const [selectedSlot, setSelectedSlot] = useState('All');
+  const [heatSize, setHeatSize] = useState(4);
+  const [aquaticxHeats, setAquaticxHeats] = useState([]);
+  const [activeAquaticxHeatIndex, setActiveAquaticxHeatIndex] = useState(0);
+  const [scoreSurferId, setScoreSurferId] = useState('');
+  const [scoreWaveVal, setScoreWaveVal] = useState(6.5);
+  const [aquaticxTimer, setAquaticxTimer] = useState(20 * 60);
+  const [aquaticxTimerRunning, setAquaticxTimerRunning] = useState(false);
+
+  useEffect(() => {
+    let interval = null;
+    if (aquaticxTimerRunning && aquaticxTimer > 0) {
+      interval = setInterval(() => {
+        setAquaticxTimer(t => t - 1);
+      }, 1000);
+    } else if (aquaticxTimer === 0 && aquaticxTimerRunning) {
+      setAquaticxTimerRunning(false);
+      showToast('⏰ Heat Time is Up! Horn Sounding 🚨');
+    }
+    return () => clearInterval(interval);
+  }, [aquaticxTimerRunning, aquaticxTimer]);
+
+  const handleGenerateAquaticXHeats = () => {
+    let competitorRoster = [];
+    const slotFilteredStudents = students.filter(s => 
+      selectedSlot === 'All' || s.session_time === selectedSlot
+    );
+
+    slotFilteredStudents.forEach((st) => {
+      competitorRoster.push({
+        id: `st_${st.id}`,
+        name: st.name,
+        type: 'Student',
+        email: st.email || '',
+        whatsapp_number: st.whatsapp_number || '',
+        waves: [],
+        top2Total: 0
+      });
+
+      if (Array.isArray(st.guests_details) && st.guests_details.length > 0) {
+        st.guests_details.forEach((g, gIdx) => {
+          if (g.name && g.name.trim()) {
+            competitorRoster.push({
+              id: `guest_${st.id}_${gIdx}`,
+              name: `${g.name.trim()} (Guest of ${st.name.split(' ')[0]})`,
+              type: 'Guest',
+              email: g.email || '',
+              whatsapp_number: g.whatsapp_number || '',
+              waves: [],
+              top2Total: 0
+            });
+          }
+        });
+      } else if (st.guests_count > 1) {
+        for (let i = 1; i < st.guests_count; i++) {
+          competitorRoster.push({
+            id: `guest_${st.id}_${i}`,
+            name: `Guest #${i} of ${st.name.split(' ')[0]}`,
+            type: 'Guest',
+            email: '',
+            whatsapp_number: st.whatsapp_number || '',
+            waves: [],
+            top2Total: 0
+          });
+        }
+      }
+    });
+
+    if (competitorRoster.length === 0) {
+      showToast('No students or guests found for this session slot.');
+      return;
+    }
+
+    const JERSEY_COLORS = [
+      { name: 'Red', hex: '#EF4444', badge: '🔴 RED' },
+      { name: 'Blue', hex: '#3B82F6', badge: '🔵 BLUE' },
+      { name: 'Yellow', hex: '#F59E0B', badge: '🟡 YELLOW' },
+      { name: 'Green', hex: '#10B981', badge: '🟢 GREEN' },
+      { name: 'White', hex: '#E2E8F0', badge: '⚪ WHITE' },
+    ];
+
+    const generated = [];
+    let heatNum = 1;
+    for (let i = 0; i < competitorRoster.length; i += heatSize) {
+      const chunk = competitorRoster.slice(i, i + heatSize);
+      const surfersInHeat = chunk.map((c, idx) => ({
+        ...c,
+        jersey: JERSEY_COLORS[idx % JERSEY_COLORS.length]
+      }));
+
+      generated.push({
+        heatId: `heat_${heatNum}`,
+        heatName: `Heat ${heatNum}`,
+        division: selectedSlot === 'All' ? "All Session Slots" : selectedSlot,
+        surfers: surfersInHeat,
+        status: 'Active'
+      });
+      heatNum++;
+    }
+
+    setAquaticxHeats(generated);
+    setActiveAquaticxHeatIndex(0);
+    if (generated[0]?.surfers[0]) {
+      setScoreSurferId(generated[0].surfers[0].id);
+    }
+    showToast(`⚡ Generated ${generated.length} Heats for ${competitorRoster.length} Competitors (Students + Guests)!`);
+  };
+
+  const handleLogAquaticXWave = (e) => {
+    e.preventDefault();
+    if (!aquaticxHeats.length) return;
+    const currentHeat = aquaticxHeats[activeAquaticxHeatIndex];
+    if (!currentHeat) return;
+
+    const waveScore = parseFloat(scoreWaveVal);
+    if (isNaN(waveScore)) return;
+
+    const updatedHeats = aquaticxHeats.map((h, hIdx) => {
+      if (hIdx !== activeAquaticxHeatIndex) return h;
+      const updatedSurfers = h.surfers.map((s) => {
+        if (s.id !== scoreSurferId) return s;
+        const newWaves = [...s.waves, waveScore];
+        const sorted = [...newWaves].sort((a, b) => b - a);
+        const top2 = (sorted[0] || 0) + (sorted[1] || 0);
+        return {
+          ...s,
+          waves: newWaves,
+          top2Total: parseFloat(top2.toFixed(2))
+        };
+      });
+
+      updatedSurfers.sort((a, b) => b.top2Total - a.top2Total);
+
+      return {
+        ...h,
+        surfers: updatedSurfers
+      };
+    });
+
+    setAquaticxHeats(updatedHeats);
+    showToast(`Logged Wave Score ${waveScore.toFixed(1)}!`);
+  };
+
   // Fetch initial competitions data & students list
   useEffect(() => {
     // 1. Fetch competitions
@@ -293,15 +437,18 @@ const Competitions = () => {
         {/* Top Header & Tab Switcher */}
         <header className="cmp-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <h1 className="cmp-title">Competitions Hub</h1>
-            <p style={{ color: '#64748B', fontSize: '14px', margin: '4px 0 0 0' }}>Track live WSL heats or run mock heat scoring simulations for athletes.</p>
+            <h1 className="cmp-title" style={{ color: '#0F172A', fontSize: '32px', fontWeight: 800, margin: 0, textAlign: 'left' }}>Competitions Hub</h1>
+            <p style={{ color: '#475569', fontSize: '14px', margin: '4px 0 0 0' }}>Track live WSL heats or run mock heat scoring simulations for athletes.</p>
           </div>
           <div className="cmp-tab-switcher">
             <button className={`cmp-tab-btn ${activeTab === 'live' ? 'active' : ''}`} onClick={() => setActiveTab('live')}>
               🏆 Live Events
             </button>
+            <button className={`cmp-tab-btn ${activeTab === 'aquaticx' ? 'active' : ''}`} onClick={() => setActiveTab('aquaticx')}>
+              🏄 AquaticX Multi-Surfer Heats
+            </button>
             <button className={`cmp-tab-btn ${activeTab === 'mock-heat' ? 'active' : ''}`} onClick={() => setActiveTab('mock-heat')}>
-              ⏱️ Mock Heat Engine
+              ⏱️ Solo Mock Heat
             </button>
           </div>
         </header>
@@ -425,7 +572,389 @@ const Competitions = () => {
           </div>
         )}
 
-        {/* Tab 2: Mock Heat Engine */}
+        {/* Tab 2: AquaticX Multi-Surfer Heat Engine */}
+        {activeTab === 'aquaticx' && (
+          <div className="mock-heat-container" style={{ maxWidth: '1100px', margin: '0 auto' }}>
+            <div className="card-dark" style={{ background: '#0F172A', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', padding: '24px', marginBottom: '24px', width: '100%' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+                <span style={{ fontSize: '28px' }}>🏄</span>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 800, color: '#F8FAFC' }}>AquaticX Multi-Surfer Heat Engine</h2>
+                  <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#94A3B8' }}>
+                    Automatically generate heats for all registered students and their accompanying guests (up to 10 guests per student) for any session slot or division.
+                  </p>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '16px', marginTop: '20px', alignItems: 'flex-end' }}>
+                <div className="form-field" style={{ margin: 0 }}>
+                  <label style={{ color: '#CBD5E1', fontSize: '12px', fontWeight: 700, marginBottom: '6px', display: 'block' }}>Select Session Slot / Division</label>
+                  <select value={selectedSlot} onChange={e => setSelectedSlot(e.target.value)} style={{ width: '100%', padding: '12px', borderRadius: '10px', background: '#1E293B', color: '#FFF', border: '1px solid #334155', fontSize: '13px' }}>
+                    <option value="All">All Registered Students & Guests</option>
+                    <option value="Morning 6:00 AM">Morning 6:00 AM (Dawn Patrol)</option>
+                    <option value="Morning 8:00 AM">Morning 8:00 AM</option>
+                    <option value="Evening 4:00 PM">Evening 4:00 PM</option>
+                  </select>
+                </div>
+
+                <div className="form-field" style={{ margin: 0 }}>
+                  <label style={{ color: '#CBD5E1', fontSize: '12px', fontWeight: 700, marginBottom: '6px', display: 'block' }}>Surfers per Heat</label>
+                  <select value={heatSize} onChange={e => setHeatSize(parseInt(e.target.value))} style={{ width: '100%', padding: '12px', borderRadius: '10px', background: '#1E293B', color: '#FFF', border: '1px solid #334155', fontSize: '13px' }}>
+                    <option value={4}>4 Surfers / Heat (Red, Blue, Yellow, Green)</option>
+                    <option value={3}>3 Surfers / Heat</option>
+                    <option value={2}>2 Surfers / Heat (Man-on-Man)</option>
+                  </select>
+                </div>
+
+                <button
+                  type="button"
+                  style={{
+                    background: 'linear-gradient(135deg, #00D1B2 0%, #00F2FE 100%)',
+                    color: '#0B0E17',
+                    fontWeight: 800,
+                    fontSize: '13px',
+                    padding: '12px 24px',
+                    borderRadius: '10px',
+                    border: 'none',
+                    cursor: 'pointer',
+                    height: '44px',
+                    whiteSpace: 'nowrap'
+                  }}
+                  onClick={handleGenerateAquaticXHeats}
+                >
+                  ⚡ Auto-Generate AquaticX Heats
+                </button>
+              </div>
+            </div>
+
+            {/* Generated Heats Dashboard & Scoring Console */}
+            {aquaticxHeats.length > 0 && (
+              <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: '20px', marginTop: '20px' }}>
+                {/* Left Column: Heat Selector Cards */}
+                <div style={{ background: '#0F172A', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '16px', padding: '18px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+                    <h3 style={{ margin: 0, fontSize: '14px', color: '#F8FAFC', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      📋 Heat Schedule
+                    </h3>
+                    <span style={{ fontSize: '11px', background: 'rgba(0, 242, 254, 0.15)', color: '#00F2FE', padding: '3px 8px', borderRadius: '12px', fontWeight: 700 }}>
+                      {aquaticxHeats.length} Heats
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {aquaticxHeats.map((h, hIdx) => {
+                      const isActive = activeAquaticxHeatIndex === hIdx;
+                      return (
+                        <button
+                          key={h.heatId}
+                          type="button"
+                          onClick={() => {
+                            setActiveAquaticxHeatIndex(hIdx);
+                            if (h.surfers[0]) setScoreSurferId(h.surfers[0].id);
+                          }}
+                          style={{
+                            display: 'flex',
+                            justify: 'space-between',
+                            alignItems: 'center',
+                            padding: '14px 16px',
+                            borderRadius: '12px',
+                            border: isActive ? '2px solid #00F2FE' : '1px solid rgba(255,255,255,0.06)',
+                            background: isActive ? 'linear-gradient(135deg, rgba(0, 242, 254, 0.15) 0%, rgba(15, 23, 42, 0.9) 100%)' : 'rgba(255,255,255,0.02)',
+                            boxShadow: isActive ? '0 0 15px rgba(0, 242, 254, 0.2)' : 'none',
+                            color: '#FFF',
+                            cursor: 'pointer',
+                            textAlign: 'left',
+                            transition: 'all 0.2s ease'
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontWeight: 800, fontSize: '14px', color: isActive ? '#00F2FE' : '#F8FAFC' }}>{h.heatName}</div>
+                            <div style={{ fontSize: '11px', color: '#94A3B8', marginTop: '2px' }}>{h.surfers.length} Surfers · {h.division}</div>
+                          </div>
+                          <span style={{
+                            fontSize: '10px',
+                            padding: '3px 8px',
+                            borderRadius: '20px',
+                            background: isActive ? '#00F2FE' : 'rgba(255,255,255,0.08)',
+                            color: isActive ? '#0B0E17' : '#94A3B8',
+                            fontWeight: 800,
+                            letterSpacing: '0.5px'
+                          }}>
+                            {isActive ? '● LIVE' : 'READY'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Right Column: Live Heat Scoreboard & Surfer Scorecards */}
+                <div style={{ background: '#0F172A', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '16px', padding: '20px' }}>
+                  {/* Heat Header */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px', paddingBottom: '14px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ background: 'rgba(239, 68, 68, 0.2)', color: '#EF4444', border: '1px solid rgba(239, 68, 68, 0.4)', fontSize: '10px', fontWeight: 800, padding: '2px 8px', borderRadius: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          ● LIVE COMPETITION HEAT
+                        </span>
+                      </div>
+                      <h2 style={{ margin: '6px 0 0 0', fontSize: '22px', fontWeight: 800, color: '#FFF' }}>
+                        {aquaticxHeats[activeAquaticxHeatIndex]?.heatName} — {aquaticxHeats[activeAquaticxHeatIndex]?.division}
+                      </h2>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                      {/* Heat Countdown Clock */}
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '10px', color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 700 }}>HEAT TIMER</div>
+                        <div style={{
+                          fontSize: '26px',
+                          fontWeight: 900,
+                          fontFamily: 'monospace',
+                          color: aquaticxTimerRunning ? '#00F2FE' : '#F59E0B',
+                          letterSpacing: '1px',
+                          lineHeight: 1
+                        }}>
+                          {formatTime(aquaticxTimer)}
+                        </div>
+                      </div>
+
+                      {/* Control Buttons: Start ▶, Pause ⏸, Stop ⏹ */}
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        {!aquaticxTimerRunning ? (
+                          <button
+                            type="button"
+                            onClick={() => setAquaticxTimerRunning(true)}
+                            style={{
+                              background: 'rgba(16, 185, 129, 0.2)',
+                              border: '1px solid rgba(16, 185, 129, 0.5)',
+                              color: '#10B981',
+                              padding: '8px 14px',
+                              borderRadius: '8px',
+                              fontWeight: 800,
+                              fontSize: '12px',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            ▶ Start
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setAquaticxTimerRunning(false)}
+                            style={{
+                              background: 'rgba(245, 158, 11, 0.2)',
+                              border: '1px solid rgba(245, 158, 11, 0.5)',
+                              color: '#F59E0B',
+                              padding: '8px 14px',
+                              borderRadius: '8px',
+                              fontWeight: 800,
+                              fontSize: '12px',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            ⏸ Pause
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAquaticxTimerRunning(false);
+                            setAquaticxTimer(20 * 60);
+                            showToast('⏹ Heat Timer Reset to 20:00');
+                          }}
+                          style={{
+                            background: 'rgba(239, 68, 68, 0.2)',
+                            border: '1px solid rgba(239, 68, 68, 0.5)',
+                            color: '#EF4444',
+                            padding: '8px 14px',
+                            borderRadius: '8px',
+                            fontWeight: 800,
+                            fontSize: '12px',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}
+                        >
+                          ⏹ Stop
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Surfer Scorecards List */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '22px' }}>
+                    {aquaticxHeats[activeAquaticxHeatIndex]?.surfers.map((s, rankIdx) => {
+                      const isSelected = scoreSurferId === s.id;
+                      const isAdvancing = rankIdx < 2;
+                      return (
+                        <div
+                          key={s.id}
+                          onClick={() => setScoreSurferId(s.id)}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justify: 'space-between',
+                            padding: '12px 16px',
+                            borderRadius: '12px',
+                            border: isSelected ? '2px solid #00F2FE' : '1px solid rgba(255,255,255,0.06)',
+                            background: isSelected ? 'rgba(0, 242, 254, 0.08)' : 'rgba(255,255,255,0.02)',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          {/* Rank & Jersey */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <div style={{ textAlign: 'center', minWidth: '32px' }}>
+                              <span style={{ fontSize: '14px', fontWeight: 900, color: isAdvancing ? '#10B981' : '#64748B' }}>
+                                #{rankIdx + 1}
+                              </span>
+                              {isAdvancing && (
+                                <div style={{ fontSize: '9px', color: '#10B981', fontWeight: 800, marginTop: '-2px' }}>ADVANCES</div>
+                              )}
+                            </div>
+
+                            <span style={{
+                              padding: '4px 10px',
+                              borderRadius: '6px',
+                              background: s.jersey?.hex || '#64748B',
+                              color: '#FFF',
+                              fontWeight: 900,
+                              fontSize: '11px',
+                              letterSpacing: '0.5px',
+                              boxShadow: `0 2px 8px ${s.jersey?.hex || '#000'}40`
+                            }}>
+                              {s.jersey?.badge}
+                            </span>
+
+                            <div>
+                              <div style={{ fontWeight: 800, fontSize: '14px', color: '#FFF' }}>{s.name}</div>
+                              <span style={{
+                                fontSize: '10px',
+                                padding: '1px 6px',
+                                borderRadius: '4px',
+                                background: s.type === 'Guest' ? 'rgba(245, 158, 11, 0.15)' : 'rgba(0, 242, 254, 0.15)',
+                                color: s.type === 'Guest' ? '#F59E0B' : '#00F2FE',
+                                fontWeight: 700,
+                                display: 'inline-block',
+                                marginTop: '2px'
+                              }}>
+                                {s.type}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Waves Logged & Top 2 Total */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                            <div style={{ textAlign: 'right' }}>
+                              <div style={{ fontSize: '10px', color: '#64748B', fontWeight: 700, textTransform: 'uppercase', marginBottom: '3px' }}>WAVES LOGGED</div>
+                              {s.waves.length === 0 ? (
+                                <span style={{ color: '#475569', fontSize: '12px', fontStyle: 'italic' }}>No waves yet</span>
+                              ) : (
+                                <div style={{ display: 'flex', gap: '4px', justifyContent: 'flex-end' }}>
+                                  {s.waves.map((w, wIdx) => (
+                                    <span key={wIdx} style={{
+                                      padding: '3px 8px',
+                                      borderRadius: '6px',
+                                      background: 'rgba(255,255,255,0.08)',
+                                      color: '#F8FAFC',
+                                      fontSize: '12px',
+                                      fontWeight: 700,
+                                      border: '1px solid rgba(255,255,255,0.1)'
+                                    }}>
+                                      {w.toFixed(1)}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+
+                            <div style={{ textAlign: 'right', minWidth: '70px' }}>
+                              <div style={{ fontSize: '10px', color: '#94A3B8', fontWeight: 700, textTransform: 'uppercase' }}>HEAT TOTAL</div>
+                              <div style={{ fontSize: '20px', fontWeight: 900, color: '#00F2FE', lineHeight: '1.2' }}>
+                                {s.top2Total.toFixed(2)}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Judge Wave Scoring Control Console */}
+                  <form onSubmit={handleLogAquaticXWave} style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: '14px', border: '1px solid rgba(0, 242, 254, 0.2)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                      <h4 style={{ margin: 0, fontSize: '13px', color: '#00F2FE', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                        ✍️ Judge Live Wave Scoring Input
+                      </h4>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <button type="button" onClick={() => setScoreWaveVal(5.0)} style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', color: '#FFF', padding: '3px 8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', fontWeight: 700 }}>+5.0 Avg</button>
+                        <button type="button" onClick={() => setScoreWaveVal(7.5)} style={{ background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)', color: '#FFF', padding: '3px 8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', fontWeight: 700 }}>+7.5 Good</button>
+                        <button type="button" onClick={() => setScoreWaveVal(9.0)} style={{ background: 'rgba(16, 185, 129, 0.2)', border: '1px solid rgba(16, 185, 129, 0.4)', color: '#10B981', padding: '3px 8px', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', fontWeight: 800 }}>+9.0 Excellent!</button>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr auto', gap: '12px', alignItems: 'flex-end' }}>
+                      <div className="form-field" style={{ margin: 0 }}>
+                        <label style={{ fontSize: '11px', color: '#CBD5E1', marginBottom: '4px', display: 'block', fontWeight: 700 }}>Select Surfer in Active Heat</label>
+                        <select value={scoreSurferId} onChange={e => setScoreSurferId(e.target.value)} style={{ padding: '10px 12px', borderRadius: '8px', background: '#1E293B', color: '#FFF', border: '1px solid #334155', fontSize: '13px', width: '100%', fontWeight: 700 }}>
+                          {aquaticxHeats[activeAquaticxHeatIndex]?.surfers.map(s => (
+                            <option key={s.id} value={s.id}>
+                              {s.jersey?.badge} - {s.name} ({s.top2Total.toFixed(2)} pts)
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="form-field" style={{ margin: 0 }}>
+                        <label style={{ fontSize: '11px', color: '#CBD5E1', marginBottom: '4px', display: 'block', fontWeight: 700 }}>Wave Score (0.0 - 10.0)</label>
+                        <input
+                          type="number"
+                          step="0.1"
+                          min="0"
+                          max="10"
+                          value={scoreWaveVal}
+                          onChange={e => setScoreWaveVal(e.target.value)}
+                          style={{ padding: '10px 12px', borderRadius: '8px', background: '#1E293B', color: '#FFF', border: '1px solid #334155', fontSize: '13px', width: '100%', fontWeight: 800 }}
+                          required
+                        />
+                      </div>
+
+                      <button
+                        type="submit"
+                        style={{
+                          background: 'linear-gradient(135deg, #00D1B2 0%, #00F2FE 100%)',
+                          color: '#0B0E17',
+                          fontWeight: 900,
+                          fontSize: '13px',
+                          padding: '0 24px',
+                          borderRadius: '8px',
+                          border: 'none',
+                          cursor: 'pointer',
+                          height: '42px',
+                          whiteSpace: 'nowrap',
+                          boxShadow: '0 0 12px rgba(0, 242, 254, 0.3)'
+                        }}
+                      >
+                        ⚡ Log Wave Score
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab 3: Solo Mock Heat Engine */}
         {activeTab === 'mock-heat' && (
           <div className="mock-heat-container">
             {/* Mode A: Setup Mock Heat Form */}

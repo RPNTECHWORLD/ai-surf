@@ -316,6 +316,17 @@ const INITIAL_ACTIVITIES = [
 const INITIAL_SCHOOLS = [
   {
     id: 1,
+    name: "Aquatic Indica Surf School",
+    owner: "Aquatic Admin",
+    email: "rpntechworld@gmail.com",
+    phone: "+91 9876543210",
+    country: "India",
+    city: "Kovalam / Chennai",
+    instructor_count: "5–15",
+    website: "https://aquaticindica.com"
+  },
+  {
+    id: 2,
     name: "Pipeline Surf School",
     owner: "John Doe",
     email: "hello@pipeline.com",
@@ -328,6 +339,8 @@ const INITIAL_SCHOOLS = [
 ];
 
 // In-Memory Database State
+const registeredUsers = {};
+
 const state = {
   instructors: [...INITIAL_INSTRUCTORS],
   students: [...INITIAL_STUDENTS],
@@ -446,9 +459,9 @@ window.fetch = async function (input, init) {
       
       // Seeded accounts check
       if (email === 'rpntechworld@gmail.com' && password === '12345678') {
-        matchingUser = { id: 99, email: 'rpntechworld@gmail.com', role: 'admin', name: 'System Admin', image: '' };
+        matchingUser = { id: 99, email: 'rpntechworld@gmail.com', role: 'admin', name: 'School Admin', image: '' };
       } else if (email === 'admin@aisurf.com' && password === 'admin123') {
-        matchingUser = { id: 99, email: 'admin@aisurf.com', role: 'admin', name: 'System Admin', image: '' };
+        matchingUser = { id: 99, email: 'admin@aisurf.com', role: 'admin', name: 'School Admin', image: '' };
       } else {
         // Check coaches
         const inst = state.instructors.find(i => i.email === email);
@@ -459,6 +472,8 @@ window.fetch = async function (input, init) {
           const stud = state.students.find(s => s.email === email);
           if (stud && password === `${stud.name.split(' ')[0].toLowerCase()}123`) {
             matchingUser = { id: stud.id, email: stud.email, role: 'athlete', student_id: stud.id, name: stud.name, image: stud.image };
+          } else if (registeredUsers[email] && registeredUsers[email].password === password) {
+            matchingUser = registeredUsers[email].user;
           }
         }
       }
@@ -528,7 +543,30 @@ window.fetch = async function (input, init) {
         state.instructors.push(newInstructor);
         newUser.instructor_id = newInstructor.id;
         state.activityLogs.unshift({ id: Date.now(), text: `New Coach ${body.name} registered on the platform`, type: "group", time: "Just now" });
+      } else if (role === 'admin') {
+        const schName = (body.school || "").trim() || `${body.name}'s Surf School`;
+        newUser.school_name = schName;
+        newUser.name = body.name || "School Admin";
+        if (!state.schools.some(s => s.email === email || s.name === schName)) {
+          state.schools.push({
+            id: state.schools.length + 1,
+            name: schName,
+            owner: body.name,
+            email: email,
+            phone: body.whatsapp_number || "+91 9876543210",
+            country: "India",
+            city: "Kovalam / Chennai",
+            instructor_count: "5-15",
+            website: ""
+          });
+        }
+        state.activityLogs.unshift({ id: Date.now(), text: `School Admin ${body.name} registered ${schName}`, type: "group", time: "Just now" });
       }
+
+      registeredUsers[email] = {
+        user: newUser,
+        password: body.password
+      };
 
       const token = `mock_token_${newUser.email}_${Math.random().toString(36).substring(7)}`;
       activeSessions[token] = newUser;
@@ -1111,6 +1149,35 @@ window.fetch = async function (input, init) {
         technical: { total_waves: totalWaves, log_count: techList.length },
         mental: { avg_anxiety: avgAnxiety, avg_focus: avgFocus, log_count: mentalList.length }
       });
+    }
+
+    // ─── 13. Surf Schools Routes ───
+    if (path === '/api/schools') {
+      if (method === 'GET') {
+        return jsonResponse(state.schools);
+      }
+      if (method === 'POST') {
+        const body = JSON.parse(init.body);
+        const newSchool = {
+          id: state.schools.length + 1,
+          name: body.name || "New Surf School",
+          owner: body.owner || "School Owner",
+          email: body.email || "",
+          phone: body.phone || "",
+          country: body.country || "Global",
+          city: body.city || "Coastal",
+          instructor_count: body.instructor_count || "1-5",
+          website: body.website || ""
+        };
+        state.schools.push(newSchool);
+        return jsonResponse({ id: newSchool.id, message: `School '${newSchool.name}' registered successfully!` });
+      }
+    }
+
+    if (path.startsWith('/api/schools/') && method === 'DELETE') {
+      const schId = parseInt(path.split('/')[3]);
+      state.schools = state.schools.filter(s => s.id !== schId);
+      return jsonResponse({ message: "School deleted successfully" });
     }
 
     // Default API 404
