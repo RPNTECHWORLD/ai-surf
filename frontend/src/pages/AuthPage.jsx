@@ -98,7 +98,7 @@ const AuthPage = () => {
     session_time: 'Morning 6:00 AM',
     staying_at_school: 'Yes',
     reminder_preference: 'WhatsApp Text',
-    guests_count: 1,
+    guests_count: 0,
   });
 
   const [schoolsList, setSchoolsList] = useState([
@@ -322,7 +322,8 @@ const AuthPage = () => {
           session_time: formData.session_time,
           staying_at_school: formData.staying_at_school,
           reminder_preference: formData.reminder_preference,
-          guests_count: parseInt(formData.guests_count) || 1,
+          guests_count: parseInt(formData.guests_count) || 0,
+          guests_details: formData.guests_details || [],
           school: formData.school,
           // Pass invite token so backend links to pre-created student record
           ...(inviteToken ? { invite_token: inviteToken } : {}),
@@ -562,7 +563,17 @@ const AuthPage = () => {
               {isLogin ? 'Log in to continue your training' : 'Start your high-performance surf coaching journey'}
             </p>
 
-            {errorMsg && <div className="auth-error">{errorMsg}</div>}
+            {errorMsg && (
+              <div className="auth-error" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div>{errorMsg}</div>
+                {errorMsg.toLowerCase().includes('already registered') && (
+                  <button type="button" onClick={switchToLogin}
+                    style={{ background: '#FF4D6D', color: '#fff', border: 'none', borderRadius: '6px', padding: '6px 12px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', alignSelf: 'flex-start' }}>
+                    → Switch to Login
+                  </button>
+                )}
+              </div>
+            )}
             {successMsg && <div className="auth-success">{successMsg}</div>}
 
             <div className="auth-tabs">
@@ -792,34 +803,80 @@ const AuthPage = () => {
                           </div>
                           <div className="auth-field" style={{ flex: 1 }}>
                             <label>👥 Accompanying Guests</label>
-                            <input type="number" name="guests_count" min={1} max={10}
+                            <input type="number" name="guests_count" min={0} max={10}
                               value={formData.guests_count} onChange={handleChange} />
                           </div>
                         </div>
 
-                        {parseInt(formData.guests_count || 1) > 1 && (
-                          <div style={{ marginTop: '14px', background: 'rgba(255, 255, 255, 0.03)', padding: '12px 14px', borderRadius: '12px', border: '1px solid rgba(0, 242, 254, 0.2)' }}>
-                            <h5 style={{ margin: '0 0 10px 0', color: '#00F2FE', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                              👥 Enter Details for {parseInt(formData.guests_count) - 1} Accompanying Guest(s)
+                        {parseInt(formData.guests_count || 0) > 0 && (
+                          <div style={{ marginTop: '14px', background: 'rgba(255, 255, 255, 0.03)', padding: '14px', borderRadius: '12px', border: '1px solid rgba(0, 242, 254, 0.2)' }}>
+                            <h5 style={{ margin: '0 0 12px 0', color: '#00F2FE', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                              👥 Enter Details for {parseInt(formData.guests_count)} Accompanying Guest(s)
                             </h5>
-                            {Array.from({ length: parseInt(formData.guests_count) - 1 }).map((_, gIdx) => (
-                              <div key={gIdx} style={{ background: 'rgba(0, 0, 0, 0.25)', padding: '10px', borderRadius: '8px', marginBottom: '8px', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
-                                <div style={{ fontSize: '11px', fontWeight: 700, color: '#94A3B8', marginBottom: '6px' }}>Guest #{gIdx + 1}</div>
-                                <div className="auth-fields-row" style={{ gap: '8px' }}>
-                                  <div className="auth-field" style={{ flex: 1.2 }}>
+                            {Array.from({ length: parseInt(formData.guests_count) }).map((_, gIdx) => (
+                              <div key={gIdx} style={{ background: 'rgba(0, 0, 0, 0.3)', padding: '12px', borderRadius: '10px', marginBottom: '10px', border: '1px solid rgba(255, 255, 255, 0.08)' }}>
+                                <div style={{ fontSize: '12px', fontWeight: 700, color: '#FF4D6D', marginBottom: '8px' }}>Guest #{gIdx + 1} Profile</div>
+                                <div className="guest-fields-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px' }}>
+                                  <div className="auth-field" style={{ minWidth: 0 }}>
+                                    <label style={{ fontSize: '11px', color: '#94A3B8' }}>Full Name *</label>
                                     <input type="text" placeholder="Guest Full Name"
                                       value={formData.guests_details?.[gIdx]?.name || ''}
                                       onChange={e => handleGuestChange(gIdx, 'name', e.target.value)} required />
                                   </div>
-                                  <div className="auth-field" style={{ flex: 1 }}>
-                                    <input type="tel" placeholder="WhatsApp / Phone"
+                                  <div className="auth-field" style={{ minWidth: 0 }}>
+                                    <label style={{ fontSize: '11px', color: '#94A3B8' }}>WhatsApp / Phone</label>
+                                    <input type="tel" placeholder="Phone Number"
                                       value={formData.guests_details?.[gIdx]?.whatsapp_number || ''}
                                       onChange={e => handleGuestChange(gIdx, 'whatsapp_number', e.target.value)} />
                                   </div>
-                                  <div className="auth-field" style={{ flex: 1 }}>
-                                    <input type="email" placeholder="Email Address"
+                                  <div className="auth-field" style={{ minWidth: 0 }}>
+                                    <label style={{ fontSize: '11px', color: '#94A3B8' }}>Email Address</label>
+                                    <input type="email" placeholder="guest@example.com"
                                       value={formData.guests_details?.[gIdx]?.email || ''}
                                       onChange={e => handleGuestChange(gIdx, 'email', e.target.value)} />
+                                  </div>
+                                  <div className="auth-field" style={{ minWidth: 0 }}>
+                                    <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#94A3B8' }}>
+                                      <span>DOB</span>
+                                      {formData.guests_details?.[gIdx]?.dob && (
+                                        <span style={{ color: '#00F2FE', fontWeight: 700 }}>
+                                          Age: {calculateAge(formData.guests_details[gIdx].dob)} yrs
+                                        </span>
+                                      )}
+                                    </label>
+                                    <input type="date"
+                                      value={formData.guests_details?.[gIdx]?.dob || ''}
+                                      onChange={e => {
+                                        const dobVal = e.target.value;
+                                        const computedAge = calculateAge(dobVal);
+                                        setFormData(prev => {
+                                          const guests = [...(prev.guests_details || [])];
+                                          while (guests.length <= gIdx) {
+                                            guests.push({ name: '', whatsapp_number: '', email: '', dob: '', age: '', stance: 'regular', level: 'Beginner' });
+                                          }
+                                          guests[gIdx] = { ...guests[gIdx], dob: dobVal, age: computedAge };
+                                          return { ...prev, guests_details: guests };
+                                        });
+                                      }}
+                                      max={new Date().toISOString().split('T')[0]}
+                                      style={{ colorScheme: 'dark' }} />
+                                  </div>
+                                  <div className="auth-field" style={{ minWidth: 0 }}>
+                                    <label style={{ fontSize: '11px', color: '#94A3B8' }}>Gender</label>
+                                    <select value={formData.guests_details?.[gIdx]?.gender || 'Male'}
+                                      onChange={e => handleGuestChange(gIdx, 'gender', e.target.value)}>
+                                      <option value="Male">Male</option>
+                                      <option value="Female">Female</option>
+                                      <option value="Other">Other</option>
+                                    </select>
+                                  </div>
+                                  <div className="auth-field" style={{ minWidth: 0 }}>
+                                    <label style={{ fontSize: '11px', color: '#94A3B8' }}>Surf Stance</label>
+                                    <select value={formData.guests_details?.[gIdx]?.stance || 'regular'}
+                                      onChange={e => handleGuestChange(gIdx, 'stance', e.target.value)}>
+                                      <option value="regular">Regular</option>
+                                      <option value="goofy">Goofy</option>
+                                    </select>
                                   </div>
                                 </div>
                               </div>
@@ -1315,8 +1372,8 @@ input:-webkit-autofill:focus, input:-webkit-autofill:active {
   -webkit-text-fill-color: #FFFFFF !important;
 }
 
-.auth-fields-row { display: flex; gap: 16px; }
-.auth-fields-row .auth-field { flex: 1; }
+.auth-fields-row { display: flex; gap: 16px; flex-wrap: wrap; }
+.auth-fields-row .auth-field { flex: 1; min-width: 0; }
 
 .auth-submit {
   margin-top: 4px; padding: 12px;
@@ -1406,6 +1463,39 @@ input:-webkit-autofill:focus, input:-webkit-autofill:active {
   color: #0F172A !important; background-color: #FFFFFF !important;
   border-color: #4285F4 !important;
   box-shadow: 0 0 0 3px rgba(66, 133, 244, 0.2) !important;
+}
+
+@media (max-width: 640px) {
+  .auth-panel-left {
+    width: 100% !important;
+    padding: 24px 16px !important;
+  }
+  .auth-title {
+    font-size: 24px !important;
+  }
+  .auth-subtitle {
+    font-size: 13px !important;
+    margin-bottom: 16px !important;
+  }
+  .auth-fields-row {
+    flex-direction: column !important;
+    gap: 12px !important;
+  }
+  .auth-fields-row .auth-field {
+    width: 100% !important;
+  }
+  .guest-fields-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .auth-role-subfields {
+    padding: 14px 12px !important;
+  }
+  .auth-sso-buttons {
+    flex-direction: column !important;
+  }
+  .sso-btn {
+    width: 100% !important;
+  }
 }
 `;
 

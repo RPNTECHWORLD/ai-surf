@@ -4,7 +4,7 @@ import Sidebar from '../components/Sidebar';
 const API = import.meta.env.VITE_API_URL || '';
 
 const Competitions = () => {
-  const [activeTab, setActiveTab] = useState('live'); // 'live', 'mock-heat'
+  const [activeTab, setActiveTab] = useState('aquaticx'); // 'aquaticx', 'live', 'mock-heat'
   const [data, setData] = useState({
     upcomingEvents: [],
     heatCompetitors: [],

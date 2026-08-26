@@ -1132,12 +1132,13 @@ class UserSignup(BaseModel):
     role: str # "athlete", "coach", "admin"
     name: str
     # Athlete fields
+    gender: Optional[str] = "Male"
     stance: Optional[str] = "regular"
     dob: Optional[str] = ""
     age: Optional[int] = None
     division: Optional[str] = ""
     whatsapp_number: Optional[str] = ""
-    guests_count: Optional[int] = 1
+    guests_count: Optional[int] = 0
     course_duration: Optional[str] = "3 Days Course"
     start_date: Optional[str] = ""
     end_date: Optional[str] = ""
@@ -1174,6 +1175,7 @@ class StudentUpdate(BaseModel):
     name: Optional[str] = None
     level: Optional[str] = None
     bio: Optional[str] = None
+    gender: Optional[str] = None
     stance: Optional[str] = None
     dob: Optional[str] = None
     age: Optional[int] = None
@@ -1659,6 +1661,15 @@ def send_otp_endpoint(data: SendOtpRequest, db: OrmSession = Depends(get_db)):
     email = data.email.lower().strip()
     if not email:
         raise HTTPException(status_code=400, detail="Email is required")
+
+    # If purpose is signup, check if email is already registered BEFORE sending OTP
+    if data.purpose == "signup":
+        existing = db.query(User).filter(User.email == email).first()
+        if existing:
+            raise HTTPException(
+                status_code=400,
+                detail="This email address is already registered. Please log in instead."
+            )
     
     # Invalidate previous unused OTPs
     try:
@@ -1695,7 +1706,7 @@ def send_otp_endpoint(data: SendOtpRequest, db: OrmSession = Depends(get_db)):
     """
     sent = send_smtp_email(email, f"🔑 {otp} is your AiSurf Login Verification Code", html)
     if not sent:
-        print(f"\n🔑 [DEV MODE] SMTP Failed. OTP Generated for {email}: {otp}\n")
+        print(f"\n[DEV MODE] SMTP Failed. OTP Generated for {email}: {otp}\n")
         return {"status": "success", "message": f"Verification code generated (Dev Mode Fallback: {otp})"}
 
     return {"status": "success", "message": f"Verification code sent to {email}"}
@@ -2639,6 +2650,56 @@ def create_student(data: StudentCreate, db: OrmSession = Depends(get_db)):
     return student_to_dict(student)
 
 
+@app.post("/api/students/bulk")
+def create_students_bulk(students_data: List[StudentCreate], db: OrmSession = Depends(get_db)):
+    created = []
+    for data in students_data:
+        if not data.name or not data.email:
+            continue
+        user_id = None
+        if data.password and data.email:
+            existing_user = db.query(User).filter(User.email == data.email.lower().strip()).first()
+            if not existing_user:
+                new_user = User(
+                    email=data.email.lower().strip(),
+                    password_hash=hash_password(data.password),
+                    password_plain=data.password,
+                    role="athlete",
+                    auth_provider="email"
+                )
+                db.add(new_user)
+                db.flush()
+                user_id = new_user.id
+            else:
+                user_id = existing_user.id
+
+        student = Student(
+            user_id=user_id,
+            name=data.name, email=data.email, level=data.level or "Beginner",
+            instructor_id=data.instructor_id,
+            image=data.image or "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100",
+            last_active="Today",
+            whatsapp_number=data.whatsapp_number or "",
+            guests_count=data.guests_count or 1,
+            course_duration=data.course_duration or "3 Days Course",
+            start_date=data.start_date or datetime.now().strftime("%Y-%m-%d"),
+            end_date=data.end_date or "",
+            session_time=data.session_time or "Morning 6:00 AM",
+            staying_at_school=data.staying_at_school or "Yes",
+            reminder_preference=data.reminder_preference or "WhatsApp Text",
+            reminder_sent=bool(data.reminder_sent),
+            guests_details=json.dumps(data.guests_details or [])
+        )
+        db.add(student)
+        db.flush()
+        created.append(student_to_dict(student))
+    
+    db.commit()
+    db.add(ActivityLog(text=f"Bulk imported {len(created)} new students", type="group"))
+    db.commit()
+    return {"message": f"Successfully created {len(created)} students", "students": created}
+
+
 class AttendanceCreate(BaseModel):
     student_id: int
     date: Optional[str] = None # YYYY-MM-DD (defaults to today)
@@ -2748,6 +2809,45 @@ def record_attendance(data: AttendanceCreate, db: OrmSession = Depends(get_db)):
         "date": rec.date,
         "status": rec.present_status
     }
+
+
+@app.post("/api/admin/whatsapp-dispatch")
+def whatsapp_dispatch_all(db: OrmSession = Depends(get_db)):
+    """Module 3: WhatsApp batch dispatch & reminder log generator."""
+    students = db.query(Student).all()
+    dispatch_list = []
+    
+    for s in students:
+        s_dict = student_to_dict(s)
+        # Filter active students with valid whatsapp numbers
+        if s_dict["whatsapp_number"] and s_dict["remaining_days"] > 0:
+            s.reminder_sent = True
+            dispatch_list.append({
+                "student_id": s.id,
+                "name": s.name,
+                "whatsapp_number": s_dict["whatsapp_number"],
+                "which_day": s_dict["which_day"],
+                "total_days": s_dict["total_days"],
+                "session_time": s.session_time or "Morning 6:00 AM",
+                "wa_link": s_dict["wa_link"],
+                "reminder_sent": True
+            })
+            
+    db.commit()
+    return {
+        "status": "success",
+        "count": len(dispatch_list),
+        "dispatches": dispatch_list,
+        "message": f"Successfully generated & flagged {len(dispatch_list)} daily WhatsApp reminders!"
+    }
+
+
+@app.post("/api/admin/whatsapp-reset")
+def whatsapp_reset_daily(db: OrmSession = Depends(get_db)):
+    """Module 2 & 3: Daily midnight reset for reminder flags."""
+    db.query(Student).update({"reminder_sent": False})
+    db.commit()
+    return {"status": "success", "message": "Daily reminder flags reset for all active students."}
 
 
 @app.post("/api/students/{student_id}/generate-invite")
