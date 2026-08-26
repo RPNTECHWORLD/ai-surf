@@ -57,6 +57,20 @@ const StudentsManagement = () => {
   const levels = ['Beginner', 'Intermediate', 'Advanced', 'Master'];
 
   const filtered = students.filter(s => {
+    if (!s.email) return false;
+    const emailLower = s.email.toLowerCase();
+
+    // 1. Pending approval status filter
+    if (s.approval_status === 'pending') return false;
+
+    // 2. Require explicit admin approval in school_join_requests for newly registered students
+    try {
+      const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+      const req = savedReqs.find(r => r.student_email?.toLowerCase() === emailLower);
+      if (req && req.status !== 'approved') return false;
+      if (!req && s.id > 2 && s.name !== 'ERIC T1') return false;
+    } catch (e) {}
+
     const matchSearch = s.name.toLowerCase().includes(search.toLowerCase()) ||
       s.email.toLowerCase().includes(search.toLowerCase()) ||
       (s.whatsapp_number && s.whatsapp_number.includes(search));
@@ -67,13 +81,31 @@ const StudentsManagement = () => {
     return matchSearch && matchLevel && matchInstructor && matchSession && matchStay;
   });
 
+
+
+  const approvedStudents = students.filter(s => {
+    if (!s.email) return false;
+    const emailLower = s.email.toLowerCase();
+    if (s.approval_status === 'pending') return false;
+    try {
+      const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+      const req = savedReqs.find(r => r.student_email?.toLowerCase() === emailLower);
+      if (req && req.status !== 'approved') return false;
+      if (!req && s.id > 2 && s.name !== 'ERIC T1') return false;
+    } catch (e) {}
+    return true;
+  });
+
+
+
   const stats = [
-    { value: students.length, label: 'TOTAL', color: '#050B1A', active: false },
-    { value: students.filter(s => s.last_active === 'Today' || s.last_active === 'Yesterday').length, label: 'ACTIVE', color: '#0D9488', active: true },
-    { value: students.filter(s => s.level === 'Beginner').length, label: 'BEGINNER', color: '#F59E0B', active: false },
-    { value: students.filter(s => s.level === 'Intermediate').length, label: 'INTERMEDIATE', color: '#0D9488', active: false },
-    { value: students.filter(s => s.level === 'Advanced').length, label: 'ADVANCED', color: '#7C3AED', active: false },
+    { value: approvedStudents.length, label: 'TOTAL', color: '#050B1A', active: false },
+    { value: approvedStudents.filter(s => s.last_active === 'Today' || s.last_active === 'Yesterday').length, label: 'ACTIVE', color: '#0D9488', active: true },
+    { value: approvedStudents.filter(s => s.level === 'Beginner').length, label: 'BEGINNER', color: '#F59E0B', active: false },
+    { value: approvedStudents.filter(s => s.level === 'Intermediate').length, label: 'INTERMEDIATE', color: '#0D9488', active: false },
+    { value: approvedStudents.filter(s => s.level === 'Advanced').length, label: 'ADVANCED', color: '#7C3AED', active: false },
   ];
+
 
   const handleAdd = async (e) => {
     e.preventDefault();
@@ -233,7 +265,123 @@ const StudentsManagement = () => {
     document.body.removeChild(link);
   };
 
+  const [inviteCopied, setInviteCopied] = useState(false);
+
+  const handleCopyStudentInviteLink = () => {
+    const savedUser = sessionStorage.getItem('user');
+    let schoolName = 'Aquatic Indica Surf School';
+    if (savedUser) {
+      try {
+        const u = JSON.parse(savedUser);
+        if (u.school) schoolName = u.school;
+        else if (u.name && (u.role === 'school' || u.role === 'admin')) schoolName = u.name;
+      } catch (e) {}
+    }
+
+    const link = `${window.location.origin}/auth?mode=signup&school=${encodeURIComponent(schoolName)}`;
+    
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(link);
+    } else {
+      const el = document.createElement('textarea');
+      el.value = link;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+    }
+
+    setInviteCopied(true);
+    setTimeout(() => setInviteCopied(false), 3500);
+  };
+
+  const [showPendingModal, setShowPendingModal] = useState(false);
+  const [toastMsg, setToastMsg] = useState('');
+  const showToast = (msg) => { setToastMsg(msg); setTimeout(() => setToastMsg(''), 4000); };
+
+  const [joinRequests, setJoinRequests] = useState(() => {
+    try {
+      const saved = localStorage.getItem('school_join_requests');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+
+  const allPendingRequests = [...joinRequests.filter(r => r.status !== 'approved' && r.status !== 'rejected')];
+
+  // Synchronize newly created unapproved students into pending requests list
+  students.forEach(s => {
+    if (!s.email) return;
+    const emailLower = s.email.toLowerCase();
+    const isApprovedInStorage = joinRequests.some(r => r.student_email?.toLowerCase() === emailLower && r.status === 'approved');
+    const isRejectedInStorage = joinRequests.some(r => r.student_email?.toLowerCase() === emailLower && r.status === 'rejected');
+    
+    // Any student created after initial setup who has not been explicitly approved by admin
+    const isPending = s.approval_status === 'pending' || (!isApprovedInStorage && !isRejectedInStorage && s.id > 2 && s.name !== 'ERIC T1');
+    
+    if (isPending && !allPendingRequests.some(r => r.student_email?.toLowerCase() === emailLower)) {
+      allPendingRequests.push({
+        id: s.id,
+        student_id: s.id,
+        student_name: s.name,
+        student_email: s.email,
+        school_name: s.school || 'Aquatic Indica Surf School',
+        start_date: s.start_date || '2026-08-26',
+        session_time: s.session_time || 'Morning 6:00 AM',
+        whatsapp_number: s.whatsapp_number || 'N/A'
+      });
+    }
+  });
+
+
+  const handleApproveStudentRequest = async (reqId, studentEmail) => {
+    try {
+      if (typeof reqId === 'number' || (!isNaN(reqId) && !String(reqId).startsWith('req_'))) {
+        await fetch(`${API}/api/students/${reqId}/approve`, { method: 'POST' }).catch(() => {});
+      }
+
+      setStudents(prev => prev.map(s => {
+        if (s.id === reqId || (s.email && s.email.toLowerCase() === (studentEmail || '').toLowerCase())) {
+          return { ...s, approval_status: 'approved' };
+        }
+        return s;
+      }));
+
+      const updatedReqs = joinRequests.map(r => {
+        if (r.id === reqId || (r.student_email && r.student_email.toLowerCase() === (studentEmail || '').toLowerCase())) {
+          return { ...r, status: 'approved' };
+        }
+        return r;
+      });
+      setJoinRequests(updatedReqs);
+      localStorage.setItem('school_join_requests', JSON.stringify(updatedReqs));
+
+      try {
+        const savedAccounts = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
+        const updatedAccounts = savedAccounts.map(a => 
+          a.email.toLowerCase() === (studentEmail || '').toLowerCase() ? { ...a, approval_status: 'approved' } : a
+        );
+        localStorage.setItem('savedAccounts', JSON.stringify(updatedAccounts));
+      } catch (e) {}
+
+      showToast(`✅ Approved ${studentEmail || 'student'}! Account unlocked.`);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleRejectStudentRequest = (reqId, studentEmail) => {
+    if (!window.confirm(`Decline registration request for ${studentEmail || 'student'}?`)) return;
+    setStudents(prev => prev.filter(s => s.id !== reqId && (s.email && s.email.toLowerCase() !== (studentEmail || '').toLowerCase())));
+    const updatedReqs = joinRequests.filter(r => r.id !== reqId && (r.student_email && r.student_email.toLowerCase() !== (studentEmail || '').toLowerCase()));
+    setJoinRequests(updatedReqs);
+    localStorage.setItem('school_join_requests', JSON.stringify(updatedReqs));
+    showToast(`❌ Declined request for ${studentEmail || 'student'}.`);
+  };
+
   return (
+
     <div className="sm-page">
       <Sidebar />
       <main className="sm-main">
@@ -243,14 +391,135 @@ const StudentsManagement = () => {
             <h1 className="sm-title">Students ({loading ? '…' : students.length})</h1>
             <p className="sm-sub">Manage your student body and track their progression across badge levels.</p>
           </div>
-          <div className="sm-actions">
+          <div className="sm-actions" style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            <button 
+              className="sm-btn-secondary"
+              onClick={() => setShowPendingModal(true)}
+              style={{
+                background: allPendingRequests.length > 0 ? '#FFFBEB' : '#FFFFFF',
+                color: allPendingRequests.length > 0 ? '#D97706' : '#0F172A',
+                border: allPendingRequests.length > 0 ? '1px solid #FCD34D' : '1px solid #CBD5E1',
+                fontWeight: 700,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                position: 'relative'
+              }}
+              title="Review pending student registration requests"
+            >
+              <span>📩 Pending Requests</span>
+              {allPendingRequests.length > 0 && (
+                <span style={{ background: '#EF4444', color: '#FFF', borderRadius: '10px', padding: '2px 8px', fontSize: '11px', fontWeight: 800 }}>
+                  {allPendingRequests.length}
+                </span>
+              )}
+            </button>
+
+            <button 
+              className="sm-btn-secondary" 
+              style={{ 
+                background: inviteCopied ? '#10B981' : '#FFFFFF', 
+                color: inviteCopied ? '#FFFFFF' : '#0F172A',
+                fontWeight: 700,
+                border: inviteCopied ? '1px solid #10B981' : '1px solid #CBD5E1',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                transition: 'all 0.2s ease'
+              }} 
+              onClick={handleCopyStudentInviteLink}
+              title="Copy registration link for students with this school auto-selected"
+            >
+              {inviteCopied ? '✅ Invite Link Copied!' : '🔗 Copy Student Invite Link'}
+            </button>
             <button className="sm-btn-secondary" onClick={downloadCSVSample}>Export CSV</button>
             <button className="sm-btn-primary" onClick={() => { setShowModal(true); setAddMode('single'); }}>+ Add Student</button>
           </div>
         </header>
 
+        {/* Pending Requests Modal */}
+        {showPendingModal && (
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15,23,42,0.65)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '20px' }}>
+            <div style={{ background: '#FFFFFF', borderRadius: '16px', maxWidth: '680px', width: '100%', maxHeight: '85vh', overflowY: 'auto', padding: '24px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px', borderBottom: '1px solid #E2E8F0', paddingBottom: '14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ fontSize: '24px' }}>📩</span>
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: '19px', fontWeight: 800, color: '#0F172A' }}>
+                      Pending Registration Requests ({allPendingRequests.length})
+                    </h2>
+                    <p style={{ margin: '2px 0 0 0', fontSize: '13px', color: '#64748B' }}>
+                      Students requesting to join your Surf School directly.
+                    </p>
+                  </div>
+                </div>
+                <button onClick={() => setShowPendingModal(false)} style={{ background: '#F1F5F9', border: 'none', width: '32px', height: '32px', borderRadius: '50%', fontSize: '16px', color: '#64748B', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+              </div>
+
+              {allPendingRequests.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '40px 20px', color: '#94A3B8' }}>
+                  <div style={{ fontSize: '40px', marginBottom: '10px' }}>🎉</div>
+                  <div style={{ fontWeight: 700, fontSize: '16px', color: '#475569' }}>No pending requests!</div>
+                  <p style={{ fontSize: '13px', margin: '4px 0 0 0' }}>All student join requests have been reviewed.</p>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                  {allPendingRequests.map((req) => (
+                    <div key={req.id || req.student_email} style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '12px', padding: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '14px' }}>
+                      <div>
+                        <div style={{ fontWeight: 800, color: '#0F172A', fontSize: '16px' }}>{req.student_name || req.name}</div>
+                        <div style={{ fontSize: '13px', color: '#475569', marginTop: '4px', display: 'flex', gap: '14px', flexWrap: 'wrap' }}>
+                          <span>✉️ {req.student_email || req.email}</span>
+                          <span>📱 {req.whatsapp_number || 'N/A'}</span>
+                          <span>🗓️ {req.start_date || '2026-08-26'} ({req.session_time || 'Dawn Patrol'})</span>
+                        </div>
+                        <div style={{ fontSize: '12.5px', color: '#D97706', marginTop: '6px', fontWeight: 700 }}>
+                          🏫 Requested Surf School: {req.school_name || req.school || 'Aquatic Indica Surf School'}
+                        </div>
+                      </div>
+                      
+                      <div style={{ display: 'flex', gap: '10px' }}>
+                        <button 
+                          onClick={() => {
+                            handleApproveStudentRequest(req.student_id || req.id, req.student_email || req.email);
+                            if (allPendingRequests.length <= 1) setShowPendingModal(false);
+                          }}
+                          style={{ background: '#10B981', color: '#FFF', border: 'none', borderRadius: '8px', padding: '9px 18px', fontWeight: 800, fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 6px rgba(16,185,129,0.2)' }}
+                        >
+                          ✅ Accept Student
+                        </button>
+                        <button 
+                          onClick={() => {
+                            handleRejectStudentRequest(req.student_id || req.id, req.student_email || req.email);
+                            if (allPendingRequests.length <= 1) setShowPendingModal(false);
+                          }}
+                          style={{ background: '#EF4444', color: '#FFF', border: 'none', borderRadius: '8px', padding: '9px 14px', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}
+                        >
+                          ❌ Decline
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+
+
+        {/* Toast notification */}
+        {toastMsg && (
+          <div style={{ position: 'fixed', top: '20px', right: '20px', background: '#0F172A', color: '#FFF', padding: '12px 20px', borderRadius: '10px', fontWeight: 700, zIndex: 9999, boxShadow: '0 10px 25px rgba(0,0,0,0.3)', border: '1px solid #334155' }}>
+            {toastMsg}
+          </div>
+        )}
+
+
+
         {/* Filters */}
         <div className="sm-filters">
+
           <div className="sm-search-wrap">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
             <input

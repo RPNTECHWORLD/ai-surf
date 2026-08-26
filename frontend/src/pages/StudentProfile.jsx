@@ -229,12 +229,42 @@ const StudentProfile = () => {
     (currentUser.role === 'admin')
   );
 
+  const isPendingApproval = currentUser && currentUser.role === 'athlete' && (
+    currentUser.approval_status === 'pending' || 
+    (() => {
+      try {
+        const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+        const req = reqs.find(r => r.student_email?.toLowerCase() === currentUser.email?.toLowerCase());
+        return req && req.status !== 'approved';
+      } catch (e) { return false; }
+    })()
+  );
+
   return (
     <div className="sp-page">
       <Sidebar />
       <main className="sp-main">
+        {/* Pending Approval Warning Banner */}
+        {isPendingApproval && (
+          <div style={{ background: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: '14px', padding: '16px 20px', marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', boxShadow: '0 4px 12px rgba(245,158,11,0.08)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <span style={{ fontSize: '26px' }}>⏳</span>
+              <div>
+                <h3 style={{ margin: 0, color: '#92400E', fontSize: '15px', fontWeight: 800 }}>Join Request Pending Approval</h3>
+                <p style={{ margin: '2px 0 0 0', color: '#B45309', fontSize: '13px' }}>
+                  Your join request to <strong>{student?.school || 'your selected Surf School'}</strong> is waiting for School Admin approval.
+                </p>
+              </div>
+            </div>
+            <span style={{ background: '#FEF3C7', color: '#D97706', padding: '6px 14px', borderRadius: '20px', fontSize: '12px', fontWeight: 800, border: '1px solid #FDE68A' }}>
+              PENDING APPROVAL
+            </span>
+          </div>
+        )}
+
         {/* Hero Section */}
         <section className="sp-hero">
+
           <img src={student.image} alt={student.name} className="sp-avatar" />
           <div className="sp-hero-info">
             <h1 className="sp-name">{student.name}</h1>

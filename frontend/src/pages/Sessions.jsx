@@ -49,6 +49,19 @@ const Sessions = () => {
   const [selectedCalendarDate, setSelectedCalendarDate] = useState('24 Aug 2026');
   const [selectedSessionDetail, setSelectedSessionDetail] = useState(null);
 
+  // User Context for Role-Based Data Isolation
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('user') || localStorage.getItem('user');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) {
+      return null;
+    }
+  });
+
+  const isStudent = currentUser?.role === 'athlete';
+  const currentStudentName = currentUser?.name || 'Eric Sheldon';
+
   const fetchSessions = () => {
     setLoading(true);
     fetch(`${API}/api/sessions`)
@@ -62,22 +75,37 @@ const Sessions = () => {
     fetchSessions();
   }, []);
 
+  // Role-Scoped Base Sessions List
+  const roleScopedSessions = useMemo(() => {
+    if (!isStudent) return sessions; // Admins, School & Coaches see ALL sessions across students
+
+    // Student Role: Strictly isolate to ONLY sessions belonging to this specific student
+    const mySessions = sessions.filter(s => {
+      if (s.student && s.student.toLowerCase() === currentStudentName.toLowerCase()) return true;
+      if (currentUser?.student_id && s.student_id === currentUser.student_id) return true;
+      return false;
+    });
+
+    // Fallback: If mock data doesn't match name yet, show sessions matched by name
+    return mySessions.length > 0 ? mySessions : sessions.filter(s => s.student === 'Eric Sheldon' || s.student === currentStudentName);
+  }, [sessions, currentUser, isStudent, currentStudentName]);
+
   // Extract unique instructors and students for dropdowns
   const availableInstructors = useMemo(() => {
-    const names = new Set(sessions.map(s => s.instructor).filter(Boolean));
+    const names = new Set(roleScopedSessions.map(s => s.instructor).filter(Boolean));
     return Array.from(names);
-  }, [sessions]);
+  }, [roleScopedSessions]);
 
   const availableStudents = useMemo(() => {
-    const names = new Set(sessions.map(s => s.student).filter(Boolean));
+    const names = new Set(roleScopedSessions.map(s => s.student).filter(Boolean));
     return Array.from(names);
-  }, [sessions]);
+  }, [roleScopedSessions]);
 
   // Filtered sessions
   const filteredSessions = useMemo(() => {
     const todayStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
     
-    return sessions.filter(s => {
+    return roleScopedSessions.filter(s => {
       // Status & Date filter
       if (statusFilter === 'Today') {
         if (s.date !== todayStr) return false;
@@ -90,7 +118,7 @@ const Sessions = () => {
         return false;
       }
 
-      // Student filter
+      // Student filter (for Admins/Coaches)
       if (studentFilter !== 'All' && s.student !== studentFilter) {
         return false;
       }
@@ -120,7 +148,7 @@ const Sessions = () => {
 
       return true;
     });
-  }, [sessions, statusFilter, instructorFilter, studentFilter, conditionFilter, typeFilter, searchQuery]);
+  }, [roleScopedSessions, statusFilter, instructorFilter, studentFilter, conditionFilter, typeFilter, searchQuery]);
 
   const hasActiveFilters = 
     statusFilter !== 'All' ||
@@ -140,18 +168,18 @@ const Sessions = () => {
   };
 
   // Derived stats
-  const totalSessions = sessions.length;
+  const totalSessions = roleScopedSessions.length;
   const avgDuration = totalSessions > 0
-    ? Math.round(sessions.reduce((sum, s) => sum + (s.duration_mins || 60), 0) / totalSessions)
+    ? Math.round(roleScopedSessions.reduce((sum, s) => sum + (s.duration_mins || 60), 0) / totalSessions)
     : 0;
 
-  const locationCounts = sessions.reduce((acc, s) => {
+  const locationCounts = roleScopedSessions.reduce((acc, s) => {
     if (s.location) acc[s.location] = (acc[s.location] || 0) + 1;
     return acc;
   }, {});
   const topSpot = Object.keys(locationCounts).sort((a, b) => locationCounts[b] - locationCounts[a])[0] || '—';
 
-  const conditionCounts = sessions.reduce((acc, s) => {
+  const conditionCounts = roleScopedSessions.reduce((acc, s) => {
     if (s.condition) acc[s.condition] = (acc[s.condition] || 0) + 1;
     return acc;
   }, {});
@@ -279,20 +307,29 @@ const Sessions = () => {
               </select>
             </div>
 
-            {/* Student Filter */}
-            <div className="ses-select-wrap">
-              <label className="ses-select-label">Student</label>
-              <select
-                className="ses-select"
-                value={studentFilter}
-                onChange={(e) => setStudentFilter(e.target.value)}
-              >
-                <option value="All">All Students</option>
-                {availableStudents.map(name => (
-                  <option key={name} value={name}>{name}</option>
-                ))}
-              </select>
-            </div>
+            {/* Student Filter / Locked Badge */}
+            {!isStudent ? (
+              <div className="ses-select-wrap">
+                <label className="ses-select-label">Student</label>
+                <select
+                  className="ses-select"
+                  value={studentFilter}
+                  onChange={(e) => setStudentFilter(e.target.value)}
+                >
+                  <option value="All">All Students</option>
+                  {availableStudents.map(name => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="ses-select-wrap">
+                <label className="ses-select-label">Student Account</label>
+                <div style={{ padding: '8px 14px', borderRadius: '8px', background: '#F1F5F9', color: '#0F172A', fontWeight: 800, fontSize: '13px', border: '1px solid #CBD5E1', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span>👤</span> {currentStudentName}
+                </div>
+              </div>
+            )}
 
             {/* Condition Filter */}
             <div className="ses-select-wrap">

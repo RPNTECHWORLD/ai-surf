@@ -16,6 +16,7 @@ import CoachingReport from './pages/CoachingReport';
 import AuthPage from './pages/AuthPage';
 import SuperAdminDashboard from './pages/SuperAdminDashboard';
 import AthleteIntelligence from './pages/AthleteIntelligence';
+import JudgeScoring from './pages/JudgeScoring';
 
 const PrivateRoute = ({ children }) => {
   const token = sessionStorage.getItem('token');
@@ -29,6 +30,7 @@ function App() {
         <Route path="/" element={<LandingPage />} />
         <Route path="/auth" element={<AuthPage />} />
         <Route path="/register" element={<SchoolRegistration />} />
+        <Route path="/judge-scoring" element={<JudgeScoring />} />
         
         {/* Protected Routes */}
         <Route path="/dashboard" element={<PrivateRoute><SchoolDashboard /></PrivateRoute>} />

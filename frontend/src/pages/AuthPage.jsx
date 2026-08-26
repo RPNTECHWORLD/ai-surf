@@ -32,31 +32,13 @@ const AuthPage = () => {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  // Saved device accounts
+  // Saved device accounts (Only populated when real users save accounts on this device)
   const [savedAccounts, setSavedAccounts] = useState(() => {
-    const defaultDemo = [
-      { name: 'Aquatic Indica Admin', email: 'rpntechworld@gmail.com', role: 'School Admin', image: '' },
-      { name: 'Pipeline Admin', email: 'admin@aisurf.com', role: 'School Admin', image: '' },
-      { name: 'Kai Lenny', email: 'kai@aisurf.com', role: 'Coach', image: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=100' },
-      { name: 'Eric Sheldon', email: 'ericsheldon04@gmail.com', role: 'Athlete', image: '' }
-    ];
     try {
-      const parsed = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
-      const cleaned = parsed.map(acc => ({
-        ...acc,
-        name: (!acc.name || acc.name === 'System Admin') ? 'School Admin' : acc.name,
-        role: acc.role === 'admin' ? 'School Admin' : acc.role
-      }));
-      // Merge unique accounts by email
-      const map = new Map();
-      [...cleaned, ...defaultDemo].forEach(item => {
-        if (item.email && !map.has(item.email.toLowerCase())) {
-          map.set(item.email.toLowerCase(), item);
-        }
-      });
-      return Array.from(map.values());
+      localStorage.removeItem('savedAccounts'); // Clear any cached demo accounts
+      return [];
     } catch (e) {
-      return defaultDemo;
+      return [];
     }
   });
 
@@ -102,10 +84,7 @@ const AuthPage = () => {
   });
 
   const [schoolsList, setSchoolsList] = useState([
-    'Aquatic Indica Surf School',
-    'Pipeline Surf School',
-    'North Shore Surf Academy',
-    'Waimea Bay Surf Club'
+    'Aquatic Indica Surf School'
   ]);
 
   useEffect(() => {
@@ -118,12 +97,13 @@ const AuthPage = () => {
   useEffect(() => {
     const urlSchool = searchParams.get('school');
     if (urlSchool) {
-      setFormData(prev => ({ ...prev, school: urlSchool }));
+      setFormData(prev => ({ ...prev, school: urlSchool, password: '', confirmPassword: '' }));
       setSchoolsList(prev => Array.from(new Set([urlSchool, ...prev])));
       setRole('athlete');
       setOtpVerified(true);
       setIsLogin(false);
     }
+
   }, [searchParams]);
 
   // Fetch invite info if token present in URL
@@ -197,6 +177,41 @@ const AuthPage = () => {
     localStorage.setItem('savedAccounts', JSON.stringify(updated));
   };
 
+  const [pendingApprovalUser, setPendingApprovalUser] = useState(null);
+
+  const checkApprovalStatus = () => {
+    if (!pendingApprovalUser) return;
+    setErrorMsg('');
+    try {
+      const studentEmail = pendingApprovalUser.email?.toLowerCase();
+
+      // Check in localStorage school_join_requests (sole source of truth for admin approval)
+      const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+      const currentReq = savedReqs.find(r => r.student_email?.toLowerCase() === studentEmail);
+
+      const isApproved = currentReq && currentReq.status === 'approved';
+
+
+      if (isApproved) {
+        const approvedUser = { ...pendingApprovalUser, approval_status: 'approved' };
+        sessionStorage.setItem('token', 'session_active_token');
+        sessionStorage.setItem('user', JSON.stringify(approvedUser));
+        sessionStorage.setItem('activeSchool', JSON.stringify({
+          name: approvedUser.school || 'Aquatic Indica Surf School',
+          owner: approvedUser.name,
+          email: approvedUser.email,
+        }));
+        setPendingApprovalUser(null);
+        navigate(`/students/${approvedUser.student_id || approvedUser.id || 1}`);
+      } else {
+        setErrorMsg(`⏳ Your join request to "${pendingApprovalUser.school || 'your selected Surf School'}" is STILL PENDING approval from the School Admin.`);
+      }
+    } catch (e) {
+      setErrorMsg('Could not verify status. Please try again.');
+    }
+  };
+
+
   const handleAuthSuccess = (token, user) => {
     sessionStorage.setItem('token', token);
     sessionStorage.setItem('user', JSON.stringify(user));
@@ -208,11 +223,31 @@ const AuthPage = () => {
         email: user.email.toLowerCase(),
         role: user.role === 'admin' ? 'School Admin' : (user.role || 'athlete'),
         image: user.image || '',
+        approval_status: user.approval_status || 'approved',
         lastLogin: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
       }, ...filtered];
       localStorage.setItem('savedAccounts', JSON.stringify(updatedAccounts));
       setSavedAccounts(updatedAccounts);
     } catch (e) {}
+
+    // Check if student approval is pending (only for direct signups without invite link)
+    const isDirectSignup = !inviteToken && !searchParams.get('school');
+    let isApprovedInStorage = false;
+    try {
+      const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+      const currentReq = savedReqs.find(r => r.student_email?.toLowerCase() === user.email?.toLowerCase());
+      if (currentReq && currentReq.status === 'approved') {
+        isApprovedInStorage = true;
+      }
+    } catch (e) {}
+
+    const isPending = (user.role === 'athlete') && (user.approval_status === 'pending' || (isDirectSignup && user.approval_status !== 'approved'));
+
+    if (isPending && !isApprovedInStorage) {
+      setPendingApprovalUser(user);
+      return;
+    }
+
     sessionStorage.setItem('activeSchool', JSON.stringify({
       name: user.school_name || formData.school || (user.role === 'admin' ? 'School Admin' : user.role === 'coach' ? 'Coach Portal' : 'Student Portal'),
       owner: user.name,
@@ -222,6 +257,7 @@ const AuthPage = () => {
     else if (user.role === 'coach') navigate(`/instructors/${user.instructor_id || user.id || 1}`);
     else navigate('/dashboard');
   };
+
 
   // ── Login ──────────────────────────────────────────────────────────────────
   const handleLoginSubmit = async (e) => {
@@ -262,6 +298,7 @@ const AuthPage = () => {
         if (!isResend) setOtpSent(true);
         setSuccessMsg(`Verification code sent to ${formData.email}`);
       } else {
+        setOtpSent(false);
         setErrorMsg(data.detail || 'Failed to send OTP. Please try again.');
       }
     } catch (err) {
@@ -330,12 +367,50 @@ const AuthPage = () => {
         })
       });
       const data = await res.json();
-      if (res.ok) handleAuthSuccess(data.token, data.user);
-      else setErrorMsg(data.detail || 'Registration failed. Please try again.');
+      if (res.ok) {
+        const userObj = data.user || {
+          id: Date.now(),
+          name: formData.name.trim(),
+          email: formData.email.toLowerCase().trim(),
+          role: role,
+          school: formData.school,
+          approval_status: (inviteToken || searchParams.get('school')) ? 'approved' : 'pending'
+        };
+
+        // If direct signup without invite link, record pending join request for school admin
+        if (!inviteToken && !searchParams.get('school') && role === 'athlete') {
+          try {
+            const existingReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+            const studentEmail = formData.email.toLowerCase().trim();
+            if (!existingReqs.some(r => r.student_email?.toLowerCase() === studentEmail)) {
+              existingReqs.unshift({
+                id: `req_${Date.now()}`,
+                student_id: userObj.student_id || userObj.id || Date.now(),
+                student_name: formData.name.trim(),
+                student_email: studentEmail,
+                school_name: formData.school || 'Aquatic Indica Surf School',
+                start_date: formData.start_date || '2026-08-26',
+                session_time: formData.session_time || 'Morning 6:00 AM',
+                whatsapp_number: formData.whatsapp_number || 'N/A',
+                status: 'pending',
+                request_date: new Date().toLocaleDateString(),
+                time: new Date().toLocaleTimeString()
+              });
+              localStorage.setItem('school_join_requests', JSON.stringify(existingReqs));
+            }
+          } catch (e) {}
+          userObj.approval_status = 'pending';
+        }
+
+        handleAuthSuccess(data.token || 'session_token', userObj);
+      } else {
+        setErrorMsg(data.detail || 'Registration failed. Please try again.');
+      }
     } catch (err) {
       setErrorMsg('Could not connect to the authentication server.');
     } finally { setLoading(false); }
   };
+
 
   // ── Forgot Password ────────────────────────────────────────────────────────
   const sendForgotOtp = async (isResend = false) => {
@@ -489,8 +564,44 @@ const AuthPage = () => {
           <span className="auth-brand-name">AiSurf</span>
         </div>
 
-        {/* ── FORGOT PASSWORD FLOW ── */}
-        {forgotStep > 0 ? (
+        {pendingApprovalUser ? (
+
+          <div style={{ padding: '10px 0' }}>
+            <div style={{ fontSize: '48px', marginBottom: '12px', textAlign: 'center' }}>⏳</div>
+            <h2 className="auth-title" style={{ textAlign: 'center', marginBottom: '8px' }}>Registration Pending</h2>
+            <p className="auth-subtitle" style={{ textAlign: 'center', marginBottom: '24px' }}>
+              Your join request to <strong style={{ color: '#00F2FE' }}>{pendingApprovalUser.school || 'your selected Surf School'}</strong> has been submitted successfully!
+            </p>
+
+            <div style={{ background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)', borderRadius: '12px', padding: '16px', color: '#FCD34D', fontSize: '13px', lineHeight: '1.6', marginBottom: '24px' }}>
+              <div style={{ fontWeight: 800, fontSize: '14px', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span>🔒</span> Status: Pending School Admin Approval
+              </div>
+              The School Admin has been notified of your registration. You will be able to access your student dashboard once approved.
+            </div>
+
+            {errorMsg && <div className="auth-error" style={{ marginBottom: '16px' }}>{errorMsg}</div>}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <button 
+                onClick={checkApprovalStatus} 
+                className="btn-primary auth-submit"
+                style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+              >
+                🔄 Check Approval Status
+              </button>
+
+              <button 
+                onClick={() => setPendingApprovalUser(null)} 
+                className="auth-link-btn"
+                style={{ textAlign: 'center', marginTop: '6px' }}
+              >
+                ← Back to Login
+              </button>
+            </div>
+          </div>
+        ) : forgotStep > 0 ? (
+
           <>
             <h2 className="auth-title">Reset Password</h2>
             <p className="auth-subtitle">
@@ -755,15 +866,18 @@ const AuthPage = () => {
                     <div className="auth-fields-row">
                       <div className="auth-field">
                         <label>Password</label>
-                        <input type="password" name="password" placeholder="••••••••"
-                          value={formData.password} onChange={handleChange} required />
+                        <input type="password" name="password" placeholder="Enter password"
+                          autoComplete="new-password"
+                          value={formData.password || ''} onChange={handleChange} required />
                       </div>
                       <div className="auth-field">
                         <label>Confirm Password</label>
-                        <input type="password" name="confirmPassword" placeholder="••••••••"
-                          value={formData.confirmPassword} onChange={handleChange} required />
+                        <input type="password" name="confirmPassword" placeholder="Re-enter password"
+                          autoComplete="new-password"
+                          value={formData.confirmPassword || ''} onChange={handleChange} required />
                       </div>
                     </div>
+
 
                     {/* Athlete extra fields */}
                     {role === 'athlete' && (

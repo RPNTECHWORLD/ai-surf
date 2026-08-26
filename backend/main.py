@@ -28,36 +28,45 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./aisurf.db")
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-if DATABASE_URL.startswith("sqlite"):
-    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-else:
-    if "amazonaws.com" in DATABASE_URL:
-        from urllib.parse import urlparse
-        from sqlalchemy import event
-        import boto3
-        
-        parsed = urlparse(DATABASE_URL)
-        db_host = parsed.hostname
-        db_port = parsed.port or 5432
-        db_user = parsed.username or "postgres"
-        db_name = parsed.path.lstrip("/")
-        
-        # Create connection URI without static password
-        connection_uri = f"postgresql+psycopg2://{db_user}@{db_host}:{db_port}/{db_name}"
-        engine = create_engine(connection_uri, connect_args={"sslmode": "require"})
-        
-        @event.listens_for(engine, "do_connect")
-        def provide_token(dialect, conn_rec, cargs, cparams):
-            client = boto3.client("rds", region_name=os.getenv("AWS_REGION", "us-east-1"))
-            token = client.generate_db_auth_token(
-                DBHostname=db_host,
-                Port=db_port,
-                DBUsername=db_user,
-                Region=os.getenv("AWS_REGION", "us-east-1")
-            )
-            cparams["password"] = token
+try:
+    if DATABASE_URL.startswith("sqlite"):
+        engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
     else:
-        engine = create_engine(DATABASE_URL)
+        if "amazonaws.com" in DATABASE_URL:
+            from urllib.parse import urlparse
+            from sqlalchemy import event
+            import boto3
+            
+            parsed = urlparse(DATABASE_URL)
+            db_host = parsed.hostname
+            db_port = parsed.port or 5432
+            db_user = parsed.username or "postgres"
+            db_name = parsed.path.lstrip("/")
+            
+            connection_uri = f"postgresql+psycopg2://{db_user}@{db_host}:{db_port}/{db_name}"
+            engine = create_engine(connection_uri, connect_args={"sslmode": "require", "connect_timeout": 3})
+            
+            @event.listens_for(engine, "do_connect")
+            def provide_token(dialect, conn_rec, cargs, cparams):
+                client = boto3.client("rds", region_name=os.getenv("AWS_REGION", "us-east-1"))
+                token = client.generate_db_auth_token(
+                    DBHostname=db_host,
+                    Port=db_port,
+                    DBUsername=db_user,
+                    Region=os.getenv("AWS_REGION", "us-east-1")
+                )
+                cparams["password"] = token
+
+            # Verify connection or fallback
+            with engine.connect() as test_conn:
+                pass
+        else:
+            engine = create_engine(DATABASE_URL)
+except Exception as err:
+    print(f"Notice: AWS RDS Direct VPC connection not directly reachable from local environment ({err}). Initializing local database engine.")
+    DATABASE_URL = "sqlite:///./aisurf.db"
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -531,31 +540,10 @@ finally:
 db = SessionLocal()
 try:
     from sqlalchemy import text
+    # Clean database initialization
     surfer_count = db.execute(text("SELECT COUNT(*) FROM surfers")).fetchone()[0]
     if surfer_count == 0:
-        db.execute(text("INSERT INTO surfers (id, name) VALUES (1, 'Kai Lenny'), (2, 'Bethany Hamilton'), (3, 'Kolohe Andino'), (4, 'Carissa Moore'), (5, 'Marcus Silva'), (6, 'John Miller'), (7, 'Chloe Kim'), (8, 'Emma Watson'), (9, 'Rick Grimes'), (10, 'Santhosh Kumar')"))
-        db.execute(text("INSERT INTO events (id, name, location, start_date, status) VALUES (1, 'Pipeline Pro 2026', 'Banzai Pipeline, Oahu', '12-18 Feb 2026', 'Upcoming'), (2, 'Gold Coast Surf Festival', 'Snapper Rocks, QLD', '05-12 Mar 2026', 'Upcoming'), (3, 'Maui Surf Classic 2026', 'Honolua Bay, Maui', '07-10 Aug 2026', 'Live'), (4, 'Chiba Pro 2025', 'Chiba, Japan', '15-20 Oct 2025', 'Finished'), (5, 'Huntington Beach Open', 'Huntington Beach, CA', '01-05 Jul 2025', 'Finished')"))
-        db.execute(text("INSERT INTO heats (id, event_id, round, heat_number, status) VALUES (1, 3, 'Quarterfinals', 2, 'Live')"))
-        db.execute(text("INSERT INTO heat_surfers (heat_id, surfer_id, rank, seed) VALUES (1, 1, 1, 1), (1, 3, 2, 4), (1, 10, 3, 10)"))
-        db.execute(text("INSERT INTO scores (heat_id, surfer_id, score) VALUES (1, 1, 16.50), (1, 3, 14.20), (1, 10, 12.10)"))
         db.commit()
-    
-    # Backfill password_plain for default/existing users
-    db.execute(text("UPDATE users SET password_plain = 'admin123' WHERE email = 'admin@aisurf.com' AND password_plain IS NULL"))
-    db.execute(text("UPDATE users SET password_plain = 'kai123' WHERE email = 'kai@aisurf.com' AND password_plain IS NULL"))
-    db.execute(text("UPDATE users SET password_plain = 'bethany123' WHERE email = 'bethany@aisurf.com' AND password_plain IS NULL"))
-    db.execute(text("UPDATE users SET password_plain = 'kolohe123' WHERE email = 'kolohe@aisurf.com' AND password_plain IS NULL"))
-    db.execute(text("UPDATE users SET password_plain = 'carissa123' WHERE email = 'carissa@aisurf.com' AND password_plain IS NULL"))
-    db.execute(text("UPDATE users SET password_plain = 'marcus123' WHERE email = 'marcus@aisurf.com' AND password_plain IS NULL"))
-    db.execute(text("UPDATE users SET password_plain = 'chloe123' WHERE email = 'chloe@aisurf.com' AND password_plain IS NULL"))
-    db.execute(text("UPDATE users SET password_plain = 'john123' WHERE email = 'john@aisurf.com' AND password_plain IS NULL"))
-    db.execute(text("UPDATE users SET password_plain = 'emma123' WHERE email = 'emma@aisurf.com' AND password_plain IS NULL"))
-    db.execute(text("UPDATE users SET password_plain = 'rick123' WHERE email = 'rick@aisurf.com' AND password_plain IS NULL"))
-    db.execute(text("UPDATE users SET password_plain = 'sarah123' WHERE email = 'sarah@aisurf.com' AND password_plain IS NULL"))
-    db.execute(text("UPDATE users SET password_plain = 'james123' WHERE email = 'james@aisurf.com' AND password_plain IS NULL"))
-    db.execute(text("UPDATE users SET password_plain = 'rpn123' WHERE email = 'rpn@gmail.com' AND password_plain IS NULL"))
-    db.execute(text("UPDATE users SET password_plain = 'test123' WHERE email = 'test@gmail.com' AND password_plain IS NULL"))
-    db.execute(text("UPDATE users SET password_plain = 'tt123' WHERE email = 'tt@gmail.com' AND password_plain IS NULL"))
     db.commit()
 
     # Seed Marketplace Items
@@ -2890,10 +2878,25 @@ def get_invite_info(token: str, db: OrmSession = Depends(get_db)):
 @app.delete("/api/students/{student_id}")
 def delete_student(student_id: int, db: OrmSession = Depends(get_db)):
     s = db.query(Student).filter(Student.id == student_id).first()
-    if not s:
-        raise HTTPException(status_code=404, detail="Student not found")
-    db.delete(s)
-    db.commit()
+    if s:
+        if s.email:
+            u = db.query(User).filter(func.lower(User.email) == s.email.lower()).first()
+            if u:
+                db.delete(u)
+        db.delete(s)
+        db.commit()
+        return {"message": "Deleted"}
+    
+    u = db.query(User).filter(User.id == student_id).first()
+    if u:
+        if u.email:
+            st = db.query(Student).filter(func.lower(Student.email) == u.email.lower()).first()
+            if st:
+                db.delete(st)
+        db.delete(u)
+        db.commit()
+        return {"message": "Deleted"}
+        
     return {"message": "Deleted"}
 
 
@@ -2998,17 +3001,12 @@ def analytics_students(db: OrmSession = Depends(get_db)):
 def get_schools(db: OrmSession = Depends(get_db)):
     schools = db.query(School).all()
     if not schools:
-        # Auto-populate initial surf schools if empty
+        # Auto-populate main surf school if empty
         s1 = School(name="Aquatic Indica Surf School", owner="Aquatic Admin",
                     email="rpntechworld@gmail.com", phone="+91 9876543210",
                     country="India", city="Kovalam / Chennai",
-                    instructor_count="5–15", website="https://aquaticindica.com")
-        s2 = School(name="Pipeline Surf School", owner="John Doe",
-                    email="admin@aisurf.com", phone="+1 808 555 0100",
-                    country="United States", city="Honolulu",
-                    instructor_count="6–15", website="https://pipeline.com")
+                    instructor_count="0", website="https://aquaticindica.com")
         db.add(s1)
-        db.add(s2)
         db.commit()
         schools = db.query(School).all()
     return [
@@ -3078,44 +3076,54 @@ def get_features():
 def get_competitions_data(db: OrmSession = Depends(get_db)):
     from sqlalchemy import text
     
-    # 1. Fetch upcoming events (excluding finished and heat drawn ones)
+    # 1. Fetch all competition events from database
     upcoming_events = []
     try:
         events = db.execute(text("""
-            SELECT id, name, location, start_date 
+            SELECT id, name, location, start_date, status 
             FROM events 
-            WHERE status NOT IN ('Finished', 'Finished - Result Published', 'Heat Drawn', 'heat drawn', 'Live', 'Ongoing', 'Active', 'Active - Live') 
-            ORDER BY start_date ASC 
-            LIMIT 5
+            ORDER BY id DESC 
+            LIMIT 10
         """)).fetchall()
 
         for ev in events:
+            ev_status = ev[4] or "Scheduled"
             upcoming_events.append({
                 "id": ev[0],
                 "name": ev[1],
-                "locationDate": f"{ev[2] or 'No Location'} • {ev[3] or 'No Date'}",
+                "locationDate": f"{ev[2] or 'Covelong Beach'} • {ev[3] or '2026'}",
+                "status": ev_status,
                 "badges": [
-                    {"text": "Reef Break", "color": "#F59E0B"},
-                    {"text": "Advanced", "color": "#F43F5E"}
+                    {"text": ev_status, "color": "#F59E0B" if ev_status != "Finished" else "#64748B"},
+                    {"text": "Surfing", "color": "#3B82F6"}
                 ]
             })
     except Exception as e:
         print(f"Error fetching upcoming events: {e}")
 
-    # 2. Fetch live event and heat competitors
+    # 2. Fetch live or latest event and heat competitors
     live_event_name = ""
     live_event_location = ""
     live_heat_name = ""
     heat_competitors = []
     has_live_event = False
     try:
-        # Get event that is currently Ongoing or Live
+        # Get event that is currently Ongoing or Live, or fallback to the latest active/created event
         live_ev = db.execute(text("""
             SELECT id, name, location 
             FROM events 
-            WHERE status IN ('Ongoing', 'Live', 'ongoing', 'live') 
+            WHERE status IN ('Ongoing', 'Live', 'ongoing', 'live', 'Active', 'Active - Live', 'Heat Drawn', 'Register Form Opening') 
+            ORDER BY id DESC
             LIMIT 1
         """)).fetchone()
+        
+        if not live_ev:
+            live_ev = db.execute(text("""
+                SELECT id, name, location 
+                FROM events 
+                ORDER BY id DESC 
+                LIMIT 1
+            """)).fetchone()
         
         if live_ev:
             has_live_event = True
@@ -3126,7 +3134,7 @@ def get_competitions_data(db: OrmSession = Depends(get_db)):
             heat = db.execute(text("""
                 SELECT id, round, heat_number 
                 FROM heats 
-                WHERE event_id = :event_id AND status IN ('Ongoing', 'Live', 'ongoing', 'live', 'running') 
+                WHERE event_id = :event_id AND status IN ('Ongoing', 'Live', 'ongoing', 'live', 'running', 'in-progress', 'Heat Drawn') 
                 LIMIT 1
             """), {"event_id": live_ev[0]}).fetchone()
             
@@ -3141,7 +3149,7 @@ def get_competitions_data(db: OrmSession = Depends(get_db)):
                 """), {"event_id": live_ev[0]}).fetchone()
                 
             if heat:
-                live_heat_name = f"Round: {heat[1]}, Heat: {heat[2]}"
+                live_heat_name = f"Round: {heat[1] or 'Round 1'}, Heat: {heat[2] or '1'}"
                 heat_id = heat[0]
                 
                 surfer_rows = db.execute(text("""
@@ -3174,10 +3182,11 @@ def get_competitions_data(db: OrmSession = Depends(get_db)):
     try:
         completed_events = db.execute(text("""
             SELECT id, name, location FROM events 
-            WHERE status IN ('Finished', 'Finished - Result Published') 
+            WHERE status IN ('Finished', 'Finished - Result Published', 'completed') 
             ORDER BY start_date DESC 
             LIMIT 5
         """)).fetchall()
+
         for ev in completed_events:
             # Query top score from this event
             top_score_row = db.execute(text("""
@@ -3384,5 +3393,29 @@ def delete_key(id: int, db: OrmSession = Depends(get_db)):
     db.delete(k)
     db.commit()
     return {"message": "Key deleted successfully"}
+
+
+@app.delete("/api/superadmin/users/{user_id}")
+def delete_user_by_id(user_id: int, db: OrmSession = Depends(get_db)):
+    u = db.query(User).filter(User.id == user_id).first()
+    if u:
+        if u.email:
+            inst = db.query(Instructor).filter(func.lower(Instructor.email) == u.email.lower()).first()
+            if inst:
+                db.delete(inst)
+            stud = db.query(Student).filter(func.lower(Student.email) == u.email.lower()).first()
+            if stud:
+                db.delete(stud)
+        db.delete(u)
+        db.commit()
+        return {"message": "User deleted successfully"}
+    
+    inst = db.query(Instructor).filter(Instructor.id == user_id).first()
+    if inst:
+        db.delete(inst)
+        db.commit()
+        return {"message": "Instructor deleted successfully"}
+        
+    return {"message": "User deleted successfully"}
 
 

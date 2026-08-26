@@ -2,316 +2,15 @@
 
 const originalFetch = window.fetch;
 
-// Initialize Seed Data (Reset on page refresh as per client's request)
-const INITIAL_INSTRUCTORS = [
-  {
-    id: 1,
-    name: "Kai Lenny",
-    email: "kai@aisurf.com",
-    age: 30,
-    gender: "Male",
-    fitness_level: "Elite",
-    experience: "12 Years",
-    certifications: ["ISA Level 2", "CPR"],
-    image: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=100",
-    bio: "Big wave charger and multi-discipline waterman.",
-    specializations: ["S&C", "Video Analysis", "Big Wave"],
-    rates: "$150 / hr",
-    location: "Maui, Hawaii",
-    reviews: [
-      { student: "Emma Watson", rating: 5, comment: "Kai is an incredible coach! He breaks down paddling technique so clearly." }
-    ]
-  },
-  {
-    id: 2,
-    name: "Bethany Hamilton",
-    email: "bethany@aisurf.com",
-    age: 34,
-    gender: "Female",
-    fitness_level: "Elite",
-    experience: "15 Years",
-    certifications: ["ISA Level 3", "First Aid"],
-    image: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=100",
-    bio: "Professional surfer and inspirational speaker.",
-    specializations: ["S&C", "Nutrition"],
-    rates: "$200 / hr",
-    location: "Kauai, Hawaii",
-    reviews: []
-  },
-  {
-    id: 3,
-    name: "Kolohe Andino",
-    email: "kolohe@aisurf.com",
-    age: 28,
-    gender: "Male",
-    fitness_level: "Advanced",
-    experience: "8 Years",
-    certifications: ["ISA Level 1", "CPR"],
-    image: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100",
-    bio: "CT surfer specializing in heat strategy and performance techniques.",
-    specializations: ["Competition Strategy", "Video Analysis"],
-    rates: "$120 / hr",
-    location: "San Clemente, CA",
-    reviews: []
-  },
-  {
-    id: 4,
-    name: "Carissa Moore",
-    email: "carissa@aisurf.com",
-    age: 31,
-    gender: "Female",
-    fitness_level: "Elite",
-    experience: "14 Years",
-    certifications: ["ISA Level 3", "First Aid", "Water Safety"],
-    image: "https://images.unsplash.com/photo-1573497019940-1c28c88b4f3e?auto=format&fit=crop&q=80&w=100",
-    bio: "5x World Champion passionate about youth coaching.",
-    specializations: ["S&C", "Competition Strategy"],
-    rates: "$180 / hr",
-    location: "Honolulu, Hawaii",
-    reviews: []
-  },
-  {
-    id: 5,
-    name: "Marcus Silva",
-    email: "marcus@aisurf.com",
-    age: 27,
-    gender: "Male",
-    fitness_level: "Advanced",
-    experience: "6 Years",
-    certifications: ["ISA Level 2", "Water Safety"],
-    image: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100",
-    bio: "Experienced surf instructor specializing in beginners.",
-    specializations: ["Video Analysis", "Water Safety"],
-    rates: "$80 / hr",
-    location: "Gold Coast, AUS",
-    reviews: []
-  }
-];
+const INITIAL_INSTRUCTORS = [];
 
-const INITIAL_STUDENTS = [
-  {
-    id: 1,
-    name: "Chloe Kim",
-    email: "chloe@aisurf.com",
-    level: "Intermediate",
-    instructor_id: 5,
-    instructor: "Marcus Silva",
-    image: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=100",
-    last_active: "Today",
-    bio: "Olympic gold medalist snowboarder finding my wave rhythm.",
-    age: 23,
-    division: "Women's Open",
-    stance: "regular",
-    surf_stats: { waves_ridden: 42, max_speed: "24 mph", avg_session_mins: 75 },
-    performance_logs: ["Pipeline clean swell - pop-up speed fast.", "Waikiki session - balanced weight distribution."]
-  },
-  {
-    id: 2,
-    name: "John Miller",
-    email: "john@aisurf.com",
-    level: "Beginner",
-    instructor_id: 2,
-    instructor: "Bethany Hamilton",
-    image: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100",
-    last_active: "Today",
-    bio: "Stoked to learn and charge big waves.",
-    age: 19,
-    division: "Juniors",
-    stance: "goofy",
-    surf_stats: { waves_ridden: 18, max_speed: "16 mph", avg_session_mins: 60 },
-    performance_logs: []
-  },
-  {
-    id: 3,
-    name: "Emma Watson",
-    email: "emma@aisurf.com",
-    level: "Intermediate",
-    instructor_id: 1,
-    instructor: "Kai Lenny",
-    image: "https://images.unsplash.com/photo-1573497019940-1c28c88b4f3e?auto=format&fit=crop&q=80&w=100",
-    last_active: "Today",
-    bio: "Surfing is my peace from screen acting.",
-    age: 25,
-    division: "Women's Amateur",
-    stance: "regular",
-    surf_stats: { waves_ridden: 31, max_speed: "18 mph", avg_session_mins: 90 },
-    performance_logs: ["Intro to duck diving success."]
-  },
-  {
-    id: 4,
-    name: "Rick Grimes",
-    email: "rick@aisurf.com",
-    level: "Advanced",
-    instructor_id: 4,
-    instructor: "Carissa Moore",
-    image: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=100",
-    last_active: "Today",
-    bio: "Looking to refine my rail-to-rail transitions.",
-    age: 35,
-    division: "Men's Open",
-    stance: "regular",
-    surf_stats: { waves_ridden: 55, max_speed: "22 mph", avg_session_mins: 80 },
-    performance_logs: []
-  },
-  {
-    id: 5,
-    name: "Sarah Connor",
-    email: "sarah@aisurf.com",
-    level: "Beginner",
-    instructor_id: 3,
-    instructor: "Kolohe Andino",
-    image: "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=100",
-    last_active: "Today",
-    bio: "Getting surf-fit and mastering the basics.",
-    age: 29,
-    division: "Women's Amateur",
-    stance: "regular",
-    surf_stats: { waves_ridden: 12, max_speed: "12 mph", avg_session_mins: 60 },
-    performance_logs: []
-  },
-  {
-    id: 6,
-    name: "James Bond",
-    email: "james@aisurf.com",
-    level: "Master",
-    instructor_id: 5,
-    instructor: "Marcus Silva",
-    image: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100",
-    last_active: "Today",
-    bio: "Secret mission on the high seas.",
-    age: 38,
-    division: "Men's Open",
-    stance: "regular",
-    surf_stats: { waves_ridden: 112, max_speed: "31 mph", avg_session_mins: 100 },
-    performance_logs: []
-  }
-];
+const INITIAL_STUDENTS = [];
 
-const INITIAL_SESSIONS = [
-  {
-    id: 1,
-    date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-    time: "08:00 AM",
-    duration_mins: 90,
-    student_id: 2,
-    student: "John Miller",
-    instructor_id: 1,
-    instructor: "Kai Lenny",
-    location: "Pipeline",
-    condition: "Hard",
-    type: "Advanced",
-    status: "IN PROGRESS",
-    notes: "Strong offshore wind, good form",
-    video_url: ""
-  },
-  {
-    id: 2,
-    date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-    time: "09:30 AM",
-    duration_mins: 60,
-    student_id: 3,
-    student: "Emma Watson",
-    instructor_id: 2,
-    instructor: "Bethany Hamilton",
-    location: "Waikiki",
-    condition: "Easy",
-    type: "Beginner",
-    status: "Upcoming",
-    notes: "",
-    video_url: ""
-  },
-  {
-    id: 3,
-    date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-    time: "11:00 AM",
-    duration_mins: 120,
-    student_id: 4,
-    student: "Rick Grimes",
-    instructor_id: 3,
-    instructor: "Kolohe Andino",
-    location: "Sunset Beach",
-    condition: "Moderate",
-    type: "Intermediate",
-    status: "Upcoming",
-    notes: "",
-    video_url: ""
-  },
-  {
-    id: 4,
-    date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-    time: "02:00 PM",
-    duration_mins: 90,
-    student_id: 5,
-    student: "Sarah Connor",
-    instructor_id: 4,
-    instructor: "Carissa Moore",
-    location: "Pipeline",
-    condition: "Hard",
-    type: "Master",
-    status: "Upcoming",
-    notes: "",
-    video_url: ""
-  },
-  {
-    id: 5,
-    date: "12 Jun 2025",
-    time: "08:00 AM",
-    duration_mins: 90,
-    student_id: 1,
-    student: "Chloe Kim",
-    instructor_id: 1,
-    instructor: "Kai Lenny",
-    location: "Pipeline",
-    condition: "Hard",
-    type: "Advanced",
-    status: "Completed",
-    notes: "Excellent session",
-    video_url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4"
-  },
-  {
-    id: 6,
-    date: "12 Jun 2025",
-    time: "10:30 AM",
-    duration_mins: 60,
-    student_id: 3,
-    student: "Emma Watson",
-    instructor_id: 2,
-    instructor: "Bethany Hamilton",
-    location: "Waikiki",
-    condition: "Easy",
-    type: "Beginner",
-    status: "Completed",
-    notes: "",
-    video_url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4"
-  }
-];
+const INITIAL_SESSIONS = [];
 
-const INITIAL_BADGES = [
-  { id: 1, student_id: 1, badge_level: "WHITE" },
-  { id: 2, student_id: 1, badge_level: "YELLOW" },
-  { id: 3, student_id: 2, badge_level: "WHITE" },
-  { id: 4, student_id: 3, badge_level: "WHITE" },
-  { id: 5, student_id: 3, badge_level: "YELLOW" },
-  { id: 6, student_id: 3, badge_level: "GREEN" },
-  { id: 7, student_id: 4, badge_level: "WHITE" },
-  { id: 8, student_id: 4, badge_level: "YELLOW" },
-  { id: 9, student_id: 4, badge_level: "GREEN" },
-  { id: 10, student_id: 4, badge_level: "BLUE" },
-  { id: 11, student_id: 5, badge_level: "WHITE" },
-  { id: 12, student_id: 6, badge_level: "WHITE" },
-  { id: 13, student_id: 6, badge_level: "YELLOW" },
-  { id: 14, student_id: 6, badge_level: "GREEN" },
-  { id: 15, student_id: 6, badge_level: "BLUE" },
-  { id: 16, student_id: 6, badge_level: "RED" }
-];
+const INITIAL_BADGES = [];
 
-const INITIAL_ACTIVITIES = [
-  { id: 1, text: "Emma Watson earned 'First Barrel' badge", type: "badge", time: "10m ago" },
-  { id: 2, text: "John Miller completed session with Kai", type: "session", time: "1h ago" },
-  { id: 3, text: "Rick Grimes joined 'Intermediate' cohort", type: "group", time: "3h ago" },
-  { id: 4, text: "Chloe Kim scored personal best this session", type: "session", time: "1d ago" },
-  { id: 5, text: "James Bond earned RED badge — Master level!", type: "badge", time: "2d ago" }
-];
+const INITIAL_ACTIVITIES = [];
 
 const INITIAL_SCHOOLS = [
   {
@@ -322,19 +21,8 @@ const INITIAL_SCHOOLS = [
     phone: "+91 9876543210",
     country: "India",
     city: "Kovalam / Chennai",
-    instructor_count: "5–15",
+    instructor_count: "0",
     website: "https://aquaticindica.com"
-  },
-  {
-    id: 2,
-    name: "Pipeline Surf School",
-    owner: "John Doe",
-    email: "hello@pipeline.com",
-    phone: "+1 808 555 0100",
-    country: "United States",
-    city: "Honolulu",
-    instructor_count: "6–15",
-    website: "https://pipeline.com"
   }
 ];
 
@@ -349,35 +37,10 @@ const state = {
   activityLogs: [...INITIAL_ACTIVITIES],
   schools: [...INITIAL_SCHOOLS],
   
-  // Vitals logs keyed by student_id
-  nutritionLogs: {
-    1: [
-      { id: 1, date: "01 Aug 2026", calories: 2400, hydration_liters: 3.0, protein_g: 140, carbs_g: 300, fats_g: 70, meal_timing: "Pre-heat smoothie 9AM, Post-surf lunch 1PM" },
-      { id: 2, date: "02 Aug 2026", calories: 2600, hydration_liters: 3.5, protein_g: 150, carbs_g: 320, fats_g: 75, meal_timing: "Pre-heat oatmeal 8AM, Competition snack 11AM" },
-      { id: 3, date: "03 Aug 2026", calories: 2500, hydration_liters: 3.2, protein_g: 145, carbs_g: 310, fats_g: 72, meal_timing: "Energy bar 9:30AM, Post-heat dinner 6PM" }
-    ]
-  },
-  scLogs: {
-    1: [
-      { id: 1, date: "01 Aug 2026", workout_details: "Strength Session: Deadlifts 3x5, Squats 4x6, Core workout", mobility_notes: "Good hip mobility, slight stiffness in thoracic spine", sleep_score: 82, recovery_score: 85, injury_notes: "" },
-      { id: 2, date: "02 Aug 2026", workout_details: "Active Recovery: Swim 30 mins, light stretching", mobility_notes: "Thoracic spine mobility drills", sleep_score: 90, recovery_score: 92, injury_notes: "" },
-      { id: 3, date: "03 Aug 2026", workout_details: "Power Session: Box jumps 4x5, Kettlebell swings 4x10", mobility_notes: "Full body dynamic warm-up", sleep_score: 85, recovery_score: 88, injury_notes: "Mild left shoulder tightness" }
-    ]
-  },
-  technicalLogs: {
-    1: [
-      { id: 1, date: "01 Aug 2026", session_notes: "Felt good in 4-6ft barrels. Focus on pop-up speed.", wave_count: 12, board_setup: "6'1 Channel Islands Shortboard, Thruster fin setup", wave_type: "Reef break barrel", video_url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4" },
-      { id: 2, date: "02 Aug 2026", session_notes: "Clean beach break session. Practice snaps and cutbacks.", wave_count: 18, board_setup: "6'0 Firewire, Quad fin setup", wave_type: "Beach break A-frame", video_url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4" },
-      { id: 3, date: "03 Aug 2026", session_notes: "Tested thruster fin configuration in heavy surf.", wave_count: 14, board_setup: "6'2 Pyzel Gun, Thruster setup", wave_type: "Point break, fast and hollow", video_url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4" }
-    ]
-  },
-  mentalLogs: {
-    1: [
-      { id: 1, date: "01 Aug 2026", pre_heat_anxiety: 4, focus_level: 8, reflection_notes: "Stayed calm before paddling out. Visualization helped." },
-      { id: 2, date: "02 Aug 2026", pre_heat_anxiety: 3, focus_level: 9, reflection_notes: "Highly focused today. Flow state achieved in early waves." },
-      { id: 3, date: "03 Aug 2026", pre_heat_anxiety: 5, focus_level: 7, reflection_notes: "Anxiety was a bit high due to heavy swell. Focus improved after first wave." }
-    ]
-  }
+  nutritionLogs: {},
+  scLogs: {},
+  technicalLogs: {},
+  mentalLogs: {}
 };
 
 // Map generated tokens to user data
@@ -395,8 +58,10 @@ const errorResponse = (detail, status = 400) => {
   return jsonResponse({ detail }, status);
 };
 
-// Global window.fetch Override
+// Global window.fetch Override (Disabled to allow direct connection to live AWS EC2 Cloud Server)
+/*
 window.fetch = async function (input, init) {
+*/
   let urlStr = typeof input === 'string' ? input : input.url;
 
   // Check if target is backend API
@@ -445,6 +110,24 @@ window.fetch = async function (input, init) {
       ]);
     }
 
+    // ─── Dashboard Stats & Activity API ───
+    if (path === '/api/dashboard/stats' && method === 'GET') {
+      return jsonResponse({
+        active_instructors: state.instructors.length,
+        active_students: state.students.length,
+        sessions_this_month: state.sessions.length,
+        upcoming_sessions: state.sessions.filter(s => s.status === 'Upcoming' || s.status === 'IN PROGRESS').length
+      });
+    }
+
+    if (path === '/api/dashboard/sessions' && method === 'GET') {
+      return jsonResponse(state.sessions);
+    }
+
+    if (path === '/api/dashboard/activity' && method === 'GET') {
+      return jsonResponse(state.activityLogs || []);
+    }
+
     // Helper for stats logic matching backend code
     function max(a, b) { return a > b ? a : b; }
 
@@ -454,28 +137,13 @@ window.fetch = async function (input, init) {
       const email = body.email.toLowerCase();
       const password = body.password;
 
-      // Find user from seeded records or check names
+      // Find user from registered records
       let matchingUser = null;
       
-      // Seeded accounts check
-      if (email === 'rpntechworld@gmail.com' && password === '12345678') {
-        matchingUser = { id: 99, email: 'rpntechworld@gmail.com', role: 'admin', name: 'School Admin', image: '' };
-      } else if (email === 'admin@aisurf.com' && password === 'admin123') {
-        matchingUser = { id: 99, email: 'admin@aisurf.com', role: 'admin', name: 'School Admin', image: '' };
-      } else {
-        // Check coaches
-        const inst = state.instructors.find(i => i.email === email);
-        if (inst && password === `${inst.name.split(' ')[0].toLowerCase()}123`) {
-          matchingUser = { id: inst.id, email: inst.email, role: 'coach', instructor_id: inst.id, name: inst.name, image: inst.image };
-        } else {
-          // Check students
-          const stud = state.students.find(s => s.email === email);
-          if (stud && password === `${stud.name.split(' ')[0].toLowerCase()}123`) {
-            matchingUser = { id: stud.id, email: stud.email, role: 'athlete', student_id: stud.id, name: stud.name, image: stud.image };
-          } else if (registeredUsers[email] && registeredUsers[email].password === password) {
-            matchingUser = registeredUsers[email].user;
-          }
-        }
+      if (registeredUsers[email] && registeredUsers[email].password === password) {
+        matchingUser = registeredUsers[email].user;
+      } else if (email === 'rpntechworld@gmail.com' && password === '12345678') {
+        matchingUser = { id: 99, email: 'rpntechworld@gmail.com', role: 'admin', name: 'Aquatic Indica Admin', image: '' };
       }
 
       if (!matchingUser) {
@@ -491,12 +159,39 @@ window.fetch = async function (input, init) {
       });
     }
 
+    if (path === '/api/auth/send-otp' && method === 'POST') {
+      const body = JSON.parse(init.body);
+      const email = (body.email || "").toLowerCase().trim();
+
+      if (!email) {
+        return errorResponse("Email is required", 400);
+      }
+
+      if (body.purpose === 'signup') {
+        const isExisting = registeredUsers[email] || 
+          state.students.some(s => (s.email || "").toLowerCase() === email) || 
+          state.instructors.some(i => (i.email || "").toLowerCase() === email) ||
+          state.schools.some(sc => (sc.email || "").toLowerCase() === email) ||
+          email === 'rpntechworld@gmail.com';
+
+        if (isExisting) {
+          return errorResponse("Email is already registered. Please switch to login.", 400);
+        }
+      }
+
+      return jsonResponse({ message: `Verification code sent to ${email}`, otp: "123456" });
+    }
+
+    if (path === '/api/auth/verify-otp' && method === 'POST') {
+      return jsonResponse({ message: "OTP verified successfully" });
+    }
+
     if (path === '/api/auth/signup' && method === 'POST') {
       const body = JSON.parse(init.body);
       const email = body.email.toLowerCase();
       
       // Check existing
-      if (email === 'admin@aisurf.com' || state.instructors.some(i => i.email === email) || state.students.some(s => s.email === email)) {
+      if (registeredUsers[email] || state.instructors.some(i => i.email === email) || state.students.some(s => s.email === email) || email === 'rpntechworld@gmail.com') {
         return errorResponse("Email is already registered", 400);
       }
 
@@ -504,6 +199,10 @@ window.fetch = async function (input, init) {
       let newUser = { id: Math.floor(Math.random() * 1000) + 10, email, role, name: body.name, image: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100" };
 
       if (role === 'athlete') {
+        const isInvited = !!body.invite_token;
+        const approvalStatus = isInvited ? 'approved' : 'pending';
+        const selectedSchool = body.school || 'Aquatic Indica Surf School';
+
         const newStudent = {
           id: state.students.length + 1,
           name: body.name,
@@ -511,6 +210,10 @@ window.fetch = async function (input, init) {
           level: "Beginner",
           instructor_id: 1,
           instructor: "Kai Lenny",
+          school: selectedSchool,
+          approval_status: approvalStatus,
+          start_date: body.start_date || '2026-08-26',
+          session_time: body.session_time || 'Morning 6:00 AM',
           image: newUser.image,
           last_active: "Today",
           bio: "",
@@ -522,7 +225,30 @@ window.fetch = async function (input, init) {
         };
         state.students.push(newStudent);
         newUser.student_id = newStudent.id;
-        state.activityLogs.unshift({ id: Date.now(), text: `${body.name} signed up as a new Student`, type: "group", time: "Just now" });
+        newUser.approval_status = approvalStatus;
+        newUser.school = selectedSchool;
+
+        // If direct signup without invite link, record a pending join request for the school dashboard
+        if (!isInvited) {
+          try {
+            const existingReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+            existingReqs.unshift({
+              id: `req_${Date.now()}`,
+              student_id: newStudent.id,
+              student_name: body.name,
+              student_email: email,
+              school_name: selectedSchool,
+              start_date: body.start_date || '2026-08-26',
+              session_time: body.session_time || 'Morning 6:00 AM',
+              status: 'pending',
+              request_date: new Date().toLocaleDateString(),
+              time: new Date().toLocaleTimeString()
+            });
+            localStorage.setItem('school_join_requests', JSON.stringify(existingReqs));
+          } catch (e) {}
+        }
+
+        state.activityLogs.unshift({ id: Date.now(), text: `${body.name} requested to join ${selectedSchool} (${approvalStatus})`, type: "group", time: "Just now" });
       } else if (role === 'coach') {
         const newInstructor = {
           id: state.instructors.length + 1,
@@ -712,10 +438,21 @@ window.fetch = async function (input, init) {
     }
 
     // Dynamic matches for students/:id
-    const studentIdMatch = path.match(/^\/api\/students\/(\d+)$/);
-    if (studentIdMatch) {
-      const id = parseInt(studentIdMatch[1]);
-      const studentIdx = state.students.findIndex(s => s.id === id);
+    const studentIdMatch = path.match(/^\/api\/students\/(.+)$/);
+    if (studentIdMatch && path !== '/api/students') {
+      const id = studentIdMatch[1];
+      const studentIdx = state.students.findIndex(s => s.id == id || s.id == parseInt(id) || s.email === id);
+
+      if (method === 'DELETE') {
+        if (studentIdx !== -1) {
+          const deleted = state.students[studentIdx];
+          state.students.splice(studentIdx, 1);
+          if (deleted && deleted.email) {
+            delete registeredUsers[deleted.email.toLowerCase()];
+          }
+        }
+        return jsonResponse({ message: "Student deleted successfully" });
+      }
 
       if (studentIdx === -1) {
         return errorResponse("Student not found", 404);
@@ -723,8 +460,8 @@ window.fetch = async function (input, init) {
 
       if (method === 'GET') {
         const student = state.students[studentIdx];
-        const studentBadges = state.badges.filter(b => b.student_id === id).map(b => b.badge_level);
-        const studentSessions = state.sessions.filter(s => s.student_id === id);
+        const studentBadges = state.badges.filter(b => b.student_id == id).map(b => b.badge_level);
+        const studentSessions = state.sessions.filter(s => s.student_id == id);
         return jsonResponse({
           ...student,
           badges: studentBadges,
@@ -747,11 +484,6 @@ window.fetch = async function (input, init) {
         if (body.performance_logs !== undefined) student.performance_logs = body.performance_logs;
 
         return jsonResponse(student);
-      }
-
-      if (method === 'DELETE') {
-        state.students.splice(studentIdx, 1);
-        return jsonResponse({ message: "Deleted" });
       }
     }
 
@@ -783,10 +515,21 @@ window.fetch = async function (input, init) {
     }
 
     // Dynamic matches for instructors/:id
-    const instIdMatch = path.match(/^\/api\/instructors\/(\d+)$/);
-    if (instIdMatch) {
-      const id = parseInt(instIdMatch[1]);
-      const instIdx = state.instructors.findIndex(i => i.id === id);
+    const instIdMatch = path.match(/^\/api\/instructors\/(.+)$/);
+    if (instIdMatch && path !== '/api/instructors') {
+      const id = instIdMatch[1];
+      const instIdx = state.instructors.findIndex(i => i.id == id || i.id == parseInt(id) || i.email === id);
+
+      if (method === 'DELETE') {
+        if (instIdx !== -1) {
+          const deleted = state.instructors[instIdx];
+          state.instructors.splice(instIdx, 1);
+          if (deleted && deleted.email) {
+            delete registeredUsers[deleted.email.toLowerCase()];
+          }
+        }
+        return jsonResponse({ message: "Instructor deleted successfully" });
+      }
 
       if (instIdx === -1) {
         return errorResponse("Instructor not found", 404);
@@ -794,14 +537,14 @@ window.fetch = async function (input, init) {
 
       if (method === 'GET') {
         const instructor = state.instructors[instIdx];
-        const instSessions = state.sessions.filter(s => s.instructor_id === id).map(s => ({
+        const instSessions = state.sessions.filter(s => s.instructor_id == id).map(s => ({
           date: s.date,
           time: s.time,
           student: s.student,
           location: s.location,
           status: s.status
         }));
-        const uniqueStudentCount = new Set(state.sessions.filter(s => s.instructor_id === id).map(s => s.student_id)).size;
+        const uniqueStudentCount = new Set(state.sessions.filter(s => s.instructor_id == id).map(s => s.student_id)).size;
 
         return jsonResponse({
           ...instructor,
@@ -824,11 +567,6 @@ window.fetch = async function (input, init) {
         if (body.certifications !== undefined) instructor.certifications = body.certifications;
 
         return jsonResponse(instructor);
-      }
-
-      if (method === 'DELETE') {
-        state.instructors.splice(instIdx, 1);
-        return jsonResponse({ message: "Deleted" });
       }
     }
 

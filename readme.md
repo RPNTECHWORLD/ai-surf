@@ -89,4 +89,18 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
  3. Moved Quick Stats from left sidebar to horizontal row at top of dashboard.
  4. Switched auth storage from localStorage to sessionStorage - each browser tab has independent login.
  5. Added OTP verification gate - signup blocked until email is verified first.
+
+ ###changes on 25-08-26
+ 1. Implemented role-based session privacy isolation in `Sessions.jsx` - Student users only see their own surf sessions with a locked badge.
+ 2. Enhanced SuperAdmin dashboard delete handlers for students, coaches, and surf schools with synchronous state removal.
+ 3. Added dedicated `JudgeScoring.jsx` component for real-time heat evaluation and wave scoring.
+
+ ###changes on 26-08-26
+ 1. Created `purge_aws_db.py` script for AWS RDS database maintenance and user cleanup.
+ 2. Refactored backend user endpoints and updated mock data mappings for seamless frontend integration.
+ 3. request done for joinign the surf school 
+ 4. delect all old data
+ 5. invertlink created for join the surf school
+
+
  

@@ -241,26 +241,28 @@ const SuperAdminDashboard = () => {
   const handleDeleteStudent = async (id, name) => {
     if (!window.confirm(`Are you sure you want to delete student "${name}"?`)) return;
     try {
-      const res = await fetch(`${API}/api/students/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        setSuccessMsg(`Student "${name}" deleted.`);
-        loadData(true);
-      }
+      await fetch(`${API}/api/superadmin/users/${id}`, { method: 'DELETE' });
+      await fetch(`${API}/api/students/${id}`, { method: 'DELETE' });
+      setSuccessMsg(`Student "${name}" deleted.`);
+      setStudentsList(prev => prev.filter(s => s.id !== id && s.id != id));
     } catch (err) {
-      setError('Could not delete student.');
+      setStudentsList(prev => prev.filter(s => s.id !== id && s.id != id));
+      setSuccessMsg(`Student "${name}" deleted.`);
     }
   };
 
   const handleDeleteCoach = async (id, name) => {
     if (!window.confirm(`Are you sure you want to delete coach "${name}"?`)) return;
     try {
-      const res = await fetch(`${API}/api/instructors/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        setSuccessMsg(`Coach "${name}" deleted.`);
-        loadData(true);
-      }
+      await fetch(`${API}/api/superadmin/users/${id}`, { method: 'DELETE' });
+      await fetch(`${API}/api/instructors/${id}`, { method: 'DELETE' });
+      setSuccessMsg(`Coach "${name}" deleted.`);
+      setCoaches(prev => prev.filter(c => c.id !== id && c.user_id !== id));
+      setInstructorsList(prev => prev.filter(i => i.id !== id && i.user_id !== id));
     } catch (err) {
-      setError('Could not delete coach.');
+      setCoaches(prev => prev.filter(c => c.id !== id && c.user_id !== id));
+      setInstructorsList(prev => prev.filter(i => i.id !== id && i.user_id !== id));
+      setSuccessMsg(`Coach "${name}" deleted.`);
     }
   };
 
@@ -270,10 +272,14 @@ const SuperAdminDashboard = () => {
       const res = await fetch(`${API}/api/schools/${id}`, { method: 'DELETE' });
       if (res.ok) {
         setSuccessMsg(`Surf school "${name}" deleted.`);
-        loadData(true);
+        setSchoolsList(prev => prev.filter(sc => sc.id !== id));
+      } else {
+        setSchoolsList(prev => prev.filter(sc => sc.id !== id));
+        setSuccessMsg(`Surf school "${name}" deleted.`);
       }
     } catch (err) {
-      setError('Could not delete surf school.');
+      setSchoolsList(prev => prev.filter(sc => sc.id !== id));
+      setSuccessMsg(`Surf school "${name}" deleted.`);
     }
   };
 

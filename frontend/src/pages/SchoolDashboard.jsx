@@ -71,19 +71,10 @@ const SchoolDashboard = () => {
         setActivity(act);
       })
       .catch(() => {
-        // Fallback mock data
-        setStats({ active_instructors: 12, active_students: 87, sessions_this_month: 34, upcoming_sessions: 6 });
-        setSessions([
-          { time: '08:00 AM', instructor: 'Kai Lenny', student: 'John Miller', status: 'IN PROGRESS' },
-          { time: '09:30 AM', instructor: 'Bethany Hamilton', student: 'Emma Watson', status: 'UPCOMING' },
-          { time: '11:00 AM', instructor: 'Kolohe Andino', student: 'Rick Grimes', status: 'UPCOMING' },
-          { time: '02:00 PM', instructor: 'Carissa Moore', student: 'Sarah Connor', status: 'UPCOMING' },
-        ]);
-        setActivity([
-          { id: 1, text: "Emma Watson earned 'First Barrel' badge", time: '2m ago', type: 'badge' },
-          { id: 2, text: 'John Miller completed session with Kai', time: '15m ago', type: 'session' },
-          { id: 3, text: "Rick Grimes joined 'Intermediate' cohort", time: '1h ago', type: 'group' },
-        ]);
+        // Fallback clean data (0 students, 0 sessions)
+        setStats({ active_instructors: 5, active_students: 0, sessions_this_month: 0, upcoming_sessions: 0 });
+        setSessions([]);
+        setActivity([]);
       })
       .finally(() => setLoading(false));
   }, []);
