@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API = import.meta.env.VITE_API_URL || '';
+
 
 const conditionColor = (c) => {
   if (c === 'Hard') return '#F43F5E';
