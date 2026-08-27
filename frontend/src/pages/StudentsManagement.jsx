@@ -15,27 +15,96 @@ const StudentsManagement = () => {
   const [instructorFilter, setInstructorFilter] = useState('All');
   const [sessionTimeFilter, setSessionTimeFilter] = useState('All');
   const [stayFilter, setStayFilter] = useState('All');
+  const [activeStatFilter, setActiveStatFilter] = useState('TOTAL');
   const [showModal, setShowModal] = useState(false);
   const [modalInvite, setModalInvite] = useState(null); // link shown inside the add-student modal after creation
+  const [copied, setCopied] = useState(false);
+  const [copiedInviteId, setCopiedInviteId] = useState(null);
+  const [inviteModalData, setInviteModalData] = useState(null);
+  const [inviteLinkCopied, setInviteLinkCopied] = useState(false);
   const [attendanceModal, setAttendanceModal] = useState(null); // student object to mark attendance
   const [attSaving, setAttSaving] = useState(false);
   const [attError, setAttError] = useState('');
   const [saving, setSaving] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const addDaysToDate = (startDateStr, days) => {
+    if (!startDateStr) return '';
+    const d = new Date(startDateStr);
+    if (isNaN(d.getTime())) return '';
+    d.setDate(d.getDate() + (days - 1));
+    return d.toISOString().split('T')[0];
+  };
+
+  const calculateDaysBetween = (startStr, endStr) => {
+    if (!startStr || !endStr) return null;
+    const s = new Date(startStr);
+    const e = new Date(endStr);
+    if (isNaN(s.getTime()) || isNaN(e.getTime())) return null;
+    const diffTime = e.getTime() - s.getTime();
+    const diffDays = Math.round(diffTime / (1000 * 3600 * 24)) + 1;
+    return diffDays > 0 ? diffDays : 1;
+  };
+
+  const defaultStartDate = new Date().toISOString().split('T')[0];
+  const defaultEndDate = addDaysToDate(defaultStartDate, 3);
+
   const [form, setForm] = useState({
     name: '', email: '', password: '', level: 'Beginner', instructor_id: '',
     whatsapp_number: '', course_duration: '3 Days Course', session_time: 'Morning 6:00 AM',
-    start_date: new Date().toISOString().split('T')[0], staying_at_school: 'Yes'
+    start_date: defaultStartDate, end_date: defaultEndDate, staying_at_school: 'Yes'
   });
+
+  const handleCourseDurationChange = (val) => {
+    if (val === 'custom') {
+      const currentDays = calculateDaysBetween(form.start_date, form.end_date) || 14;
+      const targetDays = currentDays > 10 ? currentDays : 14;
+      const newEnd = addDaysToDate(form.start_date, targetDays);
+      setForm(prev => ({
+        ...prev,
+        course_duration: `${targetDays} Days Course`,
+        end_date: newEnd
+      }));
+    } else {
+      const match = val.match(/^(\d+)\s*Days/i);
+      const days = match ? parseInt(match[1]) : 3;
+      const newEnd = addDaysToDate(form.start_date, days);
+      setForm(prev => ({
+        ...prev,
+        course_duration: val,
+        end_date: newEnd
+      }));
+    }
+  };
+
+  const handleStartDateChange = (newStart) => {
+    const currentDays = calculateDaysBetween(form.start_date, form.end_date) || 3;
+    const newEnd = addDaysToDate(newStart, currentDays);
+    setForm(prev => ({
+      ...prev,
+      start_date: newStart,
+      end_date: newEnd
+    }));
+  };
+
+  const handleEndDateChange = (newEnd) => {
+    const calculatedDays = calculateDaysBetween(form.start_date, newEnd) || 1;
+    const durationLabel = `${calculatedDays} ${calculatedDays === 1 ? 'Day' : 'Days'} Course`;
+    setForm(prev => ({
+      ...prev,
+      end_date: newEnd,
+      course_duration: durationLabel
+    }));
+  };
 
   const closeModal = () => {
     setShowModal(false);
     setModalInvite(null);
+    setAddedStudentSummary(null);
+    setAddMode('single');
     setCopied(false);
     setForm({
       name: '', email: '', password: '', level: 'Beginner', instructor_id: '',
       whatsapp_number: '', course_duration: '3 Days Course', session_time: 'Morning 6:00 AM',
-      start_date: new Date().toISOString().split('T')[0], staying_at_school: 'Yes'
+      start_date: new Date().toISOString().split('T')[0], end_date: addDaysToDate(new Date().toISOString().split('T')[0], 3), staying_at_school: 'Yes'
     });
   };
 
@@ -57,54 +126,101 @@ const StudentsManagement = () => {
 
   const levels = ['Beginner', 'Intermediate', 'Advanced', 'Master'];
 
-  const filtered = students.filter(s => {
-    if (!s.email) return false;
-    const emailLower = s.email.toLowerCase();
+  const activeSchoolName = (() => {
+    try {
+      const savedSchool = sessionStorage.getItem('activeSchool');
+      if (savedSchool) {
+        const parsed = JSON.parse(savedSchool);
+        if (parsed.name) return parsed.name;
+      }
+      const savedUser = sessionStorage.getItem('user');
+      if (savedUser) {
+        const parsed = JSON.parse(savedUser);
+        if (parsed.school) return parsed.school;
+        if (parsed.school_name) return parsed.school_name;
+      }
+    } catch (e) {}
+    return null;
+  })();
 
-    // 1. Pending approval status filter
+  const isDefaultSchool = !activeSchoolName || activeSchoolName.toLowerCase() === 'aquatic indica surf school' || activeSchoolName.toLowerCase() === 'school admin';
+
+  const approvedStudents = (students || []).filter(s => {
+    if (!s || !s.email) return false;
+    const emailLower = String(s.email).toLowerCase();
     if (s.approval_status === 'pending') return false;
 
-    // 2. Require explicit admin approval in school_join_requests for newly registered students
+    // Determine target school for student request/profile
+    let studentTargetSchool = s.school || 'Aquatic Indica Surf School';
+
     try {
       const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-      const req = savedReqs.find(r => r.student_email?.toLowerCase() === emailLower);
-      if (req && req.status !== 'approved') return false;
-      if (!req && s.id > 2 && s.name !== 'ERIC T1') return false;
+      const req = savedReqs.find(r => r.student_email && String(r.student_email).toLowerCase() === emailLower);
+      if (req) {
+        if (req.status !== 'approved') return false;
+        if (req.school_name) studentTargetSchool = req.school_name;
+      }
     } catch (e) {}
 
-    const matchSearch = s.name.toLowerCase().includes(search.toLowerCase()) ||
-      s.email.toLowerCase().includes(search.toLowerCase()) ||
-      (s.whatsapp_number && s.whatsapp_number.includes(search));
+    // Strict school isolation
+    if (activeSchoolName) {
+      if (String(studentTargetSchool).toLowerCase() !== String(activeSchoolName).toLowerCase()) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+
+  const handleStatClick = (label) => {
+    setActiveStatFilter(label);
+    if (label === 'TOTAL') {
+      setLevelFilter('All');
+    } else if (label === 'ACTIVE') {
+      setLevelFilter('All');
+    } else if (label === 'BEGINNER') {
+      setLevelFilter('Beginner');
+    } else if (label === 'INTERMEDIATE') {
+      setLevelFilter('Intermediate');
+    } else if (label === 'ADVANCED') {
+      setLevelFilter('Advanced');
+    }
+  };
+
+  const filtered = approvedStudents.filter(s => {
+    const searchLower = (search || '').toLowerCase();
+    const sName = (s.name || '').toLowerCase();
+    const sEmail = (s.email || '').toLowerCase();
+    const sPhone = String(s.whatsapp_number || '');
+
+    const matchSearch = sName.includes(searchLower) ||
+      sEmail.includes(searchLower) ||
+      sPhone.includes(search);
+
+    let matchStat = true;
+    if (activeStatFilter === 'ACTIVE') {
+      matchStat = s.last_active === 'Today' || s.last_active === 'Yesterday';
+    } else if (activeStatFilter === 'BEGINNER') {
+      matchStat = s.level === 'Beginner';
+    } else if (activeStatFilter === 'INTERMEDIATE') {
+      matchStat = s.level === 'Intermediate';
+    } else if (activeStatFilter === 'ADVANCED') {
+      matchStat = s.level === 'Advanced';
+    }
+
     const matchLevel = levelFilter === 'All' || s.level === levelFilter;
     const matchInstructor = instructorFilter === 'All' || s.instructor === instructorFilter;
     const matchSession = sessionTimeFilter === 'All' || s.session_time === sessionTimeFilter;
     const matchStay = stayFilter === 'All' || (stayFilter === 'Lodge' ? s.staying_at_school === 'Yes' : s.staying_at_school === 'No');
-    return matchSearch && matchLevel && matchInstructor && matchSession && matchStay;
+    return matchSearch && matchLevel && matchStat && matchInstructor && matchSession && matchStay;
   });
-
-
-
-  const approvedStudents = students.filter(s => {
-    if (!s.email) return false;
-    const emailLower = s.email.toLowerCase();
-    if (s.approval_status === 'pending') return false;
-    try {
-      const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-      const req = savedReqs.find(r => r.student_email?.toLowerCase() === emailLower);
-      if (req && req.status !== 'approved') return false;
-      if (!req && s.id > 2 && s.name !== 'ERIC T1') return false;
-    } catch (e) {}
-    return true;
-  });
-
-
 
   const stats = [
-    { value: approvedStudents.length, label: 'TOTAL', color: '#050B1A', active: false },
-    { value: approvedStudents.filter(s => s.last_active === 'Today' || s.last_active === 'Yesterday').length, label: 'ACTIVE', color: '#0D9488', active: true },
-    { value: approvedStudents.filter(s => s.level === 'Beginner').length, label: 'BEGINNER', color: '#F59E0B', active: false },
-    { value: approvedStudents.filter(s => s.level === 'Intermediate').length, label: 'INTERMEDIATE', color: '#0D9488', active: false },
-    { value: approvedStudents.filter(s => s.level === 'Advanced').length, label: 'ADVANCED', color: '#7C3AED', active: false },
+    { value: approvedStudents.length, label: 'TOTAL', color: '#050B1A', active: activeStatFilter === 'TOTAL' },
+    { value: approvedStudents.filter(s => s.last_active === 'Today' || s.last_active === 'Yesterday').length, label: 'ACTIVE', color: '#0D9488', active: activeStatFilter === 'ACTIVE' },
+    { value: approvedStudents.filter(s => s.level === 'Beginner').length, label: 'BEGINNER', color: '#F59E0B', active: activeStatFilter === 'BEGINNER' },
+    { value: approvedStudents.filter(s => s.level === 'Intermediate').length, label: 'INTERMEDIATE', color: '#0D9488', active: activeStatFilter === 'INTERMEDIATE' },
+    { value: approvedStudents.filter(s => s.level === 'Advanced').length, label: 'ADVANCED', color: '#7C3AED', active: activeStatFilter === 'ADVANCED' },
   ];
 
 
@@ -125,6 +241,7 @@ const StudentsManagement = () => {
           course_duration: form.course_duration,
           session_time: form.session_time,
           start_date: form.start_date,
+          end_date: form.end_date,
           staying_at_school: form.staying_at_school,
         }),
       });
@@ -141,13 +258,37 @@ const StudentsManagement = () => {
           }
         } catch (err) {}
 
+        const studentInviteLink = `${baseUrl}/student-portal?token=${inviteToken}`;
+        const summaryData = {
+          ...newStudent,
+          name: newStudent.name || form.name,
+          email: newStudent.email || form.email,
+          whatsapp_number: newStudent.whatsapp_number || form.whatsapp_number,
+          level: newStudent.level || form.level,
+          course_duration: newStudent.course_duration || form.course_duration,
+          session_time: newStudent.session_time || form.session_time,
+          start_date: newStudent.start_date || form.start_date,
+          end_date: newStudent.end_date || form.end_date,
+          staying_at_school: newStudent.staying_at_school || form.staying_at_school,
+          instructor: instructors.find(i => i.id === parseInt(form.instructor_id))?.name || 'Auto-Assigned Coach',
+          inviteLink: studentInviteLink
+        };
+
         setModalInvite({
           name: form.name,
           email: form.email,
-          link: `${baseUrl}/auth?invite=${inviteToken}`,
+          link: studentInviteLink,
         });
+        setAddedStudentSummary(summaryData);
+        setAddMode('summary');
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        alert(errData.detail || 'Failed to add student. Please check input values.');
       }
-    } catch (err) {}
+    } catch (err) {
+      console.error(err);
+      alert('Error creating student. Please try again.');
+    }
     setSaving(false);
   };
 
@@ -309,7 +450,15 @@ const StudentsManagement = () => {
     }
   });
 
-  const allPendingRequests = [...joinRequests.filter(r => r.status !== 'approved' && r.status !== 'rejected')];
+
+
+  const allPendingRequests = joinRequests.filter(r => {
+    if (r.status === 'approved' || r.status === 'rejected') return false;
+    if (activeSchoolName && r.school_name && r.school_name.toLowerCase() !== activeSchoolName.toLowerCase()) {
+      return false;
+    }
+    return true;
+  });
 
   // Synchronize newly created unapproved students into pending requests list
   students.forEach(s => {
@@ -318,16 +467,17 @@ const StudentsManagement = () => {
     const isApprovedInStorage = joinRequests.some(r => r.student_email?.toLowerCase() === emailLower && r.status === 'approved');
     const isRejectedInStorage = joinRequests.some(r => r.student_email?.toLowerCase() === emailLower && r.status === 'rejected');
     
-    // Any student created after initial setup who has not been explicitly approved by admin
-    const isPending = s.approval_status === 'pending' || (!isApprovedInStorage && !isRejectedInStorage && s.id > 2 && s.name !== 'ERIC T1');
+    // Only mark as pending if student's approval status is explicitly pending
+    const isPending = s.approval_status === 'pending' && !isApprovedInStorage;
+    const matchesSchool = !activeSchoolName || !s.school || s.school.toLowerCase() === activeSchoolName.toLowerCase();
     
-    if (isPending && !allPendingRequests.some(r => r.student_email?.toLowerCase() === emailLower)) {
+    if (isPending && matchesSchool && !isRejectedInStorage && !allPendingRequests.some(r => r.student_email?.toLowerCase() === emailLower)) {
       allPendingRequests.push({
         id: s.id,
         student_id: s.id,
         student_name: s.name,
         student_email: s.email,
-        school_name: s.school || 'Aquatic Indica Surf School',
+        school_name: s.school || activeSchoolName || 'Aquatic Indica Surf School',
         start_date: s.start_date || '2026-08-26',
         session_time: s.session_time || 'Morning 6:00 AM',
         whatsapp_number: s.whatsapp_number || 'N/A'
@@ -338,30 +488,52 @@ const StudentsManagement = () => {
 
   const handleApproveStudentRequest = async (reqId, studentEmail) => {
     try {
+      const emailLower = (studentEmail || '').toLowerCase();
+
       if (typeof reqId === 'number' || (!isNaN(reqId) && !String(reqId).startsWith('req_'))) {
         await fetch(`${API}/api/students/${reqId}/approve`, { method: 'POST' }).catch(() => {});
       }
+      if (emailLower) {
+        await fetch(`${API}/api/students/approve-by-email`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: emailLower })
+        }).catch(() => {});
+      }
 
       setStudents(prev => prev.map(s => {
-        if (s.id === reqId || (s.email && s.email.toLowerCase() === (studentEmail || '').toLowerCase())) {
+        if (s.id === reqId || (s.email && s.email.toLowerCase() === emailLower)) {
           return { ...s, approval_status: 'approved' };
         }
         return s;
       }));
 
+      // Upsert approved status into joinRequests & localStorage
+      let found = false;
       const updatedReqs = joinRequests.map(r => {
-        if (r.id === reqId || (r.student_email && r.student_email.toLowerCase() === (studentEmail || '').toLowerCase())) {
+        if (r.id === reqId || (r.student_email && r.student_email.toLowerCase() === emailLower)) {
+          found = true;
           return { ...r, status: 'approved' };
         }
         return r;
       });
+
+      if (!found && emailLower) {
+        updatedReqs.push({
+          id: reqId || `req_${Date.now()}`,
+          student_id: reqId,
+          student_email: emailLower,
+          status: 'approved'
+        });
+      }
+
       setJoinRequests(updatedReqs);
       localStorage.setItem('school_join_requests', JSON.stringify(updatedReqs));
 
       try {
         const savedAccounts = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
         const updatedAccounts = savedAccounts.map(a => 
-          a.email.toLowerCase() === (studentEmail || '').toLowerCase() ? { ...a, approval_status: 'approved' } : a
+          a.email.toLowerCase() === emailLower ? { ...a, approval_status: 'approved' } : a
         );
         localStorage.setItem('savedAccounts', JSON.stringify(updatedAccounts));
       } catch (e) {}
@@ -374,12 +546,30 @@ const StudentsManagement = () => {
 
   const handleRejectStudentRequest = (reqId, studentEmail) => {
     if (!window.confirm(`Decline registration request for ${studentEmail || 'student'}?`)) return;
-    setStudents(prev => prev.filter(s => s.id !== reqId && (s.email && s.email.toLowerCase() !== (studentEmail || '').toLowerCase())));
-    const updatedReqs = joinRequests.filter(r => r.id !== reqId && (r.student_email && r.student_email.toLowerCase() !== (studentEmail || '').toLowerCase()));
+    const emailLower = (studentEmail || '').toLowerCase();
+    setStudents(prev => prev.filter(s => s.id !== reqId && (s.email && s.email.toLowerCase() !== emailLower)));
+    
+    let found = false;
+    const updatedReqs = joinRequests.map(r => {
+      if (r.id === reqId || (r.student_email && r.student_email.toLowerCase() === emailLower)) {
+        found = true;
+        return { ...r, status: 'rejected' };
+      }
+      return r;
+    });
+    if (!found && emailLower) {
+      updatedReqs.push({
+        id: reqId || `req_${Date.now()}`,
+        student_id: reqId,
+        student_email: emailLower,
+        status: 'rejected'
+      });
+    }
     setJoinRequests(updatedReqs);
     localStorage.setItem('school_join_requests', JSON.stringify(updatedReqs));
     showToast(`❌ Declined request for ${studentEmail || 'student'}.`);
   };
+
 
   return (
 
@@ -389,7 +579,7 @@ const StudentsManagement = () => {
         {/* Header */}
         <header className="sm-header">
           <div className="sm-header-text">
-            <h1 className="sm-title">Students ({loading ? '…' : students.length})</h1>
+            <h1 className="sm-title">Students ({loading ? '…' : approvedStudents.length})</h1>
             <p className="sm-sub">Manage your student body and track their progression across badge levels.</p>
           </div>
           <div className="sm-actions" style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
@@ -416,23 +606,7 @@ const StudentsManagement = () => {
               )}
             </button>
 
-            <button 
-              className="sm-btn-secondary" 
-              style={{ 
-                background: inviteCopied ? '#10B981' : '#FFFFFF', 
-                color: inviteCopied ? '#FFFFFF' : '#0F172A',
-                fontWeight: 700,
-                border: inviteCopied ? '1px solid #10B981' : '1px solid #CBD5E1',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                transition: 'all 0.2s ease'
-              }} 
-              onClick={handleCopyStudentInviteLink}
-              title="Copy registration link for students with this school auto-selected"
-            >
-              {inviteCopied ? '✅ Invite Link Copied!' : '🔗 Copy Student Invite Link'}
-            </button>
+
             <button className="sm-btn-secondary" onClick={downloadCSVSample}>Export CSV</button>
             <button className="sm-btn-primary" onClick={() => { setShowModal(true); setAddMode('single'); }}>+ Add Student</button>
           </div>
@@ -531,7 +705,18 @@ const StudentsManagement = () => {
               className="sm-search-input"
             />
           </div>
-          <select className="sm-select" value={levelFilter} onChange={e => setLevelFilter(e.target.value)}>
+          <select
+            className="sm-select"
+            value={levelFilter}
+            onChange={e => {
+              const val = e.target.value;
+              setLevelFilter(val);
+              if (val === 'Beginner') setActiveStatFilter('BEGINNER');
+              else if (val === 'Intermediate') setActiveStatFilter('INTERMEDIATE');
+              else if (val === 'Advanced') setActiveStatFilter('ADVANCED');
+              else setActiveStatFilter('TOTAL');
+            }}
+          >
             <option value="All">Level: All</option>
             {levels.map(l => <option key={l}>{l}</option>)}
           </select>
@@ -555,7 +740,12 @@ const StudentsManagement = () => {
         {/* Stats */}
         <div className="sm-stats-grid">
           {stats.map(s => (
-            <div key={s.label} className={`sm-stat-card ${s.active ? 'sm-stat-active' : ''}`}>
+            <div
+              key={s.label}
+              className={`sm-stat-card ${s.active ? 'sm-stat-active' : ''}`}
+              onClick={() => handleStatClick(s.label)}
+              title={`Click to filter by ${s.label}`}
+            >
               <span className="sm-stat-value" style={{ color: s.color }}>{s.value}</span>
               <span className="sm-stat-label">{s.label}</span>
             </div>
@@ -631,10 +821,24 @@ const StudentsManagement = () => {
                       </button>
                     </td>
                     <td style={{ textAlign: 'right' }}>
-                        {!s.user_id && (
+                        {!s.has_password && (
                           <button
                             className="sm-invite-btn"
                             title="Generate & copy invite link"
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              background: copiedInviteId === s.id ? 'rgba(16, 185, 129, 0.12)' : 'rgba(99, 102, 241, 0.08)',
+                              color: copiedInviteId === s.id ? '#10B981' : '#6366F1',
+                              borderColor: copiedInviteId === s.id ? 'rgba(16, 185, 129, 0.3)' : 'rgba(99, 102, 241, 0.25)',
+                              transition: 'all 0.2s ease',
+                              padding: '6px 12px',
+                              borderRadius: '8px',
+                              fontSize: '12px',
+                              fontWeight: '700',
+                              cursor: 'pointer'
+                            }}
                             onClick={async (e) => {
                               e.stopPropagation();
                               try {
@@ -642,26 +846,51 @@ const StudentsManagement = () => {
                                 if (invRes.ok) {
                                   const invData = await invRes.json();
                                   const baseUrl = window.location.origin;
-                                  setModalInvite({
+                                  const inviteUrl = `${baseUrl}/student-portal?token=${invData.token}`;
+                                  
+                                  // Auto-copy to clipboard
+                                  if (navigator.clipboard) {
+                                    await navigator.clipboard.writeText(inviteUrl);
+                                  }
+                                  
+                                  // Show copied state on button
+                                  setCopiedInviteId(s.id);
+                                  setTimeout(() => setCopiedInviteId(null), 3000);
+
+                                  // Open invite modal popup
+                                  setInviteModalData({
+                                    id: s.id,
                                     name: s.name,
                                     email: s.email,
-                                    link: `${baseUrl}/auth?invite=${invData.token}`,
+                                    phone: s.whatsapp_number,
+                                    link: inviteUrl
                                   });
                                 }
-                              } catch (err) {}
+                              } catch (err) {
+                                console.error('Error generating invite:', err);
+                              }
                             }}
                           >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-                            Invite
+                            {copiedInviteId === s.id ? (
+                              <>
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                                <span>Copied!</span>
+                              </>
+                            ) : (
+                              <>
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                                <span>Invite</span>
+                              </>
+                            )}
                           </button>
                         )}
-                        {s.user_id && (
+                        {s.has_password && (
                           <span style={{ fontSize: '11px', color: '#10B981', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                             Joined
                           </span>
                         )}
-                      </td>
+                    </td>
                     <td style={{ textAlign: 'right' }}>
                       <button className="sm-action-btn" onClick={e => { e.stopPropagation(); navigate(`/students/${s.id}`); }}>
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
@@ -763,11 +992,23 @@ const StudentsManagement = () => {
                     </div>
                     <div className="sm-field">
                       <label>Course Duration</label>
-                      <select value={form.course_duration} onChange={e => setForm({...form, course_duration: e.target.value})}>
+                      <select
+                        value={
+                          ['3 Days Course', '5 Days Course', '7 Days Course', '10 Days Course'].includes(form.course_duration)
+                            ? form.course_duration
+                            : 'custom'
+                        }
+                        onChange={e => handleCourseDurationChange(e.target.value)}
+                      >
                         <option value="3 Days Course">3 Days Course</option>
                         <option value="5 Days Course">5 Days Course</option>
                         <option value="7 Days Course">7 Days Course</option>
                         <option value="10 Days Course">10 Days Course</option>
+                        <option value="custom">
+                          {['3 Days Course', '5 Days Course', '7 Days Course', '10 Days Course'].includes(form.course_duration)
+                            ? 'Custom (> 10 Days)'
+                            : `Custom (${form.course_duration})`}
+                        </option>
                       </select>
                     </div>
                   </div>
@@ -804,15 +1045,27 @@ const StudentsManagement = () => {
                   <div className="sm-grid-2">
                     <div className="sm-field">
                       <label>Start Date *</label>
-                      <input type="date" value={form.start_date} onChange={e => setForm({...form, start_date: e.target.value})} required />
+                      <input type="date" value={form.start_date} onChange={e => handleStartDateChange(e.target.value)} required />
                     </div>
                     <div className="sm-field">
-                      <label>Lodge Stay</label>
-                      <select value={form.staying_at_school} onChange={e => setForm({...form, staying_at_school: e.target.value})}>
-                        <option value="Yes">Yes (On-site Lodge)</option>
-                        <option value="No">No (Off-site Stay)</option>
-                      </select>
+                      <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>End Date *</span>
+                        {form.start_date && form.end_date && (
+                          <span style={{ fontSize: '11px', color: '#0D9488', fontWeight: '700', background: 'rgba(13,148,136,0.12)', padding: '2px 8px', borderRadius: '12px' }}>
+                            {calculateDaysBetween(form.start_date, form.end_date)} Days
+                          </span>
+                        )}
+                      </label>
+                      <input type="date" min={form.start_date} value={form.end_date} onChange={e => handleEndDateChange(e.target.value)} required />
                     </div>
+                  </div>
+
+                  <div className="sm-field">
+                    <label>Lodge Stay</label>
+                    <select value={form.staying_at_school} onChange={e => setForm({...form, staying_at_school: e.target.value})}>
+                      <option value="Yes">Yes (On-site Lodge)</option>
+                      <option value="No">No (Off-site Stay)</option>
+                    </select>
                   </div>
 
                   <div className="sm-form-actions-row">
@@ -1066,7 +1319,7 @@ const StudentsManagement = () => {
               </div>
             )}
 
-            {/* ── MODE 4: REVIEW SUMMARY / SUCCESS PAGE (IMAGE 4) ── */}
+            {/* ── MODE 4: REVIEW SUMMARY / SUCCESS PAGE ── */}
             {addMode === 'summary' && addedStudentSummary && (
               <div className="sm-summary-layout">
                 {/* Green Banner */}
@@ -1075,12 +1328,83 @@ const StudentsManagement = () => {
                   <span>Student Successfully Added!</span>
                 </div>
 
+                {/* Magic Invite Link Card */}
+                {addedStudentSummary.inviteLink && (
+                  <div style={{
+                    background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)',
+                    borderRadius: '16px',
+                    padding: '20px 24px',
+                    marginBottom: '24px',
+                    border: '1px solid rgba(0, 242, 254, 0.3)',
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.12)'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '20px' }}>🔗</span>
+                        <span style={{ color: '#00F2FE', fontWeight: 800, fontSize: '15px', fontFamily: 'Outfit, sans-serif' }}>
+                          Student Magic Portal Link
+                        </span>
+                      </div>
+                      <span style={{ background: 'rgba(0, 242, 254, 0.15)', color: '#00F2FE', fontSize: '11px', fontWeight: 700, padding: '3px 10px', borderRadius: '12px', border: '1px solid rgba(0, 242, 254, 0.3)' }}>
+                        READY TO SHARE
+                      </span>
+                    </div>
+                    <p style={{ margin: '0 0 12px 0', fontSize: '13px', color: '#94A3B8', lineHeight: '1.5' }}>
+                      Send this direct link to <strong>{addedStudentSummary.name}</strong>. Opening this link lands them directly in their student portal where they can set their password without needing credentials beforehand.
+                    </p>
+                    <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                      <input
+                        type="text"
+                        readOnly
+                        value={addedStudentSummary.inviteLink}
+                        style={{
+                          flex: 1,
+                          background: '#090D1A',
+                          border: '1px solid #334155',
+                          borderRadius: '10px',
+                          padding: '10px 14px',
+                          color: '#F8FAFC',
+                          fontSize: '13px',
+                          fontFamily: 'monospace',
+                          outline: 'none'
+                        }}
+                        onClick={(e) => e.target.select()}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(addedStudentSummary.inviteLink);
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 2500);
+                        }}
+                        style={{
+                          background: copied ? '#10B981' : '#FF3355',
+                          color: '#FFFFFF',
+                          border: 'none',
+                          borderRadius: '10px',
+                          padding: '10px 20px',
+                          fontWeight: 700,
+                          fontSize: '13px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          transition: 'all 0.2s',
+                          whiteSpace: 'nowrap'
+                        }}
+                      >
+                        {copied ? '✓ Copied!' : '📋 Copy Link'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <div className="sm-summary-grid">
                   {/* Left Column: Student Details Card */}
                   <div className="sm-summary-card">
                     <div className="sm-summary-avatar-row">
                       <div className="sm-summary-avatar">
-                        {addedStudentSummary.name.split(' ').map(n=>n[0]).join('').toUpperCase()}
+                        {(addedStudentSummary.name || 'S').split(' ').map(n=>n[0]).join('').toUpperCase()}
                       </div>
                       <div>
                         <div className="sm-summary-name">{addedStudentSummary.name}</div>
@@ -1129,7 +1453,7 @@ const StudentsManagement = () => {
                         <div className="sm-qa-icon">📅</div>
                         <div className="sm-qa-text">
                           <div className="sm-qa-title">Assign to Session</div>
-                          <div className="sm-qa-sub">Schedule {addedStudentSummary.name.split(' ')[0]}'s first coaching session</div>
+                          <div className="sm-qa-sub">Schedule {(addedStudentSummary.name || 'Student').split(' ')[0]}'s first coaching session</div>
                         </div>
                         <span className="sm-qa-arrow">→</span>
                       </div>
@@ -1296,6 +1620,148 @@ const StudentsManagement = () => {
         </div>
       )}
 
+      {/* ── Direct Student Invite Link Modal ── */}
+      {inviteModalData && (
+        <div className="sm-modal-overlay" onClick={() => setInviteModalData(null)}>
+          <div
+            className="sm-modal"
+            style={{ maxWidth: '520px', width: '100%', background: '#FFFFFF', borderRadius: '20px', padding: '28px', border: '1px solid #E2E8F0', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(99, 102, 241, 0.1)', color: '#6366F1', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px' }}>
+                  🔗
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#0F172A', fontFamily: 'Outfit, sans-serif' }}>
+                    Student Invite Link
+                  </h3>
+                  <p style={{ margin: '3px 0 0 0', fontSize: '13px', color: '#64748B' }}>
+                    Ready for <strong>{inviteModalData.name}</strong>
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setInviteModalData(null)}
+                style={{ background: '#F1F5F9', border: 'none', borderRadius: '50%', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#64748B' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '14px', padding: '16px', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                <span style={{ fontSize: '11px', fontWeight: '700', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Direct Magic Portal Link</span>
+                <span style={{ fontSize: '11px', fontWeight: '700', color: '#10B981', background: '#ECFDF5', padding: '2px 8px', borderRadius: '10px' }}>
+                  ✓ Copied to Clipboard
+                </span>
+              </div>
+              <input
+                type="text"
+                readOnly
+                value={inviteModalData.link}
+                style={{
+                  width: '100%',
+                  background: '#0F172A',
+                  color: '#00F2FE',
+                  border: '1px solid #334155',
+                  borderRadius: '10px',
+                  padding: '12px 14px',
+                  fontSize: '13px',
+                  fontFamily: 'monospace',
+                  outline: 'none',
+                  boxSizing: 'border-box'
+                }}
+                onClick={e => e.target.select()}
+              />
+              <p style={{ margin: '8px 0 0 0', fontSize: '12px', color: '#64748B', lineHeight: '1.4' }}>
+                The student can open this link directly to access their portal and set up their profile & password without pre-existing credentials.
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', flexDirection: 'column' }}>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(inviteModalData.link);
+                    setInviteLinkCopied(true);
+                    setTimeout(() => setInviteLinkCopied(false), 2500);
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '12px 18px',
+                    borderRadius: '12px',
+                    background: inviteLinkCopied ? '#10B981' : '#6366F1',
+                    color: '#FFFFFF',
+                    border: 'none',
+                    fontWeight: '700',
+                    fontSize: '13px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                    transition: 'all 0.2s ease',
+                    boxShadow: '0 4px 12px rgba(99, 102, 241, 0.25)'
+                  }}
+                >
+                  {inviteLinkCopied ? '✓ Copied to Clipboard!' : '📋 Copy Invite Link'}
+                </button>
+
+                {inviteModalData.phone && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const cleanPhone = String(inviteModalData.phone).replace(/\D/g, '');
+                      const text = encodeURIComponent(
+                        `Hi ${inviteModalData.name}! Here is your Aquatic Indica Surf School portal link: ${inviteModalData.link}\n\nClick the link to access your student portal and set your password.`
+                      );
+                      window.open(`https://wa.me/${cleanPhone}?text=${text}`, '_blank');
+                    }}
+                    style={{
+                      padding: '12px 18px',
+                      borderRadius: '12px',
+                      background: '#25D366',
+                      color: '#FFFFFF',
+                      border: 'none',
+                      fontWeight: '700',
+                      fontSize: '13px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      boxShadow: '0 4px 12px rgba(37, 211, 102, 0.25)'
+                    }}
+                  >
+                    💬 WhatsApp
+                  </button>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => window.open(inviteModalData.link, '_blank')}
+                style={{
+                  width: '100%',
+                  padding: '10px',
+                  borderRadius: '10px',
+                  background: 'transparent',
+                  color: '#64748B',
+                  border: '1px solid #E2E8F0',
+                  fontWeight: '600',
+                  fontSize: '12px',
+                  cursor: 'pointer'
+                }}
+              >
+                🚀 Open Portal in New Tab
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <style>{`
         .sm-page { display: flex; min-height: 100vh; background: #F8FAFC; font-family: 'Instrument Sans', sans-serif; }
         .sm-main { flex: 1; padding: 40px 80px; display: flex; flex-direction: column; gap: 32px; overflow-y: auto; }
@@ -1326,12 +1792,22 @@ const StudentsManagement = () => {
 
         .sm-stats-grid { display: flex; gap: 20px; }
         .sm-stat-card {
-          flex: 1; background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; height: 100px;
+          flex: 1; background: #FFFFFF; border: 1.5px solid #E2E8F0; border-radius: 12px; height: 100px;
           display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+          cursor: pointer; transition: all 0.2s ease; user-select: none;
         }
-        .sm-stat-active { border-color: #0D9488; background: rgba(13, 148, 136, 0.05); }
-        .sm-stat-value { font-family: 'Outfit', sans-serif; font-size: 24px; font-weight: 700; line-height: 1.2; }
-        .sm-stat-label { font-size: 12px; font-weight: 700; text-transform: uppercase; color: #64748B; opacity: 0.6; }
+        .sm-stat-card:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 6px 16px rgba(0,0,0,0.06);
+          border-color: #CBD5E1;
+        }
+        .sm-stat-active {
+          border-color: #0D9488 !important;
+          background: rgba(13, 148, 136, 0.06) !important;
+          box-shadow: 0 0 0 1px #0D9488, 0 4px 12px rgba(13, 148, 136, 0.12) !important;
+        }
+        .sm-stat-value { font-family: 'Outfit', sans-serif; font-size: 26px; font-weight: 800; line-height: 1.2; }
+        .sm-stat-label { font-size: 12px; font-weight: 700; text-transform: uppercase; color: #64748B; letter-spacing: 0.5px; }
 
         .sm-table-container { background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 16px; overflow: hidden; }
         .sm-table { width: 100%; border-collapse: collapse; }

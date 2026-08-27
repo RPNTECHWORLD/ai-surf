@@ -1,13 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
+
 
 const API = import.meta.env.VITE_API_URL || '';
 
 const NewSession = () => {
   const navigate = useNavigate();
   const { id } = useParams();
+  const [searchParams] = useSearchParams();
   const isEdit = !!id;
+
   const [students, setStudents] = useState([]);
   const [instructors, setInstructors] = useState([]);
   const [saving, setSaving] = useState(false);
@@ -61,12 +64,15 @@ const NewSession = () => {
     }
   };
 
+  // Parse ?date= param from URL (e.g., set by calendar "Schedule Slot")
+  const urlDateParam = searchParams.get('date'); // format: YYYY-MM-DD
+
   const today = new Date();
-  const todayStr = today.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  const todayISO = today.toISOString().split('T')[0]; // YYYY-MM-DD for date input
 
   const [form, setForm] = useState({
-    date: todayStr,
-    time: '08:30 AM',
+    date: urlDateParam || todayISO,
+    time: '08:30',
     duration_mins: '90',
     location: 'Banzai Pipeline, North Shore, Oahu',
     condition: 'Moderate',
@@ -98,9 +104,30 @@ const NewSession = () => {
       fetch(`${API}/api/sessions/${id}`)
         .then(r => r.json())
         .then(data => {
+          // Convert stored "27 Aug 2026" → "2026-08-27" for date input
+          const parseToISO = (d) => {
+            if (!d) return '';
+            // Already ISO format
+            if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+            const p = new Date(d);
+            return isNaN(p) ? d : p.toISOString().split('T')[0];
+          };
+          // Convert "08:30 AM" → "08:30" for time input (HTML5 type=time uses 24h HH:MM)
+          const parseToHHMM = (t) => {
+            if (!t) return '08:30';
+            if (/^\d{2}:\d{2}$/.test(t)) return t;
+            const m = t.match(/(\d+):(\d+)\s*(AM|PM)/i);
+            if (!m) return t.slice(0, 5);
+            let h = parseInt(m[1]);
+            const min = m[2];
+            const ampm = m[3].toUpperCase();
+            if (ampm === 'PM' && h !== 12) h += 12;
+            if (ampm === 'AM' && h === 12) h = 0;
+            return `${String(h).padStart(2,'0')}:${min}`;
+          };
           setForm({
-            date: data.date,
-            time: data.time,
+            date: parseToISO(data.date),
+            time: parseToHHMM(data.time),
             duration_mins: String(data.duration_mins),
             location: data.location,
             condition: data.condition,
@@ -153,8 +180,20 @@ const NewSession = () => {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          date: form.date,
-          time: form.time,
+          // Convert YYYY-MM-DD → "27 Aug 2026"
+          date: form.date
+            ? new Date(form.date + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+            : form.date,
+          // Convert HH:MM (24h) → "08:30 AM"
+          time: (() => {
+            const [hStr, mStr] = (form.time || '08:30').split(':');
+            let h = parseInt(hStr);
+            const min = mStr || '00';
+            const ampm = h >= 12 ? 'PM' : 'AM';
+            if (h > 12) h -= 12;
+            if (h === 0) h = 12;
+            return `${String(h).padStart(2, '0')}:${min} ${ampm}`;
+          })(),
           duration_mins: parseInt(form.duration_mins) || 60,
           student_id: parseInt(form.student_id),
           instructor_id: parseInt(form.instructor_id),
@@ -242,20 +281,18 @@ const NewSession = () => {
                 <label className="ns-label">DATE</label>
                 <input
                   className="ns-input-box ns-real-input"
-                  type="text"
+                  type="date"
                   value={form.date}
                   onChange={e => setField('date', e.target.value)}
-                  placeholder="31 Jul 2026"
                 />
               </div>
               <div className="ns-form-group">
                 <label className="ns-label">START TIME</label>
                 <input
                   className="ns-input-box ns-real-input"
-                  type="text"
+                  type="time"
                   value={form.time}
                   onChange={e => setField('time', e.target.value)}
-                  placeholder="08:30 AM"
                 />
               </div>
               <div className="ns-form-group">

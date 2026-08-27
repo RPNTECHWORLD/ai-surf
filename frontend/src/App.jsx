@@ -17,6 +17,7 @@ import AuthPage from './pages/AuthPage';
 import SuperAdminDashboard from './pages/SuperAdminDashboard';
 import AthleteIntelligence from './pages/AthleteIntelligence';
 import JudgeScoring from './pages/JudgeScoring';
+import StudentPortal from './pages/StudentPortal';
 
 const PrivateRoute = ({ children }) => {
   const token = sessionStorage.getItem('token');
@@ -31,7 +32,8 @@ function App() {
         <Route path="/auth" element={<AuthPage />} />
         <Route path="/register" element={<SchoolRegistration />} />
         <Route path="/judge-scoring" element={<JudgeScoring />} />
-        
+        <Route path="/student-portal" element={<StudentPortal />} />
+
         {/* Protected Routes */}
         <Route path="/dashboard" element={<PrivateRoute><SchoolDashboard /></PrivateRoute>} />
         <Route path="/instructors" element={<PrivateRoute><InstructorManagement /></PrivateRoute>} />

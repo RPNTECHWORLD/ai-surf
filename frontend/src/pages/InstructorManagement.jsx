@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 
@@ -23,10 +23,42 @@ const InstructorManagement = () => {
   const [selected, setSelected] = useState(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [saving, setSaving] = useState(false);
+  const fileInputRef = useRef(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [form, setForm] = useState({
     name: '', age: '', gender: 'Male', fitness_level: 'Elite',
-    experience: '', certifications: '', languages: '', biography: ''
+    experience: '', certifications: '', languages: '', biography: '', image: ''
   });
+
+  const handlePhotoUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const previewUrl = URL.createObjectURL(file);
+    setForm(prev => ({ ...prev, image: previewUrl }));
+    setUploadingPhoto(true);
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetch(`${API}/api/upload-image`, {
+        method: 'POST',
+        body: formData
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const uploadedUrl = data.image_url || data.url;
+        if (uploadedUrl) {
+          setForm(prev => ({ ...prev, image: uploadedUrl }));
+        }
+      }
+    } catch (err) {
+      console.error('Photo upload error:', err);
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
 
   const fetchInstructors = () => {
     fetch(`${API}/api/instructors`)
@@ -67,11 +99,12 @@ const InstructorManagement = () => {
           fitness_level: form.fitness_level,
           experience: form.experience,
           certifications: certs,
+          image: form.image || '',
         }),
       });
       if (res.ok) {
         setShowAddModal(false);
-        setForm({ name: '', age: '', gender: 'Male', fitness_level: 'Elite', experience: '', certifications: '', languages: '', biography: '' });
+        setForm({ name: '', age: '', gender: 'Male', fitness_level: 'Elite', experience: '', certifications: '', languages: '', biography: '', image: '' });
         fetchInstructors();
       }
     } catch (err) {}
@@ -97,12 +130,13 @@ const InstructorManagement = () => {
           fitness_level: form.fitness_level,
           experience: form.experience,
           certifications: certs,
+          image: form.image || '',
         }),
       });
       if (res.ok) {
         setShowAddModal(false);
         setSelected(null);
-        setForm({ name: '', age: '', gender: 'Male', fitness_level: 'Elite', experience: '', certifications: '', languages: '', biography: '' });
+        setForm({ name: '', age: '', gender: 'Male', fitness_level: 'Elite', experience: '', certifications: '', languages: '', biography: '', image: '' });
         fetchInstructors();
       }
     } catch (err) {}
@@ -125,7 +159,7 @@ const InstructorManagement = () => {
                 <p className="im-subtitle">Manage your school's coaching roster and assignments.</p>
               </div>
               {!showAddModal && (
-                <button className="btn-primary db-cta" onClick={() => { setSelected(null); setForm({ name: '', age: '', gender: 'Male', fitness_level: 'Elite', experience: '', certifications: '', languages: '', biography: '' }); setShowAddModal(true); }}>
+                <button className="btn-primary db-cta" onClick={() => { setSelected(null); setForm({ name: '', age: '', gender: 'Male', fitness_level: 'Elite', experience: '', certifications: '', languages: '', biography: '', image: '' }); setShowAddModal(true); }}>
                   + Add Instructor
                 </button>
               )}
@@ -153,12 +187,39 @@ const InstructorManagement = () => {
                 )}
                 {filtered.map((instructor) => (
                   <div key={instructor.id} className="im-card">
-                    {/* Cover photo banner */}
-                    <div className="im-card-banner" style={{ backgroundImage: `url(${getCoverImage(instructor.name)})` }} />
-                    
-                    {/* Overlapping profile circle avatar */}
-                    <div className="im-avatar-wrapper">
-                      <img src={instructor.image} alt={instructor.name} className="im-avatar-img" />
+                    {/* Profile photo avatar only */}
+                    <div className="im-avatar-header">
+                      <div className="im-avatar-wrapper">
+                        {instructor.image ? (
+                          <img
+                            src={instructor.image}
+                            alt={instructor.name}
+                            className="im-avatar-img"
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                              const fallback = e.currentTarget.parentElement.querySelector('.im-avatar-fallback');
+                              if (fallback) fallback.style.display = 'flex';
+                            }}
+                          />
+                        ) : null}
+                        <div
+                          className="im-avatar-fallback"
+                          style={{
+                            display: instructor.image ? 'none' : 'flex',
+                            width: '100%',
+                            height: '100%',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
+                            color: '#FFFFFF',
+                            fontWeight: '800',
+                            fontSize: '28px',
+                            fontFamily: 'Outfit, sans-serif'
+                          }}
+                        >
+                          {instructor.name ? instructor.name.charAt(0).toUpperCase() : 'C'}
+                        </div>
+                      </div>
                     </div>
 
                     <div className="im-card-body">
@@ -187,7 +248,7 @@ const InstructorManagement = () => {
                         <button className="im-card-view-profile" onClick={() => navigate(`/instructors/${instructor.id}`)}>
                           View Profile
                         </button>
-                        <button className="im-card-edit" onClick={() => { setSelected(instructor); setForm({ ...instructor, certifications: instructor.certifications.join(', ') }); setShowAddModal(true); }}>
+                        <button className="im-card-edit" onClick={() => { setSelected(instructor); setForm({ ...instructor, certifications: Array.isArray(instructor.certifications) ? instructor.certifications.join(', ') : (instructor.certifications || ''), image: instructor.image || '' }); setShowAddModal(true); }}>
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4Z" /></svg>
                         </button>
                       </div>
@@ -210,11 +271,51 @@ const InstructorManagement = () => {
 
               <form onSubmit={selected ? handleUpdate : handleAdd} className="im-sidebar-form">
                 {/* Profile photo upload block */}
-                <div className="im-photo-upload">
-                  <div className="upload-circle">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" /></svg>
-                  </div>
-                  <span className="upload-label">Upload profile photo...</span>
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={handlePhotoUpload}
+                />
+                <div
+                  className="im-photo-upload"
+                  onClick={() => fileInputRef.current?.click()}
+                  style={form.image ? { padding: '16px', background: '#F0FDFA', borderColor: '#00D1B2' } : {}}
+                >
+                  {form.image ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                      <img
+                        src={form.image}
+                        alt="Profile preview"
+                        style={{
+                          width: '72px',
+                          height: '72px',
+                          borderRadius: '50%',
+                          objectFit: 'cover',
+                          border: '3px solid #00D1B2',
+                          boxShadow: '0 4px 12px rgba(0,209,178,0.25)'
+                        }}
+                      />
+                      <span className="upload-label" style={{ color: '#0F766E', fontWeight: '700', fontSize: '12px' }}>
+                        {uploadingPhoto ? 'Uploading...' : '✓ Photo Selected (Click to change)'}
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="upload-circle">
+                        {uploadingPhoto ? (
+                          <div className="db-spinner" style={{ width: '20px', height: '20px', borderWidth: '2px' }} />
+                        ) : (
+                          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                            <circle cx="12" cy="13" r="4" />
+                          </svg>
+                        )}
+                      </div>
+                      <span className="upload-label">{uploadingPhoto ? 'Uploading photo...' : 'Upload profile photo...'}</span>
+                    </>
+                  )}
                 </div>
 
                 <div className="form-group">
@@ -545,28 +646,30 @@ const InstructorManagement = () => {
           overflow: hidden;
           box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
           transition: all 0.22s ease-in-out;
+          padding-top: 24px;
         }
         .im-card:hover {
           transform: translateY(-4px);
           box-shadow: 0 12px 24px rgba(5, 11, 26, 0.06);
           border-color: #CBD5E1;
         }
-        .im-card-banner {
-          height: 120px;
-          background-size: cover;
-          background-position: center;
+        .im-avatar-header {
+          display: flex;
+          justify-content: center;
+          align-items: center;
           width: 100%;
         }
         .im-avatar-wrapper {
-          width: 60px;
-          height: 60px;
+          width: 84px;
+          height: 84px;
           border-radius: 50%;
-          border: 3px solid #FFFFFF;
-          margin-top: -30px;
-          margin-left: 20px;
+          border: 3px solid #E2E8F0;
           overflow: hidden;
-          box-shadow: 0 4px 10px rgba(0,0,0,0.06);
-          background: #F1F5F9;
+          box-shadow: 0 4px 14px rgba(0,0,0,0.06);
+          background: #F8FAFC;
+          display: flex;
+          align-items: center;
+          justify-content: center;
         }
         .im-avatar-img {
           width: 100%;
@@ -578,22 +681,27 @@ const InstructorManagement = () => {
           display: flex;
           flex-direction: column;
           gap: 12px;
+          text-align: center;
         }
         .im-card-name {
           font-size: 18px;
           font-weight: 750;
           color: #0F172A;
           margin: 0;
-          text-align: left;
+          text-align: center;
         }
         .im-card-details {
           font-size: 13px;
           color: #64748B;
           margin: 0;
-          text-align: left;
+          text-align: center;
         }
         .im-card-badges {
           display: flex;
+          gap: 6px;
+          flex-wrap: wrap;
+          justify-content: center;
+        }
           gap: 8px;
         }
         .im-badge-cert {

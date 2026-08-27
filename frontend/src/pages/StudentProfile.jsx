@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 
@@ -34,6 +34,9 @@ const StudentProfile = () => {
   const [currentUser, setCurrentUser] = useState(null);
   const [showEditModal, setShowEditModal] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const avatarFileInputRef = useRef(null);
+  const modalPhotoInputRef = useRef(null);
   const [editForm, setEditForm] = useState({
     name: '',
     bio: '',
@@ -52,8 +55,114 @@ const StudentProfile = () => {
     session_time: 'Morning 6:00 AM',
     staying_at_school: 'Yes',
     reminder_preference: 'WhatsApp Text',
-    guests_details: []
+    guests_details: [],
+    image: ''
   });
+
+  // Password Management State
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [newPass, setNewPass] = useState('');
+  const [confirmPass, setConfirmPass] = useState('');
+  const [isSavingPass, setIsSavingPass] = useState(false);
+  const [passError, setPassError] = useState('');
+  const [passSuccess, setPassSuccess] = useState('');
+
+  const handleUpdatePassword = async (e) => {
+    e.preventDefault();
+    setPassError('');
+    setPassSuccess('');
+    if (newPass.length < 6) {
+      setPassError('Password must be at least 6 characters.');
+      return;
+    }
+    if (newPass !== confirmPass) {
+      setPassError('Passwords do not match.');
+      return;
+    }
+
+    setIsSavingPass(true);
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const token = urlParams.get('token') || currentUser?.invite_token;
+      
+      let res;
+      if (token) {
+        res = await fetch(`${API}/api/invite/${token}/set-password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: newPass })
+        });
+      } else {
+        res = await fetch(`${API}/api/students/${id}/set-password`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: newPass })
+        });
+      }
+
+      const data = await res.json();
+      if (res.ok && (data.success || data.message)) {
+        setPassSuccess('Password updated successfully! You can now log in anytime with your email.');
+        setStudent(prev => ({ ...prev, has_password: true }));
+        if (currentUser) {
+          const updatedUser = { ...currentUser, has_password: true };
+          sessionStorage.setItem('user', JSON.stringify(updatedUser));
+          setCurrentUser(updatedUser);
+        }
+        setTimeout(() => {
+          setShowPasswordModal(false);
+          setPassSuccess('');
+          setNewPass('');
+          setConfirmPass('');
+        }, 2000);
+      } else {
+        setPassError(data.detail || data.message || 'Failed to update password.');
+      }
+    } catch (err) {
+      setPassError('Network error. Please try again.');
+    } finally {
+      setIsSavingPass(false);
+    }
+  };
+
+  const handlePhotoUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const previewUrl = URL.createObjectURL(file);
+    setEditForm(prev => ({ ...prev, image: previewUrl }));
+    setUploadingPhoto(true);
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetch(`${API}/api/upload-image`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.url) {
+          setEditForm(prev => ({ ...prev, image: data.url }));
+          const token = sessionStorage.getItem('token');
+          await fetch(`${API}/api/students/${id}`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ image: data.url })
+          });
+          fetchStudent();
+        }
+      }
+    } catch (err) {
+      console.error('Photo upload error:', err);
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
 
   // Dynamic fallback for registered surfer (never hardcoded Chloe Kim)
   const getFallbackStudent = () => {
@@ -161,7 +270,8 @@ const StudentProfile = () => {
       session_time: student.session_time || 'Morning 6:00 AM',
       staying_at_school: student.staying_at_school || 'Yes',
       reminder_preference: student.reminder_preference || 'WhatsApp Text',
-      guests_details: student.guests_details || []
+      guests_details: student.guests_details || [],
+      image: student.image || ''
     });
     setShowEditModal(true);
   };
@@ -198,7 +308,8 @@ const StudentProfile = () => {
           session_time: editForm.session_time,
           staying_at_school: editForm.staying_at_school,
           reminder_preference: editForm.reminder_preference,
-          guests_details: editForm.guests_details || []
+          guests_details: editForm.guests_details || [],
+          image: editForm.image || undefined
         })
       });
 
@@ -263,27 +374,149 @@ const StudentProfile = () => {
           </div>
         )}
 
+        {/* Password Setup Banner (Shown until student creates password) */}
+        {(!student.has_password || !student.user_id) && (
+          <div style={{
+            background: 'linear-gradient(135deg, #0F172A 0%, #1E1B4B 100%)',
+            border: '1px solid #6366F1',
+            borderRadius: '16px',
+            padding: '18px 24px',
+            marginBottom: '20px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            boxShadow: '0 10px 30px rgba(99, 102, 241, 0.18)',
+            color: '#FFF',
+            flexWrap: 'wrap',
+            gap: '16px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1, minWidth: '280px' }}>
+              <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: 'rgba(99, 102, 241, 0.2)', border: '1px solid rgba(99, 102, 241, 0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', flexShrink: 0 }}>
+                🔐
+              </div>
+              <div>
+                <div style={{ color: '#00F2FE', fontWeight: 800, fontSize: '15px' }}>
+                  Update Your Account Password
+                </div>
+                <div style={{ color: '#94A3B8', fontSize: '13px', marginTop: '2px' }}>
+                  You are currently accessing your profile via your invite link. Set a password to log in anytime with your email & password.
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowPasswordModal(true)}
+              style={{
+                background: 'linear-gradient(135deg, #FF3366 0%, #FF6584 100%)',
+                color: '#FFFFFF',
+                border: 'none',
+                borderRadius: '12px',
+                padding: '11px 22px',
+                fontWeight: 800,
+                fontSize: '13px',
+                cursor: 'pointer',
+                boxShadow: '0 4px 15px rgba(255, 51, 102, 0.4)',
+                whiteSpace: 'nowrap',
+                transition: 'all 0.2s ease'
+              }}
+            >
+              Update Password →
+            </button>
+          </div>
+        )}
+
         {/* Hero Section */}
         <section className="sp-hero">
+          <input
+            type="file"
+            ref={avatarFileInputRef}
+            accept="image/*"
+            style={{ display: 'none' }}
+            onChange={handlePhotoUpload}
+          />
+          <div
+            className="sp-avatar-wrapper"
+            onClick={() => isOwnProfile && avatarFileInputRef.current?.click()}
+            style={{ cursor: isOwnProfile ? 'pointer' : 'default' }}
+            title={isOwnProfile ? "Click to change profile photo" : ""}
+          >
+            {student.image && !student.image.includes('1500648767791') ? (
+              <img
+                src={student.image}
+                alt={student.name}
+                className="sp-avatar-img"
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none';
+                  const fallback = e.currentTarget.parentElement.querySelector('.sp-avatar-fallback');
+                  if (fallback) fallback.style.display = 'flex';
+                }}
+              />
+            ) : null}
+            <div
+              className="sp-avatar-fallback"
+              style={{
+                display: (student.image && !student.image.includes('1500648767791')) ? 'none' : 'flex',
+                width: '100%',
+                height: '100%',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
+                color: '#FFFFFF',
+                fontWeight: '800',
+                fontSize: '32px',
+                fontFamily: 'Outfit, sans-serif'
+              }}
+            >
+              {student.name ? student.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : 'ST'}
+            </div>
+            {isOwnProfile && (
+              <div className="sp-avatar-overlay">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+                  <circle cx="12" cy="13" r="4"></circle>
+                </svg>
+              </div>
+            )}
+          </div>
 
-          <img src={student.image} alt={student.name} className="sp-avatar" />
           <div className="sp-hero-info">
             <h1 className="sp-name">{student.name}</h1>
             <div className="sp-hero-meta">
               <span className={`sp-level-badge level-${student.level.toLowerCase()}`}>{student.level}</span>
               <div className="sp-meta-dot" />
               <span className="sp-instructor-text">Instructor: {student.instructor}</span>
+              <div className="sp-meta-dot" />
+              <span className="sp-session-badge">
+                ⏰ {student.session_time || 'Morning 6:00 AM'}
+              </span>
             </div>
           </div>
-          {isOwnProfile && (
-            <button className="btn-secondary edit-profile-btn" onClick={handleEditClick} style={{ marginLeft: 'auto' }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px' }}>
-                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-              </svg>
-              Edit Profile
-            </button>
-          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            {(!student.has_password || !student.user_id) && (
+              <button
+                type="button"
+                className="sp-edit-profile-btn"
+                onClick={() => setShowPasswordModal(true)}
+                style={{
+                  background: 'linear-gradient(135deg, #FF3366 0%, #FF6584 100%)',
+                  color: '#FFFFFF',
+                  border: 'none',
+                  boxShadow: '0 4px 15px rgba(255, 51, 102, 0.4)'
+                }}
+              >
+                <span>🔐 Update Password</span>
+              </button>
+            )}
+            {isOwnProfile && (
+              <button className="sp-edit-profile-btn" onClick={handleEditClick}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                  <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                </svg>
+                <span>Edit Profile</span>
+              </button>
+            )}
+          </div>
         </section>
 
         <div className="sp-content">
@@ -332,10 +565,6 @@ const StudentProfile = () => {
               {/* Details Grid */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '13px', marginBottom: '18px' }}>
                 <div style={{ background: 'rgba(255,255,255,0.04)', padding: '10px 12px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <span style={{ display: 'block', fontSize: '11px', color: '#94A3B8', fontWeight: 600 }}>SESSION TIME</span>
-                  <strong style={{ color: '#F1F5F9' }}>⏰ {student.session_time || 'Morning 6:00 AM'}</strong>
-                </div>
-                <div style={{ background: 'rgba(255,255,255,0.04)', padding: '10px 12px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.06)' }}>
                   <span style={{ display: 'block', fontSize: '11px', color: '#94A3B8', fontWeight: 600 }}>GROUP SIZE</span>
                   <strong style={{ color: '#F1F5F9' }}>
                     👥 {student.guests_details && student.guests_details.length > 0 
@@ -349,7 +578,7 @@ const StudentProfile = () => {
                     {student.staying_at_school === 'Yes' ? '🏨 Yes (On-site Lodge)' : '🚗 No (Off-site)'}
                   </strong>
                 </div>
-                <div style={{ background: 'rgba(255,255,255,0.04)', padding: '10px 12px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div style={{ gridColumn: 'span 2', background: 'rgba(255,255,255,0.04)', padding: '10px 12px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.06)' }}>
                   <span style={{ display: 'block', fontSize: '11px', color: '#94A3B8', fontWeight: 600 }}>REMINDER PREF</span>
                   <strong style={{ color: '#F1F5F9' }}>💬 {student.reminder_preference || 'WhatsApp Text'}</strong>
                 </div>
@@ -691,6 +920,33 @@ const StudentProfile = () => {
               </div>
               <form onSubmit={handleEditSubmit}>
                 <div className="sp-modal-body">
+                  {/* Photo Upload in Modal */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '16px', padding: '12px', background: '#F8FAFC', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
+                    <div style={{ width: '56px', height: '56px', borderRadius: '50%', overflow: 'hidden', background: '#0D9488', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FFF', fontWeight: 800, fontSize: '20px' }}>
+                      {editForm.image && !editForm.image.includes('1500648767791') ? (
+                        <img src={editForm.image} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      ) : (
+                        (editForm.name || 'S').slice(0, 2).toUpperCase()
+                      )}
+                    </div>
+                    <div>
+                      <input
+                        type="file"
+                        ref={modalPhotoInputRef}
+                        accept="image/*"
+                        style={{ display: 'none' }}
+                        onChange={handlePhotoUpload}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => modalPhotoInputRef.current?.click()}
+                        style={{ background: '#0F172A', color: '#FFF', border: 'none', padding: '8px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}
+                      >
+                        {uploadingPhoto ? 'Uploading...' : '📷 Upload Photo'}
+                      </button>
+                    </div>
+                  </div>
+
                   <div className="sp-form-field">
                     <label>Full Name</label>
                     <input type="text" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required />
@@ -898,31 +1154,159 @@ const StudentProfile = () => {
             </div>
           </div>
         )}
+        {/* Password Setup Modal */}
+        {showPasswordModal && (
+          <div className="sp-modal-overlay" onClick={() => setShowPasswordModal(false)}>
+            <div className="sp-modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: '440px', background: '#FFFFFF', borderRadius: '20px', padding: '28px', boxShadow: '0 20px 50px rgba(0,0,0,0.25)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ fontSize: '24px' }}>🔐</span>
+                  <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: '#0F172A', fontFamily: 'Outfit, sans-serif' }}>Update Account Password</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowPasswordModal(false)}
+                  style={{ background: 'none', border: 'none', fontSize: '20px', color: '#64748B', cursor: 'pointer' }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <p style={{ fontSize: '13px', color: '#64748B', margin: '0 0 20px 0', lineHeight: 1.5 }}>
+                Set a permanent password for <strong>{student.email || student.name}</strong>. Once saved, you can log in directly anytime from the Login page.
+              </p>
+
+              {passError && (
+                <div style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#EF4444', padding: '10px 14px', borderRadius: '10px', fontSize: '12px', marginBottom: '16px' }}>
+                  ⚠️ {passError}
+                </div>
+              )}
+              {passSuccess && (
+                <div style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.3)', color: '#10B981', padding: '10px 14px', borderRadius: '10px', fontSize: '12px', marginBottom: '16px' }}>
+                  ✅ {passSuccess}
+                </div>
+              )}
+
+              <form onSubmit={handleUpdatePassword}>
+                <div style={{ marginBottom: '16px' }}>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#475569', marginBottom: '6px' }}>New Password</label>
+                  <input
+                    type="password"
+                    placeholder="At least 6 characters"
+                    value={newPass}
+                    onChange={e => setNewPass(e.target.value)}
+                    required
+                    style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: '1px solid #CBD5E1', fontSize: '14px', boxSizing: 'border-box' }}
+                  />
+                </div>
+
+                <div style={{ marginBottom: '22px' }}>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#475569', marginBottom: '6px' }}>Confirm Password</label>
+                  <input
+                    type="password"
+                    placeholder="Repeat new password"
+                    value={confirmPass}
+                    onChange={e => setConfirmPass(e.target.value)}
+                    required
+                    style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: '1px solid #CBD5E1', fontSize: '14px', boxSizing: 'border-box' }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowPasswordModal(false)}
+                    style={{ flex: 1, padding: '12px', borderRadius: '10px', border: '1px solid #E2E8F0', background: '#F8FAFC', color: '#64748B', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSavingPass}
+                    style={{ flex: 2, padding: '12px', borderRadius: '10px', border: 'none', background: 'linear-gradient(135deg, #FF3366 0%, #FF6584 100%)', color: '#FFFFFF', fontWeight: 800, fontSize: '14px', cursor: 'pointer', boxShadow: '0 4px 15px rgba(255,51,102,0.3)' }}
+                  >
+                    {isSavingPass ? 'Saving...' : '💾 Save Password'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </main>
 
       <style>{`
         .sp-page { display: flex; min-height: 100vh; background: #F8FAFC; font-family: 'Instrument Sans', sans-serif; }
         .sp-main { flex: 1; padding: 40px 80px; overflow-y: auto; display: flex; flex-direction: column; gap: 32px; position: relative; }
  
-        /* Hero */
+        /* Hero Header */
         .sp-hero {
-          background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 24px;
-          padding: 32px; display: flex; align-items: center; gap: 24px;
-          box-shadow: 0px 8px 24px rgba(0, 0, 0, 0.06);
+          background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 20px;
+          padding: 24px 32px; display: flex; align-items: center; gap: 24px;
+          box-shadow: 0px 4px 16px rgba(0, 0, 0, 0.03);
         }
-        .sp-avatar { width: 100px; height: 100px; border-radius: 50%; object-fit: cover; }
-        .sp-hero-info { display: flex; flex-direction: column; gap: 8px; }
-        .sp-name { font-family: 'Outfit', sans-serif; font-size: 32px; font-weight: 700; color: #0F172A; margin: 0; line-height: 1.2; }
-        .sp-hero-meta { display: flex; align-items: center; gap: 12px; }
+        .sp-avatar-wrapper {
+          width: 84px; height: 84px; border-radius: 50%; position: relative;
+          overflow: hidden; box-shadow: 0 4px 14px rgba(0,0,0,0.06);
+          border: 3px solid #E2E8F0; flex-shrink: 0; display: flex;
+          align-items: center; justify-content: center; background: #F1F5F9;
+        }
+        .sp-avatar-img { width: 100%; height: 100%; object-fit: cover; }
+        .sp-avatar-overlay {
+          position: absolute; inset: 0; background: rgba(15, 23, 42, 0.55);
+          display: flex; align-items: center; justify-content: center;
+          opacity: 0; transition: opacity 0.2s; border-radius: 50%;
+        }
+        .sp-avatar-wrapper:hover .sp-avatar-overlay { opacity: 1; }
         
-        .sp-level-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 700; text-transform: uppercase; }
-        .level-beginner { background: rgba(245, 158, 11, 0.12); color: #F59E0B; }
+        .sp-hero-info { display: flex; flex-direction: column; gap: 8px; justify-content: center; }
+        .sp-name { font-family: 'Outfit', sans-serif; font-size: 26px; font-weight: 800; color: #0F172A; margin: 0; line-height: 1.1; }
+        .sp-hero-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        
+        .sp-level-badge { padding: 4px 10px; border-radius: 6px; font-size: 11.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.4px; }
+        .level-beginner { background: rgba(245, 158, 11, 0.12); color: #D97706; }
         .level-intermediate { background: rgba(13, 148, 136, 0.12); color: #0D9488; }
         .level-advanced { background: rgba(124, 58, 237, 0.12); color: #7C3AED; }
-        .level-master { background: rgba(239, 68, 68, 0.12); color: #EF4444; }
+        .level-master { background: rgba(239, 68, 68, 0.12); color: #DC2626; }
         
-        .sp-meta-dot { width: 6px; height: 6px; background: #E2E8F0; border-radius: 50%; }
-        .sp-instructor-text { font-size: 13px; color: #64748B; font-weight: 500; }
+        .sp-meta-dot { width: 4px; height: 4px; background: #94A3B8; border-radius: 50%; }
+        .sp-instructor-text { font-size: 13px; color: #475569; font-weight: 600; }
+
+        .sp-session-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          background: rgba(13, 148, 136, 0.08);
+          color: #0D9488;
+          font-weight: 700;
+          font-size: 12px;
+          padding: 3px 10px;
+          border-radius: 6px;
+          border: 1px solid rgba(13, 148, 136, 0.2);
+        }
+
+        .sp-edit-profile-btn {
+          margin-left: auto;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          background: #0F172A;
+          color: #FFFFFF;
+          border: 1px solid #0F172A;
+          padding: 10px 20px;
+          border-radius: 12px;
+          font-family: 'Instrument Sans', sans-serif;
+          font-weight: 700;
+          font-size: 13.5px;
+          cursor: pointer;
+          box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
+          transition: all 0.2s ease;
+        }
+        .sp-edit-profile-btn:hover {
+          background: #0D9488;
+          border-color: #0D9488;
+          transform: translateY(-2px);
+          box-shadow: 0 6px 16px rgba(13, 148, 136, 0.28);
+        }
 
         /* Two Column Layout */
         .sp-content { display: flex; gap: 32px; }

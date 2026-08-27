@@ -174,21 +174,18 @@ const Sessions = () => {
     ? Math.round(roleScopedSessions.reduce((sum, s) => sum + (s.duration_mins || 60), 0) / totalSessions)
     : 0;
 
-  const locationCounts = roleScopedSessions.reduce((acc, s) => {
-    if (s.location) acc[s.location] = (acc[s.location] || 0) + 1;
-    return acc;
-  }, {});
-  const topSpot = Object.keys(locationCounts).sort((a, b) => locationCounts[b] - locationCounts[a])[0] || '—';
+  // 3-Card Status Metrics (Pending / Booked / Completed)
+  const pendingSessionsList = roleScopedSessions.filter(s => s.status === 'Scheduled' || s.status === 'Pending' || s.status === 'In Progress' || !s.status);
+  const pendingCount = pendingSessionsList.length;
+  const pendingDays = new Set(pendingSessionsList.map(s => s.date).filter(Boolean)).size;
 
-  const conditionCounts = roleScopedSessions.reduce((acc, s) => {
-    if (s.condition) acc[s.condition] = (acc[s.condition] || 0) + 1;
-    return acc;
-  }, {});
-  const waveDistrib = ['Hard', 'Moderate', 'Easy'].map(c => ({
-    label: c,
-    pct: totalSessions > 0 ? Math.round(((conditionCounts[c] || 0) / totalSessions) * 100) : 0,
-    color: conditionColor(c),
-  }));
+  const bookedSessionsList = roleScopedSessions;
+  const bookedCount = bookedSessionsList.length;
+  const bookedDays = new Set(bookedSessionsList.map(s => s.date).filter(Boolean)).size;
+
+  const completedSessionsList = roleScopedSessions.filter(s => s.status === 'Completed');
+  const completedCount = completedSessionsList.length;
+  const completedDays = new Set(completedSessionsList.map(s => s.date).filter(Boolean)).size;
 
   // Calendar calculations
   const year = currentDate.getFullYear();
@@ -237,22 +234,26 @@ const Sessions = () => {
             </p>
           </div>
           <div className="ses-actions">
-            <button className="ses-btn-secondary" onClick={() => setShowCalendarModal(true)}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0D9488" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
-                <line x1="16" y1="2" x2="16" y2="6"></line>
-                <line x1="8" y1="2" x2="8" y2="6"></line>
-                <line x1="3" y1="10" x2="21" y2="10"></line>
-              </svg>
-              Interactive Calendar & Ground Ops
-            </button>
-            <button className="ses-btn-primary" onClick={() => navigate('/sessions/new')}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="12" y1="5" x2="12" y2="19"></line>
-                <line x1="5" y1="12" x2="19" y2="12"></line>
-              </svg>
-              Schedule Session
-            </button>
+            {!isStudent && (
+              <>
+                <button className="ses-btn-secondary" onClick={() => setShowCalendarModal(true)}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0D9488" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                    <line x1="16" y1="2" x2="16" y2="6"></line>
+                    <line x1="8" y1="2" x2="8" y2="6"></line>
+                    <line x1="3" y1="10" x2="21" y2="10"></line>
+                  </svg>
+                  Interactive Calendar & Ground Ops
+                </button>
+                <button className="ses-btn-primary" onClick={() => navigate('/sessions/new')}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                  </svg>
+                  Schedule Session
+                </button>
+              </>
+            )}
           </div>
         </header>
 
@@ -502,17 +503,19 @@ const Sessions = () => {
                           No sessions match your filter criteria
                         </div>
                         <p style={{ margin: '0 0 16px', fontSize: '13px' }}>
-                          Try clearing filters or schedule a new session for this time slot.
+                          {isStudent
+                            ? 'No sessions found for your account.'
+                            : 'Try clearing filters or schedule a new session for this time slot.'}
                         </p>
                         {hasActiveFilters ? (
                           <button className="ses-btn-secondary" style={{ margin: '0 auto' }} onClick={resetFilters}>
                             Clear Filters
                           </button>
-                        ) : (
+                        ) : !isStudent ? (
                           <button className="ses-btn-primary" style={{ margin: '0 auto' }} onClick={() => navigate('/sessions/new')}>
                             + Schedule First Session
                           </button>
-                        )}
+                        ) : null}
                       </td>
                     </tr>
                   )}
@@ -521,47 +524,24 @@ const Sessions = () => {
             )}
           </div>
 
-          {/* Right Column: Insights */}
+          {/* Right Column: 3 Session Status Metric Cards */}
           <div className="ses-sidebar">
-            <h2 className="ses-insights-title">Monthly Insights</h2>
-
-            <div className="ses-stat-card">
-              <div className="ses-stat-header">
-                <span className="ses-stat-label">Total Sessions</span>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0D9488" strokeWidth="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
-              </div>
-              <div className="ses-stat-value">{loading ? '…' : totalSessions}</div>
+            <div className="ses-status-metric-card pending-card">
+              <div className="ses-smc-label">PENDING SESSIONS</div>
+              <div className="ses-smc-value">{loading ? '…' : pendingCount}</div>
+              <div className="ses-smc-sub">Days Pending: {loading ? '…' : pendingDays}</div>
             </div>
 
-            <div className="ses-stat-card">
-              <div className="ses-stat-header">
-                <span className="ses-stat-label">Avg. Duration</span>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0D9488" strokeWidth="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-              </div>
-              <div className="ses-stat-value">{loading ? '…' : `${avgDuration} mins`}</div>
+            <div className="ses-status-metric-card booked-card">
+              <div className="ses-smc-label">SESSIONS BOOKED</div>
+              <div className="ses-smc-value">{loading ? '…' : bookedCount}</div>
+              <div className="ses-smc-sub">Days Booked: {loading ? '…' : bookedDays}</div>
             </div>
 
-            <div className="ses-stat-card">
-              <div className="ses-stat-header">
-                <span className="ses-stat-label">Top Spot</span>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0D9488" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
-              </div>
-              <div className="ses-stat-value" style={{ fontSize: '20px' }}>{loading ? '…' : topSpot}</div>
-            </div>
-
-            <div className="ses-wave-card">
-              <h3 className="ses-wave-title">Wave Distribution</h3>
-              {waveDistrib.map(w => (
-                <div key={w.label} className="ses-wave-row">
-                  <div className="ses-wave-header">
-                    <span>{w.label}</span>
-                    <span className="ses-wave-pct">{w.pct}%</span>
-                  </div>
-                  <div className="ses-wave-bar-bg">
-                    <div className="ses-wave-bar" style={{ width: `${w.pct}%`, backgroundColor: w.color }}></div>
-                  </div>
-                </div>
-              ))}
+            <div className="ses-status-metric-card completed-card">
+              <div className="ses-smc-label">SESSIONS COMPLETED</div>
+              <div className="ses-smc-value">{loading ? '…' : completedCount}</div>
+              <div className="ses-smc-sub">Days Completed: {loading ? '…' : completedDays}</div>
             </div>
           </div>
         </div>
@@ -715,7 +695,13 @@ const Sessions = () => {
                           <button
                             className="ses-btn-primary"
                             style={{ padding: '6px 14px', fontSize: '12px' }}
-                            onClick={() => navigate('/sessions/new')}
+                            onClick={() => {
+                              // Convert "29 Aug 2026" → "2026-08-29" for the date input
+                              const isoDate = selectedCalendarDate
+                                ? new Date(selectedCalendarDate).toISOString().split('T')[0]
+                                : '';
+                              navigate(`/sessions/new${isoDate ? `?date=${isoDate}` : ''}`);
+                            }}
                           >
                             + Schedule Slot
                           </button>
@@ -1106,27 +1092,30 @@ const Sessions = () => {
         }
         .ses-whatsapp-quick-btn:hover { background: #1EBE5B; transform: translateY(-1px); }
 
-        /* Right Sidebar */
-        .ses-sidebar { display: flex; flex-direction: column; gap: 20px; width: 300px; flex-shrink: 0; }
-        .ses-insights-title { font-family: 'Outfit', sans-serif; font-size: 18px; font-weight: 700; color: #050B1A; margin: 0; }
+        /* Right Sidebar - Status Metric Cards */
+        .ses-sidebar { display: flex; flex-direction: column; gap: 16px; width: 300px; flex-shrink: 0; }
         
-        .ses-stat-card {
-          background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; padding: 18px 20px;
-          display: flex; flex-direction: column; gap: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+        .ses-status-metric-card {
+          background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 14px; padding: 20px 22px;
+          display: flex; flex-direction: column; gap: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+          transition: all 0.2s ease;
         }
-        .ses-stat-header { display: flex; justify-content: space-between; align-items: center; }
-        .ses-stat-label { font-size: 13px; color: #64748B; font-weight: 500; }
-        .ses-stat-value { font-family: 'Outfit', sans-serif; font-size: 28px; font-weight: 700; color: #050B1A; line-height: 1.2; }
-
-        .ses-wave-card {
-          background: #050B1A; border-radius: 16px; padding: 22px; display: flex; flex-direction: column; gap: 16px;
+        .ses-status-metric-card.pending-card {
+          background: #F0F7FF; border: 1.5px solid #BFDBFE;
         }
-        .ses-wave-title { font-size: 12px; font-weight: 700; color: rgba(255, 255, 255, 0.6); margin: 0; text-transform: uppercase; letter-spacing: 0.5px; }
-        .ses-wave-row { display: flex; flex-direction: column; gap: 8px; }
-        .ses-wave-header { display: flex; justify-content: space-between; font-size: 12px; color: #FFFFFF; }
-        .ses-wave-pct { opacity: 0.6; }
-        .ses-wave-bar-bg { height: 6px; background: rgba(255, 255, 255, 0.12); border-radius: 3px; overflow: hidden; }
-        .ses-wave-bar { height: 100%; border-radius: 3px; transition: width 0.6s ease; }
+        .ses-status-metric-card:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 8px 18px rgba(0,0,0,0.04);
+        }
+        .ses-smc-label {
+          font-size: 11px; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.6px;
+        }
+        .ses-smc-value {
+          font-family: 'Outfit', sans-serif; font-size: 38px; font-weight: 800; color: #0F172A; line-height: 1.1; margin: 2px 0;
+        }
+        .ses-smc-sub {
+          font-size: 13px; color: #64748B; font-weight: 500;
+        }
 
         /* Calendar & Ground Ops Modal */
         .ses-modal-overlay {

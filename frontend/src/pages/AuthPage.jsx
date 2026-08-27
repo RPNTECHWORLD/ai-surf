@@ -107,6 +107,19 @@ const AuthPage = () => {
 
   }, [searchParams]);
 
+  // Always fetch all registered surf schools for dropdown options on load
+  useEffect(() => {
+    fetch(`${API}/api/schools`)
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data) && data.length > 0) {
+          const names = data.map(s => s.name).filter(Boolean);
+          setSchoolsList(prev => Array.from(new Set([...names, ...prev])));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   // Fetch invite info if token present in URL
   useEffect(() => {
     if (!inviteToken) return;
@@ -133,16 +146,6 @@ const AuthPage = () => {
       })
       .catch(() => setInviteError('Could not load invite. Please try a fresh link.'))
       .finally(() => setInviteLoading(false));
-
-    fetch(`${API}/api/schools`)
-      .then(r => r.json())
-      .then(data => {
-        if (Array.isArray(data) && data.length > 0) {
-          const names = data.map(s => s.name);
-          setSchoolsList(prev => Array.from(new Set([...names, ...prev])));
-        }
-      })
-      .catch(() => {});
   }, [inviteToken]);
 
   const handleChange = (e) => {
@@ -180,22 +183,52 @@ const AuthPage = () => {
 
   const [pendingApprovalUser, setPendingApprovalUser] = useState(null);
 
-  const checkApprovalStatus = () => {
+  const checkApprovalStatus = async () => {
     if (!pendingApprovalUser) return;
     setErrorMsg('');
     try {
       const studentEmail = pendingApprovalUser.email?.toLowerCase();
 
-      // Check in localStorage school_join_requests (sole source of truth for admin approval)
+      // 1. First check remote backend API (server database)
+      let isApprovedOnServer = false;
+      let serverStudentId = null;
+
+      try {
+        const res = await fetch(`${API}/api/auth/check-approval?email=${encodeURIComponent(studentEmail)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.is_approved) {
+            isApprovedOnServer = true;
+            serverStudentId = data.student_id;
+          }
+        }
+      } catch (err) {
+        console.warn('Backend API unreachable, checking local cache', err);
+      }
+
+      // 2. Check local storage cache fallback
       const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
       const currentReq = savedReqs.find(r => r.student_email?.toLowerCase() === studentEmail);
+      const isApprovedInLocal = currentReq && currentReq.status === 'approved';
 
-      const isApproved = currentReq && currentReq.status === 'approved';
-
+      const isApproved = isApprovedOnServer || isApprovedInLocal;
 
       if (isApproved) {
+        // Sync local storage so subsequent local checks pass
+        try {
+          const updatedReqs = savedReqs.map(r => 
+            r.student_email?.toLowerCase() === studentEmail ? { ...r, status: 'approved' } : r
+          );
+          if (!savedReqs.some(r => r.student_email?.toLowerCase() === studentEmail)) {
+            updatedReqs.push({ student_email: studentEmail, status: 'approved' });
+          }
+          localStorage.setItem('school_join_requests', JSON.stringify(updatedReqs));
+        } catch (e) {}
+
         const approvedUser = { ...pendingApprovalUser, approval_status: 'approved' };
-        sessionStorage.setItem('token', 'session_active_token');
+        if (serverStudentId) approvedUser.student_id = serverStudentId;
+
+        sessionStorage.setItem('token', sessionStorage.getItem('token') || 'session_active_token');
         sessionStorage.setItem('user', JSON.stringify(approvedUser));
         sessionStorage.setItem('activeSchool', JSON.stringify({
           name: approvedUser.school || 'Aquatic Indica Surf School',
@@ -203,7 +236,7 @@ const AuthPage = () => {
           email: approvedUser.email,
         }));
         setPendingApprovalUser(null);
-        navigate(`/students/${approvedUser.student_id || approvedUser.id || 1}`);
+        navigate(`/students/${serverStudentId || approvedUser.student_id || approvedUser.id || 1}`);
       } else {
         setErrorMsg(`⏳ Your join request to "${pendingApprovalUser.school || 'your selected Surf School'}" is STILL PENDING approval from the School Admin.`);
       }
@@ -291,13 +324,19 @@ const AuthPage = () => {
       const res = await fetch(`${API}/api/auth/send-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: formData.email.trim(), purpose: 'signup' })
+        body: JSON.stringify({ email: formData.email.trim(), purpose: 'signup', role })
       });
       const data = await res.json();
       if (res.ok) {
         setResendCooldown(60);
         if (!isResend) setOtpSent(true);
-        setSuccessMsg(`Verification code sent to ${formData.email}`);
+        const fallbackOtp = data.otp || data.message?.match(/\b\d{6}\b/)?.[0];
+        if (fallbackOtp) {
+          setOtpCode(fallbackOtp);
+          setSuccessMsg(`Verification code: ${fallbackOtp}`);
+        } else {
+          setSuccessMsg(data.message || `Verification code sent to ${formData.email}`);
+        }
       } else {
         setOtpSent(false);
         setErrorMsg(data.detail || 'Failed to send OTP. Please try again.');
@@ -428,7 +467,13 @@ const AuthPage = () => {
       if (res.ok) {
         setResendCooldown(60);
         if (!isResend) setForgotStep(2);
-        setSuccessMsg(`Reset code sent to ${forgotEmail}`);
+        const fallbackOtp = data.otp || data.message?.match(/\b\d{6}\b/)?.[0];
+        if (fallbackOtp) {
+          setForgotOtp(fallbackOtp);
+          setSuccessMsg(`Reset code: ${fallbackOtp}`);
+        } else {
+          setSuccessMsg(data.message || `Reset code sent to ${forgotEmail}`);
+        }
       } else {
         setErrorMsg(data.detail || 'Failed to send reset code.');
       }

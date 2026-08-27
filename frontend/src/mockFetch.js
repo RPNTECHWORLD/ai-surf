@@ -168,14 +168,19 @@ window.fetch = async function (input, init) {
       }
 
       if (body.purpose === 'signup') {
-        const isExisting = registeredUsers[email] || 
-          state.students.some(s => (s.email || "").toLowerCase() === email) || 
-          state.instructors.some(i => (i.email || "").toLowerCase() === email) ||
-          state.schools.some(sc => (sc.email || "").toLowerCase() === email) ||
-          email === 'rpntechworld@gmail.com';
+        const targetRole = (body.role || 'athlete').toLowerCase();
+        let isExisting = false;
+        if (targetRole === 'athlete') {
+          isExisting = (registeredUsers[email] && registeredUsers[email].role === 'athlete') || state.students.some(s => (s.email || "").toLowerCase() === email);
+        } else if (targetRole === 'coach') {
+          isExisting = (registeredUsers[email] && registeredUsers[email].role === 'coach') || state.instructors.some(i => (i.email || "").toLowerCase() === email);
+        } else if (targetRole === 'admin') {
+          isExisting = (registeredUsers[email] && registeredUsers[email].role === 'admin') || state.schools.some(sc => (sc.email || "").toLowerCase() === email);
+        }
 
         if (isExisting) {
-          return errorResponse("Email is already registered. Please switch to login.", 400);
+          const roleLabel = targetRole === 'athlete' ? 'Student (Athlete)' : (targetRole === 'coach' ? 'Coach (Instructor)' : 'School Admin');
+          return errorResponse(`This email is already registered as ${roleLabel}. Please switch to login or choose another role.`, 400);
         }
       }
 
@@ -189,13 +194,20 @@ window.fetch = async function (input, init) {
     if (path === '/api/auth/signup' && method === 'POST') {
       const body = JSON.parse(init.body);
       const email = body.email.toLowerCase();
+      const role = (body.role || 'athlete').toLowerCase();
       
-      // Check existing
-      if (registeredUsers[email] || state.instructors.some(i => i.email === email) || state.students.some(s => s.email === email) || email === 'rpntechworld@gmail.com') {
-        return errorResponse("Email is already registered", 400);
+      // Check existing in same role
+      let isExisting = false;
+      if (role === 'athlete') {
+        isExisting = state.students.some(s => (s.email || "").toLowerCase() === email);
+      } else if (role === 'coach') {
+        isExisting = state.instructors.some(i => (i.email || "").toLowerCase() === email);
       }
 
-      const role = body.role.toLowerCase();
+      if (isExisting) {
+        return errorResponse("This email is already registered for this role", 400);
+      }
+
       let newUser = { id: Math.floor(Math.random() * 1000) + 10, email, role, name: body.name, image: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100" };
 
       if (role === 'athlete') {

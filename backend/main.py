@@ -75,12 +75,13 @@ Base = declarative_base()
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, unique=True, index=True, nullable=True)
+    email = Column(String, index=True, nullable=True)
     password_hash = Column(String, nullable=True)
     password_plain = Column(String, nullable=True)
     role = Column(String, nullable=False)  # "athlete", "coach", "admin"
     auth_provider = Column(String, default="email")  # "email", "google", "apple"
     social_id = Column(String, nullable=True)
+    approval_status = Column(String, default="approved")
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -161,6 +162,8 @@ class Student(Base):
     reminder_sent = Column(Boolean, default=False)
     guests_details = Column(Text, nullable=True) # JSON list of accompanying guest profiles
     invite_token = Column(String, nullable=True, unique=True) # Shareable registration token
+    school = Column(String, default="Aquatic Indica Surf School")
+    approval_status = Column(String, default="approved")
 
     user_rel = relationship("User", back_populates="student")
     instructor_rel = relationship("Instructor", back_populates="students")
@@ -433,6 +436,9 @@ try:
         db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS guests_details TEXT DEFAULT '[]'"))
         db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS dob VARCHAR(50) DEFAULT ''"))
         db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS invite_token VARCHAR(128) DEFAULT NULL"))
+        db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS school VARCHAR(150) DEFAULT 'Aquatic Indica Surf School'"))
+        db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS approval_status VARCHAR(50) DEFAULT 'approved'"))
+        db_migrate.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS approval_status VARCHAR(50) DEFAULT 'approved'"))
         db_migrate.execute(text("""
             CREATE TABLE IF NOT EXISTS attendance_records (
                 id SERIAL PRIMARY KEY,
@@ -479,6 +485,8 @@ try:
             db_migrate.execute(text("ALTER TABLE students ADD COLUMN guests_details TEXT DEFAULT '[]'"))
             db_migrate.execute(text("ALTER TABLE students ADD COLUMN dob VARCHAR(50) DEFAULT ''"))
             db_migrate.execute(text("ALTER TABLE students ADD COLUMN invite_token VARCHAR(128) DEFAULT NULL"))
+            db_migrate.execute(text("ALTER TABLE students ADD COLUMN approval_status VARCHAR(50) DEFAULT 'approved'"))
+            db_migrate.execute(text("ALTER TABLE users ADD COLUMN approval_status VARCHAR(50) DEFAULT 'approved'"))
             db_migrate.execute(text("""
                 CREATE TABLE IF NOT EXISTS attendance_records (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1180,6 +1188,7 @@ class StudentUpdate(BaseModel):
     reminder_preference: Optional[str] = None
     reminder_sent: Optional[bool] = None
     guests_details: Optional[List[dict]] = None
+    image: Optional[str] = None
 
 
 class InstructorUpdate(BaseModel):
@@ -1191,6 +1200,7 @@ class InstructorUpdate(BaseModel):
     rates: Optional[str] = None
     location: Optional[str] = None
     certifications: Optional[List[str]] = None
+    image: Optional[str] = None
 
 
 class NutritionLogCreate(BaseModel):
@@ -1373,7 +1383,8 @@ def student_to_dict(s: Student):
         "remaining_days": remaining_days,
         "total_days": total_days,
         "wa_link": wa_link,
-        "has_password": bool(s.user_id or s.user_rel),
+        "has_password": bool(s.user_rel and s.user_rel.password_hash),
+        "school": s.school or "Aquatic Indica Surf School",
     }
 
 
@@ -1452,8 +1463,13 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
                 res["school"] = {"id": sch.id, "name": sch.name, "owner": sch.owner, "email": sch.email}
                 if sch.owner and user.role == "admin":
                     res["name"] = sch.owner
-    except Exception:
+    except Exception as e:
         pass
+    # approval status fallback
+    user_st = getattr(user, "approval_status", None)
+    if not user_st and user.student:
+        user_st = getattr(user.student, "approval_status", None)
+    res["approval_status"] = user_st or "approved"
 
     return res
 
@@ -1462,20 +1478,27 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
 
 @app.post("/api/auth/signup")
 def auth_signup(data: UserSignup, db: OrmSession = Depends(get_db)):
-    existing = db.query(User).filter(User.email == data.email.lower()).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="Email is already registered")
-
-    role = data.role.lower()
+    role = data.role.lower().strip()
     if role not in ["athlete", "coach", "admin"]:
         raise HTTPException(status_code=400, detail="Invalid role specified")
+
+    email_clean = data.email.lower().strip()
+    existing = db.query(User).filter(
+        func.lower(User.email) == email_clean,
+        User.role == role
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"This email is already registered as {role}. Please log in instead.")
+
+    initial_approval = "approved" if (data.invite_token or role != "athlete") else "pending"
 
     user = User(
         email=data.email.lower(),
         password_hash=hash_password(data.password),
         password_plain=data.password,
         role=role,
-        auth_provider="email"
+        auth_provider="email",
+        approval_status=initial_approval
     )
     db.add(user)
     db.flush()
@@ -1500,6 +1523,7 @@ def auth_signup(data: UserSignup, db: OrmSession = Depends(get_db)):
             existing_student.stance = data.stance or existing_student.stance or "regular"
             existing_student.invite_token = None  # Consume/invalidate token
             existing_student.last_active = "Today"
+            existing_student.approval_status = "approved"
             db.add(ActivityLog(text=f"{existing_student.name} activated their student account", type="group"))
         else:
             student = Student(
@@ -1525,7 +1549,9 @@ def auth_signup(data: UserSignup, db: OrmSession = Depends(get_db)):
                 staying_at_school=data.staying_at_school or "Yes",
                 reminder_preference=data.reminder_preference or "WhatsApp Text",
                 reminder_sent=False,
-                guests_details=json.dumps(data.guests_details or [])
+                guests_details=json.dumps(data.guests_details or []),
+                school=data.school or "Aquatic Indica Surf School",
+                approval_status=initial_approval
             )
             db.add(student)
             db.add(ActivityLog(text=f"{data.name} signed up for {data.course_duration or '3 Days Course'}", type="group"))
@@ -1637,6 +1663,7 @@ def test_email_endpoint(data: EmailTestRequest):
 class SendOtpRequest(BaseModel):
     email: str
     purpose: Optional[str] = "login"
+    role: Optional[str] = "athlete"
 
 class VerifyOtpRequest(BaseModel):
     email: str
@@ -1650,13 +1677,18 @@ def send_otp_endpoint(data: SendOtpRequest, db: OrmSession = Depends(get_db)):
     if not email:
         raise HTTPException(status_code=400, detail="Email is required")
 
-    # If purpose is signup, check if email is already registered BEFORE sending OTP
+    # If purpose is signup, check if email is already registered FOR THIS ROLE BEFORE sending OTP
     if data.purpose == "signup":
-        existing = db.query(User).filter(User.email == email).first()
+        target_role = (data.role or "athlete").lower().strip()
+        existing = db.query(User).filter(
+            func.lower(User.email) == email,
+            User.role == target_role
+        ).first()
         if existing:
+            role_display = "Student (Athlete)" if target_role == "athlete" else ("Coach (Instructor)" if target_role == "coach" else "School Admin")
             raise HTTPException(
                 status_code=400,
-                detail="This email address is already registered. Please log in instead."
+                detail=f"This email address is already registered as {role_display}. Please log in instead, or change 'Register As' to another role."
             )
     
     # Invalidate previous unused OTPs
@@ -1818,24 +1850,30 @@ def reset_password_endpoint(data: ResetPasswordRequest, db: OrmSession = Depends
 
 @app.post("/api/auth/login")
 def auth_login(data: UserLogin, db: OrmSession = Depends(get_db)):
-    user = db.query(User).filter(User.email == data.email.lower()).first()
-    if not user:
+    email_clean = data.email.lower().strip()
+    candidates = db.query(User).filter(func.lower(User.email) == email_clean).all()
+    if not candidates:
         raise HTTPException(status_code=400, detail="Invalid email or password")
     
-    # Check password hash or plain
-    valid = False
-    if user.password_hash and verify_password(data.password, user.password_hash):
-        valid = True
-    elif user.password_plain and user.password_plain == data.password:
-        valid = True
+    # Check password against all candidate role accounts for this email
+    matched_user = None
+    for u in candidates:
+        valid = False
+        if u.password_hash and verify_password(data.password, u.password_hash):
+            valid = True
+        elif u.password_plain and u.password_plain == data.password:
+            valid = True
+        if valid:
+            matched_user = u
+            break
 
-    if not valid:
+    if not matched_user:
         raise HTTPException(status_code=400, detail="Invalid email or password")
 
-    token = generate_token({"user_id": user.id, "email": user.email, "role": user.role})
+    token = generate_token({"user_id": matched_user.id, "email": matched_user.email, "role": matched_user.role})
     return {
         "token": token,
-        "user": make_user_response(user)
+        "user": make_user_response(matched_user)
     }
 
 
@@ -1956,6 +1994,8 @@ def update_student(student_id: int, data: StudentUpdate, db: OrmSession = Depend
         student.reminder_sent = data.reminder_sent
     if data.guests_details is not None:
         student.guests_details = json.dumps(data.guests_details)
+    if data.image is not None:
+        student.image = data.image
 
     db.commit()
     db.refresh(student)
@@ -1984,6 +2024,8 @@ def update_instructor(instructor_id: int, data: InstructorUpdate, db: OrmSession
         instructor.location = data.location
     if data.certifications is not None:
         instructor.certifications = json.dumps(data.certifications)
+    if data.image is not None:
+        instructor.image = data.image
 
     db.commit()
     db.refresh(instructor)
@@ -2446,11 +2488,37 @@ def upload_video(file: UploadFile = File(...)):
             raise HTTPException(status_code=500, detail=f"AWS S3 upload failed: {str(e)}")
             
     # Fallback to local storage if S3 is not configured
+    return {"video_url": f"http://localhost:8000/uploads/{unique_filename}"}
+
+
+@app.post("/api/upload-image")
+def upload_image(file: UploadFile = File(...)):
+    file_ext = os.path.splitext(file.filename)[1] or ".jpg"
+    unique_filename = f"{uuid.uuid4()}{file_ext}"
+    
+    if S3_BUCKET_NAME:
+        try:
+            file.file.seek(0)
+            s3_client.upload_fileobj(
+                file.file,
+                S3_BUCKET_NAME,
+                unique_filename,
+                ExtraArgs={
+                    "ContentType": file.content_type or "image/jpeg"
+                }
+            )
+            image_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{unique_filename}"
+            return {"image_url": image_url, "url": image_url}
+        except Exception as e:
+            print(f"S3 upload error: {e}")
+            
     file_path = os.path.join(UPLOAD_DIR, unique_filename)
     with open(file_path, "wb") as f:
         f.write(file.file.read())
         
-    return {"video_url": f"http://localhost:8000/uploads/{unique_filename}"}
+    image_url = f"http://localhost:8000/uploads/{unique_filename}"
+    return {"image_url": image_url, "url": image_url}
+
 
 
 # ─── Dashboard ────────────────────────────────────────────────────────────────
@@ -2852,26 +2920,207 @@ def generate_invite(student_id: int, db: OrmSession = Depends(get_db)):
     return {"token": token, "student_id": student.id, "name": student.name, "email": student.email}
 
 
+
 @app.get("/api/invite/{token}")
 def get_invite_info(token: str, db: OrmSession = Depends(get_db)):
-    """Return pre-fill data for the invite registration page."""
+    """Return full student profile data for the direct student portal (no login needed)."""
     student = db.query(Student).filter(Student.invite_token == token).first()
     if not student:
         raise HTTPException(status_code=404, detail="Invalid or expired invite link")
-    if student.user_id:
-        raise HTTPException(status_code=400, detail="This invite link has already been used")
     sch = db.query(School).first()
     sch_name = sch.name if sch else "Aquatic Indica Surf School"
+    password_set = student.user_id is not None
+    instructor_name = None
+    if student.instructor_id:
+        instr = db.query(Instructor).filter(Instructor.id == student.instructor_id).first()
+        if instr:
+            instructor_name = instr.name
     return {
         "valid": True,
         "student_id": student.id,
         "name": student.name,
         "email": student.email or "",
         "level": student.level or "Beginner",
+        "whatsapp_number": student.whatsapp_number or "",
         "instructor_id": student.instructor_id,
+        "instructor_name": instructor_name,
         "session_time": student.session_time or "Morning 6:00 AM",
         "course_duration": student.course_duration or "3 Days Course",
+        "start_date": student.start_date or "",
+        "staying_at_school": student.staying_at_school or "",
+        "approval_status": student.approval_status or "approved",
         "school_name": sch_name,
+        "image": student.image or "",
+        "password_set": password_set,
+    }
+
+
+@app.post("/api/invite/{token}/set-password")
+def set_invite_password(token: str, data: dict, db: OrmSession = Depends(get_db)):
+    """Student sets their password via the invite link. Creates User account and links to student."""
+    student = db.query(Student).filter(Student.invite_token == token).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Invalid or expired invite link")
+
+    password = data.get("password", "").strip()
+    if not password or len(password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+
+    if student.user_id:
+        user = db.query(User).filter(User.id == student.user_id).first()
+        if user:
+            user.password_hash = hash_password(password)
+            user.password_plain = password
+            db.commit()
+            return {"success": True, "message": "Password updated successfully"}
+        raise HTTPException(status_code=400, detail="Account already set up")
+
+    email = student.email or ""
+    if not email:
+        raise HTTPException(status_code=400, detail="Student has no email address")
+
+    existing_user = db.query(User).filter(func.lower(User.email) == email.lower()).first()
+    if existing_user:
+        student.user_id = existing_user.id
+        existing_user.password_hash = hash_password(password)
+        existing_user.password_plain = password
+        student.invite_token = None
+        db.commit()
+        return {"success": True, "message": "Password set successfully. You can now log in."}
+
+    user = User(
+        email=email.lower(),
+        password_hash=hash_password(password),
+        password_plain=password,
+        role="athlete",
+        auth_provider="email",
+        approval_status="approved"
+    )
+    db.add(user)
+    db.flush()
+    student.user_id = user.id
+    student.invite_token = None
+    student.approval_status = "approved"
+    db.add(ActivityLog(text=f"{student.name} set their password and activated their account", type="group"))
+    db.commit()
+    return {"success": True, "message": "Password set! You can now log in with your email."}
+
+
+@app.post("/api/students/{student_id}/set-password")
+def set_student_password(student_id: int, data: dict, db: OrmSession = Depends(get_db)):
+    """Direct password setting from student profile page."""
+    student = db.query(Student).filter(Student.id == student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    password = data.get("password", "").strip()
+    if not password or len(password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    
+    email = student.email or ""
+    if not email:
+        raise HTTPException(status_code=400, detail="Student has no email address")
+    
+    if student.user_id:
+        user = db.query(User).filter(User.id == student.user_id).first()
+        if user:
+            user.password_hash = hash_password(password)
+            user.password_plain = password
+            student.invite_token = None
+            db.commit()
+            return {"success": True, "message": "Password updated successfully"}
+    
+    existing_user = db.query(User).filter(func.lower(User.email) == email.lower()).first()
+    if existing_user:
+        student.user_id = existing_user.id
+        existing_user.password_hash = hash_password(password)
+        existing_user.password_plain = password
+        student.invite_token = None
+        db.commit()
+        return {"success": True, "message": "Password updated successfully"}
+    
+    user = User(
+        email=email.lower(),
+        password_hash=hash_password(password),
+        password_plain=password,
+        role="athlete",
+        auth_provider="email",
+        approval_status="approved"
+    )
+    db.add(user)
+    db.flush()
+    student.user_id = user.id
+    student.invite_token = None
+    student.approval_status = "approved"
+    db.commit()
+    return {"success": True, "message": "Password set! You can now log in anytime."}
+
+
+@app.post("/api/students/{student_id}/approve")
+def approve_student(student_id: int, db: OrmSession = Depends(get_db)):
+    student = db.query(Student).filter(Student.id == student_id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    student.approval_status = "approved"
+    if student.user_rel:
+        student.user_rel.approval_status = "approved"
+    if student.email:
+        u = db.query(User).filter(func.lower(User.email) == student.email.lower()).first()
+        if u:
+            u.approval_status = "approved"
+    db.commit()
+    return {"status": "success", "message": f"Student {student.name} approved"}
+
+
+class ApproveEmailData(BaseModel):
+    email: str
+
+
+@app.post("/api/students/approve-by-email")
+def approve_student_by_email(data: ApproveEmailData, db: OrmSession = Depends(get_db)):
+    email_clean = (data.email or "").strip().lower()
+    if not email_clean:
+        raise HTTPException(status_code=400, detail="Email is required")
+    
+    st_count = 0
+    students = db.query(Student).filter(func.lower(Student.email) == email_clean).all()
+    for s in students:
+        s.approval_status = "approved"
+        st_count += 1
+    
+    users = db.query(User).filter(func.lower(User.email) == email_clean).all()
+    for u in users:
+        u.approval_status = "approved"
+
+    db.commit()
+    return {"status": "success", "message": f"Approved {email_clean}", "updated_students": st_count}
+
+
+@app.get("/api/auth/check-approval")
+def check_approval(email: str, db: OrmSession = Depends(get_db)):
+    email_clean = (email or "").strip().lower()
+    if not email_clean:
+        return {"email": email, "status": "approved", "is_approved": True}
+        
+    user = db.query(User).filter(func.lower(User.email) == email_clean).first()
+    student = db.query(Student).filter(func.lower(Student.email) == email_clean).first()
+
+    u_stat = getattr(user, "approval_status", None) if user else None
+    s_stat = getattr(student, "approval_status", None) if student else None
+
+    # If explicitly pending in user or student table
+    if u_stat == "pending" or s_stat == "pending":
+        is_approved = False
+    elif u_stat == "approved" or s_stat == "approved":
+        is_approved = True
+    else:
+        # Default fallback for users created earlier or via direct student list
+        is_approved = True
+
+    return {
+        "email": email_clean,
+        "status": "approved" if is_approved else "pending",
+        "is_approved": is_approved,
+        "student_id": student.id if student else (user.student.id if user and user.student else None)
     }
 
 
