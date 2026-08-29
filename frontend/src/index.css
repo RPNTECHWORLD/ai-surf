@@ -383,7 +383,7 @@ h2 {
 }
 
 /* Page Containers Grid */
-.db-page, .im-page, .ses-page, .an-page, .va-page, .ip-page, .sp-page, .ns-page, .cr-page {
+.db-page, .im-page, .an-page, .va-page, .ip-page, .sp-page, .ns-page, .cr-page {
   display: flex !important;
   flex-direction: row !important;
   height: 100vh !important;
@@ -391,8 +391,8 @@ h2 {
   overflow: hidden !important;
   box-sizing: border-box !important;
 }
-/* Students page — allow full vertical scroll */
-.sm-page {
+/* Students, Sessions & Session Configure page — allow full vertical scroll */
+.sm-page, .ses-page, .sc-page-container {
   display: flex !important;
   flex-direction: row !important;
   min-height: 100vh !important;
@@ -474,7 +474,7 @@ h2 {
   gap: 28px !important;
 }
 
-.im-main, .ses-main, .an-main, .cmp-main, .va-main, .ip-main, .sp-main, .ns-main, .cr-main {
+.im-main, .an-main, .cmp-main, .va-main, .ip-main, .sp-main, .ns-main, .cr-main {
   flex: 1 !important;
   margin-left: 0 !important;
   margin-top: 72px !important;
@@ -483,8 +483,8 @@ h2 {
   padding: 32px 40px !important;
   box-sizing: border-box !important;
 }
-/* Students main — unconstrained height so list scrolls freely */
-.sm-main {
+/* Students & Sessions main — unconstrained height so lists scroll freely */
+.sm-main, .ses-main {
   flex: 1 !important;
   margin-left: 0 !important;
   margin-top: 72px !important;

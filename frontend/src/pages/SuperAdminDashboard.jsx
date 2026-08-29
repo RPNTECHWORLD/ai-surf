@@ -250,6 +250,46 @@ const SuperAdminDashboard = () => {
       setSuccessMsg(`Student "${name}" deleted.`);
     }
   };
+  
+  const handleAssignInstructor = async (studentId, instructorIdVal) => {
+    const instructorId = instructorIdVal ? parseInt(instructorIdVal) : 0;
+    
+    // Update local state first for instant feedback (Optimistic Update)
+    setStudentsList(prev => prev.map(s => {
+      if (s.id === studentId) {
+        const selectedCoach = coaches.find(c => c.instructor_id === instructorId);
+        return {
+          ...s,
+          instructor_id: instructorId || null,
+          instructor: selectedCoach ? selectedCoach.name : ''
+        };
+      }
+      return s;
+    }));
+
+    try {
+      const res = await fetch(`${API}/api/students/${studentId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          instructor_id: instructorId
+        })
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json();
+        console.error("Failed to assign instructor:", errorData);
+        setError("Failed to assign instructor to the student.");
+        loadData();
+      }
+    } catch (err) {
+      console.error(err);
+      setError("Failed to connect to the backend server.");
+      loadData();
+    }
+  };
 
   const handleDeleteCoach = async (id, name) => {
     if (!window.confirm(`Are you sure you want to delete coach "${name}"?`)) return;
@@ -729,7 +769,29 @@ const SuperAdminDashboard = () => {
                               {st.staying_at_school === 'Yes' ? '🏨 Lodge' : '🚗 Off-site'}<br />
                               <span style={{ fontSize: '11px', color: '#94A3B8' }}>{st.whatsapp_number ? `+91 ${st.whatsapp_number}` : ''}</span>
                             </td>
-                            <td>{st.instructor || '—'}</td>
+                            <td>
+                              <select
+                                value={st.instructor_id || ''}
+                                onChange={(e) => handleAssignInstructor(st.id, e.target.value)}
+                                style={{
+                                  padding: '6px 10px',
+                                  borderRadius: '6px',
+                                  border: '1px solid #CBD5E1',
+                                  background: '#FFFFFF',
+                                  fontSize: '12px',
+                                  fontWeight: '600',
+                                  color: '#0F172A',
+                                  cursor: 'pointer',
+                                  outline: 'none',
+                                  minWidth: '130px'
+                                }}
+                              >
+                                <option value="">Unassigned</option>
+                                {coaches.map((c) => (
+                                  c.instructor_id && <option key={c.instructor_id} value={c.instructor_id}>{c.name}</option>
+                                ))}
+                              </select>
+                            </td>
                             <td style={{ textAlign: 'right' }}>
                               <button
                                 className="sa-action-btn"

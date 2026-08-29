@@ -59,6 +59,21 @@ const StudentProfile = () => {
     image: ''
   });
 
+  // Session Configuration Slot Date Filter State
+  const [selectedSlotDate, setSelectedSlotDate] = useState(() => {
+    return new Date().toISOString().split('T')[0];
+  });
+
+  const formatSlotDateDisplay = (dateStr) => {
+    if (!dateStr) return 'Select Date';
+    try {
+      const d = new Date(dateStr + 'T00:00:00');
+      return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+    } catch (e) {
+      return dateStr;
+    }
+  };
+
   // Password Management State
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [newPass, setNewPass] = useState('');
@@ -173,7 +188,7 @@ const StudentProfile = () => {
       email: savedUser.email || '',
       level: 'Beginner',
       instructor: 'Aquatic Indica Surf Coach',
-      image: savedUser.image || 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=150',
+      image: savedUser.image || '',
       bio: 'Registered athlete at Aquatic Indica Surf School.',
       age: 24,
       division: "Men's Open",
@@ -352,6 +367,19 @@ const StudentProfile = () => {
     })()
   );
 
+  const currentBadge = (student.badges && student.badges.length > 0)
+    ? student.badges[student.badges.length - 1]
+    : { name: 'Yellow Badge', color: '#F59E0B' };
+  const badgeDisplayName = currentBadge.name ? currentBadge.name.replace(' (Student Registered)', '') : 'Yellow Badge';
+  const badgeDotColor = currentBadge.color || '#F59E0B';
+
+  const nextSessionTime = student.session_time
+    ? (student.session_time.toLowerCase().includes('morning') || student.session_time.toLowerCase().includes('evening')
+        ? `Tomorrow, ${student.session_time.replace(/morning\s*/i, '').replace(/evening\s*/i, '')}`
+        : `Tomorrow, ${student.session_time}`)
+    : 'Tomorrow, 08:30 AM';
+  const nextSessionSub = `${student.location || 'Waikiki Beach'} • ${student.course_duration || 'Intro to Barrels'}`;
+
   return (
     <div className="sp-page">
       <Sidebar />
@@ -374,58 +402,9 @@ const StudentProfile = () => {
           </div>
         )}
 
-        {/* Password Setup Banner (Shown until student creates password) */}
-        {(!student.has_password || !student.user_id) && (
-          <div style={{
-            background: 'linear-gradient(135deg, #0F172A 0%, #1E1B4B 100%)',
-            border: '1px solid #6366F1',
-            borderRadius: '16px',
-            padding: '18px 24px',
-            marginBottom: '20px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            boxShadow: '0 10px 30px rgba(99, 102, 241, 0.18)',
-            color: '#FFF',
-            flexWrap: 'wrap',
-            gap: '16px'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1, minWidth: '280px' }}>
-              <div style={{ width: '48px', height: '48px', borderRadius: '14px', background: 'rgba(99, 102, 241, 0.2)', border: '1px solid rgba(99, 102, 241, 0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px', flexShrink: 0 }}>
-                🔐
-              </div>
-              <div>
-                <div style={{ color: '#00F2FE', fontWeight: 800, fontSize: '15px' }}>
-                  Update Your Account Password
-                </div>
-                <div style={{ color: '#94A3B8', fontSize: '13px', marginTop: '2px' }}>
-                  You are currently accessing your profile via your invite link. Set a password to log in anytime with your email & password.
-                </div>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowPasswordModal(true)}
-              style={{
-                background: 'linear-gradient(135deg, #FF3366 0%, #FF6584 100%)',
-                color: '#FFFFFF',
-                border: 'none',
-                borderRadius: '12px',
-                padding: '11px 22px',
-                fontWeight: 800,
-                fontSize: '13px',
-                cursor: 'pointer',
-                boxShadow: '0 4px 15px rgba(255, 51, 102, 0.4)',
-                whiteSpace: 'nowrap',
-                transition: 'all 0.2s ease'
-              }}
-            >
-              Update Password →
-            </button>
-          </div>
-        )}
 
-        {/* Hero Section */}
+
+        {/* Hero Section - Exact Match to User Mockup */}
         <section className="sp-hero">
           <input
             type="file"
@@ -434,298 +413,220 @@ const StudentProfile = () => {
             style={{ display: 'none' }}
             onChange={handlePhotoUpload}
           />
-          <div
-            className="sp-avatar-wrapper"
-            onClick={() => isOwnProfile && avatarFileInputRef.current?.click()}
-            style={{ cursor: isOwnProfile ? 'pointer' : 'default' }}
-            title={isOwnProfile ? "Click to change profile photo" : ""}
-          >
-            {student.image && !student.image.includes('1500648767791') ? (
-              <img
-                src={student.image}
-                alt={student.name}
-                className="sp-avatar-img"
-                onError={(e) => {
-                  e.currentTarget.style.display = 'none';
-                  const fallback = e.currentTarget.parentElement.querySelector('.sp-avatar-fallback');
-                  if (fallback) fallback.style.display = 'flex';
-                }}
-              />
-            ) : null}
+          
+          <div className="sp-hero-left">
             <div
-              className="sp-avatar-fallback"
-              style={{
-                display: (student.image && !student.image.includes('1500648767791')) ? 'none' : 'flex',
-                width: '100%',
-                height: '100%',
-                alignItems: 'center',
-                justifyContent: 'center',
-                background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
-                color: '#FFFFFF',
-                fontWeight: '800',
-                fontSize: '32px',
-                fontFamily: 'Outfit, sans-serif'
-              }}
+              className="sp-avatar-wrapper"
+              onClick={() => isOwnProfile && avatarFileInputRef.current?.click()}
+              style={{ cursor: isOwnProfile ? 'pointer' : 'default' }}
+              title={isOwnProfile ? "Click to change profile photo" : ""}
             >
-              {student.name ? student.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : 'ST'}
-            </div>
-            {isOwnProfile && (
-              <div className="sp-avatar-overlay">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
-                  <circle cx="12" cy="13" r="4"></circle>
-                </svg>
-              </div>
-            )}
-          </div>
-
-          <div className="sp-hero-info">
-            <h1 className="sp-name">{student.name}</h1>
-            <div className="sp-hero-meta">
-              <span className={`sp-level-badge level-${student.level.toLowerCase()}`}>{student.level}</span>
-              <div className="sp-meta-dot" />
-              <span className="sp-instructor-text">Instructor: {student.instructor}</span>
-              <div className="sp-meta-dot" />
-              <span className="sp-session-badge">
-                ⏰ {student.session_time || 'Morning 6:00 AM'}
-              </span>
-            </div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            {(!student.has_password || !student.user_id) && (
-              <button
-                type="button"
-                className="sp-edit-profile-btn"
-                onClick={() => setShowPasswordModal(true)}
+              {student.image && !student.image.includes('1500648767791') && !student.image.includes('unsplash.com') ? (
+                <img
+                  src={student.image}
+                  alt={student.name}
+                  className="sp-avatar-img"
+                  onError={(e) => {
+                    e.currentTarget.style.display = 'none';
+                    const fallback = e.currentTarget.parentElement.querySelector('.sp-avatar-fallback');
+                    if (fallback) fallback.style.display = 'flex';
+                  }}
+                />
+              ) : null}
+              <div
+                className="sp-avatar-fallback"
                 style={{
-                  background: 'linear-gradient(135deg, #FF3366 0%, #FF6584 100%)',
+                  display: (student.image && !student.image.includes('1500648767791') && !student.image.includes('unsplash.com')) ? 'none' : 'flex',
+                  width: '100%',
+                  height: '100%',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
                   color: '#FFFFFF',
-                  border: 'none',
-                  boxShadow: '0 4px 15px rgba(255, 51, 102, 0.4)'
+                  fontWeight: '800',
+                  fontSize: '28px',
+                  fontFamily: 'Outfit, sans-serif'
                 }}
               >
-                <span>🔐 Update Password</span>
-              </button>
-            )}
-            {isOwnProfile && (
-              <button className="sp-edit-profile-btn" onClick={handleEditClick}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                  <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                </svg>
-                <span>Edit Profile</span>
-              </button>
-            )}
+                {student.name ? student.name.charAt(0).toUpperCase() : 'S'}
+              </div>
+              {isOwnProfile && (
+                <div className="sp-avatar-overlay">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+                    <circle cx="12" cy="13" r="4"></circle>
+                  </svg>
+                </div>
+              )}
+            </div>
+
+            <div className="sp-hero-info">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <h1 className="sp-name">{student.name}</h1>
+                {isOwnProfile && (
+                  <button
+                    type="button"
+                    onClick={handleEditClick}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', color: '#94A3B8', display: 'flex', alignItems: 'center' }}
+                    title="Edit Profile"
+                  >
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                      <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                    </svg>
+                  </button>
+                )}
+              </div>
+              <div className="sp-hero-meta">
+                <span className="sp-level-badge">
+                  {(student.level || 'INTERMEDIATE').toUpperCase()}
+                </span>
+                <span className="sp-badge-dot-label">
+                  <span className="sp-color-dot" style={{ backgroundColor: badgeDotColor }} />
+                  {badgeDisplayName}
+                </span>
+                <span className="sp-instructor-text">
+                  Instructor: {student.instructor || 'Marcus Silva'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="sp-hero-right">
+            {/* NEXT SESSION Banner Box */}
+            <div className="sp-next-session-box">
+              <span className="sp-ns-box-label">NEXT SESSION</span>
+              <div className="sp-ns-box-time">{nextSessionTime}</div>
+              <div className="sp-ns-box-sub">{nextSessionSub}</div>
+            </div>
           </div>
         </section>
 
         <div className="sp-content">
           {/* Left Column */}
           <div className="sp-col-left">
-            {/* Aquatic Indica Active Course Progress Card */}
-            <div className="sp-card" style={{ background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', color: '#FFFFFF', border: '1px solid rgba(0, 242, 254, 0.25)', position: 'relative', overflow: 'hidden' }}>
-              <div style={{ position: 'absolute', top: '-20px', right: '-20px', width: '120px', height: '120px', background: 'radial-gradient(circle, rgba(0,242,254,0.15) 0%, rgba(0,0,0,0) 70%)', borderRadius: '50%', pointerEvents: 'none' }} />
-              
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <span style={{ fontSize: '11px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.8px', color: '#00F2FE' }}>
-                  🏄 Aquatic Indica Surf Course
-                </span>
-                <span style={{ 
-                  background: 'rgba(0, 242, 254, 0.12)', color: '#00F2FE', 
-                  border: '1px solid rgba(0, 242, 254, 0.3)', padding: '4px 10px', 
-                  borderRadius: '20px', fontSize: '12px', fontWeight: 700 
-                }}>
-                  {student.course_duration || '3 Days Course'}
-                </span>
-              </div>
-
-              {/* Course Progress Visualizer */}
-              <div style={{ marginBottom: '18px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '6px' }}>
-                  <span style={{ fontSize: '20px', fontWeight: 800, color: '#FFFFFF', fontFamily: 'Outfit, sans-serif' }}>
-                    Day {student.which_day || 1} of {student.total_days || 3}
-                  </span>
-                  <span style={{ fontSize: '13px', color: '#94A3B8', fontWeight: 600 }}>
-                    {student.remaining_days !== undefined ? `${student.remaining_days} Day(s) Left` : 'Active'}
-                  </span>
-                </div>
-                
-                {/* Progress Bar */}
-                <div style={{ width: '100%', height: '8px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', overflow: 'hidden' }}>
-                  <div style={{ 
-                    width: `${Math.min(100, Math.max(10, ((student.which_day || 1) / (student.total_days || 3)) * 100))}%`, 
-                    height: '100%', 
-                    background: 'linear-gradient(90deg, #00F2FE 0%, #4FACFE 100%)',
-                    borderRadius: '4px',
-                    transition: 'width 0.5s ease'
-                  }} />
-                </div>
-              </div>
-
-              {/* Details Grid */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '13px', marginBottom: '18px' }}>
-                <div style={{ background: 'rgba(255,255,255,0.04)', padding: '10px 12px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <span style={{ display: 'block', fontSize: '11px', color: '#94A3B8', fontWeight: 600 }}>GROUP SIZE</span>
-                  <strong style={{ color: '#F1F5F9' }}>
-                    👥 {student.guests_details && student.guests_details.length > 0 
-                        ? `${student.guests_details.length + 1} Surfers (Primary + ${student.guests_details.length} Guest${student.guests_details.length > 1 ? 's' : ''})`
-                        : (student.guests_count > 0 ? `${student.guests_count + 1} Surfers` : '1 Surfer (Solo)')}
-                  </strong>
-                </div>
-                <div style={{ background: 'rgba(255,255,255,0.04)', padding: '10px 12px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <span style={{ display: 'block', fontSize: '11px', color: '#94A3B8', fontWeight: 600 }}>STAYING AT SCHOOL</span>
-                  <strong style={{ color: student.staying_at_school === 'Yes' ? '#10B981' : '#F59E0B' }}>
-                    {student.staying_at_school === 'Yes' ? '🏨 Yes (On-site Lodge)' : '🚗 No (Off-site)'}
-                  </strong>
-                </div>
-                <div style={{ gridColumn: 'span 2', background: 'rgba(255,255,255,0.04)', padding: '10px 12px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <span style={{ display: 'block', fontSize: '11px', color: '#94A3B8', fontWeight: 600 }}>REMINDER PREF</span>
-                  <strong style={{ color: '#F1F5F9' }}>💬 {student.reminder_preference || 'WhatsApp Text'}</strong>
-                </div>
-              </div>
-
-              {/* 1-Click WhatsApp Quick Action */}
-              {student.wa_link ? (
-                <a 
-                  href={student.wa_link} 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  style={{ 
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-                    background: '#25D366', color: '#FFFFFF', padding: '12px 16px', borderRadius: '12px',
-                    textDecoration: 'none', fontWeight: 700, fontSize: '14px',
-                    boxShadow: '0 4px 14px rgba(37, 211, 102, 0.3)', transition: 'transform 0.2s'
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'}
-                  onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
-                >
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946.003-6.556 5.338-11.891 11.893-11.891 3.181.001 6.167 1.24 8.413 3.488 2.245 2.248 3.481 5.236 3.48 8.414-.003 6.557-5.338 11.892-11.893 11.892-1.99-.001-3.951-.5-5.688-1.448l-6.305 1.654zm6.597-3.807c1.676.995 3.276 1.591 5.392 1.592 5.448 0 9.886-4.434 9.889-9.885.002-5.462-4.415-9.89-9.881-9.892-5.452 0-9.887 4.434-9.889 9.884-.001 2.225.651 3.891 1.746 5.634l-.999 3.648 3.742-.981zm11.387-5.464c-.074-.124-.272-.198-.57-.347-.297-.149-1.758-.868-2.031-.967-.272-.099-.47-.149-.669.149-.198.297-.768.967-.941 1.165-.173.198-.347.223-.644.074-.297-.149-1.255-.462-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.521.151-.172.2-.296.3-.495.099-.198.05-.372-.025-.521-.075-.148-.669-1.611-.916-2.206-.242-.579-.487-.501-.669-.51l-.57-.01c-.198 0-.52.074-.792.372s-1.04 1.016-1.04 2.479 1.065 2.876 1.213 3.074c.149.198 2.095 3.2 5.076 4.487.709.306 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.695.248-1.29.173-1.414z"/>
-                  </svg>
-                  <span>1-Click WhatsApp Reminder</span>
-                </a>
-              ) : (
-                <div style={{ fontSize: '12px', color: '#94A3B8', textAlign: 'center' }}>
-                  Add WhatsApp number to enable 1-click reminders
-                </div>
-              )}
-            </div>
-
-            {/* Student Profile Card */}
+            {/* Session History Card */}
             <div className="sp-card">
-              <h2 className="sp-card-title">Student Profile</h2>
-              <div className="sp-details-list">
-                <div className="sp-detail-row">
-                  <span className="sp-detail-label">Age</span>
-                  <span className="sp-detail-value">
-                    {student.age ? `${student.age} Years` : 'N/A'} {student.dob ? `(DOB: ${student.dob})` : ''}
-                  </span>
-                </div>
-                <div className="sp-detail-row">
-                  <span className="sp-detail-label">Stance</span>
-                  <span className="sp-detail-value" style={{ textTransform: 'capitalize' }}>{student.stance || 'Regular'}</span>
-                </div>
-                <div className="sp-detail-row">
-                  <span className="sp-detail-label">Division</span>
-                  <span className="sp-detail-value">{student.division || 'N/A'}</span>
-                </div>
-                <div className="sp-detail-row">
-                  <span className="sp-detail-label">Waves Ridden</span>
-                  <span className="sp-detail-value">{student.surf_stats?.waves_ridden || 0}</span>
-                </div>
-                <div className="sp-detail-row">
-                  <span className="sp-detail-label">Max Speed</span>
-                  <span className="sp-detail-value">{student.surf_stats?.max_speed || '0 mph'}</span>
-                </div>
-                <div className="sp-detail-row">
-                  <span className="sp-detail-label">Avg Session</span>
-                  <span className="sp-detail-value">{student.surf_stats?.avg_session_mins || 0} mins</span>
-                </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                <h2 className="sp-card-title">Session History</h2>
+                <button
+                  type="button"
+                  onClick={() => navigate('/sessions')}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#3B82F6',
+                    fontSize: '13px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    fontFamily: "'Inter', sans-serif"
+                  }}
+                >
+                  Show All Sessions
+                </button>
               </div>
-              <div className="sp-divider" />
-              <div className="sp-bio">
-                <span className="sp-bio-label">Bio</span>
-                <p className="sp-bio-text">{student.bio || 'No bio written yet.'}</p>
+
+              <div style={{ fontSize: '13px', fontWeight: 600, color: '#94A3B8', marginBottom: '16px' }}>
+                Recents
               </div>
-              {student.performance_logs && student.performance_logs.length > 0 && (
-                <>
-                  <div className="sp-divider" />
-                  <div className="sp-bio">
-                    <span className="sp-bio-label">Performance Logs</span>
-                    <ul className="sp-logs-list">
-                      {student.performance_logs.map((log, index) => (
-                        <li key={index} className="sp-log-item">{log}</li>
-                      ))}
-                    </ul>
-                  </div>
-                </>
-              )}
-            </div>
 
-            {/* Accompanying Guests Card (When group size > 1) */}
-            {student.guests_details && student.guests_details.length > 0 && (
-              <div className="sp-card">
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #E2E8F0', paddingBottom: '12px' }}>
-                  <h2 className="sp-card-title" style={{ margin: 0 }}>👥 Accompanying Guests ({student.guests_details.length})</h2>
-                  <span style={{ background: 'rgba(13, 148, 136, 0.1)', color: '#0D9488', padding: '4px 10px', borderRadius: '12px', fontSize: '11px', fontWeight: 700 }}>
-                    {student.guests_details.length} Registered Guest(s)
-                  </span>
+              {((student.sessions || []).filter(s => s.status === 'Completed')).length === 0 ? (
+                <div style={{ padding: '24px 12px', textAlign: 'center', color: '#94A3B8', fontSize: '13px', background: '#F8FAFC', borderRadius: '12px', border: '1px dashed #E2E8F0' }}>
+                  <div style={{ fontSize: '24px', marginBottom: '6px' }}>🏄</div>
+                  <div style={{ fontWeight: 600, color: '#64748B' }}>No completed sessions yet</div>
+                  <div style={{ fontSize: '11.5px', marginTop: '2px' }}>Completed surf logs will be recorded here.</div>
                 </div>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                  {student.guests_details.map((g, idx) => (
-                    <div key={idx} style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '14px', padding: '16px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                        <strong style={{ fontSize: '15px', color: '#0F172A' }}>Guest #{idx + 1}: {g.name || 'Unnamed Guest'}</strong>
-                        <span style={{ 
-                          fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', 
-                          padding: '3px 8px', borderRadius: '4px',
-                          background: 'rgba(13, 148, 136, 0.12)', color: '#0D9488'
-                        }}>
-                          {g.stance || 'Regular'} Stance
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                  {(student.sessions || []).filter(s => s.status === 'Completed').slice(0, 5).map((session, sIdx) => (
+                    <div key={session.id || sIdx} style={{ display: 'flex', alignItems: 'flex-start', gap: '14px' }}>
+                      <div style={{
+                        width: '10px',
+                        height: '10px',
+                        borderRadius: '50%',
+                        background: '#0D9488',
+                        marginTop: '5px',
+                        flexShrink: 0
+                      }} />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <span style={{ fontSize: '11px', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                          {session.date}
                         </span>
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '12px', color: '#475569' }}>
-                        <div>📱 Phone: <strong>{g.whatsapp_number || 'N/A'}</strong></div>
-                        <div>✉️ Email: <strong>{g.email || 'N/A'}</strong></div>
-                        <div>🎂 DOB / Age: <strong>{g.dob ? `${g.dob} (${calculateAge(g.dob)} yrs)` : (g.age ? `${g.age} yrs` : 'N/A')}</strong></div>
-                        <div>👤 Gender: <strong style={{ textTransform: 'capitalize' }}>{g.gender || 'N/A'}</strong></div>
+                        <strong style={{ fontSize: '14px', fontWeight: 800, color: '#0F172A' }}>
+                          {session.location || session.title || 'Surf Training Session'}
+                        </strong>
+                        <span style={{ fontSize: '13px', color: '#64748B' }}>
+                          {session.instructor || student.instructor || 'Surf Coach'}
+                        </span>
                       </div>
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
+              )}
+            </div>
 
-            {/* Next Session Card */}
-            {student.nextSession && (
-              <div className="sp-next-session">
-                <span className="sp-ns-label">NEXT SESSION</span>
-                <div className="sp-ns-details">
-                  <div className="sp-ns-time">{student.nextSession.time}</div>
-                  <div className="sp-ns-loc">{student.nextSession.details}</div>
-                </div>
-              </div>
-            )}
-
-            {/* Session History */}
+            {/* Pending Sessions Card */}
             <div className="sp-card">
-              <h2 className="sp-card-title">Session History</h2>
-              <div className="sp-history-list">
-                {student.sessionHistory && student.sessionHistory.map((session, index) => (
-                  <div key={session.id} className="sp-history-item">
-                    <div className="sp-timeline">
-                      <div className="sp-timeline-dot" />
-                      {student.sessionHistory && index < student.sessionHistory.length - 1 && <div className="sp-timeline-line" />}
-                    </div>
-                    <div className="sp-history-content">
-                      <span className="sp-history-date">{session.date}</span>
-                      <h3 className="sp-history-title">{session.title}</h3>
-                      <span className="sp-history-coach">{session.coach}</span>
-                    </div>
-                  </div>
-                ))}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+                <h2 className="sp-card-title">Pending Sessions</h2>
+                <span style={{
+                  background: '#F59E0B',
+                  color: '#FFFFFF',
+                  fontSize: '11px',
+                  fontWeight: 800,
+                  width: '20px',
+                  height: '20px',
+                  borderRadius: '50%',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}>
+                  {((student.sessions || []).filter(s => s.status === 'Upcoming' || s.status === 'Scheduled')).length}
+                </span>
               </div>
+
+              {((student.sessions || []).filter(s => s.status === 'Upcoming' || s.status === 'Scheduled')).length === 0 ? (
+                <div style={{ padding: '24px 12px', textAlign: 'center', color: '#94A3B8', fontSize: '13px', background: '#F8FAFC', borderRadius: '12px', border: '1px dashed #E2E8F0' }}>
+                  <div style={{ fontSize: '24px', marginBottom: '6px' }}>📅</div>
+                  <div style={{ fontWeight: 600, color: '#64748B' }}>No pending sessions</div>
+                  <div style={{ fontSize: '11.5px', marginTop: '2px' }}>Upcoming scheduled sessions will appear here.</div>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  {(student.sessions || []).filter(s => s.status === 'Upcoming' || s.status === 'Scheduled').map((session, pIdx, arr) => (
+                    <div
+                      key={session.id || pIdx}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: '14px',
+                        padding: pIdx === 0 ? '0 0 16px 0' : (pIdx === arr.length - 1 ? '16px 0 0 0' : '16px 0'),
+                        borderBottom: pIdx !== arr.length - 1 ? '1px solid #F1F5F9' : 'none'
+                      }}
+                    >
+                      <div style={{
+                        width: '10px',
+                        height: '10px',
+                        borderRadius: '50%',
+                        background: '#F59E0B',
+                        marginTop: '5px',
+                        flexShrink: 0
+                      }} />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <span style={{ fontSize: '11px', fontWeight: 700, color: '#F59E0B', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                          {session.date}
+                        </span>
+                        <strong style={{ fontSize: '14px', fontWeight: 800, color: '#0F172A' }}>
+                          {session.location || session.title || 'Scheduled Session'}
+                        </strong>
+                        <span style={{ fontSize: '13px', color: '#64748B' }}>
+                          {session.instructor || student.instructor || 'Coach'} • {session.time || student.session_time || 'Morning Slot'}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
@@ -754,7 +655,36 @@ const StudentProfile = () => {
               <div className="sp-card sp-badge-card">
                 <h2 className="sp-card-title">Badge History</h2>
                 <div className="sp-badge-list">
-                  {student.badges && student.badges.map(badge => (
+                  {(() => {
+                    const earned = [];
+                    const lvl = (student.level || 'Beginner').toLowerCase();
+                    earned.push({
+                      id: 1,
+                      name: 'White Badge',
+                      date: student.start_date ? `Earned ${student.start_date}` : 'Earned on Join',
+                      color: '#E2E8F0',
+                      textColor: '#0F172A'
+                    });
+                    if (lvl.includes('intermediate') || lvl.includes('advanced') || lvl.includes('master')) {
+                      earned.push({
+                        id: 2,
+                        name: 'Yellow Badge',
+                        date: 'Earned Intermediate',
+                        color: '#F59E0B',
+                        textColor: '#0F172A'
+                      });
+                    }
+                    if (lvl.includes('advanced') || lvl.includes('master')) {
+                      earned.push({
+                        id: 3,
+                        name: 'Blue Badge',
+                        date: 'Earned Advanced',
+                        color: '#3B82F6',
+                        textColor: '#0F172A'
+                      });
+                    }
+                    return earned;
+                  })().map(badge => (
                     <div key={badge.id} className="sp-badge-item">
                       <div className="sp-badge-icon" style={{ backgroundColor: badge.color }} />
                       <div className="sp-badge-info">
@@ -770,21 +700,45 @@ const StudentProfile = () => {
             {/* Video Analysis */}
             <div className="sp-card">
               <h2 className="sp-card-title">Video Analysis</h2>
-              <div className="sp-video-grid">
-                {student.videos && student.videos.map(video => (
-                  <div key={video.id} className="sp-video-card" style={{ backgroundImage: `url(${video.image})` }}>
-                    <div className="sp-video-overlay">
-                      <div className={`sp-video-status status-${video.statusColor}`}>
-                        {video.status}
-                      </div>
-                      <div className="sp-play-btn">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/></svg>
+              {((student.sessions || []).filter(s => s.video_url || s.video)).length === 0 ? (
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '36px 20px',
+                  background: '#F8FAFC',
+                  border: '1.5px dashed #CBD5E1',
+                  borderRadius: '14px',
+                  textAlign: 'center',
+                  gap: '8px'
+                }}>
+                  <span style={{ fontSize: '32px' }}>📹</span>
+                  <strong style={{ fontSize: '14px', color: '#334155' }}>No Video Analysis Uploaded Yet</strong>
+                  <p style={{ margin: 0, fontSize: '12.5px', color: '#64748B', maxWidth: '320px' }}>
+                    Session recordings and AI wave diagnostics will appear here once uploaded by your coach.
+                  </p>
+                </div>
+              ) : (
+                <div className="sp-video-grid">
+                  {(student.sessions || []).filter(s => s.video_url || s.video).map((sess, idx) => (
+                    <div key={sess.id || idx} className="sp-video-card" style={{ background: '#0F172A' }}>
+                      <div className="sp-video-overlay">
+                        <div className="sp-video-status status-teal">
+                          ANALYZED
+                        </div>
+                        <div className="sp-play-btn" onClick={() => window.open(sess.video_url || sess.video, '_blank')}>
+                          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/></svg>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
+          </div>
+        </div>
+
 
             {/* Mock Heats History */}
             <div className="sp-card" style={{ marginTop: '32px' }}>
@@ -907,8 +861,6 @@ const StudentProfile = () => {
                 )}
               </div>
             </div>
-          </div>
-        </div>
 
         {/* EDIT PROFILE MODAL */}
         {showEditModal && (
@@ -1038,9 +990,11 @@ const StudentProfile = () => {
                     <div className="sp-form-field">
                       <label>Session Time Slot</label>
                       <select value={editForm.session_time} onChange={(e) => setEditForm({ ...editForm, session_time: e.target.value })}>
-                        <option value="Morning 6:00 AM">Morning 6:00 AM</option>
-                        <option value="Morning 8:00 AM">Morning 8:00 AM</option>
-                        <option value="Evening 4:00 PM">Evening 4:00 PM</option>
+                        <option value="08:30 AM">08:30 AM · Morning Slot 1 (90m)</option>
+                        <option value="10:30 AM">10:30 AM · Morning Slot 2 (90m)</option>
+                        <option value="11:30 AM">11:30 AM · Midday Slot (60m)</option>
+                        <option value="01:00 PM">01:00 PM · Afternoon Slot (120m)</option>
+                        <option value="03:30 PM">03:30 PM · Late Afternoon (90m)</option>
                       </select>
                     </div>
                   </div>
@@ -1240,15 +1194,36 @@ const StudentProfile = () => {
  
         /* Hero Header */
         .sp-hero {
-          background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 20px;
-          padding: 24px 32px; display: flex; align-items: center; gap: 24px;
-          box-shadow: 0px 4px 16px rgba(0, 0, 0, 0.03);
+          background: #FFFFFF;
+          border: 1px solid #E2E8F0;
+          border-radius: 24px;
+          padding: 22px 32px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 24px;
+          box-shadow: 0px 4px 20px rgba(0, 0, 0, 0.03);
+          box-sizing: border-box;
+          width: 100%;
+        }
+        .sp-hero-left {
+          display: flex;
+          align-items: center;
+          gap: 20px;
         }
         .sp-avatar-wrapper {
-          width: 84px; height: 84px; border-radius: 50%; position: relative;
-          overflow: hidden; box-shadow: 0 4px 14px rgba(0,0,0,0.06);
-          border: 3px solid #E2E8F0; flex-shrink: 0; display: flex;
-          align-items: center; justify-content: center; background: #F1F5F9;
+          width: 72px;
+          height: 72px;
+          border-radius: 50%;
+          position: relative;
+          overflow: hidden;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+          border: 2px solid #E2E8F0;
+          flex-shrink: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: #F1F5F9;
         }
         .sp-avatar-img { width: 100%; height: 100%; object-fit: cover; }
         .sp-avatar-overlay {
@@ -1258,64 +1233,83 @@ const StudentProfile = () => {
         }
         .sp-avatar-wrapper:hover .sp-avatar-overlay { opacity: 1; }
         
-        .sp-hero-info { display: flex; flex-direction: column; gap: 8px; justify-content: center; }
-        .sp-name { font-family: 'Outfit', sans-serif; font-size: 26px; font-weight: 800; color: #0F172A; margin: 0; line-height: 1.1; }
-        .sp-hero-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .sp-hero-info { display: flex; flex-direction: column; gap: 6px; justify-content: center; }
+        .sp-name { font-family: 'Outfit', sans-serif; font-size: 26px; font-weight: 800; color: #0F172A; margin: 0; line-height: 1.1; letter-spacing: -0.3px; }
+        .sp-hero-meta { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
         
-        .sp-level-badge { padding: 4px 10px; border-radius: 6px; font-size: 11.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.4px; }
-        .level-beginner { background: rgba(245, 158, 11, 0.12); color: #D97706; }
-        .level-intermediate { background: rgba(13, 148, 136, 0.12); color: #0D9488; }
-        .level-advanced { background: rgba(124, 58, 237, 0.12); color: #7C3AED; }
-        .level-master { background: rgba(239, 68, 68, 0.12); color: #DC2626; }
+        .sp-level-badge {
+          padding: 4px 10px;
+          border-radius: 6px;
+          font-size: 11px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          background: #E6F8F6;
+          color: #0D9488;
+        }
         
-        .sp-meta-dot { width: 4px; height: 4px; background: #94A3B8; border-radius: 50%; }
-        .sp-instructor-text { font-size: 13px; color: #475569; font-weight: 600; }
-
-        .sp-session-badge {
+        .sp-badge-dot-label {
           display: inline-flex;
           align-items: center;
-          gap: 4px;
-          background: rgba(13, 148, 136, 0.08);
-          color: #0D9488;
+          gap: 6px;
+          font-size: 13px;
           font-weight: 700;
-          font-size: 12px;
-          padding: 3px 10px;
-          border-radius: 6px;
-          border: 1px solid rgba(13, 148, 136, 0.2);
+          color: #1E293B;
         }
+        .sp-color-dot {
+          width: 9px;
+          height: 9px;
+          border-radius: 50%;
+          display: inline-block;
+          flex-shrink: 0;
+        }
+        
+        .sp-instructor-text { font-size: 13px; color: #64748B; font-weight: 500; }
 
-        .sp-edit-profile-btn {
-          margin-left: auto;
+        .sp-hero-right {
           display: flex;
           align-items: center;
-          gap: 8px;
-          background: #0F172A;
-          color: #FFFFFF;
-          border: 1px solid #0F172A;
-          padding: 10px 20px;
-          border-radius: 12px;
-          font-family: 'Instrument Sans', sans-serif;
-          font-weight: 700;
-          font-size: 13.5px;
-          cursor: pointer;
-          box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
-          transition: all 0.2s ease;
         }
-        .sp-edit-profile-btn:hover {
-          background: #0D9488;
-          border-color: #0D9488;
-          transform: translateY(-2px);
-          box-shadow: 0 6px 16px rgba(13, 148, 136, 0.28);
+        .sp-next-session-box {
+          background: #008B7A;
+          border-radius: 18px;
+          padding: 16px 32px;
+          min-width: 260px;
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          color: #FFFFFF;
+          box-shadow: 0 4px 14px rgba(0, 139, 122, 0.22);
+        }
+        .sp-ns-box-label {
+          font-size: 10px;
+          font-weight: 800;
+          color: rgba(255, 255, 255, 0.75);
+          text-transform: uppercase;
+          letter-spacing: 0.7px;
+        }
+        .sp-ns-box-time {
+          font-family: 'Outfit', sans-serif;
+          font-size: 21px;
+          font-weight: 800;
+          color: #FFFFFF;
+          margin: 1px 0;
+          line-height: 1.2;
+        }
+        .sp-ns-box-sub {
+          font-size: 12px;
+          color: rgba(255, 255, 255, 0.85);
+          font-weight: 500;
         }
 
         /* Two Column Layout */
-        .sp-content { display: flex; gap: 32px; }
-        .sp-col-left { display: flex; flex-direction: column; gap: 32px; width: 380px; flex-shrink: 0; }
-        .sp-col-right { display: flex; flex-direction: column; gap: 32px; flex: 1; }
+        .sp-content { display: flex; gap: 24px; align-items: stretch; }
+        .sp-col-left { display: flex; flex-direction: column; gap: 24px; width: 350px; flex-shrink: 0; }
+        .sp-col-right { display: flex; flex-direction: column; gap: 24px; flex: 1; }
 
         /* Cards */
-        .sp-card { background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 16px; padding: 24px; display: flex; flex-direction: column; gap: 20px; }
-        .sp-card-title { font-family: 'Outfit', sans-serif; font-size: 20px; font-weight: 700; color: #0F172A; margin: 0; }
+        .sp-card { background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 16px; padding: 24px; display: flex; flex-direction: column; gap: 16px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.02); }
+        .sp-card-title { font-family: 'Outfit', sans-serif; font-size: 20px; font-weight: 800; color: #0F172A; margin: 0; }
 
         /* Next Session Card */
         .sp-next-session { background: #0D9488; border-radius: 16px; padding: 24px; display: flex; flex-direction: column; gap: 16px; }
@@ -1338,57 +1332,45 @@ const StudentProfile = () => {
         .sp-logs-list { display: flex; flex-direction: column; gap: 8px; padding-left: 16px; margin: 0; }
         .sp-log-item { font-size: 13px; color: #475569; line-height: 1.4; }
 
-        /* Session History Timeline */
-        .sp-history-list { display: flex; flex-direction: column; gap: 0; }
-        .sp-history-item { display: flex; gap: 16px; }
-        .sp-timeline { display: flex; flex-direction: column; align-items: center; width: 12px; }
-        .sp-timeline-dot { width: 12px; height: 12px; border-radius: 50%; background: #0D9488; flex-shrink: 0; }
-        .sp-timeline-line { width: 2px; height: 100%; background: #E2E8F0; margin-top: 4px; margin-bottom: 4px; min-height: 40px; }
-        .sp-history-content { display: flex; flex-direction: column; gap: 2px; padding-bottom: 24px; }
-        .sp-history-date { font-size: 12px; font-weight: 700; color: #94A3B8; text-transform: uppercase; }
-        .sp-history-title { font-size: 14px; font-weight: 600; color: #0F172A; margin: 2px 0; }
-        .sp-history-coach { font-size: 13px; color: #64748B; }
-        .sp-history-item:last-child .sp-history-content { padding-bottom: 0; }
-
         /* Top Row (Radar & Badges) */
-        .sp-row-top { display: flex; gap: 32px; }
-        .sp-skill-card { flex: 1.5; }
+        .sp-row-top { display: flex; gap: 24px; }
+        .sp-skill-card { flex: 1.3; }
         .sp-badge-card { flex: 1; }
 
         /* Radar Chart Mock */
-        .sp-radar-container { display: flex; justify-content: center; align-items: center; padding: 20px 0; }
-        .sp-radar-mock { position: relative; width: 180px; height: 180px; display: flex; justify-content: center; align-items: center; }
+        .sp-radar-container { display: flex; justify-content: center; align-items: center; padding: 16px 0; }
+        .sp-radar-mock { position: relative; width: 170px; height: 170px; display: flex; justify-content: center; align-items: center; }
         .sp-radar-poly { position: absolute; border: 1px solid #E2E8F0; transform: rotate(45deg); }
-        .sp-poly-lg { width: 180px; height: 180px; }
-        .sp-poly-md { width: 120px; height: 120px; }
-        .sp-poly-sm { width: 60px; height: 60px; }
-        .sp-radar-fill { position: absolute; width: 140px; height: 130px; background: rgba(13, 148, 136, 0.3); border: 2px solid #0D9488; clip-path: polygon(50% 0%, 100% 38%, 82% 100%, 18% 100%, 0% 38%); }
-        .sp-radar-label { position: absolute; font-size: 10px; color: #64748B; font-weight: 600; letter-spacing: 0.5px; }
+        .sp-poly-lg { width: 170px; height: 170px; }
+        .sp-poly-md { width: 110px; height: 110px; }
+        .sp-poly-sm { width: 55px; height: 55px; }
+        .sp-radar-fill { position: absolute; width: 130px; height: 120px; background: rgba(13, 148, 136, 0.3); border: 2px solid #0D9488; clip-path: polygon(50% 0%, 100% 38%, 82% 100%, 18% 100%, 0% 38%); }
+        .sp-radar-label { position: absolute; font-size: 10px; color: #64748B; font-weight: 700; letter-spacing: 0.5px; }
         .label-top { top: -20px; left: 50%; transform: translateX(-50%); }
         .label-bottom { bottom: -20px; left: 50%; transform: translateX(-50%); }
         .label-left { left: -30px; top: 50%; transform: translateY(-50%); }
         .label-right { right: -35px; top: 50%; transform: translateY(-50%); }
 
         /* Badge History */
-        .sp-badge-list { display: flex; flex-direction: column; gap: 16px; }
-        .sp-badge-item { display: flex; align-items: center; gap: 12px; }
-        .sp-badge-icon { width: 40px; height: 40px; border-radius: 50%; }
+        .sp-badge-list { display: flex; flex-direction: column; gap: 16px; margin-top: 4px; }
+        .sp-badge-item { display: flex; align-items: center; gap: 14px; }
+        .sp-badge-icon { width: 42px; height: 42px; border-radius: 50%; flex-shrink: 0; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
         .sp-badge-info { display: flex; flex-direction: column; }
-        .sp-badge-name { font-size: 13px; font-weight: 700; color: #0F172A; }
+        .sp-badge-name { font-size: 14px; font-weight: 800; color: #0F172A; }
         .sp-badge-date { font-size: 12px; color: #64748B; margin-top: 2px; }
 
         /* Video Grid */
         .sp-video-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-        .sp-video-card { height: 160px; border-radius: 12px; background-size: cover; background-position: center; position: relative; overflow: hidden; }
+        .sp-video-card { height: 165px; border-radius: 14px; background-size: cover; background-position: center; position: relative; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.06); }
         .sp-video-overlay {
           position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-          background: rgba(0, 0, 0, 0.25); display: flex; justify-content: center; align-items: center;
+          background: rgba(0, 0, 0, 0.2); display: flex; justify-content: center; align-items: center;
         }
-        .sp-video-status { position: absolute; top: 8px; left: 8px; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; }
-        .status-teal { background: rgba(13, 148, 136, 0.9); color: #FFF; }
-        .status-orange { background: rgba(245, 158, 11, 0.9); color: #FFF; }
-        .sp-play-btn { width: 48px; height: 48px; border-radius: 50%; border: 2px solid #FFF; display: flex; align-items: center; justify-content: center; color: #FFF; background: rgba(255,255,255,0.2); cursor: pointer; transition: background 0.2s; }
-        .sp-play-btn:hover { background: rgba(255,255,255,0.4); }
+        .sp-video-status { position: absolute; top: 10px; left: 10px; padding: 4px 8px; border-radius: 5px; font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }
+        .status-teal { background: rgba(13, 148, 136, 0.95); color: #FFF; }
+        .status-orange { background: rgba(245, 158, 11, 0.95); color: #FFF; }
+        .sp-play-btn { width: 44px; height: 44px; border-radius: 50%; border: 2px solid #FFF; display: flex; align-items: center; justify-content: center; color: #FFF; background: rgba(255,255,255,0.2); backdrop-filter: blur(4px); cursor: pointer; transition: all 0.2s; }
+        .sp-play-btn:hover { background: rgba(255,255,255,0.45); transform: scale(1.08); }
 
         /* Modal styling */
         .sp-modal-overlay {

@@ -36,6 +36,7 @@ const Sessions = () => {
   const [loading, setLoading] = useState(true);
 
   // Filter States
+  const [dateFilter, setDateFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [instructorFilter, setInstructorFilter] = useState('All');
   const [studentFilter, setStudentFilter] = useState('All');
@@ -107,6 +108,18 @@ const Sessions = () => {
     const todayStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
     
     return roleScopedSessions.filter(s => {
+      // Date filter
+      if (dateFilter) {
+        const sessionDateISO = (() => {
+          if (/^\d{4}-\d{2}-\d{2}$/.test(s.date)) return s.date;
+          const p = new Date(s.date);
+          return isNaN(p) ? s.date : p.toISOString().split('T')[0];
+        })();
+        if (sessionDateISO !== dateFilter && !(s.date || '').includes(dateFilter)) {
+          return false;
+        }
+      }
+
       // Status & Date filter
       if (statusFilter === 'Today') {
         if (s.date !== todayStr) return false;
@@ -149,9 +162,10 @@ const Sessions = () => {
 
       return true;
     });
-  }, [roleScopedSessions, statusFilter, instructorFilter, studentFilter, conditionFilter, typeFilter, searchQuery]);
+  }, [roleScopedSessions, dateFilter, statusFilter, instructorFilter, studentFilter, conditionFilter, typeFilter, searchQuery]);
 
   const hasActiveFilters = 
+    dateFilter !== '' ||
     statusFilter !== 'All' ||
     instructorFilter !== 'All' ||
     studentFilter !== 'All' ||
@@ -160,6 +174,7 @@ const Sessions = () => {
     searchQuery.trim() !== '';
 
   const resetFilters = () => {
+    setDateFilter('');
     setStatusFilter('All');
     setInstructorFilter('All');
     setStudentFilter('All');
@@ -252,6 +267,15 @@ const Sessions = () => {
                   </svg>
                   Schedule Session
                 </button>
+                <button className="ses-btn-primary" onClick={() => navigate('/sessions/configure')}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                    <line x1="16" y1="2" x2="16" y2="6"></line>
+                    <line x1="8" y1="2" x2="8" y2="6"></line>
+                    <line x1="3" y1="10" x2="21" y2="10"></line>
+                  </svg>
+                  Configure Sessions
+                </button>
               </>
             )}
           </div>
@@ -278,7 +302,48 @@ const Sessions = () => {
               )}
             </div>
 
-            {/* Status / Date Filter */}
+            {/* Date Filter */}
+            <div className="ses-select-wrap" style={{ minWidth: '155px' }}>
+              <label className="ses-select-label">Date</label>
+              <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                <input
+                  type="date"
+                  className="ses-select"
+                  value={dateFilter}
+                  onChange={(e) => setDateFilter(e.target.value)}
+                  style={{
+                    width: '100%',
+                    paddingRight: dateFilter ? '26px' : '10px',
+                    fontWeight: dateFilter ? 700 : 500,
+                    color: dateFilter ? '#0D9488' : '#0F172A',
+                    borderColor: dateFilter ? '#0D9488' : '#E2E8F0',
+                    background: dateFilter ? '#E6F9F5' : '#F8FAFC'
+                  }}
+                />
+                {dateFilter && (
+                  <button
+                    type="button"
+                    onClick={() => setDateFilter('')}
+                    style={{
+                      position: 'absolute',
+                      right: '6px',
+                      background: 'none',
+                      border: 'none',
+                      color: '#0D9488',
+                      cursor: 'pointer',
+                      fontSize: '15px',
+                      fontWeight: 800,
+                      padding: '2px 4px'
+                    }}
+                    title="Clear date filter"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Status Filter */}
             <div className="ses-select-wrap">
               <label className="ses-select-label">Status</label>
               <select
@@ -388,162 +453,164 @@ const Sessions = () => {
           </div>
         </div>
 
-        {/* Two Column Layout */}
-        <div className="ses-layout">
-          {/* Main Column: Sessions Table */}
-          <div className="ses-table-container">
-            {loading ? (
-              <div className="ses-loading">
-                <div className="ses-spinner" />
-                <span style={{ color: '#64748B', fontSize: '14px', fontWeight: 500 }}>Loading sessions from AWS Cloud...</span>
-              </div>
-            ) : (
-              <table className="ses-table">
-                <thead>
-                  <tr>
-                    <th style={{ width: '170px' }}>DATE & TIME</th>
-                    <th style={{ width: '160px' }}>STUDENT</th>
-                    <th style={{ width: '160px' }}>INSTRUCTOR</th>
-                    <th>LOCATION</th>
-                    <th>CONDITIONS</th>
-                    <th>TYPE</th>
-                    <th>STATUS</th>
-                    <th style={{ textAlign: 'right' }}>ACTIONS</th>
+        {/* Metric Cards Row - Placed Between Filters & Table */}
+        <div className="ses-metrics-row">
+          <div className="ses-status-metric-card pending-card">
+            <div className="ses-smc-label">PENDING SESSIONS</div>
+            <div className="ses-smc-value">{loading ? '…' : pendingCount}</div>
+            <div className="ses-smc-sub">Days Pending: {loading ? '…' : pendingDays}</div>
+          </div>
+
+          <div className="ses-status-metric-card booked-card">
+            <div className="ses-smc-label">SESSIONS BOOKED</div>
+            <div className="ses-smc-value">{loading ? '…' : bookedCount}</div>
+            <div className="ses-smc-sub">Days Booked: {loading ? '…' : bookedDays}</div>
+          </div>
+
+          <div className="ses-status-metric-card completed-card">
+            <div className="ses-smc-label">SESSIONS COMPLETED</div>
+            <div className="ses-smc-value">{loading ? '…' : completedCount}</div>
+            <div className="ses-smc-sub">Days Completed: {loading ? '…' : completedDays}</div>
+          </div>
+        </div>
+
+        {/* Full-Width Sessions Table */}
+        <div className="ses-table-container">
+          {loading ? (
+            <div className="ses-loading">
+              <div className="ses-spinner" />
+              <span style={{ color: '#64748B', fontSize: '14px', fontWeight: 500 }}>Loading sessions from AWS Cloud...</span>
+            </div>
+          ) : (
+            <table className="ses-table">
+              <thead>
+                <tr>
+                  <th style={{ width: '170px' }}>DATE & TIME</th>
+                  <th style={{ width: '160px' }}>STUDENT</th>
+                  <th style={{ width: '160px' }}>INSTRUCTOR</th>
+                  <th>LOCATION</th>
+                  <th>CONDITIONS</th>
+                  <th>TYPE</th>
+                  <th>STATUS</th>
+                  <th style={{ textAlign: 'right' }}>ACTIONS</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredSessions.map((session, i) => (
+                  <tr key={session.id} className="ses-table-row" style={{ borderBottom: i === filteredSessions.length - 1 ? 'none' : '1px solid #F1F5F9' }}>
+                    <td>
+                      <div className="ses-td-primary" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#64748B" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                        {session.date}
+                      </div>
+                      <div className="ses-td-secondary">{session.time} · {session.duration_mins || 60} mins</div>
+                    </td>
+                    <td>
+                      <div className="ses-td-primary" style={{ fontWeight: 600 }}>{session.student || '—'}</div>
+                    </td>
+                    <td>
+                      <div className="ses-td-primary" style={{ color: '#0F766E' }}>{session.instructor || '—'}</div>
+                    </td>
+                    <td>
+                      <div className="ses-td-primary" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#64748B" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+                        {session.location || 'Aquatic Indica Spot'}
+                      </div>
+                      {session.notes && (
+                        <div className="ses-td-secondary" style={{ maxWidth: '200px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={session.notes}>
+                          {session.notes}
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      <span
+                        className="ses-badge-cond"
+                        style={{
+                          backgroundColor: `${conditionColor(session.condition)}18`,
+                          color: conditionColor(session.condition),
+                          border: `1px solid ${conditionColor(session.condition)}40`
+                        }}
+                      >
+                        {session.condition || 'Moderate'}
+                      </span>
+                    </td>
+                    <td>
+                      <span className="ses-badge-type">{session.type || 'Beginner'}</span>
+                    </td>
+                    <td>
+                      <span
+                        className="ses-status-pill"
+                        style={{
+                          backgroundColor: statusBg(session.status),
+                          color: statusColor(session.status)
+                        }}
+                      >
+                        <span className="ses-status-dot" style={{ backgroundColor: statusColor(session.status) }}></span>
+                        {session.status || 'Upcoming'}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="ses-actions-row">
+                        <button
+                          className="ses-icon-btn"
+                          title="Edit Session"
+                          onClick={() => navigate(`/sessions/${session.id}/edit`)}
+                        >
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                          </svg>
+                        </button>
+                        {(() => {
+                          const hasMedia = Boolean(session.video_url && session.video_url.trim() !== '');
+                          return (
+                            <button
+                              className={`ses-btn-view-analysis ${hasMedia ? 'ses-btn-analysis-active' : 'ses-btn-analysis-muted'}`}
+                              title={hasMedia ? "View Video Analysis (Footage Attached)" : "No footage uploaded yet (Click to view or upload)"}
+                              onClick={() => {
+                                const videoParam = hasMedia ? `&video=${encodeURIComponent(session.video_url)}` : '';
+                                navigate(`/analysis?student=${encodeURIComponent(session.student || '')}&date=${encodeURIComponent(session.date || '')}${videoParam}`);
+                              }}
+                            >
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: hasMedia ? 1 : 0.6 }}>
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                <circle cx="12" cy="12" r="3"></circle>
+                              </svg>
+                              Analysis
+                            </button>
+                          );
+                        })()}
+                      </div>
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {filteredSessions.map((session, i) => (
-                    <tr key={session.id} className="ses-table-row" style={{ borderBottom: i === filteredSessions.length - 1 ? 'none' : '1px solid #F1F5F9' }}>
-                      <td>
-                        <div className="ses-td-primary" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#64748B" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
-                          {session.date}
-                        </div>
-                        <div className="ses-td-secondary">{session.time} · {session.duration_mins || 60} mins</div>
-                      </td>
-                      <td>
-                        <div className="ses-td-primary" style={{ fontWeight: 600 }}>{session.student || '—'}</div>
-                      </td>
-                      <td>
-                        <div className="ses-td-primary" style={{ color: '#0F766E' }}>{session.instructor || '—'}</div>
-                      </td>
-                      <td>
-                        <div className="ses-td-primary" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#64748B" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
-                          {session.location || 'Aquatic Indica Spot'}
-                        </div>
-                        {session.notes && (
-                          <div className="ses-td-secondary" style={{ maxWidth: '200px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={session.notes}>
-                            {session.notes}
-                          </div>
-                        )}
-                      </td>
-                      <td>
-                        <span
-                          className="ses-badge-cond"
-                          style={{
-                            backgroundColor: `${conditionColor(session.condition)}18`,
-                            color: conditionColor(session.condition),
-                            border: `1px solid ${conditionColor(session.condition)}40`
-                          }}
-                        >
-                          {session.condition || 'Moderate'}
-                        </span>
-                      </td>
-                      <td>
-                        <span className="ses-badge-type">{session.type || 'Beginner'}</span>
-                      </td>
-                      <td>
-                        <span
-                          className="ses-status-pill"
-                          style={{
-                            backgroundColor: statusBg(session.status),
-                            color: statusColor(session.status)
-                          }}
-                        >
-                          <span className="ses-status-dot" style={{ backgroundColor: statusColor(session.status) }}></span>
-                          {session.status || 'Upcoming'}
-                        </span>
-                      </td>
-                      <td>
-                        <div className="ses-actions-row">
-                          <button
-                            className="ses-icon-btn"
-                            title="Edit Session"
-                            onClick={() => navigate(`/sessions/${session.id}/edit`)}
-                          >
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                            </svg>
-                          </button>
-                          <button
-                            className="ses-btn-view-analysis"
-                            title="View Video Analysis"
-                            onClick={() => {
-                              const videoParam = session.video_url ? `&video=${encodeURIComponent(session.video_url)}` : '';
-                              navigate(`/analysis?student=${encodeURIComponent(session.student || '')}&date=${encodeURIComponent(session.date || '')}${videoParam}`);
-                            }}
-                          >
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                              <circle cx="12" cy="12" r="3"></circle>
-                            </svg>
-                            Analysis
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                  {filteredSessions.length === 0 && !loading && (
-                    <tr>
-                      <td colSpan="8" style={{ textAlign: 'center', padding: '60px 20px', color: '#94A3B8' }}>
-                        <div style={{ fontSize: '32px', marginBottom: '8px' }}>🏄‍♂️</div>
-                        <div style={{ fontSize: '16px', fontWeight: 600, color: '#0F172A', marginBottom: '4px' }}>
-                          No sessions match your filter criteria
-                        </div>
-                        <p style={{ margin: '0 0 16px', fontSize: '13px' }}>
-                          {isStudent
-                            ? 'No sessions found for your account.'
-                            : 'Try clearing filters or schedule a new session for this time slot.'}
-                        </p>
-                        {hasActiveFilters ? (
-                          <button className="ses-btn-secondary" style={{ margin: '0 auto' }} onClick={resetFilters}>
-                            Clear Filters
-                          </button>
-                        ) : !isStudent ? (
-                          <button className="ses-btn-primary" style={{ margin: '0 auto' }} onClick={() => navigate('/sessions/new')}>
-                            + Schedule First Session
-                          </button>
-                        ) : null}
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            )}
-          </div>
-
-          {/* Right Column: 3 Session Status Metric Cards */}
-          <div className="ses-sidebar">
-            <div className="ses-status-metric-card pending-card">
-              <div className="ses-smc-label">PENDING SESSIONS</div>
-              <div className="ses-smc-value">{loading ? '…' : pendingCount}</div>
-              <div className="ses-smc-sub">Days Pending: {loading ? '…' : pendingDays}</div>
-            </div>
-
-            <div className="ses-status-metric-card booked-card">
-              <div className="ses-smc-label">SESSIONS BOOKED</div>
-              <div className="ses-smc-value">{loading ? '…' : bookedCount}</div>
-              <div className="ses-smc-sub">Days Booked: {loading ? '…' : bookedDays}</div>
-            </div>
-
-            <div className="ses-status-metric-card completed-card">
-              <div className="ses-smc-label">SESSIONS COMPLETED</div>
-              <div className="ses-smc-value">{loading ? '…' : completedCount}</div>
-              <div className="ses-smc-sub">Days Completed: {loading ? '…' : completedDays}</div>
-            </div>
-          </div>
+                ))}
+                {filteredSessions.length === 0 && !loading && (
+                  <tr>
+                    <td colSpan="8" style={{ textAlign: 'center', padding: '60px 20px', color: '#94A3B8' }}>
+                      <div style={{ fontSize: '32px', marginBottom: '8px' }}>🏄‍♂️</div>
+                      <div style={{ fontSize: '16px', fontWeight: 600, color: '#0F172A', marginBottom: '4px' }}>
+                        No sessions match your filter criteria
+                      </div>
+                      <p style={{ margin: '0 0 16px', fontSize: '13px' }}>
+                        {isStudent
+                          ? 'No sessions found for your account.'
+                          : 'Try clearing filters or schedule a new session for this time slot.'}
+                      </p>
+                      {hasActiveFilters ? (
+                        <button className="ses-btn-secondary" style={{ margin: '0 auto' }} onClick={resetFilters}>
+                          Clear Filters
+                        </button>
+                      ) : !isStudent ? (
+                        <button className="ses-btn-primary" style={{ margin: '0 auto' }} onClick={() => navigate('/sessions/new')}>
+                          + Schedule First Session
+                        </button>
+                      ) : null}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          )}
         </div>
 
         {/* Enhanced Pro Calendar & Ground Ops Modal */}
@@ -805,16 +872,22 @@ const Sessions = () => {
                                 >
                                   💬 WhatsApp
                                 </a>
-                                <button
-                                  className="ses-btn-view-analysis"
-                                  style={{ padding: '4px 10px', fontSize: '11px' }}
-                                  onClick={() => {
-                                    const videoParam = s.video_url ? `&video=${encodeURIComponent(s.video_url)}` : '';
-                                    navigate(`/analysis?student=${encodeURIComponent(s.student || '')}&date=${encodeURIComponent(s.date || '')}${videoParam}`);
-                                  }}
-                                >
-                                  Analysis
-                                </button>
+                                {(() => {
+                                  const hasMedia = Boolean(s.video_url && s.video_url.trim() !== '');
+                                  return (
+                                    <button
+                                      className={`ses-btn-view-analysis ${hasMedia ? 'ses-btn-analysis-active' : 'ses-btn-analysis-muted'}`}
+                                      style={{ padding: '4px 10px', fontSize: '11px' }}
+                                      title={hasMedia ? "View Video Analysis (Footage Attached)" : "No footage uploaded yet"}
+                                      onClick={() => {
+                                        const videoParam = hasMedia ? `&video=${encodeURIComponent(s.video_url)}` : '';
+                                        navigate(`/analysis?student=${encodeURIComponent(s.student || '')}&date=${encodeURIComponent(s.date || '')}${videoParam}`);
+                                      }}
+                                    >
+                                      Analysis
+                                    </button>
+                                  );
+                                })()}
                               </div>
                             </td>
                           </tr>
@@ -947,8 +1020,8 @@ const Sessions = () => {
       </main>
 
       <style>{`
-        .ses-page { display: flex; min-height: 100vh; background: #F8FAFC; font-family: 'Instrument Sans', sans-serif; }
-        .ses-main { flex: 1; padding: 32px 40px; display: flex; flex-direction: column; gap: 24px; overflow-y: auto; }
+        .ses-page { display: flex; min-height: 100vh; background: #F8FAFC; font-family: 'Instrument Sans', sans-serif; padding-top: 0px; box-sizing: border-box; width: 100%; }
+        .ses-main { flex: 1; padding: 24px 40px 120px 40px; display: flex; flex-direction: column; gap: 24px; width: 100%; box-sizing: border-box; }
 
         /* Header */
         .ses-header { display: flex; justify-content: space-between; align-items: center; }
@@ -1036,12 +1109,9 @@ const Sessions = () => {
           background: #CCFBF1; color: #0F766E; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 12px;
         }
 
-        /* Layout */
-        .ses-layout { display: flex; gap: 28px; }
-        
         .ses-table-container {
-          flex: 1; background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 16px; 
-          overflow-y: auto; max-height: calc(100vh - 280px); box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+          width: 100%; box-sizing: border-box; background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 16px; 
+          box-shadow: 0 1px 3px rgba(0,0,0,0.03); overflow: hidden;
         }
         .ses-table { width: 100%; border-collapse: collapse; text-align: left; }
         .ses-table th {
@@ -1079,11 +1149,26 @@ const Sessions = () => {
         
         .ses-btn-view-analysis {
           display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px;
-          background: #0D9488; border: none; border-radius: 6px;
-          font-family: 'Outfit', sans-serif; font-size: 12px; font-weight: 600; color: #FFFFFF;
-          cursor: pointer; transition: all 0.2s;
+          border-radius: 6px;
+          font-family: 'Outfit', sans-serif; font-size: 12px; font-weight: 600;
+          cursor: pointer; transition: all 0.2s ease;
+          border: 1px solid transparent;
         }
-        .ses-btn-view-analysis:hover { background: #0F766E; transform: translateY(-1px); }
+        .ses-btn-view-analysis.ses-btn-analysis-active {
+          background: #0D9488; color: #FFFFFF; border-color: #0D9488;
+          box-shadow: 0 2px 5px rgba(13, 148, 136, 0.2);
+        }
+        .ses-btn-view-analysis.ses-btn-analysis-active:hover {
+          background: #0F766E; border-color: #0F766E; transform: translateY(-1px);
+          box-shadow: 0 4px 8px rgba(13, 148, 136, 0.3);
+        }
+        .ses-btn-view-analysis.ses-btn-analysis-muted {
+          background: #F1F5F9; color: #94A3B8; border-color: #E2E8F0;
+          font-weight: 500;
+        }
+        .ses-btn-view-analysis.ses-btn-analysis-muted:hover {
+          background: #E2E8F0; color: #475569; border-color: #CBD5E1;
+        }
 
         .ses-whatsapp-quick-btn {
           display: inline-flex; align-items: center; gap: 4px; padding: 6px 10px;
@@ -1092,16 +1177,26 @@ const Sessions = () => {
         }
         .ses-whatsapp-quick-btn:hover { background: #1EBE5B; transform: translateY(-1px); }
 
-        /* Right Sidebar - Status Metric Cards */
-        .ses-sidebar { display: flex; flex-direction: column; gap: 16px; width: 300px; flex-shrink: 0; }
+        /* Metrics Row - Placed Horizontally Between Filters & Table */
+        .ses-metrics-row {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 20px;
+        }
         
         .ses-status-metric-card {
-          background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 14px; padding: 20px 22px;
-          display: flex; flex-direction: column; gap: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+          background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 14px; padding: 18px 22px;
+          display: flex; flex-direction: column; gap: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.02);
           transition: all 0.2s ease;
         }
         .ses-status-metric-card.pending-card {
           background: #F0F7FF; border: 1.5px solid #BFDBFE;
+        }
+        .ses-status-metric-card.booked-card {
+          background: #F8FAFC; border: 1.5px solid #E2E8F0;
+        }
+        .ses-status-metric-card.completed-card {
+          background: #F0FDF4; border: 1.5px solid #BBF7D0;
         }
         .ses-status-metric-card:hover {
           transform: translateY(-2px);
@@ -1111,7 +1206,7 @@ const Sessions = () => {
           font-size: 11px; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.6px;
         }
         .ses-smc-value {
-          font-family: 'Outfit', sans-serif; font-size: 38px; font-weight: 800; color: #0F172A; line-height: 1.1; margin: 2px 0;
+          font-family: 'Outfit', sans-serif; font-size: 34px; font-weight: 800; color: #0F172A; line-height: 1.1; margin: 2px 0;
         }
         .ses-smc-sub {
           font-size: 13px; color: #64748B; font-weight: 500;

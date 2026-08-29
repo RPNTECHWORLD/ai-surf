@@ -102,5 +102,18 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
  4. delect all old data
  5. invertlink created for join the surf school
 
+ ###changes on 27-08-26
+ 1. Integrated live heat progress, scoring, and judge live-lock management in AquaticX and Results pages.
+ 2. Connected school registration invite links and student/coach onboarding sync.
+ 3. Fixed login authentication flows and CORS settings between frontend and AWS EC2 backend.
+ 4. Synchronized live competition event database tables with RDS.
+
+ ###changes on 28-08-26
+ 1. Added `PUT /api/sessions/{session_id}` endpoint in backend to fix "Failed to save session" on session edit.
+ 2. Fixed session video saving and upload logic to support all video formats (.mp4, .mov, .webm, AWS S3 URLs).
+ 3. Removed dummy placeholder images from New/Edit Session page and added interactive media previews with remove (×) buttons.
+ 4. Deployed updated backend to AWS EC2 (`aisurf-backend-server`) and verified live session editing and video storage.
+
+
 
  

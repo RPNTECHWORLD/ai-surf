@@ -10,6 +10,7 @@ import StudentProfile from './pages/StudentProfile';
 import Analytics from './pages/Analytics';
 import Sessions from './pages/Sessions';
 import NewSession from './pages/NewSession';
+import SessionConfigure from './pages/SessionConfigure';
 import Competitions from './pages/Competitions';
 import VideoAnalysis from './pages/VideoAnalysis';
 import CoachingReport from './pages/CoachingReport';
@@ -18,6 +19,7 @@ import SuperAdminDashboard from './pages/SuperAdminDashboard';
 import AthleteIntelligence from './pages/AthleteIntelligence';
 import JudgeScoring from './pages/JudgeScoring';
 import StudentPortal from './pages/StudentPortal';
+import CoachPortal from './pages/CoachPortal';
 
 const PrivateRoute = ({ children }) => {
   const token = sessionStorage.getItem('token');
@@ -33,6 +35,7 @@ function App() {
         <Route path="/register" element={<SchoolRegistration />} />
         <Route path="/judge-scoring" element={<JudgeScoring />} />
         <Route path="/student-portal" element={<StudentPortal />} />
+        <Route path="/coach-portal" element={<CoachPortal />} />
 
         {/* Protected Routes */}
         <Route path="/dashboard" element={<PrivateRoute><SchoolDashboard /></PrivateRoute>} />
@@ -43,6 +46,7 @@ function App() {
         <Route path="/analytics" element={<PrivateRoute><Analytics /></PrivateRoute>} />
         <Route path="/sessions" element={<PrivateRoute><Sessions /></PrivateRoute>} />
         <Route path="/sessions/new" element={<PrivateRoute><NewSession /></PrivateRoute>} />
+        <Route path="/sessions/configure" element={<PrivateRoute><SessionConfigure /></PrivateRoute>} />
         <Route path="/sessions/:id/edit" element={<PrivateRoute><NewSession /></PrivateRoute>} />
         <Route path="/competitions" element={<PrivateRoute><Competitions /></PrivateRoute>} />
         <Route path="/analysis" element={<PrivateRoute><VideoAnalysis /></PrivateRoute>} />

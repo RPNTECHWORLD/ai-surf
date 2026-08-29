@@ -3,6 +3,7 @@ import './aquaticx.css';
 import { Plus, Calendar as CalendarIcon, X, Check, Loader2, AlertCircle, MapPin, Edit, Trash2, Copy } from 'lucide-react';
 import { useToast } from './ToastContext';
 import { useConfirm } from './ConfirmContext';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 
 const API_BASE = 'http://54.84.243.251/api';
@@ -47,6 +48,7 @@ const formatDivisionName = (name, event = null) => {
 };
 
 const EventManagement = () => {
+    const navigate = useNavigate();
     const { showToast } = useToast();
     const { showConfirm } = useConfirm();
     const [events, setEvents] = useState(globalEventCache.events);
@@ -96,15 +98,53 @@ const EventManagement = () => {
     const fetchEvents = async (silent = false) => {
         try {
             if (!silent) setIsLoading(true);
+            
+            // 1. Fetch real events
             const response = await axios.get(`${API_BASE}/events`, {
                 params: { admin_id: adminId }
             });
-            // Sort by created_at ascending (first created first)
-            const sortedEvents = response.data.sort((a, b) => {
+            const realEvents = Array.isArray(response.data) ? response.data : [];
+
+            // 2. Fetch scheduled sessions
+            let virtualEvents = [];
+            try {
+                const sessionsRes = await axios.get('/api/sessions');
+                const sessions = Array.isArray(sessionsRes.data) ? sessionsRes.data : [];
+                virtualEvents = sessions.map(session => {
+                    let eventDate = session.date;
+                    try {
+                        const parsed = new Date(session.date);
+                        if (!isNaN(parsed.getTime())) {
+                            eventDate = parsed.toISOString().split('T')[0];
+                        }
+                    } catch (e) {}
+
+                    return {
+                        id: `session-${session.id}`,
+                        isSessionEvent: true, // flag to identify virtual session event
+                        name: `Session: ${session.student_name || session.student || 'Student'}`,
+                        event_type: 'Scheduled Session',
+                        status: 'Active',
+                        location: session.instructor_name || session.instructor ? `Instructor: ${session.instructor_name || session.instructor}` : 'Indica Surf School',
+                        start_date: eventDate,
+                        end_date: eventDate,
+                        divisions: JSON.stringify([session.time || 'Morning']),
+                        sponsors: JSON.stringify([]),
+                        title_sponsors: JSON.stringify([]),
+                        created_at: session.created_at || eventDate
+                    };
+                });
+            } catch (err) {
+                console.warn('Could not fetch sessions for event list:', err);
+            }
+
+            // 3. Combine and sort
+            const combinedEvents = [...realEvents, ...virtualEvents].sort((a, b) => {
                 return new Date(a.created_at) - new Date(b.created_at);
             });
-            setEvents(sortedEvents);
-            globalEventCache.events = sortedEvents;
+
+            setEvents(combinedEvents);
+            globalEventCache.events = combinedEvents;
             globalEventCache.hasLoaded = true;
             setError(null);
         } catch (err) {
@@ -119,7 +159,8 @@ const EventManagement = () => {
 
     const handleOpenModal = (event = null) => {
         // Block creating new events beyond the limit (editing existing is always allowed)
-        if (!event && events.length >= MAX_EVENTS) {
+        const actualEventsCount = events.filter(e => !e.isSessionEvent).length;
+        if (!event && actualEventsCount >= MAX_EVENTS) {
             showToast(`Maximum of ${MAX_EVENTS} events allowed. Delete an event to create a new one.`, 'error');
             return;
         }
@@ -165,7 +206,8 @@ const EventManagement = () => {
     const handleCreateEvent = async (e) => {
         e.preventDefault();
         // Extra guard: don't allow creating beyond the cap
-        if (!editingEvent && events.length >= MAX_EVENTS) {
+        const actualEventsCount = events.filter(e => !e.isSessionEvent).length;
+        if (!editingEvent && actualEventsCount >= MAX_EVENTS) {
             showToast(`Maximum of ${MAX_EVENTS} events allowed.`, 'error');
             return;
         }
@@ -335,6 +377,8 @@ const EventManagement = () => {
         return date.toLocaleDateString('en-GB'); // dd/mm/yyyy
     };
 
+    const actualEventsCount = events.filter(ev => !ev.isSessionEvent).length;
+
     return (
         <>
             <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
@@ -344,7 +388,7 @@ const EventManagement = () => {
                         <p className="text-secondary" style={{ marginTop: '4px' }}>Create and manage surfing competition events</p>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        {events.length >= MAX_EVENTS && (
+                        {actualEventsCount >= MAX_EVENTS && (
                             <span style={{ fontSize: '12px', color: '#f59e0b', fontWeight: '700', background: '#fef3c7', padding: '4px 10px', borderRadius: '8px', border: '1px solid #fde68a' }}>
                                 {MAX_EVENTS}/{MAX_EVENTS} events — limit reached
                             </span>
@@ -353,9 +397,9 @@ const EventManagement = () => {
                             <button
                                 onClick={() => handleOpenModal()}
                                 className="btn btn-primary"
-                                disabled={events.length >= MAX_EVENTS || !canConductEvents}
-                                title={!canConductEvents ? 'Event creation disabled by super admin' : events.length >= MAX_EVENTS ? `Maximum ${MAX_EVENTS} events allowed` : 'Create a new event'}
-                                style={(events.length >= MAX_EVENTS || !canConductEvents) ? { opacity: 0.45, cursor: 'not-allowed' } : {}}
+                                disabled={actualEventsCount >= MAX_EVENTS || !canConductEvents}
+                                title={!canConductEvents ? 'Event creation disabled by super admin' : actualEventsCount >= MAX_EVENTS ? `Maximum ${MAX_EVENTS} events allowed` : 'Create a new event'}
+                                style={(actualEventsCount >= MAX_EVENTS || !canConductEvents) ? { opacity: 0.45, cursor: 'not-allowed' } : {}}
                             >
                                 <Plus size={20} />
                                 Create Event
@@ -438,61 +482,81 @@ const EventManagement = () => {
 
                                 {!isStudent && (
                                     <div className="flex gap-3" style={{ marginTop: 'auto', paddingTop: '8px' }}>
-                                        <button
-                                            onClick={() => handleOpenModal(event)}
-                                            className="btn btn-secondary"
-                                            style={{
-                                                flex: 1,
-                                                justifyContent: 'center',
-                                                padding: '10px',
-                                                fontSize: '14px',
-                                                background: 'var(--surface-hover)',
-                                                borderColor: 'var(--border-dim)',
-                                                borderRadius: '8px'
-                                            }}
-                                        >
-                                            <Edit size={16} />
-                                            Edit
-                                        </button>
-                                        <button
-                                            onClick={() => {
-                                                const link = `${window.location.origin}/broadcast/${event.id}`;
-                                                navigator.clipboard.writeText(link);
-                                                showToast('OBS Broadcast link copied to clipboard!', 'success');
-                                            }}
-                                            className="btn btn-secondary"
-                                            title="Copy OBS Broadcast Link"
-                                            style={{
-                                                width: '40px',
-                                                height: '40px',
-                                                padding: 0,
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                justifyContent: 'center',
-                                                background: 'var(--surface-hover)',
-                                                borderColor: 'var(--border-dim)',
-                                                borderRadius: '8px'
-                                            }}
-                                        >
-                                            <Copy size={16} />
-                                        </button>
-                                        <button
-                                            onClick={() => handleDeleteEvent(event.id)}
-                                            className="btn btn-danger"
-                                            style={{
-                                                width: '40px',
-                                                height: '40px',
-                                                padding: 0,
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                justifyContent: 'center',
-                                                background: 'rgba(239, 68, 68, 0.15)',
-                                                border: '1px solid rgba(239, 68, 68, 0.2)',
-                                                borderRadius: '8px'
-                                            }}
-                                        >
-                                            <Trash2 size={16} />
-                                        </button>
+                                        {event.isSessionEvent ? (
+                                            <button
+                                                onClick={() => navigate('/sessions')}
+                                                className="btn btn-secondary"
+                                                style={{
+                                                    flex: 1,
+                                                    justifyContent: 'center',
+                                                    padding: '10px',
+                                                    fontSize: '14px',
+                                                    background: 'var(--surface-hover)',
+                                                    borderColor: 'var(--border-dim)',
+                                                    borderRadius: '8px'
+                                                }}
+                                            >
+                                                Manage Session
+                                            </button>
+                                        ) : (
+                                            <>
+                                                <button
+                                                    onClick={() => handleOpenModal(event)}
+                                                    className="btn btn-secondary"
+                                                    style={{
+                                                        flex: 1,
+                                                        justifyContent: 'center',
+                                                        padding: '10px',
+                                                        fontSize: '14px',
+                                                        background: 'var(--surface-hover)',
+                                                        borderColor: 'var(--border-dim)',
+                                                        borderRadius: '8px'
+                                                    }}
+                                                >
+                                                    <Edit size={16} />
+                                                    Edit
+                                                </button>
+                                                <button
+                                                    onClick={() => {
+                                                        const link = `${window.location.origin}/broadcast/${event.id}`;
+                                                        navigator.clipboard.writeText(link);
+                                                        showToast('OBS Broadcast link copied to clipboard!', 'success');
+                                                    }}
+                                                    className="btn btn-secondary"
+                                                    title="Copy OBS Broadcast Link"
+                                                    style={{
+                                                        width: '40px',
+                                                        height: '40px',
+                                                        padding: 0,
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        background: 'var(--surface-hover)',
+                                                        borderColor: 'var(--border-dim)',
+                                                        borderRadius: '8px'
+                                                    }}
+                                                >
+                                                    <Copy size={16} />
+                                                </button>
+                                                <button
+                                                    onClick={() => handleDeleteEvent(event.id)}
+                                                    className="btn btn-danger"
+                                                    style={{
+                                                        width: '40px',
+                                                        height: '40px',
+                                                        padding: 0,
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        background: 'rgba(239, 68, 68, 0.15)',
+                                                        border: '1px solid rgba(239, 68, 68, 0.2)',
+                                                        borderRadius: '8px'
+                                                    }}
+                                                >
+                                                    <Trash2 size={16} />
+                                                </button>
+                                            </>
+                                        )}
                                     </div>
                                 )}
                             </div>

@@ -52,6 +52,11 @@ const Competitions = () => {
 
   const [toastMsg, setToastMsg] = useState('');
 
+  const showToast = (msg) => {
+    setToastMsg(msg);
+    setTimeout(() => setToastMsg(''), 4000);
+  };
+
   // AquaticX Multi-Surfer Heat Engine States
   const [selectedSlot, setSelectedSlot] = useState('All');
   const [selectedDate, setSelectedDate] = useState('All');
@@ -482,10 +487,6 @@ const Competitions = () => {
     return () => clearInterval(interval);
   }, [activeHeat, timeRemaining, isTimerPaused]);
 
-  const showToast = (msg) => {
-    setToastMsg(msg);
-    setTimeout(() => setToastMsg(''), 4000);
-  };
 
   // Format seconds to MM:SS
   const formatTime = (secs) => {
@@ -872,7 +873,7 @@ const Competitions = () => {
 
         {/* Tab 2: AquaticX Multi-Surfer Heat Engine */}
         {activeTab === 'aquaticx' && (
-          <div className="admin-layout" style={{ maxWidth: '1200px', margin: '0 auto', background: 'transparent', padding: '0 10px' }}>
+          <div className="admin-layout" style={{ width: '100%', maxWidth: '100%', margin: '0', background: 'transparent', padding: '0', boxSizing: 'border-box' }}>
             {/* AquaticX Software Floating Sub-Navigation Bar */}
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '24px' }}>
               <div style={{ display: 'flex', gap: '4px', background: '#FFFFFF', padding: '6px', borderRadius: '40px', boxShadow: '0 4px 20px rgba(0,0,0,0.06)', border: '1px solid #E2E8F0' }}>
@@ -919,52 +920,61 @@ const Competitions = () => {
                     </div>
                   </div>
                 </div>
-                <span style={{ background: 'rgba(245, 158, 11, 0.2)', color: '#F59E0B', padding: '6px 14px', borderRadius: '20px', fontSize: '12px', fontWeight: 800, whiteSpace: 'nowrap' }}>
-                  Pending Approval
-                </span>
+                <div style={{ color: '#F59E0B', fontWeight: 800, fontSize: '12px', background: '#FEF3C7', padding: '6px 14px', borderRadius: '20px' }}>
+                  Action Required by School
+                </div>
               </div>
             )}
 
-            {/* School Admin / Coach: Pending Student Join Requests Console */}
-            {currentUser?.role !== 'athlete' && joinRequests.filter(r => r.status === 'pending').length > 0 && (
-              <div style={{ background: '#0F172A', border: '1px solid #00F2FE', borderRadius: '18px', padding: '22px', marginBottom: '24px', boxShadow: '0 10px 30px rgba(0, 242, 254, 0.15)', color: '#FFF' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-                  <div>
-                    <h3 style={{ margin: 0, fontSize: '16px', color: '#00F2FE', fontWeight: 800, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span>⏳</span> Pending Student Join Requests ({joinRequests.filter(r => r.status === 'pending').length})
-                    </h3>
-                    <p style={{ margin: '3px 0 0 0', fontSize: '12px', color: '#94A3B8' }}>
-                      Students who registered directly (without an invite link) require your approval before joining school heats.
-                    </p>
+            {/* School Admin: Actionable Direct Signup Join Requests (Pending Athletes) */}
+            {currentUser?.role !== 'athlete' && currentUser?.role !== 'student' && joinRequests.filter(r => r.status === 'pending').length > 0 && (
+              <div style={{ background: '#FFFFFF', border: '1.5px solid #E2E8F0', borderRadius: '20px', padding: '24px', marginBottom: '24px', boxShadow: '0 4px 20px rgba(0,0,0,0.03)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span style={{ fontSize: '20px' }}>📩</span>
+                    <div>
+                      <h3 style={{ fontSize: '16px', fontWeight: 800, color: '#0F172A', margin: 0 }}>
+                        Direct Registration Requests ({joinRequests.filter(r => r.status === 'pending').length} Pending)
+                      </h3>
+                      <p style={{ fontSize: '13px', color: '#64748B', margin: '2px 0 0 0' }}>
+                        Athletes registered directly to join your school. Approve them into your active competitor pool.
+                      </p>
+                    </div>
                   </div>
-                  <span style={{ background: 'rgba(0, 242, 254, 0.15)', color: '#00F2FE', border: '1px solid rgba(0, 242, 254, 0.3)', padding: '4px 12px', borderRadius: '12px', fontSize: '11px', fontWeight: 800 }}>
-                    Action Required
+                  <span style={{ background: 'rgba(13, 148, 136, 0.1)', color: '#0D9488', fontWeight: 800, fontSize: '12px', padding: '4px 12px', borderRadius: '20px' }}>
+                    School Portal
                   </span>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   {joinRequests.filter(r => r.status === 'pending').map(req => (
-                    <div key={req.id} style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', padding: '14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div>
-                        <div style={{ fontWeight: 800, fontSize: '14px', color: '#FFF' }}>{req.student_name}</div>
-                        <div style={{ fontSize: '11px', color: '#00F2FE', marginTop: '2px' }}>{req.student_email}</div>
-                        <div style={{ fontSize: '11px', color: '#94A3B8', marginTop: '4px' }}>
-                          🏫 Requested School: <strong>{req.school_name}</strong> · 🕒 Slot: {req.session_time} · 📅 Date: {req.start_date}
+                    <div key={req.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', background: '#F8FAFC', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                        <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: '#0D9488', color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '16px' }}>
+                          {req.student_name ? req.student_name[0] : 'S'}
+                        </div>
+                        <div>
+                          <div style={{ fontWeight: 800, color: '#0F172A', fontSize: '14px' }}>{req.student_name}</div>
+                          <div style={{ color: '#64748B', fontSize: '12px', marginTop: '2px' }}>
+                            🏫 Requested School: <strong>{req.school_name}</strong> · 🕒 Slot: {req.session_time} · 📅 Date: {req.start_date}
+                          </div>
                         </div>
                       </div>
-
-                      <div style={{ display: 'flex', gap: '10px' }}>
+                      <div style={{ display: 'flex', gap: '8px' }}>
                         <button
-                          type="button"
                           onClick={() => handleApproveJoinRequest(req.id)}
-                          style={{ background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)', color: '#FFF', border: 'none', padding: '8px 16px', borderRadius: '8px', fontWeight: 900, fontSize: '12px', cursor: 'pointer', boxShadow: '0 4px 15px rgba(16, 185, 129, 0.3)' }}
+                          style={{ background: '#0D9488', color: '#FFF', border: 'none', padding: '8px 16px', borderRadius: '8px', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}
                         >
-                          ✅ Approve Request
+                          ✅ Approve Athlete
                         </button>
                         <button
-                          type="button"
-                          onClick={() => handleDeclineJoinRequest(req.id)}
-                          style={{ background: 'rgba(239, 68, 68, 0.15)', color: '#EF4444', border: '1px solid rgba(239, 68, 68, 0.4)', padding: '8px 16px', borderRadius: '8px', fontWeight: 800, fontSize: '12px', cursor: 'pointer' }}
+                          onClick={() => {
+                            const updated = joinRequests.map(r => r.id === req.id ? { ...r, status: 'rejected' } : r);
+                            setJoinRequests(updated);
+                            try { localStorage.setItem('school_join_requests', JSON.stringify(updated)); } catch(e) {}
+                            showToast(`Declined request for ${req.student_name}`);
+                          }}
+                          style={{ background: '#F1F5F9', color: '#64748B', border: '1px solid #CBD5E1', padding: '8px 14px', borderRadius: '8px', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}
                         >
                           ❌ Decline
                         </button>
@@ -1002,7 +1012,7 @@ const Competitions = () => {
               </ToastProvider>
             )}
 
-            {/* Sub-Tab 4: Judge Panel */}
+            {/* Sub-Tab 5: Judge Panel */}
             {aquaticSubTab === 'judge' && (
               <ToastProvider>
                 <ConfirmProvider>
@@ -1011,7 +1021,7 @@ const Competitions = () => {
               </ToastProvider>
             )}
 
-            {/* Sub-Tab 5: Results & Standings */}
+            {/* Sub-Tab 6: Results & Standings */}
             {aquaticSubTab === 'results' && (
               <ToastProvider>
                 <ConfirmProvider>
@@ -1278,8 +1288,8 @@ const Competitions = () => {
       </main>
 
       <style>{`
-        .cmp-page { display: flex; min-height: 100vh; background: #F8FAFC; font-family: 'Instrument Sans', sans-serif; }
-        .cmp-main { flex: 1; padding: 40px; display: flex; flex-direction: column; gap: 32px; overflow-y: auto; }
+        .cmp-page { display: flex; min-height: 100vh; background: #F8FAFC; font-family: 'Instrument Sans', sans-serif; padding-top: 84px; box-sizing: border-box; width: 100%; }
+        .cmp-main { flex: 1; padding: 28px 40px 80px 40px; display: flex; flex-direction: column; gap: 32px; overflow-y: auto; width: 100%; box-sizing: border-box; }
 
         /* Header */
         .cmp-title { font-family: 'Outfit', sans-serif; font-size: 32px; font-weight: 700; color: #050B1A; margin: 0; line-height: 1.2; }

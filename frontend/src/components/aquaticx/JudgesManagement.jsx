@@ -353,8 +353,8 @@ const JudgesManagement = () => {
             <div className="admin-layout">
                 <div className="admin-content">
                     <div style={{ marginBottom: '40px' }}>
-                        <h1 style={{ fontSize: '32px', fontWeight: '800', marginBottom: '8px' }}>Judges Management</h1>
-                        <p className="text-secondary" style={{ fontSize: '15px' }}>Manage judges for the event</p>
+                        <h1 style={{ fontSize: '32px', fontWeight: '800', marginBottom: '8px', color: '#0F172A' }}>Judges Management</h1>
+                        <p style={{ fontSize: '15px', color: '#64748B', margin: 0 }}>Manage judges for the event</p>
                     </div>
 
                     {isLoading ? (

@@ -127,7 +127,7 @@ const SchoolDashboard = () => {
 
             {/* Quick Stats - Horizontal Row at Top */}
             <div className="db-stats-row">
-              <div className="db-stat-card-h">
+              <div className="db-stat-card-h" onClick={() => navigate('/instructors')} style={{ cursor: 'pointer' }} title="View All Instructors">
                 <div className="stat-card-left">
                   <span className="stat-card-label">Active Instructors</span>
                   <span className="stat-card-value">{stats?.active_instructors || 0}</span>
@@ -137,7 +137,7 @@ const SchoolDashboard = () => {
                 </div>
               </div>
 
-              <div className="db-stat-card-h">
+              <div className="db-stat-card-h" onClick={() => navigate('/students')} style={{ cursor: 'pointer' }} title="View All Students">
                 <div className="stat-card-left">
                   <span className="stat-card-label">Active Students</span>
                   <span className="stat-card-value">{stats?.active_students || 0}</span>
@@ -147,7 +147,7 @@ const SchoolDashboard = () => {
                 </div>
               </div>
 
-              <div className="db-stat-card-h">
+              <div className="db-stat-card-h" onClick={() => navigate('/sessions')} style={{ cursor: 'pointer' }} title="View Sessions">
                 <div className="stat-card-left">
                   <span className="stat-card-label">Sessions This Month</span>
                   <span className="stat-card-value">{stats?.sessions_this_month || 0}</span>
@@ -157,7 +157,7 @@ const SchoolDashboard = () => {
                 </div>
               </div>
 
-              <div className="db-stat-card-h">
+              <div className="db-stat-card-h" onClick={() => navigate('/sessions')} style={{ cursor: 'pointer' }} title="View Upcoming Sessions">
                 <div className="stat-card-left">
                   <span className="stat-card-label">Upcoming Sessions</span>
                   <span className="stat-card-value">{stats?.upcoming_sessions || 0}</span>
@@ -168,28 +168,28 @@ const SchoolDashboard = () => {
               </div>
             </div>
             <div className="db-quick-actions">
-              <div className="action-card" onClick={() => navigate('/instructors')}>
+              <div className="action-card" onClick={() => navigate('/instructors')} style={{ cursor: 'pointer' }}>
                 <div className="action-icon-wrapper" style={{ color: '#00D1B2', background: '#E6F9F5' }}>
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="8" cy="7" r="4" /><line x1="20" y1="8" x2="20" y2="14" /><line x1="23" y1="11" x2="17" y2="11" /></svg>
                 </div>
                 <span className="action-label">Add Instructor</span>
               </div>
 
-              <div className="action-card" onClick={() => navigate('/students')}>
+              <div className="action-card" onClick={() => navigate('/students')} style={{ cursor: 'pointer' }}>
                 <div className="action-icon-wrapper" style={{ color: '#3B82F6', background: '#EBF3FF' }}>
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="8" cy="7" r="4" /><line x1="20" y1="8" x2="20" y2="14" /><line x1="23" y1="11" x2="17" y2="11" /></svg>
                 </div>
                 <span className="action-label">Add Student</span>
               </div>
 
-              <div className="action-card" onClick={() => navigate('/sessions/new')}>
+              <div className="action-card" onClick={() => navigate('/sessions/new')} style={{ cursor: 'pointer' }}>
                 <div className="action-icon-wrapper" style={{ color: '#10B981', background: '#ECFDF5' }}>
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>
                 </div>
                 <span className="action-label">Schedule Session</span>
               </div>
 
-              <div className="action-card" onClick={() => navigate('/analysis')}>
+              <div className="action-card" onClick={() => navigate('/analysis')} style={{ cursor: 'pointer' }}>
                 <div className="action-icon-wrapper" style={{ color: '#EF4444', background: '#FEE2E2' }}>
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" ry="2" /></svg>
                 </div>
@@ -203,7 +203,7 @@ const SchoolDashboard = () => {
               <div className="db-card">
                 <div className="db-card-header">
                   <h3 className="db-card-title">Today's Sessions</h3>
-                  <span className="db-card-badge">{sessions.length} total</span>
+                  <span className="db-card-badge" style={{ cursor: 'pointer' }} onClick={() => navigate('/sessions')}>{sessions.length} total</span>
                 </div>
                 <div className="table-responsive">
                   <table className="db-table">
@@ -217,7 +217,7 @@ const SchoolDashboard = () => {
                     </thead>
                     <tbody>
                       {sessions.map((s, i) => (
-                        <tr key={i}>
+                        <tr key={i} onClick={() => navigate('/sessions')} style={{ cursor: 'pointer' }}>
                           <td className="db-td-mono">{s.time}</td>
                           <td style={{ fontWeight: 600, color: '#0F172A' }}>{s.instructor}</td>
                           <td>{s.student}</td>

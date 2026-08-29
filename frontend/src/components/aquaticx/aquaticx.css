@@ -351,6 +351,19 @@ body {
   padding: 40px;
 }
 
+/* ─── Global Text Utilities ──────────────────────────────────── */
+.text-primary { color: #0F172A !important; }
+.text-secondary { color: #64748B !important; }
+.text-muted-cls { color: #94A3B8 !important; }
+
+/* Ensure headings inside admin pages are always visible */
+.admin-layout h1,
+.admin-layout h2,
+.admin-content h1,
+.admin-content h2 {
+  color: #0F172A;
+}
+
 /* Dashboard Layout */
 .admin-layout {
   min-height: 100vh;

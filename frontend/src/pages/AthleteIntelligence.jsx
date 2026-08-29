@@ -581,15 +581,20 @@ const AthleteIntelligence = () => {
           background: #F8FAFC;
           font-family: 'Instrument Sans', sans-serif;
           color: #0F172A;
+          padding-top: 84px;
+          box-sizing: border-box;
+          width: 100%;
         }
         .ai-main {
           flex: 1;
-          padding: 40px 80px;
+          padding: 28px 40px 80px 40px;
           overflow-y: auto;
           display: flex;
           flex-direction: column;
-          gap: 32px;
+          gap: 28px;
           position: relative;
+          width: 100%;
+          box-sizing: border-box;
         }
 
         /* Custom scrollbar styling */

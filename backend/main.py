@@ -82,6 +82,7 @@ class User(Base):
     auth_provider = Column(String, default="email")  # "email", "google", "apple"
     social_id = Column(String, nullable=True)
     approval_status = Column(String, default="approved")
+    created_by_school = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -108,6 +109,8 @@ class Instructor(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     name = Column(String, nullable=False)
+    email = Column(String, nullable=True)
+    dob = Column(String, nullable=True)
     age = Column(Integer)
     gender = Column(String)
     fitness_level = Column(String)
@@ -124,6 +127,7 @@ class Instructor(Base):
     languages = Column(Text, default="[\"English\"]")
     intro_video = Column(String, default="")
     price = Column(Float, default=100.00)
+    school = Column(String, default="Individual / Freelance Coach", nullable=True)
 
     user_rel = relationship("User", back_populates="instructor")
     students = relationship("Student", back_populates="instructor_rel")
@@ -167,7 +171,7 @@ class Student(Base):
 
     user_rel = relationship("User", back_populates="student")
     instructor_rel = relationship("Instructor", back_populates="students")
-    sessions = relationship("SurfSession", back_populates="student_rel")
+    sessions = relationship("SurfSession", back_populates="student_rel", cascade="all, delete-orphan")
     badges = relationship("Badge", back_populates="student_rel")
 
     nutrition_logs = relationship("NutritionLog", back_populates="student_rel")
@@ -698,19 +702,18 @@ def verify_token(token: str) -> Optional[dict]:
 # ─── Seed Data ────────────────────────────────────────────────────────────────
 
 def seed_database(db: OrmSession, force: bool = False):
-    if not force and db.query(User).count() > 0:
-        return  # already seeded
-
     # Seed Admin User
-    admin_user = User(
-        email="admin@aisurf.com",
-        password_hash=hash_password("admin123"),
-        password_plain="admin123",
-        role="admin",
-        auth_provider="email"
-    )
-    db.add(admin_user)
-    db.flush()
+    existing_admin = db.query(User).filter(User.email == "admin@aisurf.com").first()
+    if not existing_admin:
+        admin_user = User(
+            email="admin@aisurf.com",
+            password_hash=hash_password("admin123"),
+            password_plain="admin123",
+            role="admin",
+            auth_provider="email"
+        )
+        db.add(admin_user)
+        db.flush()
 
     # Instructors (Coaches)
     instructor_users_data = [
@@ -722,16 +725,21 @@ def seed_database(db: OrmSession, force: bool = False):
     ]
 
     for id_val, (name, email, password, age, gender, fit, exp, certs, img, bio, specs, rate, loc) in enumerate(instructor_users_data, 1):
-        u = User(email=email, password_hash=hash_password(password), password_plain=password, role="coach", auth_provider="email")
-        db.add(u)
-        db.flush()
-        inst = Instructor(
-            id=id_val, user_id=u.id, name=name, age=age, gender=gender,
-            fitness_level=fit, experience=exp, certifications=json.dumps(certs),
-            image=img, bio=bio, specializations=json.dumps(specs),
-            rates=rate, location=loc, reviews=json.dumps([])
-        )
-        db.add(inst)
+        u = db.query(User).filter(func.lower(User.email) == email.lower()).first()
+        if not u:
+            u = User(email=email, password_hash=hash_password(password), password_plain=password, role="coach", auth_provider="email")
+            db.add(u)
+            db.flush()
+        
+        inst = db.query(Instructor).filter(Instructor.id == id_val).first()
+        if not inst:
+            inst = Instructor(
+                id=id_val, user_id=u.id, name=name, age=age, gender=gender,
+                fitness_level=fit, experience=exp, certifications=json.dumps(certs),
+                image=img, bio=bio, specializations=json.dumps(specs),
+                rates=rate, location=loc, reviews=json.dumps([])
+            )
+            db.add(inst)
     db.flush()
 
     # Students (Athletes with Aquatic Indica fields)
@@ -751,20 +759,25 @@ def seed_database(db: OrmSession, force: bool = False):
     ]
 
     for id_val, (name, email, password, level, inst_id, img, bio, age, div, stance, stats, logs, wa, guests_c, dur, s_date, e_date, s_time, stay, rem_pref, g_details) in enumerate(student_users_data, 1):
-        u = User(email=email, password_hash=hash_password(password), password_plain=password, role="athlete", auth_provider="email")
-        db.add(u)
-        db.flush()
-        stud = Student(
-            id=id_val, user_id=u.id, name=name, email=email, level=level,
-            instructor_id=inst_id, image=img, last_active="Today",
-            bio=bio, age=age, division=div, stance=stance,
-            surf_stats=json.dumps(stats), performance_logs=json.dumps(logs),
-            whatsapp_number=wa, guests_count=guests_c, course_duration=dur,
-            start_date=s_date, end_date=e_date, session_time=s_time,
-            staying_at_school=stay, reminder_preference=rem_pref,
-            reminder_sent=False, guests_details=json.dumps(g_details)
-        )
-        db.add(stud)
+        u = db.query(User).filter(func.lower(User.email) == email.lower()).first()
+        if not u:
+            u = User(email=email, password_hash=hash_password(password), password_plain=password, role="athlete", auth_provider="email")
+            db.add(u)
+            db.flush()
+        
+        stud = db.query(Student).filter(Student.id == id_val).first()
+        if not stud:
+            stud = Student(
+                id=id_val, user_id=u.id, name=name, email=email, level=level,
+                instructor_id=inst_id, image=img, last_active="Today",
+                bio=bio, age=age, division=div, stance=stance,
+                surf_stats=json.dumps(stats), performance_logs=json.dumps(logs),
+                whatsapp_number=wa, guests_count=guests_c, course_duration=dur,
+                start_date=s_date, end_date=e_date, session_time=s_time,
+                staying_at_school=stay, reminder_preference=rem_pref,
+                reminder_sent=False, guests_details=json.dumps(g_details)
+            )
+            db.add(stud)
     db.flush()
 
     # Add reviews to Kai Lenny
@@ -876,10 +889,8 @@ def seed_database(db: OrmSession, force: bool = False):
     print("Database seeded with demo data!")
 
 
-# Run seed and database patches at startup
+# Run startup database sequence sync
 with SessionLocal() as _db:
-    seed_database(_db)
-    
     # Auto-patch: Reset PostgreSQL primary key sequences to prevent duplicate key violations on new signups
     if _db.bind.dialect.name == "postgresql":
         from sqlalchemy import text
@@ -1066,12 +1077,16 @@ from fastapi import Depends
 
 class InstructorCreate(BaseModel):
     name: str
-    age: int
-    gender: str
-    fitness_level: str
-    experience: str
+    email: Optional[str] = ""
+    password: Optional[str] = ""
+    dob: Optional[str] = ""
+    age: Optional[int] = 28
+    gender: str = "Male"
+    fitness_level: str = "Elite"
+    experience: str = "2 Years"
     certifications: List[str] = []
     image: Optional[str] = ""
+    school: Optional[str] = "Individual / Freelance Coach"
 
 
 class StudentCreate(BaseModel):
@@ -1102,6 +1117,34 @@ class SessionCreate(BaseModel):
     time: str
     duration_mins: Optional[int] = 60
     student_id: int
+    instructor_id: int
+    location: str
+    condition: str
+    type: str
+    status: Optional[str] = "Upcoming"
+    notes: Optional[str] = ""
+    video_url: Optional[str] = ""
+
+
+class SessionUpdate(BaseModel):
+    date: Optional[str] = None
+    time: Optional[str] = None
+    duration_mins: Optional[int] = None
+    student_id: Optional[int] = None
+    instructor_id: Optional[int] = None
+    location: Optional[str] = None
+    condition: Optional[str] = None
+    type: Optional[str] = None
+    status: Optional[str] = None
+    notes: Optional[str] = None
+    video_url: Optional[str] = None
+
+
+class SessionBulkCreate(BaseModel):
+    date: str
+    time: str
+    duration_mins: Optional[int] = 60
+    student_ids: List[int]
     instructor_id: int
     location: str
     condition: str
@@ -1154,6 +1197,7 @@ class UserSignup(BaseModel):
 class UserLogin(BaseModel):
     email: str
     password: str
+    role: Optional[str] = None
 
 
 class SSOLogin(BaseModel):
@@ -1189,10 +1233,15 @@ class StudentUpdate(BaseModel):
     reminder_sent: Optional[bool] = None
     guests_details: Optional[List[dict]] = None
     image: Optional[str] = None
+    instructor_id: Optional[int] = None
 
 
 class InstructorUpdate(BaseModel):
     name: Optional[str] = None
+    email: Optional[str] = None
+    dob: Optional[str] = None
+    age: Optional[int] = None
+    gender: Optional[str] = None
     bio: Optional[str] = None
     experience: Optional[str] = None
     fitness_level: Optional[str] = None
@@ -1201,6 +1250,7 @@ class InstructorUpdate(BaseModel):
     location: Optional[str] = None
     certifications: Optional[List[str]] = None
     image: Optional[str] = None
+    school: Optional[str] = None
 
 
 class NutritionLogCreate(BaseModel):
@@ -1274,21 +1324,34 @@ class IntegrationKeyCreate(BaseModel):
 # ─── Helper ───────────────────────────────────────────────────────────────────
 
 def instructor_to_dict(i: Instructor):
+    has_pwd = False
+    plain_pwd = ""
+    if i.user_rel:
+        has_pwd = bool(i.user_rel.password_hash or i.user_rel.password_plain)
+        plain_pwd = i.user_rel.password_plain or ""
+    safe_img = i.image or ""
+    if "unsplash.com" in safe_img or "1500648767791" in safe_img:
+        safe_img = ""
     return {
         "id": i.id,
         "name": i.name,
+        "email": i.email or (i.user_rel.email if i.user_rel else ""),
+        "dob": i.dob or "",
         "age": i.age,
         "gender": i.gender,
         "fitness_level": i.fitness_level,
         "experience": i.experience,
         "certifications": json.loads(i.certifications) if i.certifications else [],
-        "image": i.image or "",
+        "image": safe_img,
         "bio": i.bio or "",
         "specializations": json.loads(i.specializations) if i.specializations else [],
         "rates": i.rates or "",
         "location": i.location or "",
         "reviews": json.loads(i.reviews) if i.reviews else [],
+        "school": i.school or "Individual / Freelance Coach",
         "user_id": i.user_id,
+        "has_password": has_pwd,
+        "password_plain": plain_pwd,
     }
 
 
@@ -1350,6 +1413,9 @@ def student_to_dict(s: Student):
     wa_link = f"https://wa.me/{clean_digits}?text={urllib.parse.quote(wa_msg)}" if clean_digits else ""
 
     computed_age = calculate_age_from_dob(s.dob) if s.dob else s.age
+    safe_student_img = s.image or ""
+    if "unsplash.com" in safe_student_img or "1500648767791" in safe_student_img:
+        safe_student_img = ""
 
     return {
         "id": s.id,
@@ -1358,7 +1424,7 @@ def student_to_dict(s: Student):
         "level": s.level,
         "instructor_id": s.instructor_id,
         "instructor": s.instructor_rel.name if s.instructor_rel else "",
-        "image": s.image or "",
+        "image": safe_student_img,
         "last_active": s.last_active or "",
         "bio": s.bio or "",
         "dob": s.dob or "",
@@ -1438,6 +1504,7 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
         "email": user.email,
         "role": user.role,
         "auth_provider": user.auth_provider,
+        "created_by_school": user.created_by_school,
     }
     if user.student:
         res["student_id"] = user.student.id
@@ -1447,6 +1514,7 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
         res["instructor_id"] = user.instructor.id
         res["name"] = user.instructor.name
         res["image"] = user.instructor.image
+        res["school"] = user.instructor.school or "Individual / Freelance Coach"
     else:
         res["name"] = "School Admin"
         res["image"] = ""
@@ -1538,7 +1606,7 @@ def auth_signup(data: UserSignup, db: OrmSession = Depends(get_db)):
                 stance=data.stance,
                 surf_stats=json.dumps({"waves_ridden": 0, "max_speed": "0 mph", "avg_session_mins": 0}),
                 performance_logs=json.dumps([]),
-                image="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100",
+                image=data.image or "",
                 last_active="Today",
                 whatsapp_number=data.whatsapp_number or "",
                 guests_count=data.guests_count or 1,
@@ -1564,11 +1632,12 @@ def auth_signup(data: UserSignup, db: OrmSession = Depends(get_db)):
             fitness_level="Advanced",
             experience="3 Years",
             certifications=json.dumps(["ISA Level 1", "Lifeguard Certified"]),
-            image="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=100",
+            image=data.image or "",
             bio="Professional surf instructor dedicated to athletic performance.",
             specializations=json.dumps(data.specializations or ["S&C", "Video Analysis"]),
             rates=data.rates or "$75 / hr",
             location=data.location or "North Shore, Oahu",
+            school=data.school or "Individual / Freelance Coach",
             reviews=json.dumps([])
         )
         db.add(instructor)
@@ -1786,7 +1855,7 @@ def verify_otp_endpoint(data: VerifyOtpRequest, db: OrmSession = Depends(get_db)
             stance="regular",
             surf_stats=json.dumps({"waves_ridden": 0, "max_speed": "0 mph", "avg_session_mins": 0}),
             performance_logs=json.dumps([]),
-            image="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100",
+            image="",
             last_active="Today",
             whatsapp_number="",
             guests_count=1,
@@ -1851,11 +1920,14 @@ def reset_password_endpoint(data: ResetPasswordRequest, db: OrmSession = Depends
 @app.post("/api/auth/login")
 def auth_login(data: UserLogin, db: OrmSession = Depends(get_db)):
     email_clean = data.email.lower().strip()
-    candidates = db.query(User).filter(func.lower(User.email) == email_clean).all()
+    query = db.query(User).filter(func.lower(User.email) == email_clean)
+    if data.role:
+        query = query.filter(User.role == data.role.lower().strip())
+    candidates = query.all()
     if not candidates:
         raise HTTPException(status_code=400, detail="Invalid email or password")
     
-    # Check password against all candidate role accounts for this email
+    # Check password against candidate role accounts for this email
     matched_user = None
     for u in candidates:
         valid = False
@@ -1898,7 +1970,7 @@ def auth_sso(data: SSOLogin, db: OrmSession = Depends(get_db)):
         db.add(user)
         db.flush()
 
-        user_img = data.image or "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100"
+        user_img = data.image or ""
 
         if role == "athlete":
             student = Student(
@@ -1912,7 +1984,7 @@ def auth_sso(data: SSOLogin, db: OrmSession = Depends(get_db)):
                 stance="regular",
                 surf_stats=json.dumps({"waves_ridden": 0, "max_speed": "0 mph", "avg_session_mins": 0}),
                 performance_logs=json.dumps([]),
-                image="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100",
+                image=data.image or "",
                 last_active="Today"
             )
             db.add(student)
@@ -1925,7 +1997,7 @@ def auth_sso(data: SSOLogin, db: OrmSession = Depends(get_db)):
                 fitness_level="Advanced",
                 experience="2 Years",
                 certifications=json.dumps([]),
-                image="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=100",
+                image=data.image or "",
                 bio="SSO Coach profile",
                 specializations=json.dumps([]),
                 rates="$60 / hr",
@@ -1996,6 +2068,11 @@ def update_student(student_id: int, data: StudentUpdate, db: OrmSession = Depend
         student.guests_details = json.dumps(data.guests_details)
     if data.image is not None:
         student.image = data.image
+    if data.instructor_id is not None:
+        if data.instructor_id <= 0:
+            student.instructor_id = None
+        else:
+            student.instructor_id = data.instructor_id
 
     db.commit()
     db.refresh(student)
@@ -2010,6 +2087,14 @@ def update_instructor(instructor_id: int, data: InstructorUpdate, db: OrmSession
 
     if data.name is not None:
         instructor.name = data.name
+    if data.email is not None:
+        instructor.email = data.email
+    if data.dob is not None:
+        instructor.dob = data.dob
+    if data.age is not None:
+        instructor.age = data.age
+    if data.gender is not None:
+        instructor.gender = data.gender
     if data.bio is not None:
         instructor.bio = data.bio
     if data.experience is not None:
@@ -2026,6 +2111,8 @@ def update_instructor(instructor_id: int, data: InstructorUpdate, db: OrmSession
         instructor.certifications = json.dumps(data.certifications)
     if data.image is not None:
         instructor.image = data.image
+    if data.school is not None:
+        instructor.school = data.school
 
     db.commit()
     db.refresh(instructor)
@@ -2465,58 +2552,59 @@ def get_student_mock_heats(student_id: int, db: OrmSession = Depends(get_db)):
 
 @app.post("/api/upload-video")
 def upload_video(file: UploadFile = File(...)):
-    # Ensure we save it with a safe filename
-    file_ext = os.path.splitext(file.filename)[1]
+    file_ext = os.path.splitext(file.filename)[1] or ".mp4"
     unique_filename = f"{uuid.uuid4()}{file_ext}"
+    content_type = file.content_type or "video/mp4"
+    contents = file.file.read()
     
     if S3_BUCKET_NAME:
         try:
-            file.file.seek(0)
-            s3_client.upload_fileobj(
-                file.file,
-                S3_BUCKET_NAME,
-                unique_filename,
-                ExtraArgs={
-                    "ContentType": file.content_type or "video/mp4"
-                }
+            s3_client.put_object(
+                Bucket=S3_BUCKET_NAME,
+                Key=unique_filename,
+                Body=contents,
+                ContentType=content_type
             )
             video_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{unique_filename}"
-            return {"video_url": video_url}
+            return {"video_url": video_url, "url": video_url}
         except Exception as e:
-            # Log the error and fail securely
-            print(f"S3 upload error: {e}")
-            raise HTTPException(status_code=500, detail=f"AWS S3 upload failed: {str(e)}")
+            print(f"S3 video upload error: {e}")
             
-    # Fallback to local storage if S3 is not configured
-    return {"video_url": f"http://localhost:8000/uploads/{unique_filename}"}
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    file_path = os.path.join(UPLOAD_DIR, unique_filename)
+    with open(file_path, "wb") as f:
+        f.write(contents)
+        
+    video_url = f"/uploads/{unique_filename}"
+    return {"video_url": video_url, "url": video_url}
 
 
 @app.post("/api/upload-image")
 def upload_image(file: UploadFile = File(...)):
     file_ext = os.path.splitext(file.filename)[1] or ".jpg"
     unique_filename = f"{uuid.uuid4()}{file_ext}"
+    content_type = file.content_type or "image/jpeg"
+    contents = file.file.read()
     
     if S3_BUCKET_NAME:
         try:
-            file.file.seek(0)
-            s3_client.upload_fileobj(
-                file.file,
-                S3_BUCKET_NAME,
-                unique_filename,
-                ExtraArgs={
-                    "ContentType": file.content_type or "image/jpeg"
-                }
+            s3_client.put_object(
+                Bucket=S3_BUCKET_NAME,
+                Key=unique_filename,
+                Body=contents,
+                ContentType=content_type
             )
             image_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{unique_filename}"
             return {"image_url": image_url, "url": image_url}
         except Exception as e:
-            print(f"S3 upload error: {e}")
+            print(f"S3 image upload error: {e}")
             
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
     file_path = os.path.join(UPLOAD_DIR, unique_filename)
     with open(file_path, "wb") as f:
-        f.write(file.file.read())
+        f.write(contents)
         
-    image_url = f"http://localhost:8000/uploads/{unique_filename}"
+    image_url = f"/uploads/{unique_filename}"
     return {"image_url": image_url, "url": image_url}
 
 
@@ -2602,11 +2690,44 @@ def get_instructor(instructor_id: int, db: OrmSession = Depends(get_db)):
 
 @app.post("/api/instructors")
 def create_instructor(data: InstructorCreate, db: OrmSession = Depends(get_db)):
+    user_id = None
+    email_clean = (data.email or "").strip().lower()
+    
+    if email_clean:
+        existing_user = db.query(User).filter(func.lower(User.email) == email_clean).first()
+        if existing_user:
+            user_id = existing_user.id
+            if data.password and len(data.password.strip()) >= 6:
+                existing_user.password_hash = hash_password(data.password.strip())
+                existing_user.password_plain = data.password.strip()
+                existing_user.role = "coach"
+                existing_user.approval_status = "approved"
+        elif data.password and len(data.password.strip()) >= 6:
+            new_user = User(
+                email=email_clean,
+                password_hash=hash_password(data.password.strip()),
+                password_plain=data.password.strip(),
+                role="coach",
+                auth_provider="email",
+                approval_status="approved",
+                created_by_school=True
+            )
+            db.add(new_user)
+            db.flush()
+            user_id = new_user.id
+
     instructor = Instructor(
-        name=data.name, age=data.age, gender=data.gender,
-        fitness_level=data.fitness_level, experience=data.experience,
+        user_id=user_id,
+        name=data.name,
+        email=email_clean or "",
+        dob=data.dob or "",
+        age=data.age or 28,
+        gender=data.gender or "Male",
+        fitness_level=data.fitness_level or "Elite",
+        experience=data.experience or "2 Years",
         certifications=json.dumps(data.certifications),
         image=data.image or "",
+        school=data.school or "Individual / Freelance Coach",
     )
     db.add(instructor)
     db.commit()
@@ -2621,9 +2742,19 @@ def delete_instructor(instructor_id: int, db: OrmSession = Depends(get_db)):
     i = db.query(Instructor).filter(Instructor.id == instructor_id).first()
     if not i:
         raise HTTPException(status_code=404, detail="Instructor not found")
-    db.delete(i)
-    db.commit()
-    return {"message": "Deleted"}
+    try:
+        db.query(Student).filter(Student.instructor_id == instructor_id).update({"instructor_id": None})
+        db.query(SurfSession).filter(SurfSession.instructor_id == instructor_id).delete()
+        db.query(MockHeat).filter(MockHeat.coach_id == instructor_id).delete()
+        if i.user_id:
+            db.query(User).filter(User.id == i.user_id).delete()
+        db.delete(i)
+        db.commit()
+    except Exception:
+        db.rollback()
+        db.delete(i)
+        db.commit()
+    return {"message": "Instructor deleted successfully"}
 
 
 # ─── Students ─────────────────────────────────────────────────────────────────
@@ -2672,7 +2803,8 @@ def create_student(data: StudentCreate, db: OrmSession = Depends(get_db)):
                 password_hash=hash_password(data.password),
                 password_plain=data.password,
                 role="athlete",
-                auth_provider="email"
+                auth_provider="email",
+                created_by_school=True
             )
             db.add(new_user)
             db.flush()
@@ -2684,7 +2816,7 @@ def create_student(data: StudentCreate, db: OrmSession = Depends(get_db)):
         user_id=user_id,
         name=data.name, email=data.email, level=data.level,
         instructor_id=data.instructor_id,
-        image=data.image or "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100",
+        image=data.image or "",
         last_active="Today",
         whatsapp_number=data.whatsapp_number or "",
         guests_count=data.guests_count or 1,
@@ -2721,7 +2853,8 @@ def create_students_bulk(students_data: List[StudentCreate], db: OrmSession = De
                     password_hash=hash_password(data.password),
                     password_plain=data.password,
                     role="athlete",
-                    auth_provider="email"
+                    auth_provider="email",
+                    created_by_school=True
                 )
                 db.add(new_user)
                 db.flush()
@@ -2733,7 +2866,7 @@ def create_students_bulk(students_data: List[StudentCreate], db: OrmSession = De
             user_id=user_id,
             name=data.name, email=data.email, level=data.level or "Beginner",
             instructor_id=data.instructor_id,
-            image=data.image or "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100",
+            image=data.image or "",
             last_active="Today",
             whatsapp_number=data.whatsapp_number or "",
             guests_count=data.guests_count or 1,
@@ -2994,7 +3127,8 @@ def set_invite_password(token: str, data: dict, db: OrmSession = Depends(get_db)
         password_plain=password,
         role="athlete",
         auth_provider="email",
-        approval_status="approved"
+        approval_status="approved",
+        created_by_school=True
     )
     db.add(user)
     db.flush()
@@ -3044,7 +3178,8 @@ def set_student_password(student_id: int, data: dict, db: OrmSession = Depends(g
         password_plain=password,
         role="athlete",
         auth_provider="email",
-        approval_status="approved"
+        approval_status="approved",
+        created_by_school=True
     )
     db.add(user)
     db.flush()
@@ -3053,6 +3188,58 @@ def set_student_password(student_id: int, data: dict, db: OrmSession = Depends(g
     student.approval_status = "approved"
     db.commit()
     return {"success": True, "message": "Password set! You can now log in anytime."}
+
+
+@app.post("/api/instructors/{instructor_id}/set-password")
+def set_instructor_password(instructor_id: int, data: dict, db: OrmSession = Depends(get_db)):
+    """Direct password setting / updating for coach from instructor profile page."""
+    instructor = db.query(Instructor).filter(Instructor.id == instructor_id).first()
+    if not instructor:
+        raise HTTPException(status_code=404, detail="Instructor not found")
+    password = data.get("password", "").strip()
+    if not password or len(password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    
+    email = (data.get("email") or instructor.email or "").strip().lower()
+    if not email:
+        safe_name = "".join(c for c in instructor.name.lower() if c.isalnum()) or f"coach{instructor.id}"
+        email = f"{safe_name}@aisurf.io"
+        instructor.email = email
+    else:
+        instructor.email = email
+    
+    if instructor.user_id:
+        user = db.query(User).filter(User.id == instructor.user_id).first()
+        if user:
+            user.email = email
+            user.password_hash = hash_password(password)
+            user.password_plain = password
+            db.commit()
+            return {"success": True, "message": "Password updated successfully! You can now log in with your email.", "email": email, "password_plain": password}
+    
+    existing_user = db.query(User).filter(func.lower(User.email) == email.lower()).first()
+    if existing_user:
+        instructor.user_id = existing_user.id
+        existing_user.role = "coach"
+        existing_user.password_hash = hash_password(password)
+        existing_user.password_plain = password
+        db.commit()
+        return {"success": True, "message": "Password updated successfully! You can now log in with your email.", "email": email, "password_plain": password}
+    
+    user = User(
+        email=email.lower(),
+        password_hash=hash_password(password),
+        password_plain=password,
+        role="coach",
+        auth_provider="email",
+        approval_status="approved",
+        created_by_school=True
+    )
+    db.add(user)
+    db.flush()
+    instructor.user_id = user.id
+    db.commit()
+    return {"success": True, "message": "Password set! You can now log in anytime with your email.", "email": email, "password_plain": password}
 
 
 @app.post("/api/students/{student_id}/approve")
@@ -3090,6 +3277,22 @@ def approve_student_by_email(data: ApproveEmailData, db: OrmSession = Depends(ge
     users = db.query(User).filter(func.lower(User.email) == email_clean).all()
     for u in users:
         u.approval_status = "approved"
+        # If user is athlete and has no student record, auto-create student record
+        if u.role == "athlete" and not u.student and st_count == 0:
+            new_st = Student(
+                user_id=u.id,
+                name=u.email.split("@")[0].capitalize(),
+                email=u.email,
+                level="Beginner",
+                approval_status="approved",
+                school="Aquatic Indica Surf School",
+                start_date=datetime.now().strftime("%Y-%m-%d"),
+                course_duration="3 Days Course",
+                session_time="08:30 AM",
+                staying_at_school="Yes"
+            )
+            db.add(new_st)
+            st_count += 1
 
     db.commit()
     return {"status": "success", "message": f"Approved {email_clean}", "updated_students": st_count}
@@ -3128,6 +3331,7 @@ def check_approval(email: str, db: OrmSession = Depends(get_db)):
 def delete_student(student_id: int, db: OrmSession = Depends(get_db)):
     s = db.query(Student).filter(Student.id == student_id).first()
     if s:
+        db.query(SurfSession).filter(SurfSession.student_id == s.id).delete()
         if s.email:
             u = db.query(User).filter(func.lower(User.email) == s.email.lower()).first()
             if u:
@@ -3141,6 +3345,7 @@ def delete_student(student_id: int, db: OrmSession = Depends(get_db)):
         if u.email:
             st = db.query(Student).filter(func.lower(Student.email) == u.email.lower()).first()
             if st:
+                db.query(SurfSession).filter(SurfSession.student_id == st.id).delete()
                 db.delete(st)
         db.delete(u)
         db.commit()
@@ -3188,6 +3393,73 @@ def create_session(data: SessionCreate, db: OrmSession = Depends(get_db)):
     ))
     db.commit()
     return session_to_dict(session)
+
+
+@app.post("/api/sessions/bulk")
+def create_sessions_bulk(data: SessionBulkCreate, db: OrmSession = Depends(get_db)):
+    instructor = db.query(Instructor).filter(Instructor.id == data.instructor_id).first()
+    instructor_name = instructor.name if instructor else "Coach"
+    created = []
+    student_names = []
+    for sid in data.student_ids:
+        st = db.query(Student).filter(Student.id == sid).first()
+        if st:
+            student_names.append(st.name)
+        session = SurfSession(
+            date=data.date, time=data.time, duration_mins=data.duration_mins,
+            student_id=sid, instructor_id=data.instructor_id,
+            location=data.location, condition=data.condition,
+            type=data.type, status=data.status or "Upcoming",
+            notes=data.notes or "",
+            video_url=data.video_url or "",
+        )
+        db.add(session)
+        created.append(session)
+    db.commit()
+    for s in created:
+        db.refresh(s)
+    
+    count = len(created)
+    names_summary = ", ".join(student_names[:3]) + (f" and {count - 3} more" if count > 3 else "")
+    db.add(ActivityLog(
+        text=f"Group Session for {count} student(s) ({names_summary}) with {instructor_name} scheduled at {data.location} ({data.time})",
+        type="session"
+    ))
+    db.commit()
+    return [session_to_dict(s) for s in created]
+
+
+@app.put("/api/sessions/{session_id}")
+def update_session(session_id: int, data: SessionUpdate, db: OrmSession = Depends(get_db)):
+    s = db.query(SurfSession).filter(SurfSession.id == session_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if data.date is not None:
+        s.date = data.date
+    if data.time is not None:
+        s.time = data.time
+    if data.duration_mins is not None:
+        s.duration_mins = data.duration_mins
+    if data.student_id is not None:
+        s.student_id = data.student_id
+    if data.instructor_id is not None:
+        s.instructor_id = data.instructor_id
+    if data.location is not None:
+        s.location = data.location
+    if data.condition is not None:
+        s.condition = data.condition
+    if data.type is not None:
+        s.type = data.type
+    if data.status is not None:
+        s.status = data.status
+    if data.notes is not None:
+        s.notes = data.notes
+    if data.video_url is not None:
+        s.video_url = data.video_url
+
+    db.commit()
+    db.refresh(s)
+    return session_to_dict(s)
 
 
 @app.delete("/api/sessions/{session_id}")
@@ -3651,9 +3923,11 @@ def delete_user_by_id(user_id: int, db: OrmSession = Depends(get_db)):
         if u.email:
             inst = db.query(Instructor).filter(func.lower(Instructor.email) == u.email.lower()).first()
             if inst:
+                db.query(SurfSession).filter(SurfSession.instructor_id == inst.id).delete()
                 db.delete(inst)
             stud = db.query(Student).filter(func.lower(Student.email) == u.email.lower()).first()
             if stud:
+                db.query(SurfSession).filter(SurfSession.student_id == stud.id).delete()
                 db.delete(stud)
         db.delete(u)
         db.commit()
@@ -3661,6 +3935,7 @@ def delete_user_by_id(user_id: int, db: OrmSession = Depends(get_db)):
     
     inst = db.query(Instructor).filter(Instructor.id == user_id).first()
     if inst:
+        db.query(SurfSession).filter(SurfSession.instructor_id == inst.id).delete()
         db.delete(inst)
         db.commit()
         return {"message": "Instructor deleted successfully"}

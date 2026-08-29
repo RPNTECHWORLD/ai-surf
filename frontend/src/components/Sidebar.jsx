@@ -96,10 +96,6 @@ const Sidebar = () => {
       { label: 'Athlete Intel', path: '/athlete-intelligence' }
     );
 
-    if (role === 'admin') {
-      items.push({ label: 'Register School', path: '/register' });
-    }
-
     return items;
   };
 

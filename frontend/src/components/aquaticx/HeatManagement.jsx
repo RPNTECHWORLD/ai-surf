@@ -2721,8 +2721,18 @@ const HeatManagement = () => {
                             </button>
                         </div>
                         {!isStudent && (
-                            <button onClick={handleOpenCreateHeatModal} className="btn btn-primary">
-                                <Plus size={20} />
+                            <button onClick={handleOpenCreateHeatModal} style={{
+                                display: 'flex', alignItems: 'center', gap: '4px',
+                                padding: '4px 10px', borderRadius: '8px', fontSize: '12px',
+                                fontWeight: '700', border: 'none', cursor: 'pointer',
+                                background: '#0F172A', color: '#fff',
+                                boxShadow: '0 1px 4px rgba(0,0,0,0.12)', transition: 'all 0.2s',
+                                lineHeight: '1.4'
+                            }}
+                            onMouseEnter={e => e.currentTarget.style.opacity = '0.85'}
+                            onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+                            >
+                                <Plus size={12} />
                                 Create Heat
                             </button>
                         )}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 
@@ -7,27 +7,107 @@ const API = import.meta.env.VITE_API_URL || '';
 const InstructorProfile = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const fileInputRef = useRef(null);
   const [instructor, setInstructor] = useState(null);
   const [loading, setLoading] = useState(true);
 
   // Auth states
   const [currentUser, setCurrentUser] = useState(null);
+  const [schoolsList, setSchoolsList] = useState(['Aquatic Indica Surf School']);
   const [showEditModal, setShowEditModal] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [photoPreview, setPhotoPreview] = useState('');
   const [editForm, setEditForm] = useState({
     name: '',
+    email: '',
     bio: '',
     experience: '',
     fitness_level: 'Elite',
     rates: '',
     location: '',
+    school: 'Individual / Freelance Coach',
+    image: '',
     specializations: [],
     certifications: ''
   });
 
+  // Password & Credentials State
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [coachEmail, setCoachEmail] = useState('');
+  const [newPass, setNewPass] = useState('');
+  const [confirmPass, setConfirmPass] = useState('');
+  const [showNewPass, setShowNewPass] = useState(false);
+  const [showConfirmPass, setShowConfirmPass] = useState(false);
+  const [showPassInDetails, setShowPassInDetails] = useState(false);
+  const [copiedPass, setCopiedPass] = useState(false);
+  const [isSavingPass, setIsSavingPass] = useState(false);
+  const [passError, setPassError] = useState('');
+  const [passSuccess, setPassSuccess] = useState('');
+
   // Dynamic data states for students and sessions
   const [assignedStudents, setAssignedStudents] = useState([]);
   const [instructorSessions, setInstructorSessions] = useState([]);
+
+  useEffect(() => {
+    fetch(`${API}/api/schools`)
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data) && data.length > 0) {
+          const names = data.map(s => s.name).filter(Boolean);
+          setSchoolsList(prev => Array.from(new Set([...names, ...prev])));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleUpdatePassword = async (e) => {
+    e.preventDefault();
+    setPassError('');
+    setPassSuccess('');
+    if (newPass.length < 6) {
+      setPassError('Password must be at least 6 characters.');
+      return;
+    }
+    if (newPass !== confirmPass) {
+      setPassError('Passwords do not match.');
+      return;
+    }
+
+    setIsSavingPass(true);
+    try {
+      const res = await fetch(`${API}/api/instructors/${id}/set-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: coachEmail, password: newPass })
+      });
+
+      const data = await res.json();
+      if (res.ok && (data.success || data.message)) {
+        setPassSuccess(`Credentials updated successfully! You can now log in anytime with email: ${data.email || coachEmail}`);
+        setInstructor(prev => ({ ...prev, email: data.email || coachEmail, password_plain: data.password_plain || newPass, has_password: true }));
+        if (currentUser) {
+          const updatedUser = { ...currentUser, email: data.email || coachEmail };
+          sessionStorage.setItem('user', JSON.stringify(updatedUser));
+          setCurrentUser(updatedUser);
+        }
+        setTimeout(() => {
+          setShowPasswordModal(false);
+          setPassSuccess('');
+          setNewPass('');
+          setConfirmPass('');
+          setShowNewPass(false);
+          setShowConfirmPass(false);
+        }, 2200);
+      } else {
+        setPassError(data.detail || data.message || 'Failed to update password.');
+      }
+    } catch (err) {
+      setPassError('Network error. Please try again.');
+    } finally {
+      setIsSavingPass(false);
+    }
+  };
 
   const fetchInstructor = () => {
     fetch(`${API}/api/instructors/${id}`)
@@ -40,6 +120,7 @@ const InstructorProfile = () => {
         if (!data.certifications) data.certifications = [];
         if (!data.reviews) data.reviews = [];
         setInstructor(data);
+        if (data.email) setCoachEmail(data.email);
       })
       .catch(() => {
         // Mock data based on design
@@ -95,6 +176,36 @@ const InstructorProfile = () => {
     fetchDynamicData();
   }, [id]);
 
+  const handlePhotoUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const previewUrl = URL.createObjectURL(file);
+    setPhotoPreview(previewUrl);
+    setUploadingPhoto(true);
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetch(`${API}/api/upload-image`, {
+        method: 'POST',
+        body: formData
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const uploadedUrl = data.image_url || data.url;
+        if (uploadedUrl) {
+          setEditForm(prev => ({ ...prev, image: uploadedUrl }));
+        }
+      }
+    } catch (err) {
+      console.error('Photo upload error:', err);
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
+
   const handleEditClick = () => {
     setEditForm({
       name: instructor.name || '',
@@ -103,9 +214,12 @@ const InstructorProfile = () => {
       fitness_level: instructor.fitness_level || 'Elite',
       rates: instructor.rates || '',
       location: instructor.location || '',
+      school: instructor.school || 'Individual / Freelance Coach',
+      image: (instructor.image && !instructor.image.startsWith('blob:')) ? instructor.image : '',
       specializations: instructor.specializations || [],
       certifications: (instructor.certifications || []).join('\n')
     });
+    setPhotoPreview('');
     setShowEditModal(true);
   };
 
@@ -120,34 +234,43 @@ const InstructorProfile = () => {
 
   const handleEditSubmit = async (e) => {
     e.preventDefault();
+    if (uploadingPhoto) return;
     setSaving(true);
     try {
       const token = sessionStorage.getItem('token');
+      const safeImage = (editForm.image && !editForm.image.startsWith('blob:')) ? editForm.image : '';
+      const payload = {
+        name: editForm.name,
+        bio: editForm.bio,
+        experience: editForm.experience,
+        fitness_level: editForm.fitness_level,
+        specializations: editForm.specializations,
+        rates: editForm.rates,
+        location: editForm.location,
+        school: editForm.school || 'Individual / Freelance Coach',
+        certifications: editForm.certifications.split('\n').filter(c => c.trim() !== '')
+      };
+      if (safeImage) {
+        payload.image = safeImage;
+      }
+
       const res = await fetch(`${API}/api/instructors/${id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({
-          name: editForm.name,
-          bio: editForm.bio,
-          experience: editForm.experience,
-          fitness_level: editForm.fitness_level,
-          specializations: editForm.specializations,
-          rates: editForm.rates,
-          location: editForm.location,
-          certifications: editForm.certifications.split('\n').filter(c => c.trim() !== '')
-        })
+        body: JSON.stringify(payload)
       });
 
       if (res.ok) {
-        if (currentUser && currentUser.instructor_id === parseInt(id) && editForm.name !== currentUser.name) {
-          const updatedUser = { ...currentUser, name: editForm.name };
+        if (currentUser && currentUser.instructor_id === parseInt(id)) {
+          const updatedUser = { ...currentUser, name: editForm.name, image: safeImage || currentUser.image };
           sessionStorage.setItem('user', JSON.stringify(updatedUser));
           setCurrentUser(updatedUser);
         }
         setShowEditModal(false);
+        setPhotoPreview('');
         fetchInstructor();
         fetchDynamicData();
       } else {
@@ -234,15 +357,44 @@ const InstructorProfile = () => {
               <span className="ip-badge-active">ACTIVE</span>
             </div>
           </div>
-          {isOwnProfile && (
-            <button className="btn-secondary edit-profile-btn" onClick={handleEditClick} style={{ marginLeft: 'auto', background: 'rgba(255,255,255,0.1)', color: '#FFF', border: '1px solid rgba(255,255,255,0.2)', padding: '10px 18px', borderRadius: '10px', display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: '12px', alignItems: 'center' }}>
+            {(!instructor.has_password && !instructor.user_id && !instructor.password_plain) && (
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => {
+                  setCoachEmail(instructor.email || '');
+                  setShowPasswordModal(true);
+                }}
+                style={{
+                  background: 'linear-gradient(135deg, rgba(13, 148, 136, 0.25) 0%, rgba(2, 132, 199, 0.25) 100%)',
+                  color: '#2DD4BF',
+                  border: '1px solid rgba(45, 212, 191, 0.4)',
+                  padding: '10px 18px',
+                  borderRadius: '10px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  fontWeight: '700',
+                  fontSize: '13.5px',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  boxShadow: '0 2px 8px rgba(13, 148, 136, 0.15)'
+                }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                <span>🔑 Set Password / Login ID</span>
+              </button>
+            )}
+
+            <button className="btn-secondary edit-profile-btn" onClick={handleEditClick} style={{ background: 'rgba(255,255,255,0.1)', color: '#FFF', border: '1px solid rgba(255,255,255,0.2)', padding: '10px 18px', borderRadius: '10px', display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px' }}>
                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                 <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
               </svg>
               Edit Profile
             </button>
-          )}
+          </div>
         </section>
 
         <div className="ip-grid">
@@ -252,6 +404,84 @@ const InstructorProfile = () => {
             <div className="ip-card">
               <h3 className="ip-card-title">Personal Details</h3>
               <div className="ip-details-list">
+                <div className="ip-detail-row">
+                  <span className="ip-detail-label">Email (Login ID)</span>
+                  <span className="ip-detail-value" style={{ fontWeight: 700, color: instructor.email ? '#0F172A' : '#94A3B8' }}>
+                    {instructor.email || 'No email set'}
+                  </span>
+                </div>
+                <div className="ip-detail-row" style={{ alignItems: 'center' }}>
+                  <span className="ip-detail-label">Password</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span className="ip-detail-value" style={{ fontFamily: showPassInDetails && instructor.password_plain ? 'monospace' : 'inherit', fontSize: '13px', color: '#0F172A', fontWeight: 700 }}>
+                      {instructor.password_plain
+                        ? (showPassInDetails ? instructor.password_plain : '••••••••')
+                        : (instructor.has_password ? '••••••••' : 'Not set')}
+                    </span>
+                    {instructor.password_plain ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setShowPassInDetails(!showPassInDetails)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', color: '#64748B', display: 'inline-flex', alignItems: 'center' }}
+                          title={showPassInDetails ? 'Hide Password' : 'Show Password'}
+                        >
+                          {showPassInDetails ? (
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+                          ) : (
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (navigator.clipboard) {
+                              navigator.clipboard.writeText(instructor.password_plain);
+                              setCopiedPass(true);
+                              setTimeout(() => setCopiedPass(false), 2000);
+                            }
+                          }}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', color: copiedPass ? '#10B981' : '#64748B', display: 'inline-flex', alignItems: 'center' }}
+                          title="Copy Password"
+                        >
+                          {copiedPass ? (
+                            <span style={{ fontSize: '11px', color: '#10B981', fontWeight: 700 }}>Copied!</span>
+                          ) : (
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCoachEmail(instructor.email || '');
+                            setShowPasswordModal(true);
+                          }}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', color: '#64748B', display: 'inline-flex', alignItems: 'center' }}
+                          title="Change Password"
+                        >
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCoachEmail(instructor.email || '');
+                          setShowPasswordModal(true);
+                        }}
+                        style={{ background: 'none', border: 'none', color: '#0D9488', fontSize: '12px', fontWeight: 700, cursor: 'pointer', padding: 0 }}
+                      >
+                        + Set Password
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="ip-detail-row">
+                  <span className="ip-detail-label">Affiliation / School</span>
+                  <span className="ip-detail-value" style={{ fontWeight: 600, color: '#0D9488' }}>
+                    {instructor.school || 'Individual / Freelance Coach'}
+                  </span>
+                </div>
                 <div className="ip-detail-row">
                   <span className="ip-detail-label">Fitness Level</span>
                   <span className="ip-detail-value">{instructor.fitness_level}</span>
@@ -344,11 +574,37 @@ const InstructorProfile = () => {
                       onClick={() => navigate(`/students/${s.id}`)}
                     >
                       <div className="ip-student-info">
-                        <img 
-                          src={s.image || "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100"} 
-                          alt={s.name} 
-                          className="ip-student-avatar" 
-                        />
+                        {s.image && !s.image.includes('unsplash.com') && !s.image.includes('1500648767791') ? (
+                          <img 
+                            src={s.image} 
+                            alt={s.name} 
+                            className="ip-student-avatar" 
+                            onError={e => {
+                              e.currentTarget.style.display = 'none';
+                              const fallback = e.currentTarget.parentElement.querySelector('.ip-student-fallback');
+                              if (fallback) fallback.style.display = 'flex';
+                            }}
+                          />
+                        ) : null}
+                        <div
+                          className="ip-student-fallback"
+                          style={{
+                            display: (s.image && !s.image.includes('unsplash.com') && !s.image.includes('1500648767791')) ? 'none' : 'flex',
+                            width: '36px',
+                            height: '36px',
+                            borderRadius: '50%',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
+                            color: '#FFFFFF',
+                            fontWeight: '800',
+                            fontSize: '14px',
+                            fontFamily: 'Outfit, sans-serif',
+                            flexShrink: 0
+                          }}
+                        >
+                          {s.name ? s.name.charAt(0).toUpperCase() : 'S'}
+                        </div>
                         <div>
                           <div className="ip-student-name">{s.name}</div>
                           <div className="ip-student-time">{s.last_active || 'Today'}</div>
@@ -418,6 +674,80 @@ const InstructorProfile = () => {
               </div>
               <form onSubmit={handleEditSubmit}>
                 <div className="sp-modal-body">
+                  {/* Profile Photo Upload */}
+                  <div className="sp-form-field" style={{ marginBottom: '16px' }}>
+                    <label>Profile Photo</label>
+                    <input
+                      type="file"
+                      ref={fileInputRef}
+                      accept="image/*"
+                      style={{ display: 'none' }}
+                      onChange={handlePhotoUpload}
+                    />
+                    {(() => {
+                      const displayImg = photoPreview || (editForm.image && !editForm.image.startsWith('blob:') ? editForm.image : '');
+                      return (
+                        <div
+                          onClick={() => fileInputRef.current?.click()}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '16px',
+                            width: '100%',
+                            padding: '12px 16px',
+                            background: '#F8FAFC',
+                            border: '2px dashed #CBD5E1',
+                            borderRadius: '14px',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s',
+                            boxSizing: 'border-box'
+                          }}
+                        >
+                          <div style={{ position: 'relative', width: '60px', height: '60px', flexShrink: 0 }}>
+                            {displayImg ? (
+                              <img
+                                src={displayImg}
+                                alt="Coach Avatar"
+                                style={{
+                                  width: '60px',
+                                  height: '60px',
+                                  borderRadius: '50%',
+                                  objectFit: 'cover',
+                                  border: '2px solid #00D1B2'
+                                }}
+                              />
+                            ) : (
+                              <div
+                                style={{
+                                  width: '60px',
+                                  height: '60px',
+                                  borderRadius: '50%',
+                                  background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
+                                  color: '#FFF',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  fontWeight: 800,
+                                  fontSize: '20px'
+                                }}
+                              >
+                                {editForm.name ? editForm.name.charAt(0).toUpperCase() : 'C'}
+                              </div>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                            <span style={{ fontSize: '13px', fontWeight: 700, color: '#0F172A' }}>
+                              {uploadingPhoto ? 'Uploading to cloud...' : (displayImg ? '✓ Change Photo' : 'Upload Profile Photo')}
+                            </span>
+                            <span style={{ fontSize: '11px', color: '#64748B' }}>
+                              Click to select image (JPG, PNG, WEBP)
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
                   <div className="sp-form-field">
                     <label>Full Name</label>
                     <input type="text" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required />
@@ -451,6 +781,19 @@ const InstructorProfile = () => {
                   </div>
 
                   <div className="sp-form-field">
+                    <label>Affiliation / Surf School</label>
+                    <select
+                      value={editForm.school || 'Individual / Freelance Coach'}
+                      onChange={(e) => setEditForm({ ...editForm, school: e.target.value })}
+                    >
+                      <option value="Individual / Freelance Coach">👤 Individual / Freelance Coach (Independent)</option>
+                      {schoolsList.filter(s => s !== 'Individual / Freelance Coach').map(s => (
+                        <option key={s} value={s}>🏫 {s}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="sp-form-field">
                     <label>Bio</label>
                     <textarea rows="3" value={editForm.bio} onChange={(e) => setEditForm({ ...editForm, bio: e.target.value })} placeholder="Write your coaching bio..."></textarea>
                   </div>
@@ -473,9 +816,138 @@ const InstructorProfile = () => {
                   </div>
                 </div>
                 <div className="sp-modal-footer">
-                  <button type="button" className="btn-secondary" onClick={() => setShowEditModal(false)}>Cancel</button>
-                  <button type="submit" className="btn-primary" disabled={saving}>
-                    {saving ? 'Saving...' : 'Save Changes'}
+                  <button type="button" className="btn-secondary" onClick={() => { setShowEditModal(false); setPhotoPreview(''); }}>Cancel</button>
+                  <button type="submit" className="btn-primary" disabled={saving || uploadingPhoto}>
+                    {uploadingPhoto ? 'Uploading Photo...' : (saving ? 'Saving...' : 'Save Changes')}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Update Password & Login ID Modal */}
+        {showPasswordModal && (
+          <div className="sp-modal-overlay" onClick={() => setShowPasswordModal(false)}>
+            <div className="sp-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '480px' }}>
+              <div className="sp-modal-header">
+                <div>
+                  <h3 className="sp-modal-title">Coach Login & Credentials</h3>
+                  <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#64748B' }}>
+                    Set your email and password to log in directly via the login portal.
+                  </p>
+                </div>
+                <button className="sp-modal-close" onClick={() => setShowPasswordModal(false)}>×</button>
+              </div>
+
+              {passError && (
+                <div style={{ margin: '16px 24px 0 24px', padding: '10px 14px', background: '#FEF2F2', border: '1px solid #FCA5A5', color: '#991B1B', borderRadius: '8px', fontSize: '13px', fontWeight: 600 }}>
+                  ⚠️ {passError}
+                </div>
+              )}
+              {passSuccess && (
+                <div style={{ margin: '16px 24px 0 24px', padding: '10px 14px', background: '#ECFDF5', border: '1px solid #6EE7B7', color: '#065F46', borderRadius: '8px', fontSize: '13px', fontWeight: 600 }}>
+                  ✅ {passSuccess}
+                </div>
+              )}
+
+              <form onSubmit={handleUpdatePassword}>
+                <div className="sp-modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  {instructor?.password_plain && (
+                    <div style={{ padding: '12px 14px', background: '#F0FDFA', border: '1px solid #99F6E4', borderRadius: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <span style={{ fontSize: '11.5px', color: '#0F766E', fontWeight: 700, textTransform: 'uppercase' }}>Current Password:</span>
+                        <div style={{ fontSize: '14px', fontWeight: 800, color: '#0D9488', fontFamily: 'monospace', marginTop: '2px' }}>
+                          {instructor.password_plain}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (navigator.clipboard) {
+                            navigator.clipboard.writeText(instructor.password_plain);
+                            setCopiedPass(true);
+                            setTimeout(() => setCopiedPass(false), 2000);
+                          }
+                        }}
+                        style={{ padding: '6px 12px', borderRadius: '8px', background: '#0D9488', color: '#FFF', border: 'none', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}
+                      >
+                        {copiedPass ? '✓ Copied' : '📋 Copy'}
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="sp-form-field">
+                    <label>Email Address (User ID)</label>
+                    <input
+                      type="email"
+                      required
+                      placeholder="e.g. coach@school.com"
+                      value={coachEmail}
+                      onChange={(e) => setCoachEmail(e.target.value)}
+                    />
+                    <small style={{ color: '#64748B', fontSize: '11.5px', marginTop: '2px' }}>
+                      This email will be used as your Coach Login User ID.
+                    </small>
+                  </div>
+
+                  <div className="sp-form-field">
+                    <label>New Password</label>
+                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                      <input
+                        type={showNewPass ? 'text' : 'password'}
+                        required
+                        placeholder="Minimum 6 characters"
+                        value={newPass}
+                        onChange={(e) => setNewPass(e.target.value)}
+                        style={{ width: '100%', paddingRight: '40px' }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowNewPass(!showNewPass)}
+                        style={{ position: 'absolute', right: '12px', background: 'none', border: 'none', cursor: 'pointer', color: '#64748B', display: 'flex', alignItems: 'center' }}
+                        title={showNewPass ? 'Hide password' : 'Show password'}
+                      >
+                        {showNewPass ? (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+                        ) : (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="sp-form-field">
+                    <label>Confirm New Password</label>
+                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                      <input
+                        type={showConfirmPass ? 'text' : 'password'}
+                        required
+                        placeholder="Re-type new password"
+                        value={confirmPass}
+                        onChange={(e) => setConfirmPass(e.target.value)}
+                        style={{ width: '100%', paddingRight: '40px' }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowConfirmPass(!showConfirmPass)}
+                        style={{ position: 'absolute', right: '12px', background: 'none', border: 'none', cursor: 'pointer', color: '#64748B', display: 'flex', alignItems: 'center' }}
+                        title={showConfirmPass ? 'Hide password' : 'Show password'}
+                      >
+                        {showConfirmPass ? (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
+                        ) : (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="sp-modal-footer">
+                  <button type="button" className="btn-secondary" onClick={() => setShowPasswordModal(false)}>Cancel</button>
+                  <button type="submit" className="btn-primary" disabled={isSavingPass} style={{ background: '#0D9488', borderColor: '#0D9488' }}>
+                    {isSavingPass ? 'Saving Credentials...' : 'Save Password'}
                   </button>
                 </div>
               </form>

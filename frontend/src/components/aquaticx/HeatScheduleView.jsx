@@ -622,7 +622,7 @@ const HeatScheduleView = ({ heats, events, onReschedule, onAddBreak, onDeleteHea
     };
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', height: 'calc(100vh - 220px)', minHeight: '750px', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%', boxSizing: 'border-box', minHeight: '750px', fontFamily: 'inherit' }}>
 
             {/* ── WSL Brand & Filter Toolbar ────────────────────────────── */}
             <div style={{

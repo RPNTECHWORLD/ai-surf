@@ -9,6 +9,10 @@ export default defineConfig({
       '/api': {
         target: 'http://54.242.160.238:8000',
         changeOrigin: true,
+      },
+      '/uploads': {
+        target: 'http://54.242.160.238:8000',
+        changeOrigin: true,
       }
     }
   }

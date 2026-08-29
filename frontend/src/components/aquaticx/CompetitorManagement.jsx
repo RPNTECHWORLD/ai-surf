@@ -95,6 +95,7 @@ const CompetitorManagement = () => {
     const [isLoadingSchoolStudents, setIsLoadingSchoolStudents] = useState(false);
     const [selectedSchoolStudentIds, setSelectedSchoolStudentIds] = useState(new Set());
     const [syncSlotFilter, setSyncSlotFilter] = useState('All');
+    const [syncDateFilter, setSyncDateFilter] = useState('All');
     const [isSyncingToEvent, setIsSyncingToEvent] = useState(false);
 
     // Event filter
@@ -125,6 +126,36 @@ const CompetitorManagement = () => {
             catch(e) { return []; }
         }).filter(Boolean))].sort();
     }, [eventFilter, events, surfers, eventSurferIds]);
+
+    // Extract unique available dates configured across competitors / students
+    const availableDates = React.useMemo(() => {
+        const dates = new Set();
+        surfers.forEach(s => {
+            if (s.start_date && s.start_date.trim()) dates.add(s.start_date.trim());
+        });
+        return Array.from(dates).sort();
+    }, [surfers]);
+
+    // Extract unique available session slots for the selected date (or all dates)
+    const availableSlots = React.useMemo(() => {
+        const slots = new Set();
+        surfers.forEach(s => {
+            if (dateFilter === 'All' || s.start_date === dateFilter) {
+                if (s.session_time && s.session_time.trim()) {
+                    slots.add(s.session_time.trim());
+                }
+            }
+        });
+        return Array.from(slots).sort();
+    }, [surfers, dateFilter]);
+
+    const getSlotIcon = (slot) => {
+        const s = (slot || '').toLowerCase();
+        if (s.includes('dawn') || s.includes('6:') || s.includes('06:')) return '🌅';
+        if (s.includes('morning') || s.includes('8:') || s.includes('9:') || s.includes('08:') || s.includes('09:')) return '☀️';
+        if (s.includes('sunset') || s.includes('4:') || s.includes('04:') || s.includes('5:') || s.includes('evening') || s.includes('pm')) return '🌇';
+        return '⏰';
+    };
 
     // Import states
     const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -808,6 +839,9 @@ const CompetitorManagement = () => {
             } catch(e) { return false; }
         })() );
 
+        // Event filter
+        const matchesEvent = eventFilter === 'All' || (s.event_id && String(s.event_id) === String(eventFilter));
+
         // Age filtering logic
         let matchesAge = true;
         if (ageFilter === 'Under 14') {
@@ -816,30 +850,18 @@ const CompetitorManagement = () => {
             matchesAge = s.age <= 18;
         }
 
-        // Slot filter (Morning 6:30 AM, Morning 9:30 AM, Sunset 4:30 PM)
-        const sSlot = (s.session_time || '').toLowerCase();
+        // Slot filter (configured session slots)
         let matchesSlot = true;
-        if (slotFilter === 'Morning 6:30 AM') {
-            matchesSlot = sSlot.includes('6:30') || sSlot.includes('6:00') || sSlot.includes('dawn');
-        } else if (slotFilter === 'Morning 9:30 AM') {
-            matchesSlot = sSlot.includes('9:30') || sSlot.includes('8:00') || sSlot.includes('9:00');
-        } else if (slotFilter === 'Sunset 4:30 PM') {
-            matchesSlot = sSlot.includes('4:30') || sSlot.includes('4:00') || sSlot.includes('sunset') || sSlot.includes('evening');
+        if (slotFilter !== 'All') {
+            const sSlot = (s.session_time || '').trim().toLowerCase();
+            const fSlot = slotFilter.trim().toLowerCase();
+            matchesSlot = sSlot === fSlot || sSlot.includes(fSlot) || fSlot.includes(sSlot);
         }
 
-        // Date filter
+        // Date filter (configured start dates)
         let matchesDate = true;
-        const tomorrow = new Date();
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        const tomStr = tomorrow.toISOString().split('T')[0];
-        const todayStr = new Date().toISOString().split('T')[0];
-
-        if (dateFilter === 'Tomorrow') {
-            matchesDate = !s.start_date || s.start_date === tomStr;
-        } else if (dateFilter === 'Today') {
-            matchesDate = !s.start_date || s.start_date === todayStr;
-        } else if (dateFilter !== 'All') {
-            matchesDate = !s.start_date || s.start_date === dateFilter;
+        if (dateFilter !== 'All') {
+            matchesDate = s.start_date === dateFilter;
         }
 
         return matchesSearch && matchesGender && matchesSchool && matchesAge && matchesEvent && matchesDivision && matchesSlot && matchesDate;
@@ -1277,55 +1299,75 @@ const CompetitorManagement = () => {
                 </div>
 
                 {/* Session Slot & Date Quick Filter Pills */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap', background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '16px', padding: '16px 20px', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }}>
-                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-                        <span style={{ fontSize: '13px', fontWeight: '800', color: '#0F172A', marginRight: '4px' }}>⏰ Session Slot:</span>
-                        {[
-                            { id: 'All', label: 'All Slots', icon: '🌊' },
-                            { id: 'Morning 6:30 AM', label: '06:30 AM (Dawn Patrol)', icon: '🌅' },
-                            { id: 'Morning 9:30 AM', label: '09:30 AM (Morning Session)', icon: '☀️' },
-                            { id: 'Sunset 4:30 PM', label: '04:30 PM (Sunset Session)', icon: '🌇' }
-                        ].map(slot => {
-                            const isSelected = slotFilter === slot.id;
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap', background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '12px', padding: '10px 16px', boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                        <span style={{ fontSize: '12px', fontWeight: '700', color: '#64748B', marginRight: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Session Slots</span>
+                        <button
+                            type="button"
+                            onClick={() => setSlotFilter('All')}
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '5px',
+                                padding: '5px 12px',
+                                borderRadius: '20px',
+                                border: slotFilter === 'All' ? '1.5px solid #0D9488' : '1px solid #E2E8F0',
+                                background: slotFilter === 'All' ? '#0D9488' : '#F8FAFC',
+                                color: slotFilter === 'All' ? '#FFFFFF' : '#64748B',
+                                fontSize: '12px',
+                                fontWeight: slotFilter === 'All' ? '700' : '600',
+                                cursor: 'pointer',
+                                boxShadow: slotFilter === 'All' ? '0 2px 8px rgba(13,148,136,0.2)' : 'none',
+                                transition: 'all 0.15s ease'
+                            }}
+                        >
+                            <span>🌊</span>
+                            <span>All Slots</span>
+                        </button>
+                        {availableSlots.map(slot => {
+                            const isSelected = slotFilter === slot;
                             return (
                                 <button
-                                    key={slot.id}
+                                    key={slot}
                                     type="button"
-                                    onClick={() => setSlotFilter(slot.id)}
+                                    onClick={() => setSlotFilter(slot)}
                                     style={{
                                         display: 'flex',
                                         alignItems: 'center',
-                                        gap: '6px',
-                                        padding: '8px 14px',
-                                        borderRadius: '10px',
-                                        border: isSelected ? '1.5px solid #0284C7' : '1px solid #E2E8F0',
-                                        background: isSelected ? 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)' : '#F8FAFC',
-                                        color: isSelected ? '#00F2FE' : '#475569',
-                                        fontSize: '12.5px',
-                                        fontWeight: isSelected ? '800' : '600',
+                                        gap: '5px',
+                                        padding: '5px 12px',
+                                        borderRadius: '20px',
+                                        border: isSelected ? '1.5px solid #0D9488' : '1px solid #E2E8F0',
+                                        background: isSelected ? '#0D9488' : '#F8FAFC',
+                                        color: isSelected ? '#FFFFFF' : '#64748B',
+                                        fontSize: '12px',
+                                        fontWeight: isSelected ? '700' : '600',
                                         cursor: 'pointer',
-                                        boxShadow: isSelected ? '0 4px 14px rgba(2, 132, 199, 0.25)' : 'none',
-                                        transition: 'all 0.2s ease'
+                                        boxShadow: isSelected ? '0 2px 8px rgba(13,148,136,0.2)' : 'none',
+                                        transition: 'all 0.15s ease'
                                     }}
                                 >
-                                    <span>{slot.icon}</span>
-                                    <span>{slot.label}</span>
+                                    <span>{getSlotIcon(slot)}</span>
+                                    <span>{slot}</span>
                                 </button>
                             );
                         })}
                     </div>
 
-                    <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                        <span style={{ fontSize: '13px', fontWeight: '800', color: '#0F172A' }}>📅 Date:</span>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <span style={{ fontSize: '12px', fontWeight: '700', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.5px' }}>📅 Date:</span>
                         <select
-                            className="form-control"
-                            style={{ height: '38px', borderRadius: '10px', fontSize: '13px', fontWeight: '700', padding: '4px 12px' }}
+                            style={{ height: '32px', borderRadius: '8px', fontSize: '12px', fontWeight: '600', padding: '0 10px', border: '1px solid #E2E8F0', background: '#F8FAFC', color: '#0F172A', outline: 'none', cursor: 'pointer' }}
                             value={dateFilter}
-                            onChange={e => setDateFilter(e.target.value)}
+                            onChange={e => {
+                                setDateFilter(e.target.value);
+                                setSlotFilter('All');
+                            }}
                         >
                             <option value="All">All Dates</option>
-                            <option value="Today">Today</option>
-                            <option value="Tomorrow">Tomorrow</option>
+                            {availableDates.map(d => (
+                                <option key={d} value={d}>{d}</option>
+                            ))}
                         </select>
                     </div>
                 </div>
@@ -3291,33 +3333,69 @@ const CompetitorManagement = () => {
                         </div>
 
                         <div style={{ padding: '20px 24px', overflowY: 'auto', flex: 1 }}>
-                            {/* Slot Filter Inside Modal */}
-                            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
-                                {[
-                                    { id: 'All', label: 'All Slots' },
-                                    { id: 'Morning 6:30 AM', label: '🌅 Morning 6:30 AM' },
-                                    { id: 'Morning 9:30 AM', label: '☀️ Morning 9:30 AM' },
-                                    { id: 'Sunset 4:30 PM', label: '🌇 Sunset 4:30 PM' }
-                                ].map(st => (
-                                    <button
-                                        key={st.id}
-                                        type="button"
-                                        onClick={() => setSyncSlotFilter(st.id)}
-                                        style={{
-                                            padding: '6px 12px',
-                                            borderRadius: '8px',
-                                            border: syncSlotFilter === st.id ? '1.5px solid #0284C7' : '1px solid #E2E8F0',
-                                            background: syncSlotFilter === st.id ? '#0F172A' : '#F8FAFC',
-                                            color: syncSlotFilter === st.id ? '#00F2FE' : '#475569',
-                                            fontSize: '12px',
-                                            fontWeight: '700',
-                                            cursor: 'pointer'
-                                        }}
-                                    >
-                                        {st.label}
-                                    </button>
-                                ))}
-                            </div>
+                            {/* Date & Slot Filters Inside Modal */}
+                            {(() => {
+                                const availableDates = [...new Set(schoolStudents.map(st => st.start_date).filter(Boolean))].sort();
+                                const activeStudentsForDate = schoolStudents.filter(st => {
+                                    if (syncDateFilter === 'All') return true;
+                                    return st.start_date === syncDateFilter;
+                                });
+                                const uniqueSlots = [...new Set(activeStudentsForDate.map(st => st.session_time).filter(Boolean))].sort();
+                                const availableSlots = ['All', ...uniqueSlots];
+
+                                return (
+                                    <>
+                                        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '16px' }}>
+                                            <label style={{ fontSize: '13px', fontWeight: '700', color: '#475569' }}>📆 Filter by Date:</label>
+                                            <select
+                                                value={syncDateFilter}
+                                                onChange={(e) => {
+                                                    setSyncDateFilter(e.target.value);
+                                                    setSyncSlotFilter('All');
+                                                }}
+                                                style={{
+                                                    padding: '8px 12px',
+                                                    borderRadius: '8px',
+                                                    border: '1px solid #CBD5E1',
+                                                    background: '#FFFFFF',
+                                                    fontSize: '13px',
+                                                    color: '#0F172A',
+                                                    outline: 'none',
+                                                    minWidth: '150px'
+                                                }}
+                                            >
+                                                <option value="All">All Dates</option>
+                                                {availableDates.map(d => (
+                                                    <option key={d} value={d}>{d}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+
+                                        {/* Slot Filter Inside Modal */}
+                                        <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
+                                            {availableSlots.map(slot => (
+                                                <button
+                                                    key={slot}
+                                                    type="button"
+                                                    onClick={() => setSyncSlotFilter(slot)}
+                                                    style={{
+                                                        padding: '6px 12px',
+                                                        borderRadius: '8px',
+                                                        border: syncSlotFilter === slot ? '1.5px solid #0284C7' : '1px solid #E2E8F0',
+                                                        background: syncSlotFilter === slot ? '#0F172A' : '#F8FAFC',
+                                                        color: syncSlotFilter === slot ? '#00F2FE' : '#475569',
+                                                        fontSize: '12px',
+                                                        fontWeight: '700',
+                                                        cursor: 'pointer'
+                                                    }}
+                                                >
+                                                    {slot === 'All' ? 'All Slots' : slot}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </>
+                                );
+                            })()}
 
                             {isLoadingSchoolStudents ? (
                                 <div style={{ padding: '40px 0', textAlign: 'center' }}>
@@ -3326,11 +3404,12 @@ const CompetitorManagement = () => {
                                 </div>
                             ) : (() => {
                                 const displayed = schoolStudents.filter(st => {
-                                    if (syncSlotFilter === 'All') return true;
-                                    const sTime = (st.session_time || '').toLowerCase();
-                                    if (syncSlotFilter.includes('6:30')) return sTime.includes('6:30') || sTime.includes('6:00') || sTime.includes('dawn');
-                                    if (syncSlotFilter.includes('9:30')) return sTime.includes('9:30') || sTime.includes('8:00');
-                                    if (syncSlotFilter.includes('4:30')) return sTime.includes('4:30') || sTime.includes('sunset') || sTime.includes('evening');
+                                    // 1. Date Filter
+                                    if (syncDateFilter !== 'All' && st.start_date !== syncDateFilter) return false;
+                                    
+                                    // 2. Slot Filter
+                                    if (syncSlotFilter !== 'All' && st.session_time !== syncSlotFilter) return false;
+                                    
                                     return true;
                                 });
 

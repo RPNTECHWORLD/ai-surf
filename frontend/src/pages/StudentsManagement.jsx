@@ -15,6 +15,7 @@ const StudentsManagement = () => {
   const [instructorFilter, setInstructorFilter] = useState('All');
   const [sessionTimeFilter, setSessionTimeFilter] = useState('All');
   const [stayFilter, setStayFilter] = useState('All');
+  const [dateFilter, setDateFilter] = useState('All');
   const [activeStatFilter, setActiveStatFilter] = useState('TOTAL');
   const [showModal, setShowModal] = useState(false);
   const [modalInvite, setModalInvite] = useState(null); // link shown inside the add-student modal after creation
@@ -49,7 +50,7 @@ const StudentsManagement = () => {
 
   const [form, setForm] = useState({
     name: '', email: '', password: '', level: 'Beginner', instructor_id: '',
-    whatsapp_number: '', course_duration: '3 Days Course', session_time: 'Morning 6:00 AM',
+    whatsapp_number: '', course_duration: '3 Days Course', session_time: '08:30 AM',
     start_date: defaultStartDate, end_date: defaultEndDate, staying_at_school: 'Yes'
   });
 
@@ -103,7 +104,7 @@ const StudentsManagement = () => {
     setCopied(false);
     setForm({
       name: '', email: '', password: '', level: 'Beginner', instructor_id: '',
-      whatsapp_number: '', course_duration: '3 Days Course', session_time: 'Morning 6:00 AM',
+      whatsapp_number: '', course_duration: '3 Days Course', session_time: '08:30 AM',
       start_date: new Date().toISOString().split('T')[0], end_date: addDaysToDate(new Date().toISOString().split('T')[0], 3), staying_at_school: 'Yes'
     });
   };
@@ -145,32 +146,63 @@ const StudentsManagement = () => {
 
   const isDefaultSchool = !activeSchoolName || activeSchoolName.toLowerCase() === 'aquatic indica surf school' || activeSchoolName.toLowerCase() === 'school admin';
 
-  const approvedStudents = (students || []).filter(s => {
-    if (!s || !s.email) return false;
-    const emailLower = String(s.email).toLowerCase();
-    if (s.approval_status === 'pending') return false;
+  const approvedStudents = (() => {
+    const list = [...(students || [])];
 
-    // Determine target school for student request/profile
-    let studentTargetSchool = s.school || 'Aquatic Indica Surf School';
-
+    // Read approved requests from localStorage
     try {
       const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-      const req = savedReqs.find(r => r.student_email && String(r.student_email).toLowerCase() === emailLower);
-      if (req) {
-        if (req.status !== 'approved') return false;
-        if (req.school_name) studentTargetSchool = req.school_name;
-      }
+      savedReqs.forEach(req => {
+        if (req.status === 'approved' && (req.student_email || req.email)) {
+          const emailLower = (req.student_email || req.email).toLowerCase();
+          const existingIdx = list.findIndex(s => s.email && s.email.toLowerCase() === emailLower);
+          if (existingIdx >= 0) {
+            list[existingIdx] = { ...list[existingIdx], approval_status: 'approved' };
+          } else {
+            list.push({
+              id: req.student_id || req.id || Date.now(),
+              name: req.student_name || req.name || emailLower.split('@')[0],
+              email: emailLower,
+              whatsapp_number: req.whatsapp_number || '',
+              level: req.level || 'Beginner',
+              course_duration: req.course_duration || '3 Days Course',
+              session_time: req.session_time || '08:30 AM',
+              start_date: req.start_date || new Date().toISOString().split('T')[0],
+              end_date: req.end_date || '',
+              staying_at_school: req.staying_at_school || 'Yes',
+              approval_status: 'approved',
+              school: req.school_name || activeSchoolName || 'Aquatic Indica Surf School',
+              last_active: 'Today'
+            });
+          }
+        }
+      });
     } catch (e) {}
 
-    // Strict school isolation
-    if (activeSchoolName) {
-      if (String(studentTargetSchool).toLowerCase() !== String(activeSchoolName).toLowerCase()) {
-        return false;
-      }
-    }
+    return list.filter(s => {
+      if (!s || !s.email) return false;
+      const emailLower = String(s.email).toLowerCase();
+      if (s.approval_status === 'pending') return false;
 
-    return true;
-  });
+      let studentTargetSchool = s.school || 'Aquatic Indica Surf School';
+      try {
+        const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+        const req = savedReqs.find(r => r.student_email && String(r.student_email).toLowerCase() === emailLower);
+        if (req) {
+          if (req.status === 'rejected') return false;
+          if (req.school_name) studentTargetSchool = req.school_name;
+        }
+      } catch (e) {}
+
+      if (activeSchoolName && !isDefaultSchool) {
+        if (String(studentTargetSchool).toLowerCase() !== String(activeSchoolName).toLowerCase()) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  })();
 
   const handleStatClick = (label) => {
     setActiveStatFilter(label);
@@ -185,6 +217,59 @@ const StudentsManagement = () => {
     } else if (label === 'ADVANCED') {
       setLevelFilter('Advanced');
     }
+  };
+
+  const calculateCurrentCourseDay = (s) => {
+    if (!s) return { which_day: 1, total_days: 3 };
+    
+    let totalDays = 3;
+    const durStr = s.course_duration || '3 Days Course';
+    const match = String(durStr).match(/(\d+)\s*Day/i);
+    if (match) {
+      totalDays = parseInt(match[1]);
+    } else if (s.total_days) {
+      totalDays = parseInt(s.total_days);
+    }
+
+    if (!s.start_date) {
+      return { which_day: s.which_day || 1, total_days: totalDays };
+    }
+
+    try {
+      let sYear, sMonth, sDay;
+      const parts = String(s.start_date).trim().split(/[-/]/);
+      if (parts.length === 3) {
+        if (parts[0].length === 4) {
+          sYear = parseInt(parts[0]);
+          sMonth = parseInt(parts[1]) - 1;
+          sDay = parseInt(parts[2]);
+        } else if (parts[2].length === 4) {
+          sYear = parseInt(parts[2]);
+          sMonth = parseInt(parts[1]) - 1;
+          sDay = parseInt(parts[0]);
+        }
+      }
+      if (sYear && !isNaN(sYear)) {
+        const sDate = new Date(sYear, sMonth, sDay);
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        
+        const msPerDay = 1000 * 60 * 60 * 24;
+        const diffDays = Math.floor((today.getTime() - sDate.getTime()) / msPerDay);
+        
+        if (diffDays < 0) {
+          return { which_day: 1, total_days: totalDays, status: 'Upcoming' };
+        } else {
+          const currentDayNum = diffDays + 1;
+          if (currentDayNum > totalDays) {
+            return { which_day: totalDays, total_days: totalDays, completed: true };
+          }
+          return { which_day: currentDayNum, total_days: totalDays };
+        }
+      }
+    } catch (e) {}
+
+    return { which_day: s.which_day || 1, total_days: totalDays };
   };
 
   const filtered = approvedStudents.filter(s => {
@@ -212,8 +297,17 @@ const StudentsManagement = () => {
     const matchInstructor = instructorFilter === 'All' || s.instructor === instructorFilter;
     const matchSession = sessionTimeFilter === 'All' || s.session_time === sessionTimeFilter;
     const matchStay = stayFilter === 'All' || (stayFilter === 'Lodge' ? s.staying_at_school === 'Yes' : s.staying_at_school === 'No');
-    return matchSearch && matchLevel && matchStat && matchInstructor && matchSession && matchStay;
+    const matchDate = dateFilter === 'All' || s.start_date === dateFilter;
+    return matchSearch && matchLevel && matchStat && matchInstructor && matchSession && matchStay && matchDate;
   });
+
+  const availableDates = React.useMemo(() => {
+    const dates = new Set();
+    approvedStudents.forEach(s => {
+      if (s.start_date && s.start_date.trim()) dates.add(s.start_date.trim());
+    });
+    return Array.from(dates).sort();
+  }, [approvedStudents]);
 
   const stats = [
     { value: approvedStudents.length, label: 'TOTAL', color: '#050B1A', active: activeStatFilter === 'TOTAL' },
@@ -296,13 +390,8 @@ const StudentsManagement = () => {
   const [addMode, setAddMode] = useState('single');
   const [addedStudentSummary, setAddedStudentSummary] = useState(null);
   
-  // Bulk grid rows state
+  // Bulk grid rows state (Starts clean for manual data entry)
   const [bulkRows, setBulkRows] = useState([
-    { name: 'Liam Torres', email: 'liam.torres@gmail.com', phone: '(555) 123-4567', age: 22, level: 'Intermediate', start_date: '2026-08-25', end_date: '2026-09-05', instructor_id: '' },
-    { name: 'Maya Chen', email: 'maya.chen@yahoo.com', phone: '(555) 987-6543', age: 17, level: 'Beginner', start_date: '2026-08-28', end_date: '2026-09-02', instructor_id: '' },
-    { name: 'Jackson Miller', email: 'j.miller@outlook.com', phone: '(555) 456-7890', age: 28, level: 'Advanced', start_date: '2026-08-30', end_date: '2026-09-08', instructor_id: '' },
-    { name: 'Sofia Rodriguez', email: 'sofia.rod@gmail.com', phone: '(555) 321-9876', age: 19, level: 'Intermediate', start_date: '2026-09-01', end_date: '2026-09-12', instructor_id: '' },
-    { name: 'Kai Peterson', email: 'kai.pete@hawaii.edu', phone: '(555) 789-0123', age: 21, level: 'Advanced', start_date: '2026-09-03', end_date: '2026-09-15', instructor_id: '' },
     { name: '', email: '', phone: '', age: '', level: 'Beginner', start_date: '', end_date: '', instructor_id: '' }
   ]);
 
@@ -316,6 +405,14 @@ const StudentsManagement = () => {
 
   const handleAddRow = () => {
     setBulkRows(prev => [...prev, { name: '', email: '', phone: '', age: '', level: 'Beginner', start_date: '', end_date: '', instructor_id: '' }]);
+  };
+
+  const handleDeleteRow = (index) => {
+    if (bulkRows.length <= 1) {
+      setBulkRows([{ name: '', email: '', phone: '', age: '', level: 'Beginner', start_date: '', end_date: '', instructor_id: '' }]);
+      return;
+    }
+    setBulkRows(prev => prev.filter((_, i) => i !== index));
   };
 
   const handleBulkChange = (index, field, value) => {
@@ -489,6 +586,35 @@ const StudentsManagement = () => {
   const handleApproveStudentRequest = async (reqId, studentEmail) => {
     try {
       const emailLower = (studentEmail || '').toLowerCase();
+      const targetReq = allPendingRequests.find(r => 
+        (r.student_id && String(r.student_id) === String(reqId)) ||
+        (r.id && String(r.id) === String(reqId)) ||
+        (r.student_email && r.student_email.toLowerCase() === emailLower) ||
+        (r.email && r.email.toLowerCase() === emailLower)
+      );
+
+      // If student record doesn't exist in backend, create it
+      const studentExists = students.some(s => s.email && s.email.toLowerCase() === emailLower);
+      if (!studentExists && targetReq) {
+        try {
+          await fetch(`${API}/api/students`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: targetReq.student_name || targetReq.name || (emailLower.split('@')[0]),
+              email: emailLower,
+              level: targetReq.level || 'Beginner',
+              whatsapp_number: targetReq.whatsapp_number || '',
+              course_duration: targetReq.course_duration || '3 Days Course',
+              session_time: targetReq.session_time || '08:30 AM',
+              start_date: targetReq.start_date || new Date().toISOString().split('T')[0],
+              staying_at_school: targetReq.staying_at_school || 'Yes',
+              school: targetReq.school_name || activeSchoolName || 'Aquatic Indica Surf School',
+              approval_status: 'approved'
+            })
+          });
+        } catch (e) {}
+      }
 
       if (typeof reqId === 'number' || (!isNaN(reqId) && !String(reqId).startsWith('req_'))) {
         await fetch(`${API}/api/students/${reqId}/approve`, { method: 'POST' }).catch(() => {});
@@ -501,12 +627,7 @@ const StudentsManagement = () => {
         }).catch(() => {});
       }
 
-      setStudents(prev => prev.map(s => {
-        if (s.id === reqId || (s.email && s.email.toLowerCase() === emailLower)) {
-          return { ...s, approval_status: 'approved' };
-        }
-        return s;
-      }));
+      fetchStudents();
 
       // Upsert approved status into joinRequests & localStorage
       let found = false;
@@ -538,7 +659,7 @@ const StudentsManagement = () => {
         localStorage.setItem('savedAccounts', JSON.stringify(updatedAccounts));
       } catch (e) {}
 
-      showToast(`✅ Approved ${studentEmail || 'student'}! Account unlocked.`);
+      showToast(`✅ Approved ${targetReq?.student_name || studentEmail || 'student'}! Added to My Students.`);
     } catch (err) {
       console.error(err);
     }
@@ -726,9 +847,21 @@ const StudentsManagement = () => {
           </select>
           <select className="sm-select" value={sessionTimeFilter} onChange={e => setSessionTimeFilter(e.target.value)}>
             <option value="All">Session: All Slots</option>
-            <option value="Morning 6:00 AM">Morning 6:00 AM (Dawn Patrol)</option>
-            <option value="Morning 8:00 AM">Morning 8:00 AM</option>
-            <option value="Evening 4:00 PM">Evening 4:00 PM</option>
+            <option value="08:30 AM">08:30 AM (90m)</option>
+            <option value="10:30 AM">10:30 AM (90m)</option>
+            <option value="11:30 AM">11:30 AM (60m)</option>
+            <option value="01:00 PM">01:00 PM (120m)</option>
+            <option value="03:30 PM">03:30 PM (90m)</option>
+          </select>
+          <select
+            className="sm-select"
+            value={dateFilter}
+            onChange={e => setDateFilter(e.target.value)}
+          >
+            <option value="All">📅 Date: All Dates</option>
+            {availableDates.map(d => (
+              <option key={d} value={d}>📅 {d}</option>
+            ))}
           </select>
           <select className="sm-select" value={stayFilter} onChange={e => setStayFilter(e.target.value)}>
             <option value="All">Stay: All</option>
@@ -778,7 +911,37 @@ const StudentsManagement = () => {
                   >
                     <td>
                       <div className="sm-student-info">
-                        <img src={s.image} alt={s.name} className="sm-student-avatar" onError={e => e.target.style.display='none'} />
+                        {s.image && !s.image.includes('unsplash.com') && !s.image.includes('1500648767791') ? (
+                          <img
+                            src={s.image}
+                            alt={s.name}
+                            className="sm-student-avatar"
+                            onError={e => {
+                              e.currentTarget.style.display = 'none';
+                              const fallback = e.currentTarget.parentElement.querySelector('.sm-avatar-fallback');
+                              if (fallback) fallback.style.display = 'flex';
+                            }}
+                          />
+                        ) : null}
+                        <div
+                          className="sm-avatar-fallback"
+                          style={{
+                            display: (s.image && !s.image.includes('unsplash.com') && !s.image.includes('1500648767791')) ? 'none' : 'flex',
+                            width: '38px',
+                            height: '38px',
+                            borderRadius: '50%',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
+                            color: '#FFFFFF',
+                            fontWeight: '800',
+                            fontSize: '15px',
+                            fontFamily: 'Outfit, sans-serif',
+                            flexShrink: 0
+                          }}
+                        >
+                          {s.name ? s.name.charAt(0).toUpperCase() : 'S'}
+                        </div>
                         <div>
                           <div className="sm-student-name">{s.name}</div>
                           <div className="sm-student-email">
@@ -788,18 +951,26 @@ const StudentsManagement = () => {
                       </div>
                     </td>
                     <td>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                        <span style={{ fontSize: '13px', fontWeight: 700, color: '#0F172A' }}>
-                          Day {s.which_day || 1} of {s.total_days || 3}
-                        </span>
-                        <span style={{ fontSize: '11px', color: '#64748B' }}>
-                          {s.course_duration || '3 Days Course'}
-                        </span>
-                      </div>
+                      {(() => {
+                        const { which_day, total_days } = calculateCurrentCourseDay(s);
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                            <span style={{ fontSize: '13px', fontWeight: 700, color: '#0F172A' }}>
+                              Day {which_day} of {total_days}
+                            </span>
+                            <span style={{ fontSize: '11px', color: '#64748B' }}>
+                              {s.course_duration || `${total_days} Days Course`}
+                            </span>
+                          </div>
+                        );
+                      })()}
                     </td>
                     <td>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                        <span style={{ fontSize: '12px', fontWeight: 600, color: '#0F172A' }}>
+                        <span style={{ fontSize: '12px', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          🗓️ {s.start_date || '2026-08-28'}
+                        </span>
+                        <span style={{ fontSize: '12px', fontWeight: 600, color: '#0D9488' }}>
                           ⏰ {s.session_time || 'Morning 6:00 AM'}
                         </span>
                         <span style={{ fontSize: '11px', color: s.staying_at_school === 'Yes' ? '#10B981' : '#64748B' }}>
@@ -1035,10 +1206,11 @@ const StudentsManagement = () => {
                   <div className="sm-field">
                     <label>Preferred Session Time</label>
                     <select value={form.session_time} onChange={e => setForm({...form, session_time: e.target.value})}>
-                      <option value="Morning 6:00 AM">06:00 AM · Dawn Patrol</option>
-                      <option value="Morning 8:30 AM">08:30 AM · Morning Session</option>
-                      <option value="Afternoon 2:00 PM">02:00 PM · Afternoon Session</option>
-                      <option value="Sunset 4:30 PM">04:30 PM · Sunset Patrol</option>
+                      <option value="08:30 AM">08:30 AM · Morning Slot 1 (90m)</option>
+                      <option value="10:30 AM">10:30 AM · Morning Slot 2 (90m)</option>
+                      <option value="11:30 AM">11:30 AM · Midday Slot (60m)</option>
+                      <option value="01:00 PM">01:00 PM · Afternoon Slot (120m)</option>
+                      <option value="03:30 PM">03:30 PM · Late Afternoon (90m)</option>
                     </select>
                   </div>
 
@@ -1111,6 +1283,7 @@ const StudentsManagement = () => {
                         <th>Start Date</th>
                         <th>End Date</th>
                         <th>Assign Instructor</th>
+                        <th style={{ width: '48px', textAlign: 'center' }}>Action</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1182,6 +1355,31 @@ const StudentsManagement = () => {
                               <option value="">Auto-Assign</option>
                               {instructors.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
                             </select>
+                          </td>
+                          <td style={{ textAlign: 'center' }}>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteRow(rIdx)}
+                              title="Delete this row"
+                              style={{
+                                background: '#FEF2F2',
+                                border: '1px solid #FECACA',
+                                color: '#EF4444',
+                                borderRadius: '8px',
+                                width: '32px',
+                                height: '32px',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s'
+                              }}
+                            >
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="3 6 5 6 21 6" />
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                              </svg>
+                            </button>
                           </td>
                         </tr>
                       ))}
@@ -1536,7 +1734,7 @@ const StudentsManagement = () => {
             <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '12px', padding: '14px', marginBottom: '16px' }}>
               <div style={{ fontWeight: 700, fontSize: '15px', color: '#0F172A' }}>{attendanceModal.name}</div>
               <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>
-                Course: {attendanceModal.course_duration || '3 Days Course'} · Current: Day {attendanceModal.which_day || 1} of {attendanceModal.total_days || 3}
+                Course: {attendanceModal.course_duration || '3 Days Course'} · Current: Day {calculateCurrentCourseDay(attendanceModal).which_day} of {calculateCurrentCourseDay(attendanceModal).total_days}
               </div>
             </div>
 
