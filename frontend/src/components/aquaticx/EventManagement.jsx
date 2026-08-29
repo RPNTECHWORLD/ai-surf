@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import './aquaticx.css';
-import { Plus, Calendar as CalendarIcon, X, Check, Loader2, AlertCircle, MapPin, Edit, Trash2, Copy } from 'lucide-react';
+import { Plus, Calendar as CalendarIcon, X, Check, Loader2, AlertCircle, MapPin, Edit, Trash2, Copy, Clock } from 'lucide-react';
 import { useToast } from './ToastContext';
 import { useConfirm } from './ConfirmContext';
 import { useNavigate } from 'react-router-dom';
@@ -30,6 +30,45 @@ const safeParseArray = (value) => {
 let globalEventCache = {
     events: [],
     hasLoaded: false
+};
+
+const DAYS_MAP = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+const defaultSessionSlots = [
+    { id: 1, time: "08:30 AM", duration: "90", maxStudents: 4, days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], active: true },
+    { id: 2, time: "10:30 AM", duration: "90", maxStudents: 4, days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], active: true },
+    { id: 3, time: "11:30 AM", duration: "60", maxStudents: 6, days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], active: true },
+    { id: 4, time: "01:00 PM", duration: "120", maxStudents: 4, days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], active: true },
+    { id: 5, time: "03:30 PM", duration: "90", maxStudents: 4, days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], active: true },
+];
+
+const getConfiguredSlotsForDate = (dateStr) => {
+    let saved = null;
+    try {
+        const raw = localStorage.getItem('session_slots');
+        if (raw) saved = JSON.parse(raw);
+    } catch (e) {}
+    const allSlots = (Array.isArray(saved) && saved.length > 0) ? saved : defaultSessionSlots;
+
+    let dayName = DAYS_MAP[new Date().getDay()];
+    if (dateStr) {
+        try {
+            const parts = String(dateStr).split('-');
+            if (parts.length === 3) {
+                const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+                dayName = DAYS_MAP[d.getDay()];
+            } else {
+                const d = new Date(dateStr);
+                if (!isNaN(d.getTime())) {
+                    dayName = DAYS_MAP[d.getDay()];
+                }
+            }
+        } catch (e) {}
+    }
+
+    const activeSlots = allSlots.filter(s => s.active !== false);
+    const daySlots = activeSlots.filter(s => (!s.days || s.days.length === 0 || s.days.includes(dayName)));
+    return daySlots.length > 0 ? daySlots : activeSlots;
 };
 
 const formatDivisionName = (name, event = null) => {
@@ -104,6 +143,11 @@ const EventManagement = () => {
                 params: { admin_id: adminId }
             });
             const realEvents = Array.isArray(response.data) ? response.data : [];
+            const savedEventSlots = JSON.parse(localStorage.getItem('event_session_slots') || '{}');
+            const hydratedRealEvents = realEvents.map(ev => ({
+                ...ev,
+                session_slot: ev.session_slot || savedEventSlots[ev.id] || savedEventSlots[ev.slug] || savedEventSlots[ev.name] || ''
+            }));
 
             // 2. Fetch scheduled sessions
             let virtualEvents = [];
@@ -139,7 +183,7 @@ const EventManagement = () => {
             }
 
             // 3. Combine and sort
-            const combinedEvents = [...realEvents, ...virtualEvents].sort((a, b) => {
+            const combinedEvents = [...hydratedRealEvents, ...virtualEvents].sort((a, b) => {
                 return new Date(a.created_at) - new Date(b.created_at);
             });
 
@@ -165,6 +209,11 @@ const EventManagement = () => {
             return;
         }
         if (event) {
+            const savedSlots = JSON.parse(localStorage.getItem('event_session_slots') || '{}');
+            const resolvedSlot = event.session_slot || savedSlots[event.id] || savedSlots[event.slug] || savedSlots[event.name] || '';
+            const todaySlots = getConfiguredSlotsForDate(event.start_date);
+            const defaultFallback = todaySlots[0] ? `${todaySlots[0].time} (${todaySlots[0].duration} min slot)` : '10:30 AM (90 min slot)';
+
             setEditingEvent(event);
             setFormData({
                 name: event.name,
@@ -173,18 +222,35 @@ const EventManagement = () => {
                 end_date: event.end_date,
                 status: event.status,
                 event_type: event.event_type || 'Surfing Event',
-                is_series: event.is_series || 0,
-                series_parent_id: event.series_parent_id || '',
-                live_stream_url: event.live_stream_url || ''
+                session_slot: resolvedSlot || defaultFallback,
+                is_series: 0,
+                series_parent_id: '',
+                live_stream_url: ''
             });
             setDivisions(safeParseArray(event.divisions));
             setDivisionAliases(event.division_aliases ? JSON.parse(event.division_aliases) : {});
             setSponsors(safeParseArray(event.sponsors));
             setTitleSponsors(safeParseArray(event.title_sponsors));
         } else {
+            const todayStr = new Date().toISOString().split('T')[0];
+            const todayDisp = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+            const todaySlots = getConfiguredSlotsForDate(todayStr);
+            const defaultSlotVal = todaySlots[0] ? `${todaySlots[0].time} (${todaySlots[0].duration} min slot)` : '10:30 AM (90 min slot)';
+
             setEditingEvent(null);
-            setFormData({ name: '', location: '', start_date: '', end_date: '', status: 'Draft', event_type: 'Surfing Event', is_series: 0, series_parent_id: '', live_stream_url: '' });
-            setDivisions([]);
+            setFormData({
+                name: `Surf Event - ${todayDisp}`,
+                location: 'Kovalam Beach Point',
+                start_date: todayStr,
+                end_date: todayStr,
+                status: 'Active - Live',
+                event_type: 'Surfing Event',
+                session_slot: defaultSlotVal,
+                is_series: 0,
+                series_parent_id: '',
+                live_stream_url: ''
+            });
+            setDivisions(["Men's Open", "Women's Open"]);
             setDivisionAliases({});
             setSponsors([]);
             setTitleSponsors([]);
@@ -214,27 +280,49 @@ const EventManagement = () => {
         setIsSubmitting(true);
         try {
             let finalDivisions = [...divisions];
+            const todayStr = new Date().toISOString().split('T')[0];
 
             const dataToSubmit = {
                 ...formData,
-                is_series: formData.is_series ? 1 : 0,
-                series_parent_id: formData.is_series && formData.series_parent_id ? formData.series_parent_id : null,
-                divisions: JSON.stringify(finalDivisions),
-                division_aliases: divisionAliases,
+                name: (formData.name || 'Surf Event').trim(),
+                location: (formData.location || 'Kovalam Beach Point').trim(),
+                start_date: formData.start_date || todayStr,
+                end_date: formData.end_date || todayStr,
+                status: formData.status || 'Draft',
+                event_type: formData.event_type || 'Surfing Event',
+                session_slot: formData.session_slot,
+                is_series: 0,
+                series_parent_id: null,
+                divisions: JSON.stringify(finalDivisions.length > 0 ? finalDivisions : ["Men's Open", "Women's Open"]),
+                division_aliases: divisionAliases || {},
                 sponsors: Array.isArray(sponsors) ? sponsors : safeParseArray(sponsors),
                 title_sponsors: Array.isArray(titleSponsors) ? titleSponsors : safeParseArray(titleSponsors),
-                admin_id: adminId,
-                banner_image: bannerImage  // null means no change on edit; new base64 means update
+                admin_id: adminId || 'admin',
+                banner_image: bannerImage || null
             };
 
             if (editingEvent) {
                 // Optimistic UI
-                setEvents(prev => prev.map(ev => ev.id === editingEvent.id ? { ...ev, ...dataToSubmit } : ev));
+                setEvents(prev => prev.map(ev => ev.id === editingEvent.id ? { ...ev, ...dataToSubmit, session_slot: formData.session_slot } : ev));
+                const savedSlots = JSON.parse(localStorage.getItem('event_session_slots') || '{}');
+                savedSlots[editingEvent.id] = formData.session_slot;
+                if (editingEvent.slug) savedSlots[editingEvent.slug] = formData.session_slot;
+                if (editingEvent.name) savedSlots[editingEvent.name] = formData.session_slot;
+                localStorage.setItem('event_session_slots', JSON.stringify(savedSlots));
+
                 await axios.put(`${API_BASE}/events/${editingEvent.id}`, dataToSubmit);
                 showToast('Event updated successfully', 'success');
             } else {
                 const res = await axios.post(`${API_BASE}/events`, dataToSubmit);
-                if (res.data) setEvents(prev => [...prev, res.data]);
+                const created = res.data ? { ...res.data, session_slot: formData.session_slot } : null;
+                if (created) {
+                    const savedSlots = JSON.parse(localStorage.getItem('event_session_slots') || '{}');
+                    savedSlots[created.id] = formData.session_slot;
+                    if (created.slug) savedSlots[created.slug] = formData.session_slot;
+                    if (created.name) savedSlots[created.name] = formData.session_slot;
+                    localStorage.setItem('event_session_slots', JSON.stringify(savedSlots));
+                    setEvents(prev => [...prev, created]);
+                }
                 showToast('Event created successfully', 'success');
             }
 
@@ -467,6 +555,16 @@ const EventManagement = () => {
                                         <CalendarIcon size={16} style={{ color: 'var(--text-muted)' }} />
                                         {formatDate(event.start_date)} - {formatDate(event.end_date)}
                                     </div>
+                                    <div className="flex items-center gap-2" style={{ fontSize: '13px', fontWeight: '700', color: '#0d9488', background: 'rgba(13, 148, 136, 0.08)', padding: '4px 10px', borderRadius: '6px', border: '1px solid rgba(13, 148, 136, 0.2)', width: 'fit-content', marginTop: '2px' }}>
+                                        <Clock size={15} style={{ color: '#0d9488' }} />
+                                        <span>{(() => {
+                                            const savedSlots = JSON.parse(localStorage.getItem('event_session_slots') || '{}');
+                                            const found = event.session_slot || savedSlots[event.id] || savedSlots[event.slug] || savedSlots[event.name];
+                                            if (found) return found;
+                                            const todaySlots = getConfiguredSlotsForDate(event.start_date);
+                                            return todaySlots[0] ? `${todaySlots[0].time} (${todaySlots[0].duration} min slot)` : '10:30 AM (90 min slot)';
+                                        })()}</span>
+                                    </div>
                                 </div>
 
                                 <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
@@ -606,65 +704,58 @@ const EventManagement = () => {
                             <button type="button" onClick={() => setIsModalOpen(false)} className="modal-close">
                                 <X size={20} />
                             </button>
-                        </div>
-
-                        <div className="p-8">
-                            <div className="form-group">
-                                <label className="form-label">Event Type <span>*</span></label>
-                                <select
+                        </div>                        <div className="p-8">
+                            {/* Interactive Event Date Selector */}
+                            <div className="form-group" style={{ marginBottom: '16px' }}>
+                                <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span>Event Date <span>*</span></span>
+                                    <span style={{ fontSize: '12px', color: '#0D9488', fontWeight: 800 }}>
+                                        {(() => {
+                                            try {
+                                                const parts = (formData.start_date || '').split('-');
+                                                if (parts.length === 3) {
+                                                    const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+                                                    return d.toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: 'short', year: 'numeric' });
+                                                }
+                                            } catch(e) {}
+                                            return formData.start_date;
+                                        })()}
+                                    </span>
+                                </label>
+                                <input
+                                    type="date"
                                     className="form-control"
-                                    value={formData.event_type}
-                                    onChange={(e) => setFormData({ ...formData, event_type: e.target.value })}
-                                >
-                                    <option value="Surfing Event">Surfing Event</option>
-                                    <option value="SUP Event">SUP Event</option>
-                                </select>
-                            </div>
+                                    required
+                                    style={{ fontWeight: '700', fontSize: '14px', color: '#0F172A', background: '#F8FAFC' }}
+                                    value={formData.start_date}
+                                    onChange={(e) => {
+                                        const newDate = e.target.value;
+                                        let newName = formData.name;
+                                        try {
+                                            const parts = newDate.split('-');
+                                            if (parts.length === 3) {
+                                                const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+                                                const disp = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+                                                if (!editingEvent || !formData.name || formData.name.startsWith('Surf Event')) {
+                                                    newName = `Surf Event - ${disp}`;
+                                                }
+                                            }
+                                        } catch(err) {}
 
-                            {/* Series or Individual Option */}
-                            <div className="form-group">
-                                <label className="form-label">Event Option</label>
-                                <div style={{ display: 'flex', gap: '10px' }}>
-                                    <button
-                                        type="button"
-                                        className={`btn ${!formData.is_series ? 'btn-primary' : 'btn-secondary'}`}
-                                        style={{ flex: 1, justifyContent: 'center' }}
-                                        onClick={() => setFormData({ ...formData, is_series: 0, series_parent_id: '' })}
-                                    >
-                                        Individual Event
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className={`btn ${formData.is_series ? 'btn-primary' : 'btn-secondary'}`}
-                                        style={{ flex: 1, justifyContent: 'center' }}
-                                        onClick={() => setFormData({ ...formData, is_series: 1 })}
-                                    >
-                                        Series Event
-                                    </button>
-                                </div>
+                                        const slotsForNewDate = getConfiguredSlotsForDate(newDate);
+                                        const defaultSlot = slotsForNewDate[0] ? `${slotsForNewDate[0].time} (${slotsForNewDate[0].duration} min slot)` : '';
+                                        const exists = slotsForNewDate.some(s => `${s.time} (${s.duration} min slot)` === formData.session_slot);
+                                        
+                                        setFormData({
+                                            ...formData,
+                                            start_date: newDate,
+                                            end_date: newDate,
+                                            name: newName,
+                                            session_slot: exists ? formData.session_slot : (defaultSlot || formData.session_slot)
+                                        });
+                                    }}
+                                />
                             </div>
-
-                            {formData.is_series === 1 && (
-                                <div className="form-group">
-                                    <label className="form-label">Continues From Event</label>
-                                    <select
-                                        className="form-control"
-                                        value={formData.series_parent_id || ''}
-                                        onChange={(e) => setFormData({ ...formData, series_parent_id: e.target.value })}
-                                        required
-                                    >
-                                        <option value="">-- Select Parent Event --</option>
-                                        {events
-                                            .filter(ev => !editingEvent || ev.id !== editingEvent.id)
-                                            .map(ev => (
-                                                <option key={ev.id} value={ev.id}>
-                                                    {ev.name}
-                                                </option>
-                                            ))
-                                        }
-                                    </select>
-                                </div>
-                            )}
 
                             <div className="form-group">
                                 <label className="form-label">Event Name <span>*</span></label>
@@ -672,45 +763,42 @@ const EventManagement = () => {
                                     type="text"
                                     className="form-control"
                                     required
-                                    placeholder="e.g., Winter Surf Classic 2026"
+                                    placeholder="e.g., Aquatic Indica Surf Event"
                                     value={formData.name}
                                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                                 />
                             </div>
 
                             <div className="form-group">
-                                <label className="form-label">Location <span>*</span></label>
+                                <label className="form-label">Location / Surf Spot <span>*</span></label>
                                 <input
                                     type="text"
                                     className="form-control"
                                     required
-                                    placeholder="e.g., Huntington Beach, CA"
+                                    placeholder="e.g., Kovalam Beach Point"
                                     value={formData.location}
                                     onChange={(e) => setFormData({ ...formData, location: e.target.value })}
                                 />
                             </div>
 
-                            <div className="form-row form-group">
-                                <div>
-                                    <label className="form-label">Start Date <span>*</span></label>
-                                    <input
-                                        type="date"
-                                        className="form-control"
-                                        required
-                                        value={formData.start_date}
-                                        onChange={(e) => setFormData({ ...formData, start_date: e.target.value })}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="form-label">End Date <span>*</span></label>
-                                    <input
-                                        type="date"
-                                        className="form-control"
-                                        required
-                                        value={formData.end_date}
-                                        onChange={(e) => setFormData({ ...formData, end_date: e.target.value })}
-                                    />
-                                </div>
+                            <div className="form-group">
+                                <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span>Configured Time Slot & Duration <span>*</span></span>
+                                    <span style={{ fontSize: '11.5px', color: '#0D9488', fontWeight: '700' }}>
+                                        {getConfiguredSlotsForDate(formData.start_date).length} slots configured for this day
+                                    </span>
+                                </label>
+                                <select
+                                    className="form-control"
+                                    value={formData.session_slot}
+                                    onChange={(e) => setFormData({ ...formData, session_slot: e.target.value })}
+                                >
+                                    {getConfiguredSlotsForDate(formData.start_date).map((slot) => (
+                                        <option key={slot.id || slot.time} value={`${slot.time} (${slot.duration} min slot)`}>
+                                            {slot.time} ({slot.duration} min slot • Max {slot.maxStudents || 4} Surfers)
+                                        </option>
+                                    ))}
+                                </select>
                             </div>
 
                             <div className="form-group">
@@ -721,261 +809,10 @@ const EventManagement = () => {
                                     onChange={(e) => setFormData({ ...formData, status: e.target.value })}
                                 >
                                     <option value="Draft">Draft</option>
-                                    <option value="Register form opening">Register form opening</option>
+                                    <option value="Active - Live">Live - In Progress</option>
                                     <option value="Heat Drawn">Heat Drawn</option>
-                                    <option value="Active - Live">Live</option>
-                                    <option value="On Hold">On Hold</option>
-                                    <option value="Finished - Result Published">Finished - Result Published</option>
+                                    <option value="Finished - Result Published">Finished & Published</option>
                                 </select>
-                            </div>
-
-                            <div className="form-group">
-                                <label className="form-label">
-                                    YouTube Live Stream URL
-                                    <span style={{ marginLeft: '6px', fontSize: '11px', fontWeight: '500', color: 'var(--text-muted)', textTransform: 'none', letterSpacing: 0 }}>
-                                        — optional · paste the full youtube link
-                                    </span>
-                                </label>
-                                <input
-                                    type="text"
-                                    className="form-control"
-                                    placeholder="e.g., https://www.youtube.com/watch?v=..."
-                                    value={formData.live_stream_url}
-                                    onChange={(e) => setFormData({ ...formData, live_stream_url: e.target.value })}
-                                />
-                            </div>
-
-                            {/* ── Banner Image (optional) ── */}
-                            <div className="form-group">
-                                <label className="form-label">
-                                    Share Card Banner Image
-                                    <span style={{ marginLeft: '6px', fontSize: '11px', fontWeight: '500', color: 'var(--text-muted)', textTransform: 'none', letterSpacing: 0 }}>
-                                        — optional · max 2MB · used to display as banner on viewer page and show in share heat 
-                                    </span>
-                                </label>
-
-                                {/* Preview & Upload */}
-                                {bannerImage ? (
-                                    <div style={{ marginBottom: '10px', border: '1px solid var(--border-dim)', borderRadius: '10px', padding: '12px', background: 'var(--surface-hover)' }}>
-                                        <div style={{ borderRadius: '6px', overflow: 'hidden', marginBottom: '12px', height: '100px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#0f172a' }}>
-                                            <img
-                                                src={bannerImage}
-                                                alt="Banner preview"
-                                                style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
-                                            />
-                                        </div>
-                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                            <span style={{ color: 'var(--text-dark)', fontSize: '13px', fontWeight: '700' }}>
-                                                ✅ Already added banner
-                                            </span>
-                                            <button
-                                                type="button"
-                                                onClick={() => { setBannerImage(null); if (bannerInputRef.current) bannerInputRef.current.value = ''; }}
-                                                style={{ background: '#ef4444', border: 'none', color: 'white', borderRadius: '6px', padding: '6px 14px', fontSize: '12px', fontWeight: '700', cursor: 'pointer', transition: 'background 0.2s' }}
-                                                onMouseOver={(e) => e.currentTarget.style.background = '#dc2626'}
-                                                onMouseOut={(e) => e.currentTarget.style.background = '#ef4444'}
-                                            >
-                                                Remove
-                                            </button>
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <input
-                                        type="file"
-                                        accept="image/*"
-                                        ref={bannerInputRef}
-                                        onChange={handleBannerUpload}
-                                        className="form-control"
-                                        style={{ padding: '8px 12px', width: '100%' }}
-                                    />
-                                )}
-                            </div>
-
-                            <div className="form-group">
-                                <label className="form-label">Divisions</label>
-
-                                <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
-                                    {divisions.map((div, index) => (
-                                        <div key={index} className="badge" style={{
-                                            background: 'var(--surface-hover)',
-                                            border: '1px solid var(--border-dim)',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: '6px',
-                                            padding: '6px 12px',
-                                            textTransform: 'none',
-                                            fontSize: '12px',
-                                            fontWeight: '500',
-                                            color: 'var(--text-primary)'
-                                        }}>
-                                            {div}
-                                            <X size={14} style={{ cursor: 'pointer', color: 'var(--text-muted)' }} onClick={() => removeDivision(index)} />
-                                        </div>
-                                    ))}
-                                </div>
-                                <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
-                                    <div style={{ flex: 1.2, display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                        <label style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '600' }}>Select Gender</label>
-                                        <select
-                                            className="form-control"
-                                            value={divisionGender}
-                                            onChange={(e) => setDivisionGender(e.target.value)}
-                                            style={{ width: '100%' }}
-                                        >
-                                            <option value="Men">Men</option>
-                                            <option value="Women">Women</option>
-                                        </select>
-                                    </div>
-                                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                        <label style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '600' }}>Select Type</label>
-                                        <select
-                                            className="form-control"
-                                            value={divisionType}
-                                            onChange={(e) => setDivisionType(e.target.value)}
-                                            style={{ width: '100%' }}
-                                        >
-                                            <option value="Under">Under</option>
-                                            <option value="Above">Above</option>
-                                        </select>
-                                    </div>
-                                    <div style={{ flex: 0.8, display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                        <label style={{ fontSize: '11px', color: 'var(--text-secondary)', fontWeight: '600' }}>Enter Age</label>
-                                        <input
-                                            type="number"
-                                            className="form-control"
-                                            placeholder="Age"
-                                            value={divisionAge}
-                                            onKeyDown={(e) => (e.key === 'ArrowUp' || e.key === 'ArrowDown') && e.preventDefault()}
-                                            onWheel={(e) => e.target.blur()}
-                                            onChange={(e) => setDivisionAge(e.target.value)}
-                                            style={{ width: '100%' }}
-                                        />
-                                    </div>
-                                    <button
-                                        type="button"
-                                        onClick={addDivision}
-                                        className="btn btn-secondary"
-                                        title={`Add: ${buildDivisionLabel(divisionGender, divisionType, divisionAge)}`}
-                                        style={{ padding: '12px', flexShrink: 0, marginTop: '20px' }}
-                                    >
-                                        <Plus size={20} />
-                                    </button>
-                                </div>
-                            </div>
-
-                            {divisions.length > 0 && (
-                                <div className="form-group" style={{ marginTop: '24px' }}>
-                                    <label className="form-label">
-                                        Rename Divisions (Viewer Page Only)
-                                        <span style={{ marginLeft: '6px', fontSize: '11px', fontWeight: '500', color: 'var(--text-muted)', textTransform: 'none', letterSpacing: 0 }}>
-                                            — optional · changes how the division name is displayed publicly
-                                        </span>
-                                    </label>
-                                    <div style={{ background: 'var(--surface-hover)', borderRadius: '12px', padding: '16px', border: '1px solid var(--border-dim)' }}>
-                                        {divisions.map((div, index) => (
-                                            <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: index < divisions.length - 1 ? '12px' : '0' }}>
-                                                <div style={{ flex: 1, fontSize: '13px', fontWeight: '600', color: 'var(--text-dark)' }}>{div}</div>
-                                                <div style={{ color: 'var(--text-muted)' }}>→</div>
-                                                <div style={{ flex: 1.5 }}>
-                                                    <input
-                                                        type="text"
-                                                        className="form-control"
-                                                        placeholder={`Rename to (e.g. Grom, Open)`}
-                                                        value={divisionAliases[div] || ''}
-                                                        onChange={(e) => setDivisionAliases({ ...divisionAliases, [div]: e.target.value })}
-                                                        style={{ width: '100%', padding: '8px 12px', fontSize: '13px' }}
-                                                    />
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            <div className="form-group" style={{ marginTop: '24px' }}>
-                                {/* <label className="form-label">Title Sponsors</label>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
-                                    {titleSponsors.map((sponsor, index) => (
-                                        <div key={index} className="flex items-center gap-4 p-2" style={{ background: 'var(--surface-hover)', borderRadius: '8px', border: '1px solid var(--border-dim)' }}>
-                                            {sponsor.image && <img src={sponsor.image} alt={sponsor.name} style={{ width: '40px', height: '40px', objectFit: 'contain', borderRadius: '4px' }} />}
-                                            <span style={{ fontWeight: '500', flex: 1, fontSize: '14px' }}>{sponsor.name}</span>
-                                            <button type="button" onClick={() => removeTitleSponsor(index)} className="btn btn-danger" style={{ padding: '6px' }}>
-                                                <X size={14} />
-                                            </button>
-                                        </div>
-                                    ))}
-                                </div> */}
-                                {/* <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', background: 'var(--surface-hover)', padding: '16px', borderRadius: '8px', border: '1px dashed var(--border-dim)' }}>
-                                    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: '12px' }}>
-                                        <div className="form-group mb-0">
-                                            <label className="form-label" style={{ fontSize: '12px', marginBottom: '4px' }}>Title Sponsor Name</label>
-                                            <input
-                                                type="text"
-                                                className="form-control"
-                                                placeholder="e.g., Surf Co"
-                                                value={newTitleSponsorName}
-                                                onChange={(e) => setNewTitleSponsorName(e.target.value)}
-                                            />
-                                        </div>
-                                        <div className="form-group mb-0">
-                                            <label className="form-label" style={{ fontSize: '12px', marginBottom: '4px' }}>Title Sponsor Image</label>
-                                            <input
-                                                type="file"
-                                                accept="image/*"
-                                                ref={titleFileInputRef}
-                                                onChange={handleTitleImageUpload}
-                                                className="form-control"
-                                                style={{ padding: '8px 12px', width: '100%' }}
-                                            />
-                                        </div>
-                                    </div>
-                                    <button type="button" onClick={addTitleSponsor} className="btn btn-secondary" style={{ width: '100%', justifyContent: 'center', padding: '10px 16px', marginTop: '4px' }}>
-                                        <Plus size={16} style={{ marginRight: '4px' }} /> Add Title Sponsor
-                                    </button>
-                                </div> */}
-                            </div>
-
-                            <div className="form-group" style={{ marginTop: '24px' }}>
-                                <label className="form-label">Event Sponsors</label>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
-                                    {sponsors.map((sponsor, index) => (
-                                        <div key={index} className="flex items-center gap-4 p-2" style={{ background: 'var(--surface-hover)', borderRadius: '8px', border: '1px solid var(--border-dim)' }}>
-                                            {sponsor.image && <img src={sponsor.image} alt={sponsor.name} style={{ width: '40px', height: '40px', objectFit: 'contain', borderRadius: '4px' }} />}
-                                            <span style={{ fontWeight: '500', flex: 1, fontSize: '14px' }}>{sponsor.name}</span>
-                                            <button type="button" onClick={() => removeSponsor(index)} className="btn btn-danger" style={{ padding: '6px' }}>
-                                                <X size={14} />
-                                            </button>
-                                        </div>
-                                    ))}
-                                </div>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', background: 'var(--surface-hover)', padding: '16px', borderRadius: '8px', border: '1px dashed var(--border-dim)' }}>
-                                    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: '12px' }}>
-                                        <div className="form-group mb-0">
-                                            <label className="form-label" style={{ fontSize: '12px', marginBottom: '4px' }}>Sponsor Name</label>
-                                            <input
-                                                type="text"
-                                                className="form-control"
-                                                placeholder="e.g., Surf Co"
-                                                value={newSponsorName}
-                                                onChange={(e) => setNewSponsorName(e.target.value)}
-                                            />
-                                        </div>
-                                        <div className="form-group mb-0">
-                                            <label className="form-label" style={{ fontSize: '12px', marginBottom: '4px' }}>Sponsor Image</label>
-                                            <input
-                                                type="file"
-                                                accept="image/*"
-                                                ref={fileInputRef}
-                                                onChange={handleImageUpload}
-                                                className="form-control"
-                                                style={{ padding: '8px 12px', width: '100%' }}
-                                            />
-                                        </div>
-                                    </div>
-                                    <button type="button" onClick={addSponsor} className="btn btn-secondary" style={{ width: '100%', justifyContent: 'center', padding: '10px 16px', marginTop: '4px' }}>
-                                        <Plus size={16} style={{ marginRight: '4px' }} /> Add Sponsor
-                                    </button>
-                                </div>
                             </div>
                         </div>
 

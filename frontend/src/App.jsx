@@ -20,6 +20,9 @@ import AthleteIntelligence from './pages/AthleteIntelligence';
 import JudgeScoring from './pages/JudgeScoring';
 import StudentPortal from './pages/StudentPortal';
 import CoachPortal from './pages/CoachPortal';
+import JoinJudge from './pages/JoinJudge';
+import JudgeLogin from './components/aquaticx/JudgeLogin';
+import JudgeDashboard from './components/aquaticx/JudgeDashboard';
 
 const PrivateRoute = ({ children }) => {
   const token = sessionStorage.getItem('token');
@@ -36,6 +39,9 @@ function App() {
         <Route path="/judge-scoring" element={<JudgeScoring />} />
         <Route path="/student-portal" element={<StudentPortal />} />
         <Route path="/coach-portal" element={<CoachPortal />} />
+        <Route path="/join" element={<JoinJudge />} />
+        <Route path="/judge/login" element={<JudgeLogin />} />
+        <Route path="/judge/dashboard" element={<JudgeDashboard />} />
 
         {/* Protected Routes */}
         <Route path="/dashboard" element={<PrivateRoute><SchoolDashboard /></PrivateRoute>} />

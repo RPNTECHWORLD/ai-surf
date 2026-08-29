@@ -117,12 +117,19 @@ const JudgesManagement = () => {
                 }
             }
 
-            // Only map the unique AI Surf instructors to active judges
-            const active = instructors.map((inst, index) => {
+            // 1. Pending requests from invite links
+            const pending = existingJudges.filter(j => j.status === 'Pending');
+            setPendingJudges(pending);
+
+            // 2. Active judges: combine instructors with any active admitted judges
+            const activeAdmitted = existingJudges.filter(j => j.status === 'Active');
+            
+            const allActiveMap = new Map();
+            instructors.forEach((inst, index) => {
                 const matched = existingJudges.find(
                     j => j.name?.toLowerCase().trim() === inst.name?.toLowerCase().trim()
                 );
-                return {
+                allActiveMap.set((inst.name || '').toLowerCase().trim(), {
                     id: matched?.id || `inst_${inst.id || index + 1}`,
                     name: inst.name,
                     email: inst.email || matched?.email || '',
@@ -130,18 +137,29 @@ const JudgesManagement = () => {
                     role: matched?.role || 'scoring',
                     judge_number: index + 1,
                     image: inst.image || matched?.image || ''
-                };
+                });
             });
 
+            activeAdmitted.forEach((adj) => {
+                const normName = (adj.name || '').toLowerCase().trim();
+                if (!allActiveMap.has(normName)) {
+                    allActiveMap.set(normName, {
+                        ...adj,
+                        judge_number: adj.judge_number || (allActiveMap.size + 1)
+                    });
+                }
+            });
+
+            const active = Array.from(allActiveMap.values());
+
             setActiveJudges(active);
-            setPendingJudges([]);
             setHeats(heatsRes.data || []);
             setEvents(eventsRes.data || []);
             setProcessedRequests(recentProcessedRes.data || []);
 
             globalJudgeCache = {
                 activeJudges: active,
-                pendingJudges: [],
+                pendingJudges: pending,
                 heats: heatsRes.data || [],
                 events: eventsRes.data || [],
                 processedRequests: recentProcessedRes.data || [],
@@ -151,6 +169,17 @@ const JudgesManagement = () => {
             console.error('Error fetching data:', err);
         } finally {
             setIsLoading(false);
+        }
+    };
+
+    const handleRoleChange = async (judgeId, newRole) => {
+        try {
+            await axios.patch(`${API_BASE}/judges/${judgeId}/admit`, { role: newRole });
+            showToast(`Role updated to ${newRole === 'master' ? 'Head Judge' : newRole === 'tabulator' ? 'Priority Judge' : 'Scoring Judge'}`, 'success');
+            await fetchData();
+        } catch (err) {
+            console.error('Error changing judge role:', err);
+            showToast('Failed to change judge role.', 'error');
         }
     };
 
@@ -494,25 +523,26 @@ const JudgesManagement = () => {
                                                 <div style={{ flex: 1 }}>
                                                     <p style={{ fontWeight: '600', fontSize: '15px', marginBottom: '2px' }}>{j.name}</p>
                                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                        {j.role === 'scoring' ? (
-                                                            <p className="jm-scoring-label" style={{ fontSize: '10px', color: '#10b981', fontWeight: '700', margin: 0, background: 'rgba(16, 185, 129, 0.2)', padding: '2px 8px', borderRadius: '6px', whiteSpace: 'nowrap' }}>
-                                                                Judge {j.judge_number}
-                                                            </p>
-                                                        ) : (
-                                                            j.role && (
-                                                                <span style={{
-                                                                    fontSize: '10px',
-                                                                    fontWeight: '700',
-                                                                    padding: '2px 8px',
-                                                                    borderRadius: '6px',
-                                                                    background: j.role === 'master' ? 'rgba(255, 138, 0, 0.2)' : 'rgba(0, 71, 255, 0.2)',
-                                                                    color: j.role === 'master' ? '#ff8a00' : 'var(--accent-blue)',
-                                                                    textTransform: 'uppercase'
-                                                                }}>
-                                                                    {j.role === 'master' ? 'Head Judge' : 'Priority'}
-                                                                </span>
-                                                            )
-                                                        )}
+                                                        <select
+                                                            value={j.role || 'scoring'}
+                                                            onChange={(e) => handleRoleChange(j.id, e.target.value)}
+                                                            style={{
+                                                                fontSize: '11px',
+                                                                fontWeight: '800',
+                                                                padding: '3px 8px',
+                                                                borderRadius: '8px',
+                                                                border: j.role === 'master' ? '1px solid #F59E0B' : j.role === 'tabulator' ? '1px solid #3B82F6' : '1px solid #10B981',
+                                                                background: j.role === 'master' ? '#FEF3C7' : j.role === 'tabulator' ? '#EFF6FF' : '#ECFDF5',
+                                                                color: j.role === 'master' ? '#B45309' : j.role === 'tabulator' ? '#1D4ED8' : '#047857',
+                                                                cursor: 'pointer',
+                                                                outline: 'none'
+                                                            }}
+                                                            title="Change role (Head Judge / Scoring Judge / Priority Judge)"
+                                                        >
+                                                            <option value="scoring">⚖️ Scoring Judge (Judge #{j.judge_number || 1})</option>
+                                                            <option value="master">👑 Head Judge</option>
+                                                            <option value="tabulator">⏱️ Priority Judge</option>
+                                                        </select>
                                                     </div>
                                                 </div>
                                                 <button

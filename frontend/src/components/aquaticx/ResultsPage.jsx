@@ -99,7 +99,7 @@ const formatDivisionName = (name, event = null) => {
     return name;
 };
 
-const ResultsPage = () => {
+const ResultsPage = ({ currentUser }) => {
     const { theme } = useAdminTheme();
     const [events, setEvents] = useState(globalResultsCache.events);
     const [heats, setHeats] = useState(globalResultsCache.heats);
@@ -572,12 +572,31 @@ const ResultsPage = () => {
                 params.admin_id = adminId;
             }
 
-            const [eventsRes, heatsRes] = await Promise.all([
-                axios.get(`${API_BASE}/events`, { params }),
-                axios.get(`${API_BASE}/heats`, { params })
-            ]);
-            setEvents(eventsRes.data);
-            const nonBreakHeats = heatsRes.data.filter(h => h.division !== 'Break' && !(h.round || '').toLowerCase().includes('break'));
+            let allEvents = eventsRes.data || [];
+            let nonBreakHeats = (heatsRes.data || []).filter(h => h.division !== 'Break' && !(h.round || '').toLowerCase().includes('break'));
+
+            const isStudent = currentUser?.role === 'athlete' || currentUser?.role === 'student';
+            if (isStudent && currentUser) {
+                const userEmail = (currentUser.email || '').toLowerCase().trim();
+                const userName = (currentUser.name || '').toLowerCase().trim();
+
+                const myHeats = nonBreakHeats.filter(h => {
+                    const surfers = h.surfers || [];
+                    return surfers.some(s => {
+                        const sEmail = (s.email || '').toLowerCase().trim();
+                        const sName = (s.name || '').toLowerCase().trim();
+                        return (userEmail && sEmail === userEmail) || (userName && sName === userName) || (userEmail && sName === userEmail.split('@')[0]) || (userName && userEmail.includes(sName));
+                    });
+                });
+
+                if (myHeats.length > 0) {
+                    nonBreakHeats = myHeats;
+                    const myEventIds = new Set(myHeats.map(h => String(h.event_id)));
+                    allEvents = allEvents.filter(e => myEventIds.has(String(e.id)));
+                }
+            }
+
+            setEvents(allEvents);
             setHeats(nonBreakHeats);
 
             globalResultsCache.events = eventsRes.data;

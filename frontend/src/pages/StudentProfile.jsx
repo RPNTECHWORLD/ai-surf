@@ -118,18 +118,37 @@ const StudentProfile = () => {
       const data = await res.json();
       if (res.ok && (data.success || data.message)) {
         setPassSuccess('Password updated successfully! You can now log in anytime with your email.');
-        setStudent(prev => ({ ...prev, has_password: true }));
+        setStudent(prev => ({ ...prev, has_password: true, password_updated: true }));
         if (currentUser) {
-          const updatedUser = { ...currentUser, has_password: true };
+          const updatedUser = { ...currentUser, has_password: true, password_updated: true };
           sessionStorage.setItem('user', JSON.stringify(updatedUser));
           setCurrentUser(updatedUser);
         }
+        try {
+          const emailLower = (student?.email || currentUser?.email || '').toLowerCase().trim();
+          if (emailLower) {
+            const updatedPassEmails = JSON.parse(localStorage.getItem('passwords_updated_emails') || '[]');
+            if (!updatedPassEmails.includes(emailLower)) {
+              updatedPassEmails.push(emailLower);
+              localStorage.setItem('passwords_updated_emails', JSON.stringify(updatedPassEmails));
+            }
+            const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+            reqs.forEach(r => {
+              if ((r.student_email || r.email || '').toLowerCase().trim() === emailLower) {
+                r.password_updated = true;
+                r.has_password = true;
+              }
+            });
+            localStorage.setItem('school_join_requests', JSON.stringify(reqs));
+          }
+        } catch (e) {}
+
         setTimeout(() => {
           setShowPasswordModal(false);
           setPassSuccess('');
           setNewPass('');
           setConfirmPass('');
-        }, 2000);
+        }, 1800);
       } else {
         setPassError(data.detail || data.message || 'Failed to update password.');
       }
@@ -182,6 +201,12 @@ const StudentProfile = () => {
   // Dynamic fallback for registered surfer (never hardcoded Chloe Kim)
   const getFallbackStudent = () => {
     const savedUser = JSON.parse(sessionStorage.getItem('user') || '{}');
+    const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+    const emailLower = (savedUser.email || '').toLowerCase().trim();
+    const req = reqs.find(r => (r.student_email || r.email)?.toLowerCase().trim() === emailLower);
+    
+    let approvalStatus = savedUser.approval_status || (req ? req.status : 'pending');
+
     return {
       id: id,
       name: savedUser.name || 'Registered Surfer',
@@ -193,6 +218,7 @@ const StudentProfile = () => {
       age: 24,
       division: "Men's Open",
       stance: 'regular',
+      approval_status: approvalStatus,
       surf_stats: { waves_ridden: 0, max_speed: '0 mph', avg_session_mins: 0 },
       performance_logs: [],
       whatsapp_number: '',
@@ -232,13 +258,65 @@ const StudentProfile = () => {
                 color: b === 'YELLOW' ? '#F59E0B' : b === 'GREEN' ? '#10B981' : b === 'BLUE' ? '#3B82F6' : b === 'RED' ? '#EF4444' : '#E2E8F0',
                 textColor: b === 'WHITE' ? '#0F172A' : '#FFFFFF'
               }))
-            : [
-                { id: 1, name: 'White Badge (Student Registered)', date: 'Earned Today', color: '#00F2FE', textColor: '#0F172A' }
-              ]
+            : []
         };
+
+        let isApproved = data.approval_status === 'approved';
+        try {
+          const emailToCheck = (data.email || '').toLowerCase();
+          const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+          const req = reqs.find(r => (r.student_email || r.email)?.toLowerCase() === emailToCheck);
+          if (req && req.status === 'approved') {
+            isApproved = true;
+            cleanStudent.approval_status = 'approved';
+          }
+        } catch (e) {}
+
+        if (isApproved) {
+          cleanStudent.approval_status = 'approved';
+          try {
+            const saved = sessionStorage.getItem('user');
+            if (saved) {
+              const u = JSON.parse(saved);
+              u.approval_status = 'approved';
+              sessionStorage.setItem('user', JSON.stringify(u));
+              setCurrentUser(u);
+            }
+          } catch (e) {}
+        }
+
+        // Check if password has been updated or student registered manually with password
+        const emailLower = (data.email || cleanStudent.email || '').toLowerCase().trim();
+        const updatedPassEmails = (JSON.parse(localStorage.getItem('passwords_updated_emails') || '[]')).map(e => String(e).toLowerCase().trim());
+        
+        let isPassSet = true; // Default to true for registered students who signed up with password!
+
+        if (data.is_temporary_password || data.has_password === false || data.password_set === false) {
+          isPassSet = emailLower ? updatedPassEmails.includes(emailLower) : false;
+        }
+
+        try {
+          const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+          const req = reqs.find(r => (r.student_email || r.email || '').toLowerCase().trim() === emailLower);
+          if (req && (req.password_updated || req.has_password || req.password)) {
+            isPassSet = true;
+          }
+        } catch(e) {}
+
+        cleanStudent.has_password = isPassSet;
+        cleanStudent.password_updated = isPassSet;
+
+        const urlParams = new URLSearchParams(window.location.search);
+        if (!isPassSet && urlParams.has('token')) {
+          setShowPasswordModal(true);
+        }
+
         setStudent(cleanStudent);
       })
-      .catch(() => setStudent(getFallbackStudent()))
+      .catch(() => {
+        const fallback = getFallbackStudent();
+        setStudent(fallback);
+      })
       .finally(() => setLoading(false));
   };
 
@@ -252,9 +330,11 @@ const StudentProfile = () => {
   useEffect(() => {
     // Get auth user
     const saved = sessionStorage.getItem('user');
+    let u = null;
     if (saved) {
       try {
-        setCurrentUser(JSON.parse(saved));
+        u = JSON.parse(saved);
+        setCurrentUser(u);
       } catch (e) {}
     }
     fetchStudent();
@@ -356,16 +436,22 @@ const StudentProfile = () => {
     (currentUser.role === 'admin')
   );
 
-  const isPendingApproval = currentUser && currentUser.role === 'athlete' && (
-    currentUser.approval_status === 'pending' || 
-    (() => {
-      try {
+  const isPendingApproval = (() => {
+    if (student?.approval_status === 'approved') return false;
+    
+    try {
+      const emailToCheck = (student?.email || currentUser?.email || '').toLowerCase();
+      if (emailToCheck) {
         const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-        const req = reqs.find(r => r.student_email?.toLowerCase() === currentUser.email?.toLowerCase());
-        return req && req.status !== 'approved';
-      } catch (e) { return false; }
-    })()
-  );
+        const req = reqs.find(r => (r.student_email || r.email)?.toLowerCase() === emailToCheck);
+        if (req && req.status === 'approved') return false;
+      }
+    } catch (e) {}
+
+    if (student?.approval_status === 'pending') return true;
+    if (currentUser?.role === 'athlete' && currentUser?.approval_status === 'pending') return true;
+    return false;
+  })();
 
   const currentBadge = (student.badges && student.badges.length > 0)
     ? student.badges[student.badges.length - 1]
@@ -501,6 +587,72 @@ const StudentProfile = () => {
             </div>
           </div>
         </section>
+
+        {(new URLSearchParams(window.location.search).has('token') || window.location.search.includes('token=')) && !student?.password_updated && (
+          <div style={{
+            background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(239, 68, 68, 0.08) 100%)',
+            border: '1.5px solid rgba(245, 158, 11, 0.35)',
+            borderRadius: '16px',
+            padding: '18px 22px',
+            marginBottom: '24px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '16px',
+            flexWrap: 'wrap',
+            boxShadow: '0 8px 20px rgba(245, 158, 11, 0.08)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+              <div style={{
+                width: '44px',
+                height: '44px',
+                borderRadius: '12px',
+                background: 'rgba(245, 158, 11, 0.2)',
+                color: '#D97706',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '22px',
+                flexShrink: 0
+              }}>
+                🔐
+              </div>
+              <div>
+                <h4 style={{ margin: '0 0 3px 0', fontSize: '15px', fontWeight: 800, color: '#92400E', fontFamily: 'Outfit, sans-serif' }}>
+                  Action Required: Set Your Permanent Password
+                </h4>
+                <p style={{ margin: 0, fontSize: '13px', color: '#B45309', lineHeight: 1.4 }}>
+                  Your account password is not updated yet. Please set your permanent password to enable direct login with your email anytime.
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setPassError('');
+                setPassSuccess('');
+                setShowPasswordModal(true);
+              }}
+              style={{
+                background: '#D97706',
+                color: '#FFFFFF',
+                border: 'none',
+                padding: '10px 20px',
+                borderRadius: '10px',
+                fontSize: '13px',
+                fontWeight: '700',
+                cursor: 'pointer',
+                boxShadow: '0 4px 12px rgba(217, 119, 6, 0.3)',
+                whiteSpace: 'nowrap'
+              }}
+            >
+              🔑 Set Password Now
+            </button>
+          </div>
+        )}
+
+
 
         <div className="sp-content">
           {/* Left Column */}
@@ -1110,20 +1262,26 @@ const StudentProfile = () => {
         )}
         {/* Password Setup Modal */}
         {showPasswordModal && (
-          <div className="sp-modal-overlay" onClick={() => setShowPasswordModal(false)}>
+          <div className="sp-modal-overlay" onClick={() => {
+            if (student?.password_updated || student?.has_password) {
+              setShowPasswordModal(false);
+            }
+          }}>
             <div className="sp-modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: '440px', background: '#FFFFFF', borderRadius: '20px', padding: '28px', boxShadow: '0 20px 50px rgba(0,0,0,0.25)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <span style={{ fontSize: '24px' }}>🔐</span>
                   <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: '#0F172A', fontFamily: 'Outfit, sans-serif' }}>Update Account Password</h3>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setShowPasswordModal(false)}
-                  style={{ background: 'none', border: 'none', fontSize: '20px', color: '#64748B', cursor: 'pointer' }}
-                >
-                  ✕
-                </button>
+                {(student?.password_updated || student?.has_password) && (
+                  <button
+                    type="button"
+                    onClick={() => setShowPasswordModal(false)}
+                    style={{ background: 'none', border: 'none', fontSize: '20px', color: '#64748B', cursor: 'pointer' }}
+                  >
+                    ✕
+                  </button>
+                )}
               </div>
 
               <p style={{ fontSize: '13px', color: '#64748B', margin: '0 0 20px 0', lineHeight: 1.5 }}>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 
@@ -117,12 +117,27 @@ const StudentsManagement = () => {
       .finally(() => setLoading(false));
   };
 
+  const [reqRefreshKey, setReqRefreshKey] = useState(0);
+
   useEffect(() => {
     fetchStudents();
     fetch(`${API}/api/instructors`)
       .then(r => r.json())
       .then(data => setInstructors(data))
       .catch(() => {});
+
+    const onStorageChange = () => {
+      fetchStudents();
+      setReqRefreshKey(k => k + 1);
+    };
+    window.addEventListener('storage', onStorageChange);
+    window.addEventListener('focus', onStorageChange);
+    const interval = setInterval(() => setReqRefreshKey(k => k + 1), 1500);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('storage', onStorageChange);
+      window.removeEventListener('focus', onStorageChange);
+    };
   }, []);
 
   const levels = ['Beginner', 'Intermediate', 'Advanced', 'Master'];
@@ -149,57 +164,62 @@ const StudentsManagement = () => {
   const approvedStudents = (() => {
     const list = [...(students || [])];
 
-    // Read approved requests from localStorage
+    // Read deleted student emails
+    const deletedEmails = new Set(
+      JSON.parse(localStorage.getItem('deleted_student_emails') || '[]').map(e => String(e).toLowerCase().trim())
+    );
+
+    // Merge registered students & join requests from localStorage
     try {
       const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
       savedReqs.forEach(req => {
-        if (req.status === 'approved' && (req.student_email || req.email)) {
-          const emailLower = (req.student_email || req.email).toLowerCase();
-          const existingIdx = list.findIndex(s => s.email && s.email.toLowerCase() === emailLower);
-          if (existingIdx >= 0) {
-            list[existingIdx] = { ...list[existingIdx], approval_status: 'approved' };
-          } else {
-            list.push({
-              id: req.student_id || req.id || Date.now(),
-              name: req.student_name || req.name || emailLower.split('@')[0],
-              email: emailLower,
-              whatsapp_number: req.whatsapp_number || '',
-              level: req.level || 'Beginner',
-              course_duration: req.course_duration || '3 Days Course',
-              session_time: req.session_time || '08:30 AM',
-              start_date: req.start_date || new Date().toISOString().split('T')[0],
-              end_date: req.end_date || '',
-              staying_at_school: req.staying_at_school || 'Yes',
-              approval_status: 'approved',
-              school: req.school_name || activeSchoolName || 'Aquatic Indica Surf School',
-              last_active: 'Today'
-            });
-          }
+        const emailLower = (req.student_email || req.email || '').toLowerCase().trim();
+        if (!emailLower || deletedEmails.has(emailLower) || req.status === 'rejected') return;
+
+        const existingIdx = list.findIndex(s => s.email && s.email.toLowerCase().trim() === emailLower);
+        if (existingIdx >= 0) {
+          list[existingIdx] = {
+            ...list[existingIdx],
+            approval_status: req.status || list[existingIdx].approval_status || 'approved'
+          };
+        } else {
+          list.push({
+            id: req.student_id || req.id || Date.now(),
+            name: req.student_name || req.name || emailLower.split('@')[0],
+            email: emailLower,
+            whatsapp_number: req.whatsapp_number || '',
+            level: req.level || 'Beginner',
+            course_duration: req.course_duration || '3 Days Course',
+            session_time: req.session_time || '08:30 AM',
+            start_date: req.start_date || new Date().toISOString().split('T')[0],
+            end_date: req.end_date || '',
+            staying_at_school: req.staying_at_school || 'Yes',
+            approval_status: req.status || 'approved',
+            school: req.school_name || activeSchoolName || 'Aquatic Indica Surf School',
+            last_active: 'Today'
+          });
         }
       });
     } catch (e) {}
 
+    const seenEmails = new Set();
     return list.filter(s => {
       if (!s || !s.email) return false;
-      const emailLower = String(s.email).toLowerCase();
-      if (s.approval_status === 'pending') return false;
+      const emailLower = String(s.email).toLowerCase().trim();
+      if (deletedEmails.has(emailLower)) return false;
+      if (seenEmails.has(emailLower)) return false;
 
-      let studentTargetSchool = s.school || 'Aquatic Indica Surf School';
       try {
         const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-        const req = savedReqs.find(r => r.student_email && String(r.student_email).toLowerCase() === emailLower);
+        const req = savedReqs.find(r => (r.student_email || r.email) && String(r.student_email || r.email).toLowerCase().trim() === emailLower);
         if (req) {
-          if (req.status === 'rejected') return false;
-          if (req.school_name) studentTargetSchool = req.school_name;
+          if (req.status === 'pending' || req.status === 'rejected') return false; // Hide from active list until approved!
+        } else if (s.approval_status === 'pending' || s.approval_status === 'rejected') {
+          return false; // Hide unapproved students from active list!
         }
       } catch (e) {}
 
-      if (activeSchoolName && !isDefaultSchool) {
-        if (String(studentTargetSchool).toLowerCase() !== String(activeSchoolName).toLowerCase()) {
-          return false;
-        }
-      }
-
+      seenEmails.add(emailLower);
       return true;
     });
   })();
@@ -341,6 +361,25 @@ const StudentsManagement = () => {
       });
       if (res.ok) {
         const newStudent = await res.json();
+        
+        // Save student into backend surfers table (correct backend)
+        try {
+          fetch(`${API}/api/surfers`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: form.name.trim(),
+              school_name: activeSchoolName || 'Aquatic Indica Surf School',
+              email: form.email.toLowerCase().trim(),
+              phone: form.whatsapp_number || '',
+              gender: 'Male',
+              age: 20,
+              state: 'Tamil Nadu',
+              admin_id: 'admin'
+            })
+          }).catch(() => {});
+        } catch (e) {}
+
         fetchStudents();
         const baseUrl = window.location.origin;
         let inviteToken = `inv_${Date.now()}`;
@@ -538,50 +577,130 @@ const StudentsManagement = () => {
   const [toastMsg, setToastMsg] = useState('');
   const showToast = (msg) => { setToastMsg(msg); setTimeout(() => setToastMsg(''), 4000); };
 
-  const [joinRequests, setJoinRequests] = useState(() => {
+  const handleDeleteStudent = async (studentId, studentName, studentEmail) => {
+    if (!window.confirm(`Are you sure you want to remove student "${studentName || 'this student'}"?`)) return;
     try {
-      const saved = localStorage.getItem('school_join_requests');
-      return saved ? JSON.parse(saved) : [];
+      if (studentId) {
+        await fetch(`${API}/api/students/${studentId}`, { method: 'DELETE' }).catch(() => {});
+      }
+      if (studentEmail) {
+        const emailLower = studentEmail.toLowerCase().trim();
+        const deletedEmails = JSON.parse(localStorage.getItem('deleted_student_emails') || '[]');
+        if (!deletedEmails.includes(emailLower)) {
+          deletedEmails.push(emailLower);
+          localStorage.setItem('deleted_student_emails', JSON.stringify(deletedEmails));
+        }
+        const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+        const filteredReqs = savedReqs.filter(r => (r.student_email || r.email || '').toLowerCase().trim() !== emailLower);
+        localStorage.setItem('school_join_requests', JSON.stringify(filteredReqs));
+      }
+      setStudents(prev => prev.filter(s => s.id !== studentId && (s.email || '').toLowerCase().trim() !== (studentEmail || '').toLowerCase().trim()));
+      showToast(`Student "${studentName}" removed.`);
+    } catch (err) {
+      console.error('Failed to delete student:', err);
+    }
+  };
+
+  // Set of emails that are already active/approved in the roster
+  const approvedEmailsSet = new Set(
+    (approvedStudents || []).map(s => String(s.email).toLowerCase().trim()).filter(Boolean)
+  );
+
+  // Build allPendingRequests: Any registered athlete whose email is NOT in approvedEmailsSet
+  const allPendingRequests = useMemo(() => {
+    try {
+      const deletedEmails = new Set(
+        JSON.parse(localStorage.getItem('deleted_student_emails') || '[]').map(e => String(e).toLowerCase().trim())
+      );
+
+      const seenEmails = new Set();
+      const pending = [];
+
+      const addIfPending = (email, name, schoolName, startDate, sessionTime, phone, id) => {
+        const emailLower = (email || '').toLowerCase().trim();
+        if (!emailLower || deletedEmails.has(emailLower) || seenEmails.has(emailLower)) return;
+        // If student is ALREADY approved and present in the active table, do not show in pending
+        if (approvedEmailsSet.has(emailLower)) return;
+
+        // Check if student was explicitly rejected
+        const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+        const req = reqs.find(r => (r.student_email || r.email || '').toLowerCase().trim() === emailLower);
+        if (req && req.status === 'rejected') return;
+
+        seenEmails.add(emailLower);
+        pending.push({
+          id: id || req?.id || `req_${emailLower}`,
+          student_id: id || req?.student_id,
+          student_name: name || req?.student_name || req?.name || emailLower.split('@')[0],
+          student_email: emailLower,
+          school_name: schoolName || req?.school_name || activeSchoolName || 'Aquatic Indica Surf School',
+          start_date: startDate || req?.start_date || new Date().toISOString().split('T')[0],
+          session_time: sessionTime || req?.session_time || 'Morning 6:00 AM',
+          whatsapp_number: phone || req?.whatsapp_number || 'N/A',
+          status: 'pending'
+        });
+      };
+
+      // 1. From school_join_requests
+      const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+      reqs.forEach(r => {
+        addIfPending(
+          r.student_email || r.email,
+          r.student_name || r.name,
+          r.school_name || r.school,
+          r.start_date,
+          r.session_time,
+          r.whatsapp_number,
+          r.student_id || r.id
+        );
+      });
+
+      // 2. From savedAccounts
+      const savedAccs = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
+      savedAccs.forEach(u => {
+        if (!u || !u.email) return;
+        if (u.role && u.role !== 'athlete' && u.role !== 'student') return;
+        addIfPending(
+          u.email, u.name, u.school, u.start_date, u.session_time,
+          u.whatsapp_number || u.phone, u.student_id || u.id
+        );
+      });
+
+      // 3. From mock_students_data
+      const mockStudents = JSON.parse(localStorage.getItem('mock_students_data') || '[]');
+      mockStudents.forEach(u => {
+        if (!u || !u.email) return;
+        addIfPending(
+          u.email, u.name, u.school, u.start_date, u.session_time,
+          u.whatsapp_number || u.phone, u.student_id || u.id
+        );
+      });
+
+      // 4. From current logged-in / active user session
+      try {
+        const sessionUser = JSON.parse(sessionStorage.getItem('user') || '{}');
+        if (sessionUser && sessionUser.email && (sessionUser.role === 'athlete' || sessionUser.role === 'student' || !sessionUser.role)) {
+          addIfPending(
+            sessionUser.email, sessionUser.name, sessionUser.school, sessionUser.start_date, sessionUser.session_time,
+            sessionUser.whatsapp_number || sessionUser.phone, sessionUser.student_id || sessionUser.id
+          );
+        }
+      } catch (e) {}
+
+      // 5. From backend students list if unapproved
+      (students || []).forEach(s => {
+        if (!s || !s.email) return;
+        addIfPending(
+          s.email, s.name, s.school, s.start_date, s.session_time,
+          s.whatsapp_number, s.id
+        );
+      });
+
+      return pending;
     } catch (e) {
       return [];
     }
-  });
-
-
-
-  const allPendingRequests = joinRequests.filter(r => {
-    if (r.status === 'approved' || r.status === 'rejected') return false;
-    if (activeSchoolName && r.school_name && r.school_name.toLowerCase() !== activeSchoolName.toLowerCase()) {
-      return false;
-    }
-    return true;
-  });
-
-  // Synchronize newly created unapproved students into pending requests list
-  students.forEach(s => {
-    if (!s.email) return;
-    const emailLower = s.email.toLowerCase();
-    const isApprovedInStorage = joinRequests.some(r => r.student_email?.toLowerCase() === emailLower && r.status === 'approved');
-    const isRejectedInStorage = joinRequests.some(r => r.student_email?.toLowerCase() === emailLower && r.status === 'rejected');
-    
-    // Only mark as pending if student's approval status is explicitly pending
-    const isPending = s.approval_status === 'pending' && !isApprovedInStorage;
-    const matchesSchool = !activeSchoolName || !s.school || s.school.toLowerCase() === activeSchoolName.toLowerCase();
-    
-    if (isPending && matchesSchool && !isRejectedInStorage && !allPendingRequests.some(r => r.student_email?.toLowerCase() === emailLower)) {
-      allPendingRequests.push({
-        id: s.id,
-        student_id: s.id,
-        student_name: s.name,
-        student_email: s.email,
-        school_name: s.school || activeSchoolName || 'Aquatic Indica Surf School',
-        start_date: s.start_date || '2026-08-26',
-        session_time: s.session_time || 'Morning 6:00 AM',
-        whatsapp_number: s.whatsapp_number || 'N/A'
-      });
-    }
-  });
-
+  }, [reqRefreshKey, students, approvedStudents, approvedEmailsSet]);
 
   const handleApproveStudentRequest = async (reqId, studentEmail) => {
     try {
@@ -630,9 +749,10 @@ const StudentsManagement = () => {
       fetchStudents();
 
       // Upsert approved status into joinRequests & localStorage
+      const allSavedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
       let found = false;
-      const updatedReqs = joinRequests.map(r => {
-        if (r.id === reqId || (r.student_email && r.student_email.toLowerCase() === emailLower)) {
+      const updatedReqs = allSavedReqs.map(r => {
+        if (r.id === reqId || ((r.student_email || r.email) && (r.student_email || r.email).toLowerCase() === emailLower)) {
           found = true;
           return { ...r, status: 'approved' };
         }
@@ -648,17 +768,26 @@ const StudentsManagement = () => {
         });
       }
 
-      setJoinRequests(updatedReqs);
       localStorage.setItem('school_join_requests', JSON.stringify(updatedReqs));
 
+      // Also mark savedAccounts + mock_students_data as approved
       try {
         const savedAccounts = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
         const updatedAccounts = savedAccounts.map(a => 
-          a.email.toLowerCase() === emailLower ? { ...a, approval_status: 'approved' } : a
+          a.email && a.email.toLowerCase() === emailLower ? { ...a, approval_status: 'approved' } : a
         );
         localStorage.setItem('savedAccounts', JSON.stringify(updatedAccounts));
       } catch (e) {}
+      try {
+        const mockStudents = JSON.parse(localStorage.getItem('mock_students_data') || '[]');
+        const updatedMock = mockStudents.map(a => 
+          a.email && a.email.toLowerCase() === emailLower ? { ...a, approval_status: 'approved' } : a
+        );
+        localStorage.setItem('mock_students_data', JSON.stringify(updatedMock));
+      } catch (e) {}
 
+      fetchStudents();
+      setReqRefreshKey(k => k + 1);
       showToast(`✅ Approved ${targetReq?.student_name || studentEmail || 'student'}! Added to My Students.`);
     } catch (err) {
       console.error(err);
@@ -671,23 +800,27 @@ const StudentsManagement = () => {
     setStudents(prev => prev.filter(s => s.id !== reqId && (s.email && s.email.toLowerCase() !== emailLower)));
     
     let found = false;
-    const updatedReqs = joinRequests.map(r => {
-      if (r.id === reqId || (r.student_email && r.student_email.toLowerCase() === emailLower)) {
-        found = true;
+    const allReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+    let found2 = false;
+    const updatedReqs2 = allReqs.map(r => {
+      if (r.id === reqId || ((r.student_email || r.email) && (r.student_email || r.email).toLowerCase() === emailLower)) {
+        found2 = true;
         return { ...r, status: 'rejected' };
       }
       return r;
     });
-    if (!found && emailLower) {
-      updatedReqs.push({
-        id: reqId || `req_${Date.now()}`,
-        student_id: reqId,
-        student_email: emailLower,
-        status: 'rejected'
-      });
+    if (!found2 && emailLower) {
+      updatedReqs2.push({ id: reqId || `req_${Date.now()}`, student_id: reqId, student_email: emailLower, status: 'rejected' });
     }
-    setJoinRequests(updatedReqs);
-    localStorage.setItem('school_join_requests', JSON.stringify(updatedReqs));
+    localStorage.setItem('school_join_requests', JSON.stringify(updatedReqs2));
+    // Mark in savedAccounts too
+    try {
+      const savedAccounts = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
+      const updatedAccounts = savedAccounts.map(a => 
+        a.email && a.email.toLowerCase() === emailLower ? { ...a, approval_status: 'rejected' } : a
+      );
+      localStorage.setItem('savedAccounts', JSON.stringify(updatedAccounts));
+    } catch (e) {}
     showToast(`❌ Declined request for ${studentEmail || 'student'}.`);
   };
 
@@ -706,12 +839,16 @@ const StudentsManagement = () => {
           <div className="sm-actions" style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
             <button 
               className="sm-btn-secondary"
-              onClick={() => setShowPendingModal(true)}
+              onClick={() => {
+                setReqRefreshKey(k => k + 1);
+                fetchStudents();
+                setShowPendingModal(true);
+              }}
               style={{
                 background: allPendingRequests.length > 0 ? '#FFFBEB' : '#FFFFFF',
                 color: allPendingRequests.length > 0 ? '#D97706' : '#0F172A',
-                border: allPendingRequests.length > 0 ? '1px solid #FCD34D' : '1px solid #CBD5E1',
-                fontWeight: 700,
+                border: allPendingRequests.length > 0 ? '1.5px solid #FCD34D' : '1px solid #CBD5E1',
+                fontWeight: 800,
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '8px',
@@ -1062,10 +1199,20 @@ const StudentsManagement = () => {
                           </span>
                         )}
                     </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <button className="sm-action-btn" onClick={e => { e.stopPropagation(); navigate(`/students/${s.id}`); }}>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
-                      </button>
+                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                        <button
+                          className="sm-action-btn"
+                          title="Delete / Remove Student"
+                          style={{ color: '#EF4444', borderColor: 'rgba(239, 68, 68, 0.25)', background: 'rgba(239, 68, 68, 0.06)' }}
+                          onClick={e => { e.stopPropagation(); handleDeleteStudent(s.id, s.name, s.email); }}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                        </button>
+                        <button className="sm-action-btn" title="View Profile" onClick={e => { e.stopPropagation(); navigate(`/students/${s.id}`); }}>
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

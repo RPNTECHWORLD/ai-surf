@@ -2,14 +2,14 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Loader2, X, Trophy, Calendar, MapPin, Zap, ChevronLeft, ChevronRight, Eye, Waves, Share2, Copy, Check, User, Clock, Users } from 'lucide-react';
 import axios from 'axios';
-import bgImage from '../assets/bg.jpeg';
-import logo from '../assets/logo.png';
-import { shareHeatCardAsImage } from '../utils/shareHeatCard';
-import useAnalyticsTracker from '../hooks/useAnalyticsTracker';
-import useGoogleAnalytics from '../hooks/useGoogleAnalytics';
-import HeatScheduleView from '../components/HeatScheduleView';
+import bgImage from '../../assets/bg.jpeg';
+import { shareHeatCardAsImage } from './shareHeatCard';
+import HeatScheduleView from './HeatScheduleView';
+const useAnalyticsTracker = () => {};
+const useGoogleAnalytics = () => {};
+const logo = '';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_BASE = 'http://54.84.243.251/api';
 
 const formatDivisionName = (name, event = null) => {
     if (!name) return name;

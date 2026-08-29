@@ -3,9 +3,9 @@ import { useNavigate, Link } from 'react-router-dom';
 import { Waves, LogOut, Loader2, AlertCircle } from 'lucide-react';
 import axios from 'axios';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+const API_BASE = 'http://54.84.243.251/api';
 
-import bgImage from '../assets/bg.jpeg';
+import bgImage from '../../assets/bg.jpeg';
 
 const JudgeLogin = () => {
     const navigate = useNavigate();

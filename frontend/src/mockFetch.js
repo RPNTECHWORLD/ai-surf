@@ -236,6 +236,9 @@ window.fetch = async function (input, init) {
           performance_logs: []
         };
         state.students.push(newStudent);
+        try {
+          localStorage.setItem('mock_students_data', JSON.stringify(state.students));
+        } catch (e) {}
         newUser.student_id = newStudent.id;
         newUser.approval_status = approvalStatus;
         newUser.school = selectedSchool;
@@ -422,29 +425,83 @@ window.fetch = async function (input, init) {
 
     // ─── 4. Students Routes ───
     if (path === '/api/students' && method === 'GET') {
-      return jsonResponse(state.students);
+      try {
+        const savedStudents = JSON.parse(localStorage.getItem('mock_students_data') || '[]');
+        savedStudents.forEach(st => {
+          if (st && st.email) {
+            const existing = state.students.find(s => s.email && s.email.toLowerCase().trim() === st.email.toLowerCase().trim());
+            if (!existing) {
+              state.students.push(st);
+            } else {
+              existing.approval_status = st.approval_status || existing.approval_status;
+            }
+          }
+        });
+
+        // Synchronize approval status from school_join_requests
+        const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+        savedReqs.forEach(req => {
+          const emailLower = (req.student_email || req.email || '').toLowerCase().trim();
+          if (emailLower) {
+            const studentInState = state.students.find(s => s.email && s.email.toLowerCase().trim() === emailLower);
+            if (studentInState) {
+              studentInState.approval_status = req.status || studentInState.approval_status;
+            }
+          }
+        });
+      } catch (e) {}
+
+      // Exclude deleted student emails
+      const deletedEmails = new Set(
+        JSON.parse(localStorage.getItem('deleted_student_emails') || '[]').map(e => String(e).toLowerCase().trim())
+      );
+      
+      // ONLY return approved students from /api/students active roster
+      const activeStudents = state.students.filter(s => 
+        s && s.email && !deletedEmails.has(s.email.toLowerCase().trim()) && s.approval_status !== 'pending' && s.approval_status !== 'rejected'
+      );
+
+      return jsonResponse(activeStudents);
+    }
+
+    if (path === '/api/students/approve-by-email' && method === 'POST') {
+      const body = JSON.parse(init.body || '{}');
+      const emailLower = (body.email || '').toLowerCase().trim();
+      const st = state.students.find(s => s.email && s.email.toLowerCase().trim() === emailLower);
+      if (st) st.approval_status = 'approved';
+      return jsonResponse({ success: true, message: 'Student approved' });
+    }
+
+    if (path.match(/^\/api\/students\/[^\/]+\/approve$/) && method === 'POST') {
+      const studentId = path.split('/')[3];
+      const st = state.students.find(s => String(s.id) === String(studentId));
+      if (st) st.approval_status = 'approved';
+      return jsonResponse({ success: true, message: 'Student approved' });
     }
 
     if (path === '/api/students' && method === 'POST') {
       const body = JSON.parse(init.body);
       const studentInst = state.instructors.find(i => i.id === body.instructor_id);
       const newStudent = {
-        id: state.students.length + 1,
+        id: body.id || Date.now(),
         name: body.name,
         email: body.email,
-        level: body.level,
+        level: body.level || 'Beginner',
         instructor_id: body.instructor_id,
         instructor: studentInst ? studentInst.name : "",
         image: body.image || "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100",
         last_active: "Today",
         bio: "",
-        age: 20,
-        division: "Men's Open",
+        age: body.age || 20,
+        division: body.division || "Men's Open",
         stance: "regular",
         surf_stats: { waves_ridden: 0, max_speed: "0 mph", avg_session_mins: 0 },
         performance_logs: []
       };
       state.students.push(newStudent);
+      try {
+        localStorage.setItem('mock_students_data', JSON.stringify(state.students));
+      } catch (e) {}
       state.activityLogs.unshift({ id: Date.now(), text: `${body.name} joined as a new student`, type: "group", time: "Just now" });
       return jsonResponse(newStudent);
     }

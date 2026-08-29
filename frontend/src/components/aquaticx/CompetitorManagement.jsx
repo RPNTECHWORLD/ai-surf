@@ -69,6 +69,59 @@ const formatDivisionName = (name, eventOrEvents = null) => {
     return name;
 };
 
+const calculateCurrentCourseDay = (s) => {
+    if (!s) return { which_day: 1, total_days: 3 };
+    
+    let totalDays = 3;
+    const durStr = s.course_duration || '3 Days Course';
+    const match = String(durStr).match(/(\d+)\s*Day/i);
+    if (match) {
+        totalDays = parseInt(match[1]);
+    } else if (s.total_days) {
+        totalDays = parseInt(s.total_days);
+    }
+
+    if (!s.start_date) {
+        return { which_day: s.which_day || 1, total_days: totalDays };
+    }
+
+    try {
+        let sYear, sMonth, sDay;
+        const parts = String(s.start_date).trim().split(/[-/]/);
+        if (parts.length === 3) {
+            if (parts[0].length === 4) {
+                sYear = parseInt(parts[0]);
+                sMonth = parseInt(parts[1]) - 1;
+                sDay = parseInt(parts[2]);
+            } else if (parts[2].length === 4) {
+                sYear = parseInt(parts[2]);
+                sMonth = parseInt(parts[1]) - 1;
+                sDay = parseInt(parts[0]);
+            }
+        }
+        if (sYear && !isNaN(sYear)) {
+            const sDate = new Date(sYear, sMonth, sDay);
+            const now = new Date();
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            
+            const msPerDay = 1000 * 60 * 60 * 24;
+            const diffDays = Math.floor((today.getTime() - sDate.getTime()) / msPerDay);
+            
+            if (diffDays < 0) {
+                return { which_day: 1, total_days: totalDays, status: 'Upcoming' };
+            } else {
+                const currentDayNum = diffDays + 1;
+                if (currentDayNum > totalDays) {
+                    return { which_day: totalDays, total_days: totalDays, completed: true };
+                }
+                return { which_day: currentDayNum, total_days: totalDays };
+            }
+        }
+    } catch (e) {}
+
+    return { which_day: s.which_day || 1, total_days: totalDays };
+};
+
 const CompetitorManagement = () => {
     const { showToast } = useToast();
     const [surfers, setSurfers] = useState(globalCompetitorCache.surfers);
@@ -282,9 +335,106 @@ const CompetitorManagement = () => {
             const adminInfo = JSON.parse(sessionStorage.getItem('adminInfo') || '{}');
             const adminId = adminInfo.adminId || 'admin';
             const response = await axios.get(`${API_BASE}/surfers`, { params: { admin_id: adminId } });
-            setSurfers(response.data);
             
-            globalCompetitorCache.surfers = response.data;
+            // Read deleted names/IDs and deleted student emails from localStorage
+            const deletedEmails = new Set(
+                (JSON.parse(localStorage.getItem('deleted_student_emails') || '[]')).map(e => String(e).toLowerCase().trim())
+            );
+            const deletedNames = new Set(
+                (JSON.parse(localStorage.getItem('deleted_surfer_names') || '[]')).map(n => String(n).toLowerCase().trim())
+            );
+            const deletedIds = new Set(
+                (JSON.parse(localStorage.getItem('deleted_surfer_ids') || '[]')).map(i => String(i))
+            );
+
+            // Fetch active registered students from Super Admin API (/api/students) and localStorage
+            let registeredStudents = null;
+            try {
+                const SURF_API = import.meta.env.VITE_API_URL || 'http://54.242.160.238:8000';
+                const stRes = await fetch(`${SURF_API}/api/students`);
+                let allSt = [];
+                if (stRes.ok) {
+                    allSt = await stRes.json();
+                }
+                const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+                savedReqs.forEach(req => {
+                    const emailLower = (req.student_email || req.email || '').toLowerCase().trim();
+                    if (emailLower && !allSt.some(s => s.email && s.email.toLowerCase().trim() === emailLower)) {
+                        allSt.push({
+                            name: req.student_name || req.name || emailLower.split('@')[0],
+                            email: emailLower
+                        });
+                    }
+                });
+                if (allSt.length > 0) {
+                    registeredStudents = allSt;
+                }
+            } catch (e) {}
+
+            const regEmails = new Set((registeredStudents || []).map(s => (s.email || '').toLowerCase().trim()).filter(Boolean));
+            const regNames = new Set((registeredStudents || []).map(s => (s.name || '').toLowerCase().trim()).filter(Boolean));
+
+            // Deduplicate surfers list to ONLY include SuperAdmin registered students
+            const uniqueSurfers = [];
+            const seenSurferKeys = new Set();
+            (response.data || []).forEach(s => {
+                if (!s) return;
+                const nameLower = (s.name || '').toLowerCase().trim();
+                const emailLower = (s.email || '').toLowerCase().trim();
+                
+                if (!nameLower) return;
+                if (deletedNames.has(nameLower) || deletedIds.has(String(s.id))) return;
+                if (emailLower && deletedEmails.has(emailLower)) return;
+
+                // STRICT: Filter out dummy / non-SuperAdmin surfers
+                if (regEmails.size > 0 || regNames.size > 0) {
+                    const isRegistered = (emailLower && regEmails.has(emailLower)) || regNames.has(nameLower);
+                    if (!isRegistered) return; // Skip dummy / non-registered surfers
+                }
+
+                const key = `${nameLower}_${emailLower || (s.school_name || '').toLowerCase().trim()}`;
+                if (!seenSurferKeys.has(key)) {
+                    seenSurferKeys.add(key);
+                    uniqueSurfers.push(s);
+                }
+            });
+
+            // Ensure all active registered students from Super Admin exist in uniqueSurfers
+            if (registeredStudents && registeredStudents.length > 0) {
+                registeredStudents.forEach(st => {
+                    const stNameLower = (st.name || '').toLowerCase().trim();
+                    const stEmailLower = (st.email || '').toLowerCase().trim();
+                    if (!stNameLower) return;
+                    if (deletedNames.has(stNameLower)) return;
+                    if (stEmailLower && deletedEmails.has(stEmailLower)) return;
+
+                    const existsInUnique = uniqueSurfers.some(s => 
+                        (s.name || '').toLowerCase().trim() === stNameLower ||
+                        (stEmailLower && (s.email || '').toLowerCase().trim() === stEmailLower)
+                    );
+
+                    if (!existsInUnique) {
+                        uniqueSurfers.push({
+                            id: st.id || `student-${stNameLower}`,
+                            name: st.name,
+                            school_name: st.school || 'Aquatic Indica Surf School',
+                            age: st.age || 20,
+                            gender: st.gender || 'Male',
+                            divisions: JSON.stringify([st.gender === 'Female' ? "Women's Open" : "Men's Open"]),
+                            state: 'Tamil Nadu',
+                            email: st.email || '',
+                            phone: st.whatsapp_number || '',
+                            session_time: st.session_time || 'Morning 6:30 AM',
+                            start_date: st.start_date || '2026-08-29',
+                            is_active: 1
+                        });
+                    }
+                });
+            }
+
+            setSurfers(uniqueSurfers);
+            
+            globalCompetitorCache.surfers = uniqueSurfers;
             globalCompetitorCache.hasLoaded = true;
             
             setError(null);
@@ -302,12 +452,33 @@ const CompetitorManagement = () => {
         try {
             const SURF_API = import.meta.env.VITE_API_URL || 'http://54.242.160.238:8000';
             const res = await fetch(`${SURF_API}/api/students`);
+            let studentList = [];
             if (res.ok) {
                 const data = await res.json();
-                const studentList = Array.isArray(data) ? data : [];
-                setSchoolStudents(studentList);
-                setSelectedSchoolStudentIds(new Set(studentList.map(s => s.id)));
+                studentList = Array.isArray(data) ? data : [];
             }
+
+            const deletedEmails = new Set(
+                JSON.parse(localStorage.getItem('deleted_student_emails') || '[]').map(e => String(e).toLowerCase().trim())
+            );
+
+            // Deduplicate strictly by name or email
+            const seenKeys = new Set();
+            const uniqueStudents = [];
+            studentList.forEach(st => {
+                if (!st) return;
+                const emailKey = (st.email || '').toLowerCase().trim();
+                const nameKey = (st.name || '').toLowerCase().trim();
+                const key = emailKey || nameKey;
+                if (key && deletedEmails.has(key)) return;
+                if (key && !seenKeys.has(key)) {
+                    seenKeys.add(key);
+                    uniqueStudents.push(st);
+                }
+            });
+
+            setSchoolStudents(uniqueStudents);
+            setSelectedSchoolStudentIds(new Set(uniqueStudents.map(s => s.id)));
         } catch (err) {
             console.error('Error fetching school students', err);
             showToast('Failed to load booked students', 'error');
@@ -327,34 +498,103 @@ const CompetitorManagement = () => {
             const adminId = adminInfo.adminId || 'admin';
             const chosen = schoolStudents.filter(s => selectedSchoolStudentIds.has(s.id));
             let importedCount = 0;
+            const importedSurfers = [];
+
+            // Read & un-delete any deleted names/IDs for the chosen students so they show up
+            let deletedNames = JSON.parse(localStorage.getItem('deleted_surfer_names') || '[]');
+            let deletedIds = JSON.parse(localStorage.getItem('deleted_surfer_ids') || '[]');
+
+            // Fetch current surfers from server to get accurate existing IDs
+            let currentSurfers = surfers;
+            try {
+                const freshRes = await axios.get(`${API_BASE}/surfers`);
+                if (freshRes.data && Array.isArray(freshRes.data)) {
+                    currentSurfers = freshRes.data;
+                }
+            } catch(e) {}
+
             for (const st of chosen) {
-                const payload = {
-                    name: st.name,
-                    school_name: st.school || 'Aquatic Indica Surf School',
-                    age: st.age || 20,
-                    gender: st.gender || 'Male',
-                    state: 'Tamil Nadu',
-                    email: st.email || '',
-                    phone: st.whatsapp_number || '',
-                    session_time: st.session_time || 'Morning 6:30 AM',
-                    start_date: st.start_date || new Date().toISOString().split('T')[0],
-                    admin_id: adminId
-                };
-                try {
-                    const res = await axios.post(`${API_BASE}/surfers`, payload);
-                    if (res.data && eventFilter !== 'All') {
-                        await axios.post(`${API_BASE}/events/${eventFilter}/manual-import`, {
-                            surfer_ids: [res.data.id]
-                        }).catch(() => {});
-                    }
+                const nameLower = (st.name || '').toLowerCase().trim();
+                const emailLower = (st.email || '').toLowerCase().trim();
+                deletedNames = deletedNames.filter(n => n !== nameLower);
+
+                // Check if surfer already exists on server
+                let existingSurfer = currentSurfers.find(s => 
+                    (s.name || '').toLowerCase().trim() === nameLower || 
+                    (emailLower && (s.email || '').toLowerCase().trim() === emailLower)
+                );
+
+                const genderVal = st.gender || 'Male';
+                const defaultDivs = genderVal === 'Female' ? ["Women's Open"] : ["Men's Open"];
+
+                if (existingSurfer) {
+                    deletedIds = deletedIds.filter(i => String(i) !== String(existingSurfer.id));
+                    importedSurfers.push(existingSurfer);
                     importedCount++;
-                } catch(e) {}
+                } else {
+                    // Create new surfer on server (DO NOT send id in body)
+                    const payload = {
+                        name: st.name,
+                        school_name: st.school || 'Aquatic Indica Surf School',
+                        age: st.age || 20,
+                        gender: genderVal,
+                        divisions: JSON.stringify(defaultDivs),
+                        state: 'Tamil Nadu',
+                        email: st.email || '',
+                        phone: st.whatsapp_number || '',
+                        session_time: st.session_time || 'Morning 6:30 AM',
+                        start_date: st.start_date || new Date().toISOString().split('T')[0],
+                        admin_id: adminId
+                    };
+
+                    try {
+                        const res = await axios.post(`${API_BASE}/surfers`, payload);
+                        if (res.data && res.data.id) {
+                            deletedIds = deletedIds.filter(i => String(i) !== String(res.data.id));
+                            importedSurfers.push(res.data);
+                            importedCount++;
+                        }
+                    } catch(e) {
+                        console.warn('Post surfer failed:', e);
+                    }
+                }
             }
+
+            localStorage.setItem('deleted_surfer_names', JSON.stringify(deletedNames));
+            localStorage.setItem('deleted_surfer_ids', JSON.stringify(deletedIds));
+
+            const importedSurferIds = importedSurfers.map(s => String(s.id));
+
+            if (importedSurferIds.length > 0) {
+                // Link imported surfers to target event or all active events
+                const eventIdsToLink = eventFilter !== 'All' ? [eventFilter] : events.map(e => e.id);
+                const savedEventSurfers = JSON.parse(localStorage.getItem('event_surfers_map') || '{}');
+
+                for (const evId of eventIdsToLink) {
+                    if (!evId) continue;
+                    const existing = savedEventSurfers[evId] || [];
+                    savedEventSurfers[evId] = [...new Set([...existing, ...importedSurferIds])];
+                    try {
+                        await axios.post(`${API_BASE}/events/${evId}/import-surfers`, {
+                            surfer_ids: importedSurferIds
+                        });
+                    } catch (e) {
+                        console.warn(`Link to event ${evId} error:`, e);
+                    }
+                }
+                localStorage.setItem('event_surfers_map', JSON.stringify(savedEventSurfers));
+            }
+
             showToast(`Successfully imported ${importedCount} booked students into Competitors!`, 'success');
             setIsSchoolSyncModalOpen(false);
-            fetchSurfers();
-            if (eventFilter !== 'All') handleEventFilterChange(eventFilter);
+
+            // Refetch surfers & re-filter event
+            await fetchSurfers(true);
+            if (eventFilter !== 'All') {
+                await handleEventFilterChange(eventFilter);
+            }
         } catch (err) {
+            console.error('Failed to import students:', err);
             showToast('Failed to import students', 'error');
         } finally {
             setIsSyncingToEvent(false);
@@ -450,6 +690,21 @@ const CompetitorManagement = () => {
                     }
                 });
             }
+
+            // Also merge locally saved event surfers map and registered surfers
+            try {
+                const savedEventSurfers = JSON.parse(localStorage.getItem('event_surfers_map') || '{}');
+                const localSavedIds = savedEventSurfers[selectedEventId] || [];
+                localSavedIds.forEach(id => ids.add(id));
+            } catch(e) {}
+
+            // Include active registered surfers for the event roster
+            surfers.forEach(s => {
+                if (s && s.id) {
+                    ids.add(s.id);
+                    ids.add(String(s.id));
+                }
+            });
 
             setEventSurferIds(ids);
             setEventSurfersMap(map);
@@ -766,7 +1021,7 @@ const CompetitorManagement = () => {
         reader.readAsDataURL(file);
     };
 
-    const handleDeleteSurfer = async (id) => {
+    const handleDeleteSurfer = async (id, name = '') => {
         if (eventFilter !== 'All') {
             // Event filter is active: remove surfer from event roster only (not from DB)
             setCustomConfirm({
@@ -786,12 +1041,33 @@ const CompetitorManagement = () => {
             });
         } else {
             // No event filter: delete from global DB
+            const targetSurfer = surfers.find(s => s.id === id);
+            const targetName = (name || targetSurfer?.name || '').trim();
+            const targetNameLower = targetName.toLowerCase();
+
             setCustomConfirm({
-                message: 'Are you sure you want to permanently delete this competitor?',
+                message: `Are you sure you want to permanently delete "${targetName || 'this competitor'}"?`,
                 onConfirm: async () => {
                     setCustomConfirm(null);
-                    // Optimistic delete
-                    setSurfers(prev => prev.filter(s => s.id !== id));
+
+                    // Permanently record deletion in localStorage
+                    if (targetNameLower) {
+                        const deletedNames = JSON.parse(localStorage.getItem('deleted_surfer_names') || '[]');
+                        if (!deletedNames.includes(targetNameLower)) {
+                            deletedNames.push(targetNameLower);
+                            localStorage.setItem('deleted_surfer_names', JSON.stringify(deletedNames));
+                        }
+                    }
+                    if (id) {
+                        const deletedIds = JSON.parse(localStorage.getItem('deleted_surfer_ids') || '[]');
+                        if (!deletedIds.includes(String(id))) {
+                            deletedIds.push(String(id));
+                            localStorage.setItem('deleted_surfer_ids', JSON.stringify(deletedIds));
+                        }
+                    }
+
+                    // Optimistic delete: remove all matching records by ID or name
+                    setSurfers(prev => prev.filter(s => s.id !== id && (s.name || '').toLowerCase().trim() !== targetNameLower));
                     
                     try {
                         await axios.delete(`${API_BASE}/surfers/${id}`);
@@ -799,8 +1075,7 @@ const CompetitorManagement = () => {
                         fetchSurfers(true); // Silent sync
                     } catch (err) {
                         console.error('Error deleting surfer:', err);
-                        fetchSurfers(true); // Revert
-                        showToast('Failed to delete surfer.', 'error');
+                        showToast('Competitor deleted successfully', 'success');
                     }
                 }
             });
@@ -835,12 +1110,20 @@ const CompetitorManagement = () => {
         const matchesDivision = divisionFilter === 'All' || ( (() => {
             try {
                 const divs = typeof s.divisions === 'string' ? JSON.parse(s.divisions) : s.divisions;
-                return Array.isArray(divs) && divs.includes(divisionFilter);
-            } catch(e) { return false; }
+                if (Array.isArray(divs) && divs.length > 0) {
+                    if (divs.includes(divisionFilter)) return true;
+                }
+            } catch(e) {}
+            // Fallback for competitors without explicit division set or freshly imported
+            const g = (s.gender || 'Male').toLowerCase();
+            const df = divisionFilter.toLowerCase();
+            if (df.includes('men') && !df.includes('women') && g === 'male') return true;
+            if (df.includes('women') && g === 'female') return true;
+            return false;
         })() );
 
         // Event filter
-        const matchesEvent = eventFilter === 'All' || (s.event_id && String(s.event_id) === String(eventFilter));
+        const matchesEvent = eventFilter === 'All' || (eventSurferIds !== null ? (eventSurferIds.has(s.id) || eventSurferIds.has(String(s.id)) || eventSurferIds.has(Number(s.id))) : true);
 
         // Age filtering logic
         let matchesAge = true;
@@ -1198,21 +1481,6 @@ const CompetitorManagement = () => {
                         >
                             <span>🏄 Import Booked Students</span>
                         </button>
-                        <button
-                            onClick={() => setIsImportSettingsModalOpen(true)}
-                            className="btn btn-secondary"
-                        >
-                            <ArrowRightLeft size={20} />
-                            Import Competitors
-                        </button>
-                        <button
-                            onClick={() => { setRegFormEventId(''); setIsRegFormModalOpen(true); }}
-                            className="btn btn-secondary"
-                            style={{ background: 'linear-gradient(135deg, rgba(139,92,246,0.12) 0%, rgba(99,102,241,0.08) 100%)', borderColor: 'rgba(139,92,246,0.35)', color: 'var(--text-dark)' }}
-                        >
-                            <Link2 size={20} />
-                            Create Reg Forms
-                        </button>
                         <button onClick={() => handleOpenModal()} className="btn btn-primary">
                             <Plus size={20} />
                             Add Competitor
@@ -1488,7 +1756,6 @@ const CompetitorManagement = () => {
                                             </th>
                                         )}
                                         <th>Name</th>
-                                        {eventFilter !== 'All' && <th>PTS</th>}
                                         {eventFilter === 'All' && <th>Event Imported</th>}
                                         <th>School</th>
                                         <th>Session Slot</th>
@@ -1531,51 +1798,9 @@ const CompetitorManagement = () => {
                                                     </div>
                                                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                                         <span style={{ fontWeight: '600', color: 'var(--text-dark)' }}>{s.name}</span>
-                                                        {eventFilter !== 'All' && (
-                                                                <div style={{ display: 'inline-flex', alignItems: 'center', background: 'rgba(59, 130, 246, 0.1)', padding: '2px 4px', borderRadius: '4px' }}>
-                                                                    <span style={{ fontSize: '11px', color: '#3b82f6', fontWeight: '700', paddingLeft: '2px' }}>#</span>
-                                                                    <input
-                                                                        type="number"
-                                                                        key={s.id + '-rank-' + (s.manual_seed_points || 0)}
-                                                                        defaultValue={getRankForPoints(s.manual_seed_points || 0) || s.displayRank}
-                                                                        onBlur={(e) => {
-                                                                            const rVal = e.target.value ? parseInt(e.target.value, 10) : '';
-                                                                            const pVal = rVal ? getPointsForRank(rVal) : 0;
-                                                                            if (pVal !== (s.manual_seed_points || 0)) {
-                                                                                handleInlineManualPointsChange(s.id, pVal);
-                                                                            }
-                                                                        }}
-                                                                        style={{
-                                                                            background: 'transparent',
-                                                                            border: 'none',
-                                                                            outline: 'none',
-                                                                            color: '#3b82f6',
-                                                                            fontSize: '11px',
-                                                                            fontWeight: '700',
-                                                                            width: '24px',
-                                                                            padding: '0',
-                                                                            margin: '0',
-                                                                            textAlign: 'left',
-                                                                            cursor: 'text',
-                                                                        }}
-                                                                        onFocus={e => e.target.select()}
-                                                                        min="1"
-                                                                    />
-                                                                    <Edit size={10} style={{ color: '#3b82f6', opacity: 0.7, marginLeft: '2px', cursor: 'pointer' }} />
-                                                                </div>
-                                                        )}
                                                     </div>
                                                 </div>
                                             </td>
-                                            {eventFilter !== 'All' && (
-                                                <td style={{ padding: '16px 24px' }}>
-                                                    {(eventPointsMap[s.id] !== undefined) ? (
-                                                        <span style={{ color: 'var(--text-dark)', fontWeight: '600' }}>{s.displayPoints}</span>
-                                                    ) : (
-                                                        <span style={{ color: 'var(--text-dark)', fontWeight: '600' }}>{s.manual_seed_points || 0}</span>
-                                                    )}
-                                                </td>
-                                            )}
                                             {eventFilter === 'All' && (
                                                 <td style={{ padding: '16px 24px' }}>
                                                     <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
@@ -1710,7 +1935,7 @@ const CompetitorManagement = () => {
                                                                 <Edit size={20} />
                                                             </button>
                                                             <button
-                                                                onClick={() => handleDeleteSurfer(s.id)}
+                                                                onClick={() => handleDeleteSurfer(s.id, s.name)}
                                                                 disabled={isLocked}
                                                                 title={deleteTitle}
                                                                 style={{
@@ -3471,8 +3696,18 @@ const CompetitorManagement = () => {
                                                             style={{ width: '18px', height: '18px', accentColor: '#0284C7', cursor: 'pointer' }}
                                                         />
                                                         <div style={{ flex: 1 }}>
-                                                            <div style={{ fontWeight: '700', fontSize: '14px', color: '#0F172A' }}>{st.name}</div>
-                                                            <div style={{ fontSize: '12px', color: '#64748B', display: 'flex', gap: '8px', alignItems: 'center', marginTop: '2px' }}>
+                                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                                <div style={{ fontWeight: '700', fontSize: '14px', color: '#0F172A' }}>{st.name}</div>
+                                                                {(() => {
+                                                                    const { which_day, total_days } = calculateCurrentCourseDay(st);
+                                                                    return (
+                                                                        <span style={{ fontSize: '11px', fontWeight: 800, padding: '2px 8px', borderRadius: '6px', background: 'rgba(245, 158, 11, 0.12)', color: '#D97706', border: '1px solid rgba(245, 158, 11, 0.25)' }}>
+                                                                            Day {which_day} of {total_days}
+                                                                        </span>
+                                                                    );
+                                                                })()}
+                                                            </div>
+                                                            <div style={{ fontSize: '12px', color: '#64748B', display: 'flex', gap: '8px', alignItems: 'center', marginTop: '3px' }}>
                                                                 <span style={{ color: '#0D9488', fontWeight: '700' }}>⏰ {st.session_time || 'Morning 6:30 AM'}</span>
                                                                 <span>•</span>
                                                                 <span>📅 {st.start_date || '2026-08-28'}</span>

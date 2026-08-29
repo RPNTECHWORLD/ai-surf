@@ -55,7 +55,7 @@ let globalHeatCache = {
     hasLoaded: false
 };
 
-const HeatManagement = () => {
+const HeatManagement = ({ currentUser }) => {
     const { showToast } = useToast();
     const { showConfirm } = useConfirm();
     const [events, setEvents] = useState(globalHeatCache.events);
@@ -90,7 +90,7 @@ const HeatManagement = () => {
     const [serverTimeOffset, setServerTimeOffset] = useState(0);
 
     // User context & role detection
-    const savedUser = JSON.parse(sessionStorage.getItem('user') || '{}');
+    const savedUser = currentUser || JSON.parse(sessionStorage.getItem('user') || '{}');
     const isStudent = savedUser.role === 'athlete' || savedUser.role === 'student';
     const studentName = (savedUser.name || '').toLowerCase().trim();
     const studentEmail = (savedUser.email || '').toLowerCase().trim();
@@ -231,7 +231,7 @@ const HeatManagement = () => {
     const [selectedSurferIds, setSelectedSurferIds] = useState([]);
     const [calculatedHeatNumber, setCalculatedHeatNumber] = useState(1);
     const [lastSyncedKey, setLastSyncedKey] = useState('');
-    const [modalSurferSlotFilter, setModalSurferSlotFilter] = useState('All');
+    const [modalSurferGenderFilter, setModalSurferGenderFilter] = useState('All');
 
     const isBreak = formData.division === 'Break' || (formData.round || '').toLowerCase().includes('break');
 
@@ -487,29 +487,8 @@ const HeatManagement = () => {
     }, [formData.event_id, formData.division, formData.round, formData.sup_category, isModalOpen]);
 
     // Fetch imported surfers for selected event
-    // null  = no event selected (no restriction applied)
-    // Set() = event selected but nothing imported yet → show 0 surfers
-    // Set([...ids]) = show only these surfers
     useEffect(() => {
-        const fetchEventImportedSurfers = async () => {
-            if (!formData.event_id) {
-                setEventImportedSurferIds(null); // no event → no restriction
-                return;
-            }
-            try {
-                const res = await axios.get(`${API_BASE}/events/${formData.event_id}/surfers`);
-                if (res.data && res.data.length > 0) {
-                    // Event has imported surfers → restrict to those
-                    setEventImportedSurferIds(new Set(res.data.map(s => s.id)));
-                } else {
-                    // Event selected but no imports yet → show 0 surfers
-                    setEventImportedSurferIds(new Set());
-                }
-            } catch (err) {
-                setEventImportedSurferIds(new Set()); // error → be safe, show nothing
-            }
-        };
-        fetchEventImportedSurfers();
+        setEventImportedSurferIds(null);
     }, [formData.event_id]);
 
     // Fetch parent event heats when a series event is selected
@@ -521,10 +500,12 @@ const HeatManagement = () => {
                 setParentSeedingDivision('');
                 return;
             }
+
             try {
-                const res = await axios.get(`${API_BASE}/events/${selectedEvent.series_parent_id}/heats`);
+                const res = await axios.get(`${API_BASE}/heats`, { params: { event_id: selectedEvent.series_parent_id } });
                 const heatsData = res.data || [];
                 setParentEventHeats(heatsData);
+
                 // Auto-select the best matching division from parent event heats
                 const parentDivisions = [...new Set(heatsData.map(h => h.division).filter(Boolean))];
                 const formDivNorm = (formData.division || '').trim().toLowerCase();
@@ -571,10 +552,150 @@ const HeatManagement = () => {
                 const localTime = Date.now();
                 setServerTimeOffset(serverTime - localTime);
             }
-            const activeJ = judgesRes.data.filter(j => j.status === 'Active');
+            // Fetch SuperAdmin instructors (Ironman etc.) — ONLY SuperAdmin instructors are valid judges
+            const SURF_API = import.meta.env.VITE_API_URL || 'http://54.242.160.238:8000';
+            let superAdminInstructors = [];
+            try {
+                const instRes = await fetch(`${SURF_API}/api/instructors`);
+                if (instRes.ok) {
+                    superAdminInstructors = await instRes.json();
+                }
+            } catch (e) {}
+
+            const uniqueActiveJudges = [];
+            const seenJudgeKeys = new Set();
+            (superAdminInstructors || []).forEach((inst, index) => {
+                if (!inst || !inst.name) return;
+                const nameLower = inst.name.toLowerCase().trim();
+                const emailLower = (inst.email || '').toLowerCase().trim();
+                const key = `${nameLower}_${emailLower}`;
+                if (!seenJudgeKeys.has(key)) {
+                    seenJudgeKeys.add(key);
+                    // Match with existing backend judge id if present
+                    const matched = (judgesRes.data || []).find(
+                        j => (j.email && j.email.toLowerCase().trim() === emailLower) ||
+                             (j.name && j.name.toLowerCase().trim() === nameLower)
+                    );
+                    uniqueActiveJudges.push({
+                        id: matched?.id || (inst.id ? String(inst.id) : `inst-${index + 1}`),
+                        name: inst.name,
+                        email: inst.email || '',
+                        role: matched?.role || 'scoring',
+                        status: 'Active',
+                        judge_number: index + 1
+                    });
+                }
+            });
+
+            // If no SuperAdmin instructors, fallback to verified judges
+            if (uniqueActiveJudges.length === 0) {
+                (judgesRes.data || []).filter(j => j.status === 'Active').forEach(j => {
+                    if (!j || !j.name) return;
+                    const nameLower = j.name.toLowerCase().trim();
+                    const emailLower = (j.email || '').toLowerCase().trim();
+                    if (['ddf', 'summa', 'test', 'testing', 's2', 'p', 'ss', 'suman'].includes(nameLower)) return;
+                    const key = `${nameLower}_${emailLower}`;
+                    if (!seenJudgeKeys.has(key)) {
+                        seenJudgeKeys.add(key);
+                        uniqueActiveJudges.push({
+                            ...j,
+                            judge_number: uniqueActiveJudges.length + 1
+                        });
+                    }
+                });
+            }
+
+            const activeJ = uniqueActiveJudges;
             
+            // Fetch registered students from SuperAdmin to filter out un-registered / dummy surfers
+            let registeredStudents = [];
+            try {
+                const stRes = await fetch(`${SURF_API}/api/students`);
+                if (stRes.ok) {
+                    registeredStudents = await stRes.json();
+                }
+                const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+                savedReqs.forEach(req => {
+                    const emailLower = (req.student_email || req.email || '').toLowerCase().trim();
+                    if (emailLower && !registeredStudents.some(s => s.email && s.email.toLowerCase().trim() === emailLower)) {
+                        registeredStudents.push({
+                            id: req.student_id || req.id || Date.now(),
+                            name: req.student_name || req.name || emailLower.split('@')[0],
+                            email: emailLower,
+                            gender: req.gender || 'Male',
+                            age: req.age || 20,
+                            school: req.school_name || 'Aquatic Indica Surf School'
+                        });
+                    }
+                });
+            } catch (e) {}
+
+            // Read deleted names/IDs and deleted student emails from localStorage
+            const deletedEmails = new Set(
+                (JSON.parse(localStorage.getItem('deleted_student_emails') || '[]')).map(e => String(e).toLowerCase().trim())
+            );
+            const deletedNames = new Set(
+                (JSON.parse(localStorage.getItem('deleted_surfer_names') || '[]')).map(n => String(n).toLowerCase().trim())
+            );
+            const deletedIds = new Set(
+                (JSON.parse(localStorage.getItem('deleted_surfer_ids') || '[]')).map(i => String(i))
+            );
+
+            const regEmails = new Set((registeredStudents || []).map(s => (s.email || '').toLowerCase().trim()).filter(Boolean));
+            const regNames = new Set((registeredStudents || []).map(s => (s.name || '').toLowerCase().trim()).filter(Boolean));
+
+            // Deduplicate surfers list to ONLY include SuperAdmin registered students
+            const uniqueSurfers = [];
+            const seenSurferKeys = new Set();
+
+            // First include verified SuperAdmin students
+            (registeredStudents || []).forEach(st => {
+                if (!st) return;
+                const nameLower = (st.name || '').toLowerCase().trim();
+                const emailLower = (st.email || '').toLowerCase().trim();
+                if (!nameLower) return;
+                if (deletedNames.has(nameLower) || (emailLower && deletedEmails.has(emailLower))) return;
+                
+                const key = `${nameLower}_${emailLower}`;
+                if (!seenSurferKeys.has(key)) {
+                    seenSurferKeys.add(key);
+                    uniqueSurfers.push({
+                        id: st.id || Date.now(),
+                        name: st.name,
+                        email: st.email || '',
+                        gender: st.gender || 'Male',
+                        age: st.age || 20,
+                        school_name: st.school || st.school_name || 'Aquatic Indica Surf School',
+                        state: st.state || 'Tamil Nadu'
+                    });
+                }
+            });
+
+            // If backend surfers have extra details for SuperAdmin students, match them
+            (surfersRes.data || []).forEach(s => {
+                if (!s) return;
+                const nameLower = (s.name || '').toLowerCase().trim();
+                const emailLower = (s.email || '').toLowerCase().trim();
+
+                if (!nameLower) return;
+                if (deletedNames.has(nameLower) || deletedIds.has(String(s.id))) return;
+                if (emailLower && deletedEmails.has(emailLower)) return;
+
+                // STRICT: Must match SuperAdmin student email or name
+                if (regEmails.size > 0 || regNames.size > 0) {
+                    const isRegistered = (emailLower && regEmails.has(emailLower)) || regNames.has(nameLower);
+                    if (!isRegistered) return; // Discard dummy / non-SuperAdmin surfers
+                }
+
+                const key = `${nameLower}_${emailLower}`;
+                if (!seenSurferKeys.has(key)) {
+                    seenSurferKeys.add(key);
+                    uniqueSurfers.push(s);
+                }
+            });
+
             setEvents(eventsRes.data);
-            setAllSurfers(surfersRes.data);
+            setAllSurfers(uniqueSurfers);
             setHeats(heatsRes.data);
             setActiveJudges(activeJ);
 
@@ -582,7 +703,7 @@ const HeatManagement = () => {
             globalHeatCache = {
                 events: eventsRes.data,
                 heats: heatsRes.data,
-                surfers: surfersRes.data,
+                surfers: uniqueSurfers,
                 activeJudges: activeJ,
                 hasLoaded: true
             };
@@ -1126,6 +1247,50 @@ const HeatManagement = () => {
         }
     };
 
+    const filterAndDeduplicateSurfers = (surfersList) => {
+        if (!surfersList || surfersList.length === 0) return [];
+
+        const deletedEmails = new Set(
+            (JSON.parse(localStorage.getItem('deleted_student_emails') || '[]')).map(e => String(e).toLowerCase().trim())
+        );
+        const deletedNames = new Set(
+            (JSON.parse(localStorage.getItem('deleted_surfer_names') || '[]')).map(n => String(n).toLowerCase().trim())
+        );
+        const deletedIds = new Set(
+            (JSON.parse(localStorage.getItem('deleted_surfer_ids') || '[]')).map(i => String(i))
+        );
+
+        // Allowed names and emails from SuperAdmin registered students (allSurfers)
+        const allowedNames = new Set(allSurfers.map(s => (s.name || '').toLowerCase().trim()).filter(Boolean));
+        const allowedEmails = new Set(allSurfers.map(s => (s.email || '').toLowerCase().trim()).filter(Boolean));
+
+        const uniqueSurfers = [];
+        const seenKeys = new Set();
+
+        surfersList.forEach(s => {
+            if (!s || s.is_active === 0) return;
+            const nameLower = (s.name || '').toLowerCase().trim();
+            const emailLower = (s.email || '').toLowerCase().trim();
+            if (!nameLower) return;
+
+            if (deletedNames.has(nameLower) || deletedIds.has(String(s.id))) return;
+            if (emailLower && deletedEmails.has(emailLower)) return;
+
+            if (allowedNames.size > 0 || allowedEmails.size > 0) {
+                const isRegistered = (emailLower && allowedEmails.has(emailLower)) || allowedNames.has(nameLower);
+                if (!isRegistered) return;
+            }
+
+            const key = `${nameLower}_${emailLower || (s.school_name || '').toLowerCase().trim()}`;
+            if (!seenKeys.has(key)) {
+                seenKeys.add(key);
+                uniqueSurfers.push(s);
+            }
+        });
+
+        return uniqueSurfers;
+    };
+
     const getAvailableSurfers = () => {
         console.log('📊 getAvailableSurfers called');
         console.log('  - tournamentProgressionData:', tournamentProgressionData);
@@ -1134,23 +1299,11 @@ const HeatManagement = () => {
         // If no event selected yet, no surfers are available
         if (!formData.event_id) return [];
 
-        // If event is selected and eventImportedSurferIds is an empty Set,
-        // it means no surfers have been imported yet → show 0 surfers
-        if (eventImportedSurferIds !== null && eventImportedSurferIds.size === 0) {
-            console.log('  ⛔ No surfers imported for this event yet → returning empty list');
-            return [];
-        }
-
         // If we have tournament progression data from the backend, use it
         if (tournamentProgressionData && tournamentProgressionData.surfers) {
             console.log('  ✅ Using tournament progression data');
             console.log('  - Surfers from backend:', tournamentProgressionData.surfers.length);
-            let surfers = tournamentProgressionData.surfers.filter(s => s.is_active !== 0);
-
-            // Apply event import filter (restrict to imported surfers if set)
-            if (eventImportedSurferIds !== null && eventImportedSurferIds.size > 0) {
-                surfers = surfers.filter(s => eventImportedSurferIds.has(s.id));
-            }
+            let surfers = filterAndDeduplicateSurfers(tournamentProgressionData.surfers);
 
             // Still apply division rules (gender & age) as additional filter
             if (formData.division) {
@@ -1227,13 +1380,8 @@ const HeatManagement = () => {
             return surfers;
         }
 
-        // Fallback: use allSurfers, restricted to imported surfers for this event
-        let surfers = allSurfers.filter(s => s.is_active !== 0);
-
-        // Restrict to imported surfers only (eventImportedSurferIds is a non-empty Set here)
-        if (eventImportedSurferIds !== null) {
-            surfers = surfers.filter(s => eventImportedSurferIds.has(s.id));
-        }
+        // Fallback: use allSurfers
+        let surfers = filterAndDeduplicateSurfers(allSurfers);
 
         // Filter by Division Rules (Gender & Age)
         if (formData.division) {
@@ -1313,7 +1461,7 @@ const HeatManagement = () => {
             }
         }
 
-        let baseSurfers = (tournamentProgressionData?.surfers ?? allSurfers).filter(s => s.is_active !== 0);
+        let baseSurfers = filterAndDeduplicateSurfers(tournamentProgressionData?.surfers ?? allSurfers);
         if (eventImportedSurferIds !== null) {
             if (eventImportedSurferIds.size === 0) return 0;
             baseSurfers = baseSurfers.filter(s => eventImportedSurferIds.has(s.id));
@@ -2451,10 +2599,7 @@ const HeatManagement = () => {
 
                 if (isHighestCompleted) {
                     // Calculate total active surfers for this division/category to check if round is fully created
-                    let baseSurfers = (tournamentProgressionData?.surfers ?? allSurfers).filter(s => s.is_active !== 0);
-                    if (eventImportedSurferIds !== null) {
-                        baseSurfers = baseSurfers.filter(s => eventImportedSurferIds.has(s.id));
-                    }
+                    let baseSurfers = filterAndDeduplicateSurfers(tournamentProgressionData?.surfers ?? allSurfers);
                     const div = division.toLowerCase();
                     if (div.includes('women') || div.includes('female') || div.includes('girl')) {
                         baseSurfers = baseSurfers.filter(s => s.gender === 'Female');
@@ -3475,292 +3620,6 @@ const HeatManagement = () => {
                                 })()}
                             </div>
 
-                            {/* ── Auto-calculated heat details card ── */}
-                            {!isEditing && formData.event_id && formData.division && (() => {
-                                if (isBreak) return null;
-                                // Check if this category/division is already fully completed or Final is configured
-                                const currentEventObj = events.find(e => String(e.id) === String(formData.event_id));
-                                const isSupFormNow = currentEventObj?.event_type === 'SUP Event';
-
-                                const catHeats = heats.filter(h => 
-                                    String(h.event_id) === String(formData.event_id) && 
-                                    h.division?.toLowerCase().trim() === formData.division?.toLowerCase().trim() && 
-                                    (!isSupFormNow || h.sup_category === formData.sup_category)
-                                );
-                                const finalHeats = catHeats.filter(h => h.round?.toLowerCase().trim() === 'final');
-
-                                if (finalHeats.length > 0) {
-                                    const isAllCompleted = finalHeats.every(h => (h.status || '').toLowerCase() === 'completed');
-                                    return (
-                                        <div style={{
-                                            background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.08), rgba(99, 102, 241, 0.05))',
-                                            border: '1px solid rgba(34, 197, 94, 0.25)',
-                                            borderRadius: '12px',
-                                            padding: '14px 18px',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: '10px'
-                                        }}>
-                                            <span style={{ fontSize: '18px' }}>🎉</span>
-                                            <div>
-                                                <div style={{ fontSize: '13px', fontWeight: '700', color: '#16a34a' }}>
-                                                    All rounds/heats are created in this {isSupFormNow ? 'category' : 'division'}!
-                                                </div>
-                                                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                                                    {isAllCompleted 
-                                                        ? 'The final round is completed. The tournament is fully finished!'
-                                                        : 'The Final round is already configured. No further rounds are needed.'}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    );
-                                }
-
-                                // Use TOTAL eligible surfers (ignoring round-occupancy) so the
-                                // numbers stay fixed even after creating heats one by one.
-                                let total = 0;
-
-                                if (tournamentProgressionData?.expected_advancing_count !== undefined && tournamentProgressionData.previous_round) {
-                                    total = tournamentProgressionData.expected_advancing_count;
-                                } else {
-                                    let baseSurfers = (tournamentProgressionData?.surfers ?? allSurfers)
-                                        .filter(s => s.is_active !== 0);
-
-                                    // Exclude sub surfers from auto-calculation
-                                    if (tournamentProgressionData) {
-                                        if (tournamentProgressionData.previous_surfer_ids?.length > 0) {
-                                            const prevSet = new Set(tournamentProgressionData.previous_surfer_ids);
-                                            baseSurfers = baseSurfers.filter(s => prevSet.has(s.id));
-                                        } else if (tournamentProgressionData.late_import_surfer_ids?.length > 0) {
-                                            const lateSet = new Set(tournamentProgressionData.late_import_surfer_ids);
-                                            baseSurfers = baseSurfers.filter(s => !lateSet.has(s.id));
-                                        }
-                                    }
-
-                                    // ⭐ Apply event import filter — if this event has imported surfers,
-                                    // restrict the base count to only those surfers (same as available surfers picker)
-                                    if (eventImportedSurferIds !== null) {
-                                        if (eventImportedSurferIds.size === 0) return null;
-                                        baseSurfers = baseSurfers.filter(s => eventImportedSurferIds.has(s.id));
-                                    }
-
-                                    // Apply division gender/age filter (same logic as getAvailableSurfers)
-                                    const div = formData.division.toLowerCase();
-                                    if (div.includes('women') || div.includes('female') || div.includes('girl')) {
-                                        baseSurfers = baseSurfers.filter(s => s.gender === 'Female');
-                                    } else if (div.includes('men') || div.includes('male') || div.includes('boy')) {
-                                        baseSurfers = baseSurfers.filter(s => s.gender === 'Male');
-                                    }
-                                    const underMatch = div.match(/(?:u|under)\s*(\d{1,2})/i);
-                                    const aboveMatch = div.match(/(?:a|above)\s*(\d{1,2})/i);
-                                    if (underMatch?.[1]) {
-                                        baseSurfers = baseSurfers.filter(s => s.age && parseInt(s.age) <= parseInt(underMatch[1]));
-                                    } else if (aboveMatch?.[1]) {
-                                        baseSurfers = baseSurfers.filter(s => s.age && parseInt(s.age) > parseInt(aboveMatch[1]));
-                                    }
-
-                                    // ⭐ Apply SUP category filter — only count surfers in the chosen category
-                                    if (formData.sup_category) {
-                                        baseSurfers = baseSurfers.filter(s => parseSUPCategories(s.sup_categories).includes(formData.sup_category));
-                                    }
-
-                                    total = baseSurfers.length;
-                                }
-
-                                // When a SUP category is selected but yields 0 surfers, show a message
-                                // instead of hiding the card entirely
-                                if (total < 2) {
-                                    if (formData.sup_category) {
-                                        return (
-                                            <div style={{
-                                                background: 'linear-gradient(135deg, rgba(23, 133, 243, 0.07), rgba(99, 102, 241, 0.07))',
-                                                border: '1px solid rgba(23, 133, 243, 0.25)',
-                                                borderRadius: '12px',
-                                                padding: '14px 18px',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '10px'
-                                            }}>
-                                                <span style={{ fontSize: '16px' }}>⚠️</span>
-                                                <div>
-                                                    <div style={{ fontSize: '13px', fontWeight: '700', color: '#1785f3' }}>
-                                                        No surfers registered under "{formData.sup_category}"
-                                                    </div>
-                                                    <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                                                        Try selecting a different SUP category or import surfers for this event.
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        );
-                                    }
-                                    return null;
-                                }
-
-                                // Max 4 surfers per heat, min 3 allowed
-                                const numHeats = Math.ceil(total / 4);
-                                const heats3 = numHeats * 4 - total; // heats that get 3 surfers
-                                const heats4 = numHeats - heats3;    // heats that get 4 surfers
-                                const isSemiFinal = numHeats === 2;
-
-                                // Progress: count heats already created for this event+division+round+(sup_category for SUP)
-                                const currentEvent2 = events.find(e => String(e.id) === String(formData.event_id));
-                                const isSupForm = currentEvent2?.event_type === 'SUP Event';
-                                const heatsCreated = heats.filter(h =>
-                                    String(h.event_id) === String(formData.event_id) &&
-                                    h.division?.toLowerCase().trim() === formData.division?.toLowerCase().trim() &&
-                                    formData.round && h.round?.toLowerCase().trim() === formData.round?.toLowerCase().trim() &&
-                                    (!isSupForm || h.sup_category === formData.sup_category)
-                                ).length;
-                                const heatsRemaining = Math.max(0, numHeats - heatsCreated);
-
-                                const roundLabel = formData.round ? ` — ${formData.round}` : '';
-
-                                return (
-                                    <div style={{
-                                        background: 'linear-gradient(135deg, rgba(23, 133, 243, 0.07), rgba(99, 102, 241, 0.07))',
-                                        border: '1px solid rgba(23, 133, 243, 0.25)',
-                                        borderRadius: '12px',
-                                        padding: '14px 18px',
-                                        minHeight: '80px',
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        justifyContent: 'center'
-                                    }}>
-                                        {isProgressionLoading ? (
-                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                                    <Loader2 className="animate-spin" size={18} color="#1785f3" />
-                                                    <span style={{ fontSize: '11px', fontWeight: '800', color: '#1785f3', textTransform: 'uppercase', letterSpacing: '0.8px' }}>
-                                                        Analyzing Tournament Progression...
-                                                    </span>
-                                                </div>
-                                                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginLeft: '28px', fontWeight: '500' }}>
-                                                    Calculating eligible surfers and heat counts for {formData.round}...
-                                                </div>
-                                            </div>
-                                        ) : (
-                                            <>
-                                                {/* Title with round name */}
-                                                <div style={{ fontSize: '11px', fontWeight: '800', color: '#1785f3', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                                                    <span>&#9889;</span>
-                                                    <span>Auto-calculated Heat Details</span>
-                                                    {formData.round && (
-                                                        <span style={{ color: 'var(--text-gray)', fontWeight: '700', textTransform: 'none', letterSpacing: '0', fontSize: '11px' }}>
-                                                            &mdash; {formData.round}
-                                                        </span>
-                                                    )}
-                                                </div>
-
-                                                {/* Stats row */}
-                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'center' }}>
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                        <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: '600' }}>Available Surfers:</span>
-                                                        <span style={{ fontSize: '14px', fontWeight: '800', color: 'var(--text-dark)' }}>{total}</span>
-                                                    </div>
-                                                    <span style={{ color: 'var(--border-hover)', fontSize: '14px' }}>|</span>
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                        <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: '600' }}>No. of Heats:</span>
-                                                        <span style={{ fontSize: '14px', fontWeight: '800', color: '#1785f3' }}>{numHeats}</span>
-                                                    </div>
-                                                    <span style={{ color: 'var(--border-hover)', fontSize: '14px' }}>|</span>
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                        <span style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: '600' }}>Surfers per Heat:</span>
-                                                        <span style={{ fontSize: '14px', fontWeight: '800', color: '#1785f3' }}>
-                                                            {heats3 === 0
-                                                                ? '4'
-                                                                : heats4 === 0
-                                                                    ? '3'
-                                                                    : `4 Surfers (${heats4} heats),  3 Surfers (${heats3} heat(s) )`}
-                                                        </span>
-                                                    </div>
-                                                </div>
-
-                                                {/* Progress: heats created vs remaining */}
-                                                {formData.round && (
-                                                    <div style={{
-                                                        marginTop: '10px',
-                                                        padding: '7px 12px',
-                                                        background: heatsRemaining === 0
-                                                            ? 'rgba(34, 197, 94, 0.10)'
-                                                            : 'rgba(15, 23, 42, 0.04)',
-                                                        border: heatsRemaining === 0
-                                                            ? '1px solid rgba(34, 197, 94, 0.3)'
-                                                            : '1px solid var(--border-dim)',
-                                                        borderRadius: '8px',
-                                                        fontSize: '12px',
-                                                        fontWeight: '700',
-                                                        display: 'flex',
-                                                        alignItems: 'center',
-                                                        gap: '6px',
-                                                        color: heatsRemaining === 0 ? '#16a34a' : 'var(--text-secondary)'
-                                                    }}>
-                                                        <span>{heatsRemaining === 0 ? '✅' : '📦'}</span>
-                                                        {heatsCreated > 0
-                                                            ? heatsRemaining === 0
-                                                                ? `All ${numHeats} heats created for ${formData.round}`
-                                                                : `${heatsCreated} heat${heatsCreated > 1 ? 's' : ''} created — ${heatsRemaining} more heat${heatsRemaining > 1 ? 's' : ''} left to create`
-                                                            : `0 heats created yet — create ${numHeats} heat${numHeats > 1 ? 's' : ''} for this round`
-                                                        }
-                                                    </div>
-                                                )}
-                                            </>
-                                        )}
-
-                                        {/* Auto-Generate Button below Ack Message */}
-                                        {formData.round && heatsRemaining === 0 &&
-                                            !['final', 'finals'].includes(formData.round.toLowerCase().trim()) && (
-                                                <div style={{ marginTop: '12px' }}>
-                                                    <button
-                                                        type="button"
-                                                        onClick={handleOpenAutoGenModal}
-                                                        className="btn"
-                                                        style={{
-                                                            width: '100%',
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            justifyContent: 'center',
-                                                            gap: '10px',
-                                                            padding: '12px 24px',
-                                                            background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
-                                                            color: 'white',
-                                                            border: 'none',
-                                                            borderRadius: '8px',
-                                                            fontWeight: '700',
-                                                            fontSize: '14px',
-                                                            cursor: 'pointer',
-                                                            boxShadow: '0 4px 16px rgba(99, 102, 241, 0.35)',
-                                                            transition: 'all 0.2s ease',
-                                                        }}
-                                                    >
-                                                        <Trophy size={18} />
-                                                        Auto Generate Remaining Rounds
-                                                    </button>
-                                                </div>
-                                            )}
-
-                                        {/* Semi Final suggestion */}
-                                        {isSemiFinal && (
-                                            <div style={{
-                                                marginTop: '8px',
-                                                padding: '7px 12px',
-                                                background: 'rgba(234, 179, 8, 0.12)',
-                                                border: '1px solid rgba(234, 179, 8, 0.35)',
-                                                borderRadius: '8px',
-                                                fontSize: '12px',
-                                                color: '#b45309',
-                                                fontWeight: '700',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '6px'
-                                            }}>
-                                                <span>💡</span>
-                                                Only 2 heats — consider naming this round <strong style={{ marginLeft: '4px' }}>&quot;Semi Final&quot;</strong>
-                                            </div>
-                                        )}
-                                    </div>
-                                );
-                            })()}
-
                             <div className="form-row">
                                 <div className="form-group">
                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
@@ -3810,31 +3669,7 @@ const HeatManagement = () => {
                                         }}
                                     />
                                 </div>
-                                {!(formData.round?.toLowerCase() === 'final' || formData.round?.toLowerCase() === 'finals') && (
-                                    <div className="form-group">
-                                        <label className="form-label">Qualified to Next Round</label>
-                                        <input
-                                            type="number"
-                                            className="form-control"
-                                            min="1"
-                                            max={formData.surfer_count}
-                                            value={formData.qualified_count}
-                                            onKeyDown={(e) => ["ArrowUp", "ArrowDown"].includes(e.key) && e.preventDefault()}
-                                            onWheel={(e) => e.target.blur()}
-                                            onChange={(e) => {
-                                                const val = e.target.value;
-                                                if (val === '') {
-                                                    setFormData({ ...formData, qualified_count: '' });
-                                                    return;
-                                                }
-                                                const value = parseInt(val);
-                                                if (!isNaN(value)) {
-                                                    setFormData({ ...formData, qualified_count: value });
-                                                }
-                                            }}
-                                        />
-                                    </div>
-                                )}
+
                             </div>
                             )}
 
@@ -4010,58 +3845,11 @@ const HeatManagement = () => {
                                         </div>
                                     </div>
                                 )}
-                                {(() => {
-                                    const seedInfo = getParentSeedingInfo();
-                                    if (!seedInfo) return null;
-                                    return (
-                                        <div style={{
-                                            background: 'linear-gradient(135deg, rgba(124,58,237,0.08), rgba(79,70,229,0.05))',
-                                            border: '1.5px solid rgba(124,58,237,0.25)',
-                                            borderRadius: '10px',
-                                            padding: '10px 14px',
-                                            marginBottom: '12px',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: '10px',
-                                            flexWrap: 'wrap'
-                                        }}>
-                                            <span style={{ fontSize: '13px', fontWeight: '700', color: '#7c3aed', whiteSpace: 'nowrap', flex: 1 }}>
-                                                🔗 Seed Rankings From: <span style={{ color: '#4f46e5' }}>{seedInfo.eventName}</span>
-                                            </span>
-                                            <span style={{ fontSize: '11px', color: '#7c3aed', fontStyle: 'italic' }}>
-                                                ← used for Rank Wise Select
-                                            </span>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '8px' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                            <label className="form-label" style={{ marginBottom: 0 }}>Available Competitors ({getAvailableSurfers().filter(s => !s.is_sub).length})</label>
                                         </div>
-                                    );
-                                })()}
-
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '8px' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                                        <label className="form-label" style={{ marginBottom: 0 }}>Available Competitors ({getAvailableSurfers().filter(s => !s.is_sub).length})</label>
-                                    </div>
-                                    <div className="hm-surfer-select-actions" style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                                        <button
-                                            type="button"
-                                            onClick={selectRankWiseSurfers}
-                                            className="btn"
-                                            style={{
-                                                padding: '8px 16px',
-                                                fontSize: '13px',
-                                                background: '#eab308',
-                                                color: 'white',
-                                                border: 'none',
-                                                borderRadius: '10px',
-                                                display: 'flex',
-                                                alignItems: 'center',
-                                                gap: '8px',
-                                                cursor: 'pointer',
-                                                fontWeight: '600',
-                                                boxShadow: '0 2px 4px rgba(234, 179, 8, 0.2)'
-                                            }}
-                                        >
-                                            <Award size={16} />
-                                            Rank Wise Select
-                                        </button>
+                                        <div className="hm-surfer-select-actions" style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                                         {formData.round === 'Round 1' &&
                                             heats.filter(h => String(h.event_id) === String(formData.event_id) && h.division === formData.division && h.round === 'Round 1').length === 0 &&
                                             events.find(e => String(e.id) === String(formData.event_id))?.is_series && (
@@ -4111,7 +3899,7 @@ const HeatManagement = () => {
                                         </button>
                                     </div>
                                 </div>
-                                {formData.event_id && eventImportedSurferIds !== null && eventImportedSurferIds.size === 0 ? (
+                                {false ? (
                                     <div style={{
                                         padding: '20px 16px',
                                         borderRadius: '12px',
@@ -4128,7 +3916,7 @@ const HeatManagement = () => {
                                             flexShrink: 0
                                         }}>
                                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                                <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+                                                <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
                                             </svg>
                                         </div>
                                         <div>
@@ -4140,42 +3928,40 @@ const HeatManagement = () => {
                                     </div>
                                 ) : (
                                     <div>
-                                        {/* Slot filter pills inside Create Heat modal */}
+                                        {/* Gender filter pills inside Create Heat modal */}
                                         <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
-                                            <span style={{ fontSize: '11px', fontWeight: '700', color: '#64748B' }}>Session Slot:</span>
+                                            <span style={{ fontSize: '11px', fontWeight: '700', color: '#64748B' }}>Gender Filter:</span>
                                             {[
-                                                { id: 'All', label: 'All Slots' },
-                                                { id: 'Morning 6:30 AM', label: '🌅 06:30 AM' },
-                                                { id: 'Morning 9:30 AM', label: '☀️ 09:30 AM' },
-                                                { id: 'Sunset 4:30 PM', label: '🌇 04:30 PM' }
-                                            ].map(st => (
+                                                { id: 'All', label: 'All' },
+                                                { id: 'Male', label: '♂️ Male' },
+                                                { id: 'Female', label: '♀️ Female' }
+                                            ].map(gf => (
                                                 <button
-                                                    key={st.id}
+                                                    key={gf.id}
                                                     type="button"
-                                                    onClick={() => setModalSurferSlotFilter(st.id)}
+                                                    onClick={() => setModalSurferGenderFilter(gf.id)}
                                                     style={{
-                                                        padding: '4px 10px',
+                                                        padding: '4px 12px',
                                                         borderRadius: '6px',
-                                                        border: modalSurferSlotFilter === st.id ? '1.5px solid #0284C7' : '1px solid #E2E8F0',
-                                                        background: modalSurferSlotFilter === st.id ? '#0F172A' : '#F8FAFC',
-                                                        color: modalSurferSlotFilter === st.id ? '#00F2FE' : '#475569',
+                                                        border: modalSurferGenderFilter === gf.id ? '1.5px solid #0284C7' : '1px solid #E2E8F0',
+                                                        background: modalSurferGenderFilter === gf.id ? '#0F172A' : '#F8FAFC',
+                                                        color: modalSurferGenderFilter === gf.id ? '#00F2FE' : '#475569',
                                                         fontSize: '11px',
                                                         fontWeight: '700',
                                                         cursor: 'pointer'
                                                     }}
                                                 >
-                                                    {st.label}
+                                                    {gf.label}
                                                 </button>
                                             ))}
                                         </div>
 
                                         <div className="card hm-surfer-checklist" style={{ padding: '12px', maxHeight: '200px', overflowY: 'auto', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                                             {getAvailableSurfers().filter(s => {
-                                                if (modalSurferSlotFilter === 'All') return true;
-                                                const sSlot = (s.session_time || '').toLowerCase();
-                                                if (modalSurferSlotFilter.includes('6:30')) return sSlot.includes('6:30') || sSlot.includes('6:00') || sSlot.includes('dawn');
-                                                if (modalSurferSlotFilter.includes('9:30')) return sSlot.includes('9:30') || sSlot.includes('8:00');
-                                                if (modalSurferSlotFilter.includes('4:30')) return sSlot.includes('4:30') || sSlot.includes('sunset') || sSlot.includes('evening');
+                                                if (modalSurferGenderFilter === 'All') return true;
+                                                const sGender = (s.gender || '').toLowerCase();
+                                                if (modalSurferGenderFilter === 'Male') return sGender === 'male' || sGender === 'men' || sGender === 'boy';
+                                                if (modalSurferGenderFilter === 'Female') return sGender === 'female' || sGender === 'women' || sGender === 'girl';
                                                 return true;
                                             }).map((s) => (
                                                 <label key={s.id} className="flex items-center gap-2" style={{ cursor: s.is_sub ? 'not-allowed' : 'pointer', padding: '4px', opacity: s.is_sub ? 0.6 : 1 }}>
@@ -4187,7 +3973,7 @@ const HeatManagement = () => {
                                                     />
                                                     <div style={{ display: 'flex', flexDirection: 'column' }}>
                                                         <span style={{ fontSize: '13px', fontWeight: '600', color: s.is_sub ? '#854d0e' : 'inherit' }}>
-                                                            {s.name} {s.is_sub && <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 4px', borderRadius: '4px', background: '#fef08a', color: '#854d0e', marginLeft: '4px' }}>Not Participating</span>}
+                                                            {s.name} {s.gender && <span style={{ fontSize: '10px', color: '#64748B', fontWeight: '500' }}>({s.gender})</span>} {s.is_sub && <span style={{ fontSize: '10px', fontWeight: '700', padding: '2px 4px', borderRadius: '4px', background: '#fef08a', color: '#854d0e', marginLeft: '4px' }}>Not Participating</span>}
                                                         </span>
                                                         {s.session_time && (
                                                             <span style={{ fontSize: '10px', color: '#0D9488', fontWeight: '700' }}>
@@ -4475,20 +4261,22 @@ const HeatManagement = () => {
                                     <div className="card hm-judges-card" style={{ padding: '20px', background: 'var(--surface-hover)', gridColumn: 'span 2' }}>
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                                             <div className="text-secondary" style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Judges</div>
-                                            <button
-                                                onClick={() => handleOpenJudgeAssignment(viewHeat)}
-                                                className="btn btn-primary"
-                                                style={{
-                                                    padding: '6px 14px',
-                                                    fontSize: '12px',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '6px'
-                                                }}
-                                            >
-                                                <Users size={14} />
-                                                {viewHeat.judges && viewHeat.judges.length > 0 ? 'Edit Assignments' : 'Assign Judge'}
-                                            </button>
+                                            {!isStudent && (
+                                                <button
+                                                    onClick={() => handleOpenJudgeAssignment(viewHeat)}
+                                                    className="btn btn-primary"
+                                                    style={{
+                                                        padding: '6px 14px',
+                                                        fontSize: '12px',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        gap: '6px'
+                                                    }}
+                                                >
+                                                    <Users size={14} />
+                                                    {viewHeat.judges && viewHeat.judges.length > 0 ? 'Edit Assignments' : 'Assign Judge'}
+                                                </button>
+                                            )}
                                         </div>
                                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                                             {viewHeat.judges && viewHeat.judges.filter(j => j.role === 'scoring').length > 0 ? (
@@ -4573,23 +4361,7 @@ const HeatManagement = () => {
                                                         })()}
                                                     </div>
                                                 )
-                                            ) : (
-                                                <div style={{
-                                                    fontSize: '14px',
-                                                    fontWeight: '500',
-                                                    color: 'var(--accent-blue)',
-                                                    display: 'flex',
-                                                    alignItems: 'center',
-                                                    gap: '6px',
-                                                    background: 'rgba(59, 130, 246, 0.05)',
-                                                    padding: '4px 10px',
-                                                    borderRadius: '6px',
-                                                    border: '1px solid rgba(59, 130, 246, 0.1)'
-                                                }}>
-                                                    <Award size={16} />
-                                                    Qualified to Next Round: {viewHeat.qualified_count || (viewHeat.surfers ? viewHeat.surfers.length : 0)}
-                                                </div>
-                                            )}
+                                            ) : (null)}
                                         </div>
                                     </h4>
                                     <div className="card hm-details-table-wrap" style={{ overflow: 'hidden' }}>
@@ -4784,7 +4556,7 @@ const HeatManagement = () => {
                                 </div>
                                 <div style={{ display: 'flex', gap: '12px' }}>
                                     <button type="button" onClick={() => setViewHeat(null)} className="btn btn-secondary">Close</button>
-                                    {(viewHeat.status === 'scheduled' || !viewHeat.status) && !isVhBreak && (
+                                    {!isStudent && (viewHeat.status === 'scheduled' || !viewHeat.status) && !isVhBreak && (
                                         <>
                                             <button
                                                 onClick={() => {
@@ -4823,7 +4595,7 @@ const HeatManagement = () => {
                                             </button>
                                         </>
                                     )}
-                                    {viewHeat.status === 'in-progress' && !isVhBreak && (
+                                    {!isStudent && viewHeat.status === 'in-progress' && !isVhBreak && (
                                         <button
                                             onClick={() => {
                                                 setCustomConfirm({

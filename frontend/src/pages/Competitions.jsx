@@ -881,8 +881,9 @@ const Competitions = () => {
                   { id: 'events', label: '📅 Events' },
                   ...((currentUser?.role !== 'athlete' && currentUser?.role !== 'student') ? [{ id: 'competitors', label: '👥 Competitors' }] : []),
                   { id: 'heats', label: '🕒 Heats' },
+                  ...((currentUser?.role !== 'athlete' && currentUser?.role !== 'student') ? [{ id: 'scoring', label: '🎯 Scoring' }] : []),
                   ...((currentUser?.role !== 'athlete' && currentUser?.role !== 'student') ? [{ id: 'judge', label: '👨‍⚖️ Judge' }] : []),
-                  { id: 'results', label: '🏆 Results' }
+                  { id: 'results', label: '🏆 Live Scores & Results' }
                 ].map(tab => (
                   <button
                     key={tab.id}
@@ -926,70 +927,13 @@ const Competitions = () => {
               </div>
             )}
 
-            {/* School Admin: Actionable Direct Signup Join Requests (Pending Athletes) */}
-            {currentUser?.role !== 'athlete' && currentUser?.role !== 'student' && joinRequests.filter(r => r.status === 'pending').length > 0 && (
-              <div style={{ background: '#FFFFFF', border: '1.5px solid #E2E8F0', borderRadius: '20px', padding: '24px', marginBottom: '24px', boxShadow: '0 4px 20px rgba(0,0,0,0.03)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <span style={{ fontSize: '20px' }}>📩</span>
-                    <div>
-                      <h3 style={{ fontSize: '16px', fontWeight: 800, color: '#0F172A', margin: 0 }}>
-                        Direct Registration Requests ({joinRequests.filter(r => r.status === 'pending').length} Pending)
-                      </h3>
-                      <p style={{ fontSize: '13px', color: '#64748B', margin: '2px 0 0 0' }}>
-                        Athletes registered directly to join your school. Approve them into your active competitor pool.
-                      </p>
-                    </div>
-                  </div>
-                  <span style={{ background: 'rgba(13, 148, 136, 0.1)', color: '#0D9488', fontWeight: 800, fontSize: '12px', padding: '4px 12px', borderRadius: '20px' }}>
-                    School Portal
-                  </span>
-                </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {joinRequests.filter(r => r.status === 'pending').map(req => (
-                    <div key={req.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 18px', background: '#F8FAFC', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                        <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: '#0D9488', color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '16px' }}>
-                          {req.student_name ? req.student_name[0] : 'S'}
-                        </div>
-                        <div>
-                          <div style={{ fontWeight: 800, color: '#0F172A', fontSize: '14px' }}>{req.student_name}</div>
-                          <div style={{ color: '#64748B', fontSize: '12px', marginTop: '2px' }}>
-                            🏫 Requested School: <strong>{req.school_name}</strong> · 🕒 Slot: {req.session_time} · 📅 Date: {req.start_date}
-                          </div>
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', gap: '8px' }}>
-                        <button
-                          onClick={() => handleApproveJoinRequest(req.id)}
-                          style={{ background: '#0D9488', color: '#FFF', border: 'none', padding: '8px 16px', borderRadius: '8px', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}
-                        >
-                          ✅ Approve Athlete
-                        </button>
-                        <button
-                          onClick={() => {
-                            const updated = joinRequests.map(r => r.id === req.id ? { ...r, status: 'rejected' } : r);
-                            setJoinRequests(updated);
-                            try { localStorage.setItem('school_join_requests', JSON.stringify(updated)); } catch(e) {}
-                            showToast(`Declined request for ${req.student_name}`);
-                          }}
-                          style={{ background: '#F1F5F9', color: '#64748B', border: '1px solid #CBD5E1', padding: '8px 14px', borderRadius: '8px', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}
-                        >
-                          ❌ Decline
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
 
             {/* Sub-Tab 1: Heats Management */}
             {aquaticSubTab === 'heats' && (
               <ToastProvider>
                 <ConfirmProvider>
-                  <HeatManagement />
+                  <HeatManagement currentUser={currentUser} />
                 </ConfirmProvider>
               </ToastProvider>
             )}
@@ -998,7 +942,7 @@ const Competitions = () => {
             {aquaticSubTab === 'competitors' && (
               <ToastProvider>
                 <ConfirmProvider>
-                  <CompetitorManagement />
+                  <CompetitorManagement currentUser={currentUser} />
                 </ConfirmProvider>
               </ToastProvider>
             )}
@@ -1007,25 +951,34 @@ const Competitions = () => {
             {aquaticSubTab === 'events' && (
               <ToastProvider>
                 <ConfirmProvider>
-                  <EventManagement />
+                  <EventManagement currentUser={currentUser} />
+                </ConfirmProvider>
+              </ToastProvider>
+            )}
+
+            {/* Sub-Tab 4: Live Scoring (AquaticX Judge Dashboard - Judges/Admins Only) */}
+            {aquaticSubTab === 'scoring' && (currentUser?.role !== 'athlete' && currentUser?.role !== 'student') && (
+              <ToastProvider>
+                <ConfirmProvider>
+                  <JudgeDashboard currentUser={currentUser} />
                 </ConfirmProvider>
               </ToastProvider>
             )}
 
             {/* Sub-Tab 5: Judge Panel */}
-            {aquaticSubTab === 'judge' && (
+            {aquaticSubTab === 'judge' && (currentUser?.role !== 'athlete' && currentUser?.role !== 'student') && (
               <ToastProvider>
                 <ConfirmProvider>
-                  <JudgesManagement />
+                  <JudgesManagement currentUser={currentUser} />
                 </ConfirmProvider>
               </ToastProvider>
             )}
 
-            {/* Sub-Tab 6: Results & Standings */}
-            {aquaticSubTab === 'results' && (
+            {/* Sub-Tab 6: Live Results & Standings */}
+            {(aquaticSubTab === 'results' || ((currentUser?.role === 'athlete' || currentUser?.role === 'student') && (aquaticSubTab === 'scoring' || aquaticSubTab === 'judge' || aquaticSubTab === 'competitors'))) && (
               <ToastProvider>
                 <ConfirmProvider>
-                  <ResultsPage />
+                  <ResultsPage currentUser={currentUser} />
                 </ConfirmProvider>
               </ToastProvider>
             )}

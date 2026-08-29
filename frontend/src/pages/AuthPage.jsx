@@ -113,12 +113,34 @@ const AuthPage = () => {
     fetch(`${API}/api/schools`)
       .then(r => r.json())
       .then(data => {
-        if (Array.isArray(data) && data.length > 0) {
-          const names = data.map(s => s.name).filter(Boolean);
-          setSchoolsList(prev => Array.from(new Set([...names, ...prev])));
+        const deletedIds = new Set(JSON.parse(localStorage.getItem('deleted_school_ids') || '[]').map(String));
+        const deletedNames = new Set(JSON.parse(localStorage.getItem('deleted_school_names') || '[]').map(n => String(n).toLowerCase().trim()));
+        const deletedEmails = new Set(JSON.parse(localStorage.getItem('deleted_school_emails') || '[]').map(e => String(e).toLowerCase().trim()));
+
+        let validNames = [];
+        if (Array.isArray(data)) {
+          validNames = data.filter(s => {
+            if (!s) return false;
+            if (s.id && deletedIds.has(String(s.id))) return false;
+            if (s.name && deletedNames.has(String(s.name).toLowerCase().trim())) return false;
+            if (s.email && deletedEmails.has(String(s.email).toLowerCase().trim())) return false;
+            return true;
+          }).map(s => s.name).filter(Boolean);
+        }
+
+        if (!deletedNames.has('aquatic indica surf school') && !validNames.some(n => n.toLowerCase().includes('aquatic indica'))) {
+          validNames.unshift('Aquatic Indica Surf School');
+        }
+
+        const uniqueSchools = Array.from(new Set(validNames));
+        setSchoolsList(uniqueSchools.length > 0 ? uniqueSchools : ['Aquatic Indica Surf School']);
+        if (uniqueSchools.length > 0 && (!formData.school || !uniqueSchools.includes(formData.school))) {
+          setFormData(prev => ({ ...prev, school: uniqueSchools[0] }));
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        setSchoolsList(['Aquatic Indica Surf School']);
+      });
   }, []);
 
   // Fetch invite info if token present in URL
@@ -252,17 +274,38 @@ const AuthPage = () => {
     sessionStorage.setItem('user', JSON.stringify(user));
     try {
       const existingSaved = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
-      const filtered = existingSaved.filter(a => a.email.toLowerCase() !== user.email.toLowerCase());
+      const filtered = existingSaved.filter(a => a.email && a.email.toLowerCase() !== user.email.toLowerCase());
       const updatedAccounts = [{
         name: user.name && user.name !== 'System Admin' ? user.name : 'School Admin',
         email: user.email.toLowerCase(),
         role: user.role === 'admin' ? 'School Admin' : (user.role || 'athlete'),
+        school: user.school || formData.school || 'Aquatic Indica Surf School',
         image: user.image || '',
-        approval_status: user.approval_status || 'approved',
+        approval_status: user.approval_status || (inviteToken ? 'approved' : 'pending'),
+        whatsapp_number: formData.whatsapp_number || '',
+        start_date: formData.start_date || new Date().toISOString().split('T')[0],
+        session_time: formData.session_time || 'Morning 6:00 AM',
         lastLogin: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
       }, ...filtered];
       localStorage.setItem('savedAccounts', JSON.stringify(updatedAccounts));
       setSavedAccounts(updatedAccounts);
+
+      if (user.role === 'athlete' || role === 'athlete') {
+        const mockStudents = JSON.parse(localStorage.getItem('mock_students_data') || '[]');
+        const filteredMock = mockStudents.filter(m => (m.email || '').toLowerCase() !== user.email.toLowerCase());
+        filteredMock.unshift({
+          id: user.student_id || user.id || Date.now(),
+          name: user.name,
+          email: user.email.toLowerCase(),
+          role: 'athlete',
+          school: user.school || formData.school || 'Aquatic Indica Surf School',
+          approval_status: user.approval_status || (inviteToken ? 'approved' : 'pending'),
+          whatsapp_number: formData.whatsapp_number || '',
+          start_date: formData.start_date || new Date().toISOString().split('T')[0],
+          session_time: formData.session_time || 'Morning 6:00 AM',
+        });
+        localStorage.setItem('mock_students_data', JSON.stringify(filteredMock));
+      }
     } catch (e) {}
 
     // Check if student approval is pending (only for direct signups without invite link)
@@ -421,31 +464,54 @@ const AuthPage = () => {
           name: formData.name.trim(),
           email: formData.email.toLowerCase().trim(),
           role: role,
-          school: formData.school,
-          approval_status: (inviteToken || searchParams.get('school')) ? 'approved' : 'pending'
+          school: formData.school || 'Aquatic Indica Surf School',
+          approval_status: inviteToken ? 'approved' : 'pending'
         };
+        userObj.approval_status = inviteToken ? 'approved' : 'pending';
 
-        // If direct signup without invite link, record pending join request for school admin
-        if (!inviteToken && !searchParams.get('school') && role === 'athlete') {
+        // Save student into backend surfers table (correct backend)
+        try {
+          fetch(`${API}/api/surfers`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: formData.name.trim(),
+              school_name: formData.school || 'Aquatic Indica Surf School',
+              email: formData.email.toLowerCase().trim(),
+              phone: formData.whatsapp_number || '',
+              gender: formData.gender || 'Male',
+              age: formData.age ? parseInt(formData.age) : 20,
+              state: 'Tamil Nadu',
+              admin_id: 'admin'
+            })
+          }).catch(() => {});
+        } catch (e) {}
+
+        // If direct signup without invite token, ALWAYS record pending join request for school admin
+        if (!inviteToken && role === 'athlete') {
           try {
             const existingReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
             const studentEmail = formData.email.toLowerCase().trim();
-            if (!existingReqs.some(r => r.student_email?.toLowerCase() === studentEmail)) {
-              existingReqs.unshift({
-                id: `req_${Date.now()}`,
-                student_id: userObj.student_id || userObj.id || Date.now(),
-                student_name: formData.name.trim(),
-                student_email: studentEmail,
-                school_name: formData.school || 'Aquatic Indica Surf School',
-                start_date: formData.start_date || '2026-08-26',
-                session_time: formData.session_time || 'Morning 6:00 AM',
-                whatsapp_number: formData.whatsapp_number || 'N/A',
-                status: 'pending',
-                request_date: new Date().toLocaleDateString(),
-                time: new Date().toLocaleTimeString()
-              });
-              localStorage.setItem('school_join_requests', JSON.stringify(existingReqs));
+            const existingIdx = existingReqs.findIndex(r => (r.student_email || r.email || '').toLowerCase().trim() === studentEmail);
+            const newReq = {
+              id: `req_${Date.now()}`,
+              student_id: userObj.student_id || userObj.id || Date.now(),
+              student_name: formData.name.trim(),
+              student_email: studentEmail,
+              school_name: formData.school || 'Aquatic Indica Surf School',
+              start_date: formData.start_date || new Date().toISOString().split('T')[0],
+              session_time: formData.session_time || 'Morning 6:00 AM',
+              whatsapp_number: formData.whatsapp_number || 'N/A',
+              status: 'pending',
+              request_date: new Date().toLocaleDateString(),
+              time: new Date().toLocaleTimeString()
+            };
+            if (existingIdx >= 0) {
+              existingReqs[existingIdx] = { ...existingReqs[existingIdx], ...newReq, status: 'pending' };
+            } else {
+              existingReqs.unshift(newReq);
             }
+            localStorage.setItem('school_join_requests', JSON.stringify(existingReqs));
           } catch (e) {}
           userObj.approval_status = 'pending';
         }
@@ -462,29 +528,33 @@ const AuthPage = () => {
         email: formData.email.toLowerCase().trim(),
         role: role,
         school: formData.school || 'Aquatic Indica Surf School',
-        approval_status: (inviteToken || searchParams.get('school')) ? 'approved' : 'pending'
+        approval_status: inviteToken ? 'approved' : 'pending'
       };
 
-      if (!inviteToken && !searchParams.get('school') && role === 'athlete') {
+      if (!inviteToken && role === 'athlete') {
         try {
           const existingReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
           const studentEmail = formData.email.toLowerCase().trim();
-          if (!existingReqs.some(r => r.student_email?.toLowerCase() === studentEmail)) {
-            existingReqs.unshift({
-              id: `req_${Date.now()}`,
-              student_id: userObj.id,
-              student_name: formData.name.trim(),
-              student_email: studentEmail,
-              school_name: formData.school || 'Aquatic Indica Surf School',
-              start_date: formData.start_date || '2026-08-28',
-              session_time: formData.session_time || 'Morning 6:00 AM',
-              whatsapp_number: formData.whatsapp_number || 'N/A',
-              status: 'pending',
-              request_date: new Date().toLocaleDateString(),
-              time: new Date().toLocaleTimeString()
-            });
-            localStorage.setItem('school_join_requests', JSON.stringify(existingReqs));
+          const existingIdx = existingReqs.findIndex(r => (r.student_email || r.email || '').toLowerCase().trim() === studentEmail);
+          const newReq = {
+            id: `req_${Date.now()}`,
+            student_id: userObj.id,
+            student_name: formData.name.trim(),
+            student_email: studentEmail,
+            school_name: formData.school || 'Aquatic Indica Surf School',
+            start_date: formData.start_date || new Date().toISOString().split('T')[0],
+            session_time: formData.session_time || 'Morning 6:00 AM',
+            whatsapp_number: formData.whatsapp_number || 'N/A',
+            status: 'pending',
+            request_date: new Date().toLocaleDateString(),
+            time: new Date().toLocaleTimeString()
+          };
+          if (existingIdx >= 0) {
+            existingReqs[existingIdx] = { ...existingReqs[existingIdx], ...newReq, status: 'pending' };
+          } else {
+            existingReqs.unshift(newReq);
           }
+          localStorage.setItem('school_join_requests', JSON.stringify(existingReqs));
         } catch (e) {}
       }
 

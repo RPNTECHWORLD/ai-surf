@@ -16,7 +16,12 @@ function getFirstDay(y, m) { return (new Date(y, m, 1).getDay() + 6) % 7; }
 
 const SessionConfigure = () => {
   const navigate = useNavigate();
-  const [slots, setSlots] = useState(defaultSlots);
+  const [slots, setSlots] = useState(() => {
+    try {
+      const saved = localStorage.getItem('session_slots');
+      return saved ? JSON.parse(saved) : defaultSlots;
+    } catch(e) { return defaultSlots; }
+  });
   const [settings, setSettings] = useState({ defaultDuration: "90", maxStudents: "4", breakBetween: "30", cancellationWindow: "24" });
   const today = new Date();
   const [calYear, setCalYear] = useState(today.getFullYear());
@@ -58,7 +63,11 @@ const SessionConfigure = () => {
               Back to Sessions
             </button>
             <button
-              onClick={() => { setSaving(true); setTimeout(() => { setSaving(false); alert("Session Configuration Saved Successfully!"); }, 800); }}
+              onClick={() => { 
+                setSaving(true); 
+                localStorage.setItem('session_slots', JSON.stringify(slots));
+                setTimeout(() => { setSaving(false); alert("Session Configuration Saved Successfully!"); }, 500); 
+              }}
               disabled={saving}
               className="sc-btn-save"
             >

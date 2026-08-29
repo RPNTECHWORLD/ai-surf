@@ -113,7 +113,11 @@ const SuperAdminDashboard = () => {
 
   // New Admin States
   const [studentsList, setStudentsList] = useState([]);
+  const [selectedStudentIds, setSelectedStudentIds] = useState([]);
+  const [isStudentSelectMode, setIsStudentSelectMode] = useState(false);
   const [schoolsList, setSchoolsList] = useState([]);
+  const [selectedSchoolIds, setSelectedSchoolIds] = useState([]);
+  const [isSchoolSelectMode, setIsSchoolSelectMode] = useState(false);
   const [marketplace, setMarketplace] = useState([]);
   const [reports, setReports] = useState([]);
   const [aiUsage, setAiUsage] = useState(null);
@@ -161,11 +165,84 @@ const SuperAdminDashboard = () => {
 
       // 8. Fetch students for management
       const studentsRes = await fetch(`${API}/api/students`);
-      if (studentsRes.ok) setStudentsList(await studentsRes.json());
+      let allStudents = [];
+      if (studentsRes.ok) allStudents = await studentsRes.json();
+
+      const deletedEmails = new Set(
+        (JSON.parse(localStorage.getItem('deleted_student_emails') || '[]')).map(e => String(e).toLowerCase().trim())
+      );
+      const deletedIds = new Set(
+        (JSON.parse(localStorage.getItem('deleted_student_ids') || '[]')).map(i => String(i))
+      );
+
+      // Filter out deleted students from database response
+      allStudents = allStudents.filter(s => {
+        if (!s) return false;
+        if (deletedIds.has(String(s.id))) return false;
+        if (s.email && deletedEmails.has(s.email.toLowerCase().trim())) return false;
+        return true;
+      });
+
+      // Merge with registered students / requests from localStorage (excluding deleted)
+      try {
+        const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+        const savedAccs = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
+        const mockStudents = JSON.parse(localStorage.getItem('mock_students_data') || '[]');
+        const savedUser = JSON.parse(sessionStorage.getItem('user') || '{}');
+        
+        const allKnown = [...savedReqs, ...savedAccs, ...mockStudents];
+        if (savedUser && savedUser.email && (savedUser.role === 'athlete' || savedUser.role === 'student')) {
+          allKnown.push(savedUser);
+        }
+
+        allKnown.forEach(req => {
+          const emailLower = (req.student_email || req.email || '').toLowerCase().trim();
+          if (emailLower && !deletedEmails.has(emailLower) && !allStudents.some(s => s.email && s.email.toLowerCase().trim() === emailLower)) {
+            allStudents.push({
+              id: req.student_id || req.id || Date.now(),
+              name: req.student_name || req.name || emailLower.split('@')[0],
+              email: emailLower,
+              whatsapp_number: req.whatsapp_number || req.phone || '',
+              level: req.level || 'Beginner',
+              course_duration: req.course_duration || '3 Days Course',
+              session_time: req.session_time || '11:30 AM',
+              start_date: req.start_date || '2026-08-29',
+              staying_at_school: req.staying_at_school || 'Yes',
+              approval_status: req.status || req.approval_status || 'approved',
+              instructor: ''
+            });
+          }
+        });
+      } catch (e) {}
+
+      setStudentsList(allStudents);
 
       // 9. Fetch schools for management
       const schoolsRes = await fetch(`${API}/api/schools`);
-      if (schoolsRes.ok) setSchoolsList(await schoolsRes.json());
+      if (schoolsRes.ok) {
+        const schoolsData = await schoolsRes.json();
+        const deletedSchoolIds = new Set(JSON.parse(localStorage.getItem('deleted_school_ids') || '[]').map(String));
+        const deletedSchoolEmails = new Set(JSON.parse(localStorage.getItem('deleted_school_emails') || '[]').map(e => String(e).toLowerCase().trim()));
+        const deletedSchoolNames = new Set(JSON.parse(localStorage.getItem('deleted_school_names') || '[]').map(n => String(n).toLowerCase().trim()));
+
+        let filtered = (Array.isArray(schoolsData) ? schoolsData : []).filter(sc => 
+          sc && !deletedSchoolIds.has(String(sc.id)) && (!sc.email || !deletedSchoolEmails.has(String(sc.email).toLowerCase().trim())) && (!sc.name || !deletedSchoolNames.has(String(sc.name).toLowerCase().trim()))
+        );
+
+        // Keep the primary official school (Aquatic Indica Surf School) always present as the active primary school
+        if (!deletedSchoolNames.has('aquatic indica surf school') && !filtered.some(s => s.name?.toLowerCase().includes('aquatic indica'))) {
+          filtered.unshift({
+            id: 1,
+            name: "Aquatic Indica Surf School",
+            owner: "Aquatic Admin",
+            email: "rpntechworld@gmail.com",
+            phone: "+91 9876543210",
+            location: "Kovalam / Chennai, India",
+            website: "https://aquaticindica.com"
+          });
+        }
+        setSchoolsList(filtered);
+      }
 
       setError('');
     } catch (err) {
@@ -238,17 +315,152 @@ const SuperAdminDashboard = () => {
     }));
   };
 
-  const handleDeleteStudent = async (id, name) => {
+  const markStudentAsDeleted = (id, email) => {
+    if (id) {
+      const deletedIds = JSON.parse(localStorage.getItem('deleted_student_ids') || '[]');
+      if (!deletedIds.includes(String(id))) {
+        deletedIds.push(String(id));
+        localStorage.setItem('deleted_student_ids', JSON.stringify(deletedIds));
+      }
+    }
+    if (email) {
+      const emailLower = email.toLowerCase().trim();
+      const deletedEmails = JSON.parse(localStorage.getItem('deleted_student_emails') || '[]');
+      if (!deletedEmails.includes(emailLower)) {
+        deletedEmails.push(emailLower);
+        localStorage.setItem('deleted_student_emails', JSON.stringify(deletedEmails));
+      }
+      const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+      const filteredReqs = savedReqs.filter(r => (r.student_email || r.email || '').toLowerCase().trim() !== emailLower);
+      localStorage.setItem('school_join_requests', JSON.stringify(filteredReqs));
+    }
+  };
+
+  const handleDeleteStudent = async (id, name, email) => {
     if (!window.confirm(`Are you sure you want to delete student "${name}"?`)) return;
+    markStudentAsDeleted(id, email);
     try {
       await fetch(`${API}/api/superadmin/users/${id}`, { method: 'DELETE' });
       await fetch(`${API}/api/students/${id}`, { method: 'DELETE' });
-      setSuccessMsg(`Student "${name}" deleted.`);
-      setStudentsList(prev => prev.filter(s => s.id !== id && s.id != id));
-    } catch (err) {
-      setStudentsList(prev => prev.filter(s => s.id !== id && s.id != id));
-      setSuccessMsg(`Student "${name}" deleted.`);
+    } catch (err) {}
+    setStudentsList(prev => prev.filter(s => s.id !== id && s.id != id));
+    setSuccessMsg(`Student "${name}" deleted.`);
+  };
+
+  const toggleSelectStudent = (id) => {
+    setSelectedStudentIds(prev =>
+      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAllStudents = () => {
+    if (selectedStudentIds.length === studentsList.length) {
+      setSelectedStudentIds([]);
+    } else {
+      setSelectedStudentIds(studentsList.map(s => s.id));
     }
+  };
+
+  const handleBulkDeleteStudents = async () => {
+    if (selectedStudentIds.length === 0) return;
+    if (!window.confirm(`Are you sure you want to delete ${selectedStudentIds.length} selected student(s)?`)) return;
+
+    const idsToDelete = [...selectedStudentIds];
+    for (const id of idsToDelete) {
+      const student = studentsList.find(s => s.id === id || s.id == id);
+      if (student) {
+        markStudentAsDeleted(student.id, student.email);
+        try {
+          await fetch(`${API}/api/superadmin/users/${id}`, { method: 'DELETE' });
+          await fetch(`${API}/api/students/${id}`, { method: 'DELETE' });
+        } catch (e) {}
+      }
+    }
+    setStudentsList(prev => prev.filter(s => !idsToDelete.includes(s.id)));
+    setSelectedStudentIds([]);
+    setSuccessMsg(`${idsToDelete.length} student(s) deleted successfully.`);
+  };
+
+  const handleBulkAssignInstructor = async (instructorIdVal) => {
+    if (selectedStudentIds.length === 0 || !instructorIdVal) return;
+    const instructorId = parseInt(instructorIdVal);
+
+    setStudentsList(prev => prev.map(s => {
+      if (selectedStudentIds.includes(s.id)) {
+        return { ...s, instructor_id: instructorId };
+      }
+      return s;
+    }));
+
+    for (const id of selectedStudentIds) {
+      try {
+        await fetch(`${API}/api/students/${id}/assign-instructor`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ instructor_id: instructorId })
+        });
+      } catch (err) {}
+    }
+    setSuccessMsg(`Assigned instructor to ${selectedStudentIds.length} student(s).`);
+  };
+
+  const toggleSelectSchool = (id) => {
+    setSelectedSchoolIds(prev =>
+      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAllSchools = () => {
+    if (selectedSchoolIds.length === schoolsList.length) {
+      setSelectedSchoolIds([]);
+    } else {
+      setSelectedSchoolIds(schoolsList.map(s => s.id));
+    }
+  };
+
+  const markSchoolAsDeleted = (id, name, email) => {
+    if (id) {
+      const deletedIds = JSON.parse(localStorage.getItem('deleted_school_ids') || '[]');
+      if (!deletedIds.includes(String(id))) {
+        deletedIds.push(String(id));
+        localStorage.setItem('deleted_school_ids', JSON.stringify(deletedIds));
+      }
+    }
+    if (name) {
+      const nameLower = name.toLowerCase().trim();
+      const deletedNames = JSON.parse(localStorage.getItem('deleted_school_names') || '[]');
+      if (!deletedNames.includes(nameLower)) {
+        deletedNames.push(nameLower);
+        localStorage.setItem('deleted_school_names', JSON.stringify(deletedNames));
+      }
+    }
+    if (email) {
+      const emailLower = email.toLowerCase().trim();
+      const deletedEmails = JSON.parse(localStorage.getItem('deleted_school_emails') || '[]');
+      if (!deletedEmails.includes(emailLower)) {
+        deletedEmails.push(emailLower);
+        localStorage.setItem('deleted_school_emails', JSON.stringify(deletedEmails));
+      }
+    }
+  };
+
+  const handleBulkDeleteSchools = async () => {
+    if (selectedSchoolIds.length === 0) return;
+    if (!window.confirm(`Are you sure you want to delete ${selectedSchoolIds.length} selected surf school(s)?`)) return;
+
+    const idsToDelete = [...selectedSchoolIds];
+    for (const id of idsToDelete) {
+      const sch = schoolsList.find(s => s.id === id || s.id == id);
+      if (sch) {
+        markSchoolAsDeleted(sch.id, sch.name, sch.email);
+        try {
+          await fetch(`${API}/api/superadmin/schools/${id}`, { method: 'DELETE' });
+        } catch (e) {}
+      }
+    }
+    setSchoolsList(prev => prev.filter(s => !idsToDelete.includes(s.id)));
+    setSelectedSchoolIds([]);
+    setSuccessMsg(`${idsToDelete.length} surf school(s) deleted successfully.`);
   };
   
   const handleAssignInstructor = async (studentId, instructorIdVal) => {
@@ -308,6 +520,8 @@ const SuperAdminDashboard = () => {
 
   const handleDeleteSchool = async (id, name) => {
     if (!window.confirm(`Are you sure you want to delete surf school "${name}"?`)) return;
+    const sch = schoolsList.find(s => s.id === id || s.id == id);
+    markSchoolAsDeleted(id, name, sch?.email);
     try {
       const res = await fetch(`${API}/api/schools/${id}`, { method: 'DELETE' });
       if (res.ok) {
@@ -422,10 +636,10 @@ const SuperAdminDashboard = () => {
   };
 
   const statsCards = [
-    { icon: IconUsers, label: 'Total Instructors', value: stats?.active_instructors ?? 0, color: '#6366f1', sub: 'Active coaches in roster' },
-    { icon: IconActivity, label: 'Active Students', value: stats?.active_students ?? 8, color: '#06b6d4', sub: 'Athletes in training' },
-    { icon: IconTrophy, label: 'Sessions This Month', value: stats?.sessions_this_month ?? 2, color: '#10b981', sub: 'Completed sessions' },
-    { icon: IconClock, label: 'Upcoming Sessions', value: stats?.upcoming_sessions ?? 5, color: '#f59e0b', sub: 'Scheduled future events' }
+    { icon: IconUsers, label: 'Total Instructors', value: coaches?.length || 0, color: '#6366f1', sub: 'Active coaches in roster' },
+    { icon: IconActivity, label: 'Active Students', value: studentsList?.length || 0, color: '#06b6d4', sub: 'Athletes in training' },
+    { icon: IconTrophy, label: 'Sessions This Month', value: stats?.sessions_this_month ?? 0, color: '#10b981', sub: 'Completed sessions' },
+    { icon: IconClock, label: 'Upcoming Sessions', value: stats?.upcoming_sessions ?? 0, color: '#f59e0b', sub: 'Scheduled future events' }
   ];
 
   return (
@@ -734,15 +948,100 @@ const SuperAdminDashboard = () => {
                 </div>
 
                 <div className="sa-card-main">
-                  <div className="sa-card-header">
-                    <h3>Student Roster</h3>
-                    <span className="sa-count-badge">{studentsList.length} total students</span>
+                  <div className="sa-card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <h3>Student Roster</h3>
+                      <span className="sa-count-badge">{studentsList.length} total students</span>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                      {isStudentSelectMode && selectedStudentIds.length > 0 && (
+                        <>
+                          <select
+                            onChange={(e) => {
+                              if (e.target.value) {
+                                handleBulkAssignInstructor(e.target.value);
+                                e.target.value = '';
+                              }
+                            }}
+                            style={{
+                              padding: '6px 12px',
+                              borderRadius: '8px',
+                              border: '1px solid #CBD5E1',
+                              background: '#FFFFFF',
+                              fontSize: '12px',
+                              fontWeight: '600',
+                              color: '#0F172A',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            <option value="">Assign Selected to...</option>
+                            {coaches.map((c) => (
+                              c.instructor_id && <option key={c.instructor_id} value={c.instructor_id}>{c.name}</option>
+                            ))}
+                          </select>
+
+                          <button
+                            type="button"
+                            onClick={handleBulkDeleteStudents}
+                            style={{
+                              padding: '6px 14px',
+                              borderRadius: '8px',
+                              background: '#EF4444',
+                              color: '#FFFFFF',
+                              border: 'none',
+                              fontSize: '12px',
+                              fontWeight: '700',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px'
+                            }}
+                          >
+                            Delete Selected ({selectedStudentIds.length})
+                          </button>
+                        </>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsStudentSelectMode(!isStudentSelectMode);
+                          if (isStudentSelectMode) setSelectedStudentIds([]);
+                        }}
+                        style={{
+                          padding: '6px 16px',
+                          borderRadius: '8px',
+                          border: isStudentSelectMode ? '1.5px solid #0284C7' : '1px solid #CBD5E1',
+                          background: isStudentSelectMode ? '#0F172A' : '#F8FAFC',
+                          color: isStudentSelectMode ? '#00F2FE' : '#334155',
+                          fontSize: '13px',
+                          fontWeight: '700',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px'
+                        }}
+                      >
+                        {isStudentSelectMode ? '✓ Select Mode Active' : 'Select'}
+                      </button>
+                    </div>
                   </div>
 
                   <div className="sa-table-responsive">
                     <table className="sa-table">
                       <thead>
                         <tr>
+                          {isStudentSelectMode && (
+                            <th style={{ width: '40px', textAlign: 'center' }}>
+                              <input
+                                type="checkbox"
+                                checked={studentsList.length > 0 && selectedStudentIds.length === studentsList.length}
+                                onChange={toggleSelectAllStudents}
+                                style={{ cursor: 'pointer', width: '16px', height: '16px', accentColor: '#0284C7' }}
+                              />
+                            </th>
+                          )}
                           <th>Student Name</th>
                           <th>Email Address</th>
                           <th>Course & Slot</th>
@@ -753,7 +1052,17 @@ const SuperAdminDashboard = () => {
                       </thead>
                       <tbody>
                         {studentsList.map((st) => (
-                          <tr key={st.id}>
+                          <tr key={st.id} style={{ background: selectedStudentIds.includes(st.id) ? 'rgba(2, 132, 199, 0.05)' : 'transparent' }}>
+                            {isStudentSelectMode && (
+                              <td style={{ textAlign: 'center' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={selectedStudentIds.includes(st.id)}
+                                  onChange={() => toggleSelectStudent(st.id)}
+                                  style={{ cursor: 'pointer', width: '16px', height: '16px', accentColor: '#0284C7' }}
+                                />
+                              </td>
+                            )}
                             <td>
                               <div className="sa-user-info">
                                 <div className="sa-avatar">{getInitials(st.name)}</div>
@@ -796,7 +1105,7 @@ const SuperAdminDashboard = () => {
                               <button
                                 className="sa-action-btn"
                                 style={{ background: 'rgba(239, 68, 68, 0.1)', color: '#EF4444', borderColor: 'rgba(239, 68, 68, 0.3)' }}
-                                onClick={() => handleDeleteStudent(st.id, st.name)}
+                                onClick={() => handleDeleteStudent(st.id, st.name, st.email)}
                               >
                                 Delete Student
                               </button>
@@ -804,7 +1113,7 @@ const SuperAdminDashboard = () => {
                           </tr>
                         ))}
                         {studentsList.length === 0 && (
-                          <tr><td colSpan="6" style={{ textAlign: 'center', padding: '30px', color: '#94A3B8' }}>No students registered yet.</td></tr>
+                          <tr><td colSpan={isStudentSelectMode ? "7" : "6"} style={{ textAlign: 'center', padding: '30px', color: '#94A3B8' }}>No students registered yet.</td></tr>
                         )}
                       </tbody>
                     </table>
@@ -827,15 +1136,74 @@ const SuperAdminDashboard = () => {
                 </div>
 
                 <div className="sa-card-main">
-                  <div className="sa-card-header">
-                    <h3>Surf Schools Directory</h3>
-                    <span className="sa-count-badge">{schoolsList.length} schools</span>
+                  <div className="sa-card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <h3>Surf Schools Directory</h3>
+                      <span className="sa-count-badge">{schoolsList.length} schools</span>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                      {isSchoolSelectMode && selectedSchoolIds.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleBulkDeleteSchools}
+                          style={{
+                            padding: '6px 14px',
+                            borderRadius: '8px',
+                            background: '#EF4444',
+                            color: '#FFFFFF',
+                            border: 'none',
+                            fontSize: '12px',
+                            fontWeight: '700',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px'
+                          }}
+                        >
+                          Delete Selected ({selectedSchoolIds.length})
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsSchoolSelectMode(!isSchoolSelectMode);
+                          if (isSchoolSelectMode) setSelectedSchoolIds([]);
+                        }}
+                        style={{
+                          padding: '6px 16px',
+                          borderRadius: '8px',
+                          border: isSchoolSelectMode ? '1.5px solid #0284C7' : '1px solid #CBD5E1',
+                          background: isSchoolSelectMode ? '#0F172A' : '#F8FAFC',
+                          color: isSchoolSelectMode ? '#00F2FE' : '#334155',
+                          fontSize: '13px',
+                          fontWeight: '700',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px'
+                        }}
+                      >
+                        {isSchoolSelectMode ? '✓ Select Mode Active' : 'Select'}
+                      </button>
+                    </div>
                   </div>
 
                   <div className="sa-table-responsive">
                     <table className="sa-table">
                       <thead>
                         <tr>
+                          {isSchoolSelectMode && (
+                            <th style={{ width: '40px', textAlign: 'center' }}>
+                              <input
+                                type="checkbox"
+                                checked={schoolsList.length > 0 && selectedSchoolIds.length === schoolsList.length}
+                                onChange={toggleSelectAllSchools}
+                                style={{ cursor: 'pointer', width: '16px', height: '16px', accentColor: '#0284C7' }}
+                              />
+                            </th>
+                          )}
                           <th>School Name</th>
                           <th>Owner / Contact</th>
                           <th>Location</th>
@@ -845,7 +1213,17 @@ const SuperAdminDashboard = () => {
                       </thead>
                       <tbody>
                         {schoolsList.map((sch) => (
-                          <tr key={sch.id}>
+                          <tr key={sch.id} style={{ background: selectedSchoolIds.includes(sch.id) ? 'rgba(2, 132, 199, 0.05)' : 'transparent' }}>
+                            {isSchoolSelectMode && (
+                              <td style={{ textAlign: 'center' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={selectedSchoolIds.includes(sch.id)}
+                                  onChange={() => toggleSelectSchool(sch.id)}
+                                  style={{ cursor: 'pointer', width: '16px', height: '16px', accentColor: '#0284C7' }}
+                                />
+                              </td>
+                            )}
                             <td>
                               <div style={{ fontWeight: 700, color: '#F8FAFC' }}>{sch.name}</div>
                               <div style={{ fontSize: '12px', color: '#94A3B8' }}>ID: #{sch.id}</div>
@@ -868,7 +1246,7 @@ const SuperAdminDashboard = () => {
                           </tr>
                         ))}
                         {schoolsList.length === 0 && (
-                          <tr><td colSpan="5" style={{ textAlign: 'center', padding: '30px', color: '#94A3B8' }}>No surf schools registered yet.</td></tr>
+                          <tr><td colSpan={isSchoolSelectMode ? "6" : "5"} style={{ textAlign: 'center', padding: '30px', color: '#94A3B8' }}>No surf schools registered yet.</td></tr>
                         )}
                       </tbody>
                     </table>
