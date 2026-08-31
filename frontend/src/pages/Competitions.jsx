@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import '../components/aquaticx/aquaticx.css';
 import { ToastProvider } from '../components/aquaticx/ToastContext';
@@ -14,6 +15,7 @@ import ViewerAnalytics from '../components/aquaticx/ViewerAnalytics';
 const API = import.meta.env.VITE_API_URL || '';
 
 const Competitions = () => {
+  const location = useLocation();
   const [activeTab, setActiveTab] = useState('aquaticx'); // 'aquaticx', 'live', 'mock-heat'
   const [data, setData] = useState({
     upcomingEvents: [],
@@ -161,6 +163,15 @@ const Competitions = () => {
       showToast('🧹 All demo heats and history cleared! Clean slate ready for fresh data.');
     }
   };
+
+  // Switch to the right sub-tab if navigated via URL ?subtab=
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const subtab = params.get('subtab');
+    if (subtab) {
+      setAquaticSubTab(subtab);
+    }
+  }, [location.search]);
 
   useEffect(() => {
     let interval = null;

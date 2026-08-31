@@ -612,25 +612,14 @@ const HeatManagement = ({ currentUser }) => {
             try {
                 const stRes = await fetch(`${SURF_API}/api/students`);
                 if (stRes.ok) {
-                    registeredStudents = await stRes.json();
-                }
-                const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-                savedReqs.forEach(req => {
-                    const emailLower = (req.student_email || req.email || '').toLowerCase().trim();
-                    if (emailLower && !registeredStudents.some(s => s.email && s.email.toLowerCase().trim() === emailLower)) {
-                        registeredStudents.push({
-                            id: req.student_id || req.id || Date.now(),
-                            name: req.student_name || req.name || emailLower.split('@')[0],
-                            email: emailLower,
-                            gender: req.gender || 'Male',
-                            age: req.age || 20,
-                            school: req.school_name || 'Aquatic Indica Surf School'
-                        });
+                    const data = await stRes.json();
+                    if (Array.isArray(data)) {
+                        registeredStudents = data;
                     }
-                });
+                }
             } catch (e) {}
 
-            // Read deleted names/IDs and deleted student emails from localStorage
+            // Read deleted lists from localStorage to persist user deletions
             const deletedEmails = new Set(
                 (JSON.parse(localStorage.getItem('deleted_student_emails') || '[]')).map(e => String(e).toLowerCase().trim())
             );
@@ -640,6 +629,20 @@ const HeatManagement = ({ currentUser }) => {
             const deletedIds = new Set(
                 (JSON.parse(localStorage.getItem('deleted_surfer_ids') || '[]')).map(i => String(i))
             );
+
+            // Auto-clean approved students from deleted lists so they are never hidden if active
+            if (registeredStudents && registeredStudents.length > 0) {
+                let deletedEmailsList = Array.from(deletedEmails);
+                let deletedNamesList = Array.from(deletedNames);
+                const approvedEmails = new Set(registeredStudents.map(s => (s.email || '').toLowerCase().trim()).filter(Boolean));
+                const approvedNames = new Set(registeredStudents.map(s => (s.name || '').toLowerCase().trim()).filter(Boolean));
+
+                deletedEmailsList = deletedEmailsList.filter(e => !approvedEmails.has(e));
+                deletedNamesList = deletedNamesList.filter(n => !approvedNames.has(n));
+
+                localStorage.setItem('deleted_student_emails', JSON.stringify(deletedEmailsList));
+                localStorage.setItem('deleted_surfer_names', JSON.stringify(deletedNamesList));
+            }
 
             const regEmails = new Set((registeredStudents || []).map(s => (s.email || '').toLowerCase().trim()).filter(Boolean));
             const regNames = new Set((registeredStudents || []).map(s => (s.name || '').toLowerCase().trim()).filter(Boolean));
@@ -681,10 +684,18 @@ const HeatManagement = ({ currentUser }) => {
                 if (deletedNames.has(nameLower) || deletedIds.has(String(s.id))) return;
                 if (emailLower && deletedEmails.has(emailLower)) return;
 
-                // STRICT: Must match SuperAdmin student email or name
-                if (regEmails.size > 0 || regNames.size > 0) {
-                    const isRegistered = (emailLower && regEmails.has(emailLower)) || regNames.has(nameLower);
-                    if (!isRegistered) return; // Discard dummy / non-SuperAdmin surfers
+                // STRICT: Filter out dummy / non-SuperAdmin surfers - both name and email must match approved student
+                if (registeredStudents && registeredStudents.length > 0) {
+                    const matchedStudent = registeredStudents.find(st => {
+                        const cleanStName = (st.name || '').toLowerCase().trim();
+                        const cleanStEmail = (st.email || '').toLowerCase().trim();
+                        
+                        const nameMatches = nameLower === cleanStName;
+                        const emailMatches = (emailLower && cleanStEmail) ? (emailLower === cleanStEmail) : true;
+                        
+                        return nameMatches && emailMatches;
+                    });
+                    if (!matchedStudent) return; // Skip if no student matches name and email
                 }
 
                 const key = `${nameLower}_${emailLower}`;
@@ -694,14 +705,118 @@ const HeatManagement = ({ currentUser }) => {
                 }
             });
 
-            setEvents(eventsRes.data);
+            // 2. Fetch scheduled sessions virtual events
+            let virtualEvents = [];
+            try {
+                const sessionsRes = await fetch(`${SURF_API}/api/sessions`);
+                if (sessionsRes.ok) {
+                    const sessionsData = await sessionsRes.json();
+                    let sessions = Array.isArray(sessionsData) ? sessionsData : [];
+
+                    // Group sessions by date and slot time
+                    const grouped = {};
+                    sessions.forEach(session => {
+                        let eventDate = session.date;
+                        try {
+                            const parsed = new Date(session.date);
+                            if (!isNaN(parsed.getTime())) {
+                                const year = parsed.getFullYear();
+                                const month = String(parsed.getMonth() + 1).padStart(2, '0');
+                                const day = String(parsed.getDate()).padStart(2, '0');
+                                eventDate = `${year}-${month}-${day}`;
+                            }
+                        } catch (e) {}
+
+                        const slotTime = session.time || 'Morning';
+                        const groupKey = `${eventDate}_${slotTime}`;
+
+                        if (!grouped[groupKey]) {
+                            grouped[groupKey] = {
+                                date: eventDate,
+                                time: slotTime,
+                                sessions: [],
+                                duration_mins: session.duration_mins || 90
+                            };
+                        }
+                        grouped[groupKey].sessions.push(session);
+                    });
+
+                    // Format date helper
+                    const formatDateNice = (dateStr) => {
+                        if (!dateStr) return '';
+                        try {
+                            const parts = dateStr.split('-');
+                            if (parts.length === 3) {
+                                const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+                                if (!isNaN(d.getTime())) {
+                                    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+                                }
+                            }
+                            const parsed = new Date(dateStr);
+                            if (!isNaN(parsed.getTime())) {
+                                return parsed.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+                            }
+                        } catch(e) {}
+                        return dateStr;
+                    };
+
+                    virtualEvents = Object.values(grouped).map((group, idx) => {
+                        const studentIds = group.sessions.map(s => s.student_id).filter(Boolean);
+                        const studentNames = group.sessions.map(s => s.student_name || s.student).filter(Boolean);
+                        return {
+                            id: `session-slot-${group.date}-${group.time.replace(/[^a-zA-Z0-9]/g, '')}-${idx}`,
+                            isSessionEvent: true,
+                            name: `Session Slot: ${formatDateNice(group.date)} @ ${group.time}`,
+                            event_type: 'Scheduled Session',
+                            status: 'Active',
+                            location: 'Indica Surf School',
+                            start_date: group.date,
+                            end_date: group.date,
+                            divisions: JSON.stringify([group.time]),
+                            sponsors: JSON.stringify([]),
+                            title_sponsors: JSON.stringify([]),
+                            created_at: group.sessions[0]?.created_at || group.date,
+                            session_slot: group.time.includes('min slot') ? group.time : `${group.time} (${group.duration_mins} min slot)`,
+                            student_ids: studentIds,
+                            student_names: studentNames
+                        };
+                    });
+                }
+            } catch(e) {
+                console.warn('Could not fetch sessions for competitor events list:', e);
+            }
+
+            // Attach student_ids and student_names to the matching real session events from virtual sessions data
+            const combinedDbEvents = eventsRes.data.map(event => {
+                if (event.event_type === 'Scheduled Session') {
+                    const match = virtualEvents.find(ve => ve.name === event.name);
+                    if (match) {
+                        return {
+                            ...event,
+                            student_ids: match.student_ids,
+                            student_names: match.student_names
+                        };
+                    }
+                }
+                return event;
+            });
+
+            // Filter out virtual events that have already been created in the database
+            const dbEventNames = new Set(eventsRes.data.map(e => e.name));
+            const filteredVirtualEvents = virtualEvents.filter(ve => !dbEventNames.has(ve.name));
+
+            const combinedEvents = [...combinedDbEvents, ...filteredVirtualEvents].sort((a, b) => {
+                return new Date(a.created_at) - new Date(b.created_at);
+            });
+
+            setEvents(combinedEvents);
             setAllSurfers(uniqueSurfers);
             setHeats(heatsRes.data);
             setActiveJudges(activeJ);
 
             // Update global cache so next time tab opens, it's instant
             globalHeatCache = {
-                events: eventsRes.data,
+                events: combinedEvents,
                 heats: heatsRes.data,
                 surfers: uniqueSurfers,
                 activeJudges: activeJ,
@@ -896,6 +1011,33 @@ const HeatManagement = ({ currentUser }) => {
 
         try {
             setIsSubmitting(true);
+            
+            if (!isBreak && targetEventId && targetEventId.startsWith('session-slot-')) {
+                // This is a virtual session event. We must persist it to the database first!
+                const eventPayload = {
+                    name: currentEvent.name,
+                    location: currentEvent.location || 'Indica Surf School',
+                    start_date: currentEvent.start_date,
+                    end_date: currentEvent.end_date,
+                    divisions: currentEvent.divisions,
+                    status: 'Active',
+                    event_type: 'Scheduled Session',
+                    session_slot: currentEvent.session_slot,
+                    min_score: 0,
+                    max_score: 10,
+                    score_decimals: 1,
+                    judge_count: 3,
+                    drop_high_low: 0,
+                    best_waves_count: 2,
+                    max_waves: 10,
+                    sponsors: JSON.stringify([]),
+                    title_sponsors: JSON.stringify([]),
+                    admin_id: adminId
+                };
+                const newEventRes = await axios.post(`${API_BASE}/events`, eventPayload);
+                targetEventId = newEventRes.data.id;
+            }
+
             const dataToSubmit = {
                 ...formData,
                 event_id: targetEventId,
@@ -1292,12 +1434,38 @@ const HeatManagement = ({ currentUser }) => {
     };
 
     const getAvailableSurfers = () => {
+        // If no event selected yet, no surfers are available
+        if (!formData.event_id) return [];
+
+        const selectedEvent = events.find(e => String(e.id) === String(formData.event_id));
+
+        // If it is a virtual session event - load and filter booked students locally
+        if (selectedEvent && selectedEvent.isSessionEvent) {
+            let surfers = filterAndDeduplicateSurfers(allSurfers);
+            const sIds = selectedEvent.student_ids || [];
+            const sNames = (selectedEvent.student_names || []).map(n => n.toLowerCase().trim());
+            surfers = surfers.filter(s => {
+                const idMatch = sIds.includes(s.id) || sIds.includes(Number(s.id)) || sIds.includes(String(s.id));
+                const nameMatch = s.name && sNames.includes(s.name.toLowerCase().trim());
+                return idMatch || nameMatch;
+            });
+            
+            // Still apply division rules (gender & age) as additional filter if division is selected
+            if (formData.division) {
+                const div = formData.division.toLowerCase();
+                if (div.includes('women') || div.includes('female') || div.includes('girl')) {
+                    surfers = surfers.filter(s => s.gender === 'Female');
+                } else if (div.includes('men') || div.includes('male') || div.includes('boy')) {
+                    surfers = surfers.filter(s => s.gender === 'Male');
+                }
+            }
+
+            return surfers.map(s => ({ ...s, is_sub: false }));
+        }
+
         console.log('📊 getAvailableSurfers called');
         console.log('  - tournamentProgressionData:', tournamentProgressionData);
         console.log('  - eventImportedSurferIds:', eventImportedSurferIds);
-
-        // If no event selected yet, no surfers are available
-        if (!formData.event_id) return [];
 
         // If we have tournament progression data from the backend, use it
         if (tournamentProgressionData && tournamentProgressionData.surfers) {

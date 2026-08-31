@@ -152,30 +152,96 @@ const EventManagement = () => {
             // 2. Fetch scheduled sessions
             let virtualEvents = [];
             try {
-                const sessionsRes = await axios.get('/api/sessions');
-                const sessions = Array.isArray(sessionsRes.data) ? sessionsRes.data : [];
-                virtualEvents = sessions.map(session => {
+                const SURF_API = import.meta.env.VITE_API_URL || 'http://54.242.160.238:8000';
+                const res = await fetch(`${SURF_API}/api/sessions`);
+                const data = res.ok ? await res.json() : [];
+                let sessions = Array.isArray(data) ? data : [];
+
+                // If logged in as a coach, only show sessions assigned to this coach
+                const savedUser = JSON.parse(sessionStorage.getItem('user') || localStorage.getItem('user') || '{}');
+                if (savedUser.role === 'coach' && savedUser.name) {
+                    const coachName = savedUser.name.toLowerCase();
+                    const coachId = savedUser.instructor_id || savedUser.id;
+                    sessions = sessions.filter(s => {
+                        const nameMatch = s.instructor && s.instructor.toLowerCase() === coachName;
+                        const idMatch = coachId && (String(s.instructor_id) === String(coachId));
+                        return nameMatch || idMatch;
+                    });
+                }
+
+                // Group sessions by date and slot time to avoid duplicate cards for same slot
+                const grouped = {};
+                sessions.forEach(session => {
                     let eventDate = session.date;
                     try {
                         const parsed = new Date(session.date);
                         if (!isNaN(parsed.getTime())) {
-                            eventDate = parsed.toISOString().split('T')[0];
+                            const year = parsed.getFullYear();
+                            const month = String(parsed.getMonth() + 1).padStart(2, '0');
+                            const day = String(parsed.getDate()).padStart(2, '0');
+                            eventDate = `${year}-${month}-${day}`;
                         }
                     } catch (e) {}
 
+                    const slotTime = session.time || 'Morning';
+                    const groupKey = `${eventDate}_${slotTime}`;
+
+                    if (!grouped[groupKey]) {
+                        grouped[groupKey] = {
+                            date: eventDate,
+                            time: slotTime,
+                            sessions: [],
+                            duration_mins: session.duration_mins || 90
+                        };
+                    }
+                    grouped[groupKey].sessions.push(session);
+                });
+
+                // Format date helper
+                const formatDateNice = (dateStr) => {
+                    if (!dateStr) return '';
+                    try {
+                        const parts = dateStr.split('-');
+                        if (parts.length === 3) {
+                            const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+                            if (!isNaN(d.getTime())) {
+                                return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+                            }
+                        }
+                        const parsed = new Date(dateStr);
+                        if (!isNaN(parsed.getTime())) {
+                            return parsed.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+                        }
+                    } catch(e) {}
+                    return dateStr;
+                };
+
+                virtualEvents = Object.values(grouped).map((group, idx) => {
+                    const name = `Session Slot: ${formatDateNice(group.date)} @ ${group.time}`;
+                    
+                    // Instructors
+                    const instructors = [...new Set(group.sessions.map(s => s.instructor_name || s.instructor).filter(Boolean))];
+                    const location = instructors.length > 0 ? `Instructor: ${instructors.join(', ')}` : 'Indica Surf School';
+                    
+                    const studentIds = group.sessions.map(s => s.student_id).filter(Boolean);
+                    const studentNames = group.sessions.map(s => s.student_name || s.student).filter(Boolean);
+
                     return {
-                        id: `session-${session.id}`,
+                        id: `session-slot-${group.date}-${group.time.replace(/[^a-zA-Z0-9]/g, '')}-${idx}`,
                         isSessionEvent: true, // flag to identify virtual session event
-                        name: `Session: ${session.student_name || session.student || 'Student'}`,
+                        name: name,
                         event_type: 'Scheduled Session',
                         status: 'Active',
-                        location: session.instructor_name || session.instructor ? `Instructor: ${session.instructor_name || session.instructor}` : 'Indica Surf School',
-                        start_date: eventDate,
-                        end_date: eventDate,
-                        divisions: JSON.stringify([session.time || 'Morning']),
+                        location: location,
+                        start_date: group.date,
+                        end_date: group.date,
+                        divisions: JSON.stringify([group.time]),
                         sponsors: JSON.stringify([]),
                         title_sponsors: JSON.stringify([]),
-                        created_at: session.created_at || eventDate
+                        created_at: group.sessions[0]?.created_at || group.date,
+                        session_slot: group.time.includes('min slot') ? group.time : `${group.time} (${group.duration_mins} min slot)`,
+                        student_ids: studentIds,
+                        student_names: studentNames
                     };
                 });
             } catch (err) {
@@ -183,7 +249,11 @@ const EventManagement = () => {
             }
 
             // 3. Combine and sort
-            const combinedEvents = [...hydratedRealEvents, ...virtualEvents].sort((a, b) => {
+            // Filter out virtual events that have already been created in the database
+            const dbEventNames = new Set(hydratedRealEvents.map(e => e.name));
+            const filteredVirtualEvents = virtualEvents.filter(ve => !dbEventNames.has(ve.name));
+
+            const combinedEvents = [...hydratedRealEvents, ...filteredVirtualEvents].sort((a, b) => {
                 return new Date(a.created_at) - new Date(b.created_at);
             });
 
@@ -598,6 +668,33 @@ const EventManagement = () => {
                                             </button>
                                         ) : (
                                             <>
+                                                {/* Add Session Competitors button - one-click sync */}
+                                                <button
+                                                    onClick={() => {
+                                                        const slot = event.session_slot || (() => {
+                                                            const saved = JSON.parse(localStorage.getItem('event_session_slots') || '{}');
+                                                            return saved[event.id] || saved[event.slug] || saved[event.name] || '';
+                                                        })();
+                                                        sessionStorage.setItem('pending_sync_to_event', JSON.stringify({ eventId: event.id, sessionSlot: slot }));
+                                                        navigate('/competitions?subtab=competitors');
+                                                    }}
+                                                    className="btn"
+                                                    style={{
+                                                        width: '100%',
+                                                        justifyContent: 'center',
+                                                        padding: '10px',
+                                                        fontSize: '13px',
+                                                        fontWeight: '700',
+                                                        background: 'linear-gradient(135deg, rgba(13,148,136,0.1) 0%, rgba(2,132,199,0.1) 100%)',
+                                                        border: '1.5px solid rgba(13,148,136,0.3)',
+                                                        color: '#0D9488',
+                                                        borderRadius: '8px',
+                                                        gap: '6px'
+                                                    }}
+                                                >
+                                                    🏄 Add Session Competitors
+                                                </button>
+                                                <div style={{ display: 'flex', gap: '6px', marginTop: '0' }}>
                                                 <button
                                                     onClick={() => handleOpenModal(event)}
                                                     className="btn btn-secondary"
@@ -653,6 +750,7 @@ const EventManagement = () => {
                                                 >
                                                     <Trash2 size={16} />
                                                 </button>
+                                                </div>
                                             </>
                                         )}
                                     </div>

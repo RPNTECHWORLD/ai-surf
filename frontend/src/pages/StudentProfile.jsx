@@ -261,19 +261,10 @@ const StudentProfile = () => {
             : []
         };
 
-        let isApproved = data.approval_status === 'approved';
-        try {
-          const emailToCheck = (data.email || '').toLowerCase();
-          const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-          const req = reqs.find(r => (r.student_email || r.email)?.toLowerCase() === emailToCheck);
-          if (req && req.status === 'approved') {
-            isApproved = true;
-            cleanStudent.approval_status = 'approved';
-          }
-        } catch (e) {}
+        let isApproved = data.approval_status === 'approved' || (Boolean(data.id) && data.approval_status !== 'pending');
+        cleanStudent.approval_status = isApproved ? 'approved' : 'pending';
 
         if (isApproved) {
-          cleanStudent.approval_status = 'approved';
           try {
             const saved = sessionStorage.getItem('user');
             if (saved) {
@@ -438,18 +429,9 @@ const StudentProfile = () => {
 
   const isPendingApproval = (() => {
     if (student?.approval_status === 'approved') return false;
-    
-    try {
-      const emailToCheck = (student?.email || currentUser?.email || '').toLowerCase();
-      if (emailToCheck) {
-        const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-        const req = reqs.find(r => (r.student_email || r.email)?.toLowerCase() === emailToCheck);
-        if (req && req.status === 'approved') return false;
-      }
-    } catch (e) {}
-
+    if (student?.id && student?.approval_status !== 'pending') return false;
     if (student?.approval_status === 'pending') return true;
-    if (currentUser?.role === 'athlete' && currentUser?.approval_status === 'pending') return true;
+    if (currentUser?.role === 'athlete' && currentUser?.approval_status === 'pending' && !student?.id) return true;
     return false;
   })();
 

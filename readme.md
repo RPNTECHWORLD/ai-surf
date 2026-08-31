@@ -114,6 +114,7 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
  3. Removed dummy placeholder images from New/Edit Session page and added interactive media previews with remove (×) buttons.
  4. Deployed updated backend to AWS EC2 (`aisurf-backend-server`) and verified live session editing and video storage.
 
-
-
- 
+ ###changes on 31-08-26
+ 1. Fixed timezone shift bug in Event, Competitor, and Heat Management pages by using timezone-safe local date component parsing.
+ 2. Attached student mapping metadata (student_ids and student_names) to dynamic virtual session events to support booked athlete loading inside heat creation.
+ 3. Added frontend auto-persistence for virtual session events, which automatically inserts them into the database events table upon heat creation to satisfy the backend INNER JOIN constraints without touching the aquaticxsports backend repository.

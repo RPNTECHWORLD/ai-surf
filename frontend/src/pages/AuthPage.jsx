@@ -79,7 +79,7 @@ const AuthPage = () => {
     whatsapp_number: '',
     course_duration: '3 Days Course',
     start_date: new Date().toISOString().split('T')[0],
-    session_time: 'Morning 6:00 AM',
+    session_time: '08:30 AM',
     staying_at_school: 'Yes',
     reminder_preference: 'WhatsApp Text',
     guests_count: 0,
@@ -469,23 +469,7 @@ const AuthPage = () => {
         };
         userObj.approval_status = inviteToken ? 'approved' : 'pending';
 
-        // Save student into backend surfers table (correct backend)
-        try {
-          fetch(`${API}/api/surfers`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              name: formData.name.trim(),
-              school_name: formData.school || 'Aquatic Indica Surf School',
-              email: formData.email.toLowerCase().trim(),
-              phone: formData.whatsapp_number || '',
-              gender: formData.gender || 'Male',
-              age: formData.age ? parseInt(formData.age) : 20,
-              state: 'Tamil Nadu',
-              admin_id: 'admin'
-            })
-          }).catch(() => {});
-        } catch (e) {}
+
 
         // If direct signup without invite token, ALWAYS record pending join request for school admin
         if (!inviteToken && role === 'athlete') {

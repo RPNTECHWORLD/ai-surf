@@ -44,7 +44,7 @@ try:
             db_name = parsed.path.lstrip("/")
             
             connection_uri = f"postgresql+psycopg2://{db_user}@{db_host}:{db_port}/{db_name}"
-            engine = create_engine(connection_uri, connect_args={"sslmode": "require", "connect_timeout": 3})
+            engine = create_engine(connection_uri, connect_args={"sslmode": "require", "connect_timeout": 15})
             
             @event.listens_for(engine, "do_connect")
             def provide_token(dialect, conn_rec, cargs, cparams):
@@ -57,13 +57,13 @@ try:
                 )
                 cparams["password"] = token
 
-            # Verify connection or fallback
+            # Verify connection
             with engine.connect() as test_conn:
                 pass
         else:
             engine = create_engine(DATABASE_URL)
 except Exception as err:
-    print(f"Notice: AWS RDS Direct VPC connection not directly reachable from local environment ({err}). Initializing local database engine.")
+    print(f"Notice: AWS RDS Direct connection error ({err}).")
     DATABASE_URL = "sqlite:///./aisurf.db"
     engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 
@@ -160,7 +160,7 @@ class Student(Base):
     course_duration = Column(String, default="3 Days Course")
     start_date = Column(String, nullable=True)
     end_date = Column(String, nullable=True)
-    session_time = Column(String, default="Morning 6:00 AM")
+    session_time = Column(String, default="08:30 AM")
     staying_at_school = Column(String, default="Yes") # "Yes" / "No"
     reminder_preference = Column(String, default="WhatsApp Text") # "WhatsApp Text", "Phone Call", "Notice Board"
     reminder_sent = Column(Boolean, default=False)
@@ -482,13 +482,14 @@ try:
             db_migrate.execute(text("ALTER TABLE students ADD COLUMN course_duration VARCHAR(100) DEFAULT '3 Days Course'"))
             db_migrate.execute(text("ALTER TABLE students ADD COLUMN start_date VARCHAR(50) DEFAULT ''"))
             db_migrate.execute(text("ALTER TABLE students ADD COLUMN end_date VARCHAR(50) DEFAULT ''"))
-            db_migrate.execute(text("ALTER TABLE students ADD COLUMN session_time VARCHAR(50) DEFAULT 'Morning 6:00 AM'"))
+            db_migrate.execute(text("ALTER TABLE students ADD COLUMN session_time VARCHAR(50) DEFAULT '08:30 AM'"))
             db_migrate.execute(text("ALTER TABLE students ADD COLUMN staying_at_school VARCHAR(20) DEFAULT 'Yes'"))
             db_migrate.execute(text("ALTER TABLE students ADD COLUMN reminder_preference VARCHAR(50) DEFAULT 'WhatsApp Text'"))
             db_migrate.execute(text("ALTER TABLE students ADD COLUMN reminder_sent BOOLEAN DEFAULT FALSE"))
             db_migrate.execute(text("ALTER TABLE students ADD COLUMN guests_details TEXT DEFAULT '[]'"))
             db_migrate.execute(text("ALTER TABLE students ADD COLUMN dob VARCHAR(50) DEFAULT ''"))
             db_migrate.execute(text("ALTER TABLE students ADD COLUMN invite_token VARCHAR(128) DEFAULT NULL"))
+            db_migrate.execute(text("ALTER TABLE students ADD COLUMN school VARCHAR(150) DEFAULT 'Aquatic Indica Surf School'"))
             db_migrate.execute(text("ALTER TABLE students ADD COLUMN approval_status VARCHAR(50) DEFAULT 'approved'"))
             db_migrate.execute(text("ALTER TABLE users ADD COLUMN approval_status VARCHAR(50) DEFAULT 'approved'"))
             db_migrate.execute(text("""
@@ -1170,6 +1171,7 @@ class UserSignup(BaseModel):
     password: str
     role: str # "athlete", "coach", "admin"
     name: str
+    image: Optional[str] = ""
     # Athlete fields
     gender: Optional[str] = "Male"
     stance: Optional[str] = "regular"
@@ -1181,7 +1183,7 @@ class UserSignup(BaseModel):
     course_duration: Optional[str] = "3 Days Course"
     start_date: Optional[str] = ""
     end_date: Optional[str] = ""
-    session_time: Optional[str] = "Morning 6:00 AM"
+    session_time: Optional[str] = "08:30 AM"
     staying_at_school: Optional[str] = "Yes"
     reminder_preference: Optional[str] = "WhatsApp Text"
     guests_details: Optional[List[dict]] = []
@@ -1451,6 +1453,7 @@ def student_to_dict(s: Student):
         "wa_link": wa_link,
         "has_password": bool(s.user_rel and s.user_rel.password_hash),
         "school": s.school or "Aquatic Indica Surf School",
+        "approval_status": s.approval_status or "approved",
     }
 
 
@@ -1643,7 +1646,6 @@ def auth_signup(data: UserSignup, db: OrmSession = Depends(get_db)):
         db.add(instructor)
         db.add(ActivityLog(text=f"New coach {data.name} joined the academy", type="individual"))
     elif role == "admin":
-        from sqlalchemy import func
         requested_school = (data.school or "").strip()
         existing_school = db.query(School).filter(func.lower(School.email) == data.email.lower()).first()
         if not existing_school:

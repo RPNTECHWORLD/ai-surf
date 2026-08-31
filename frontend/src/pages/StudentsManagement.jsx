@@ -162,64 +162,14 @@ const StudentsManagement = () => {
   const isDefaultSchool = !activeSchoolName || activeSchoolName.toLowerCase() === 'aquatic indica surf school' || activeSchoolName.toLowerCase() === 'school admin';
 
   const approvedStudents = (() => {
-    const list = [...(students || [])];
-
-    // Read deleted student emails
-    const deletedEmails = new Set(
-      JSON.parse(localStorage.getItem('deleted_student_emails') || '[]').map(e => String(e).toLowerCase().trim())
-    );
-
-    // Merge registered students & join requests from localStorage
-    try {
-      const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-      savedReqs.forEach(req => {
-        const emailLower = (req.student_email || req.email || '').toLowerCase().trim();
-        if (!emailLower || deletedEmails.has(emailLower) || req.status === 'rejected') return;
-
-        const existingIdx = list.findIndex(s => s.email && s.email.toLowerCase().trim() === emailLower);
-        if (existingIdx >= 0) {
-          list[existingIdx] = {
-            ...list[existingIdx],
-            approval_status: req.status || list[existingIdx].approval_status || 'approved'
-          };
-        } else {
-          list.push({
-            id: req.student_id || req.id || Date.now(),
-            name: req.student_name || req.name || emailLower.split('@')[0],
-            email: emailLower,
-            whatsapp_number: req.whatsapp_number || '',
-            level: req.level || 'Beginner',
-            course_duration: req.course_duration || '3 Days Course',
-            session_time: req.session_time || '08:30 AM',
-            start_date: req.start_date || new Date().toISOString().split('T')[0],
-            end_date: req.end_date || '',
-            staying_at_school: req.staying_at_school || 'Yes',
-            approval_status: req.status || 'approved',
-            school: req.school_name || activeSchoolName || 'Aquatic Indica Surf School',
-            last_active: 'Today'
-          });
-        }
-      });
-    } catch (e) {}
-
-    const seenEmails = new Set();
+    // Pure AWS Backend Students Only - Approved students
+    const list = Array.isArray(students) ? students : [];
+    const seenIds = new Set();
     return list.filter(s => {
-      if (!s || !s.email) return false;
-      const emailLower = String(s.email).toLowerCase().trim();
-      if (deletedEmails.has(emailLower)) return false;
-      if (seenEmails.has(emailLower)) return false;
-
-      try {
-        const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-        const req = savedReqs.find(r => (r.student_email || r.email) && String(r.student_email || r.email).toLowerCase().trim() === emailLower);
-        if (req) {
-          if (req.status === 'pending' || req.status === 'rejected') return false; // Hide from active list until approved!
-        } else if (s.approval_status === 'pending' || s.approval_status === 'rejected') {
-          return false; // Hide unapproved students from active list!
-        }
-      } catch (e) {}
-
-      seenEmails.add(emailLower);
+      if (!s || !s.id) return false;
+      if (s.approval_status === 'pending' || s.approval_status === 'rejected') return false;
+      if (seenIds.has(s.id)) return false;
+      seenIds.add(s.id);
       return true;
     });
   })();
@@ -362,23 +312,7 @@ const StudentsManagement = () => {
       if (res.ok) {
         const newStudent = await res.json();
         
-        // Save student into backend surfers table (correct backend)
-        try {
-          fetch(`${API}/api/surfers`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              name: form.name.trim(),
-              school_name: activeSchoolName || 'Aquatic Indica Surf School',
-              email: form.email.toLowerCase().trim(),
-              phone: form.whatsapp_number || '',
-              gender: 'Male',
-              age: 20,
-              state: 'Tamil Nadu',
-              admin_id: 'admin'
-            })
-          }).catch(() => {});
-        } catch (e) {}
+
 
         fetchStudents();
         const baseUrl = window.location.origin;
@@ -606,101 +540,23 @@ const StudentsManagement = () => {
     (approvedStudents || []).map(s => String(s.email).toLowerCase().trim()).filter(Boolean)
   );
 
-  // Build allPendingRequests: Any registered athlete whose email is NOT in approvedEmailsSet
+  // Pure AWS Pending Students List directly from AWS RDS
   const allPendingRequests = useMemo(() => {
-    try {
-      const deletedEmails = new Set(
-        JSON.parse(localStorage.getItem('deleted_student_emails') || '[]').map(e => String(e).toLowerCase().trim())
-      );
-
-      const seenEmails = new Set();
-      const pending = [];
-
-      const addIfPending = (email, name, schoolName, startDate, sessionTime, phone, id) => {
-        const emailLower = (email || '').toLowerCase().trim();
-        if (!emailLower || deletedEmails.has(emailLower) || seenEmails.has(emailLower)) return;
-        // If student is ALREADY approved and present in the active table, do not show in pending
-        if (approvedEmailsSet.has(emailLower)) return;
-
-        // Check if student was explicitly rejected
-        const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-        const req = reqs.find(r => (r.student_email || r.email || '').toLowerCase().trim() === emailLower);
-        if (req && req.status === 'rejected') return;
-
-        seenEmails.add(emailLower);
-        pending.push({
-          id: id || req?.id || `req_${emailLower}`,
-          student_id: id || req?.student_id,
-          student_name: name || req?.student_name || req?.name || emailLower.split('@')[0],
-          student_email: emailLower,
-          school_name: schoolName || req?.school_name || activeSchoolName || 'Aquatic Indica Surf School',
-          start_date: startDate || req?.start_date || new Date().toISOString().split('T')[0],
-          session_time: sessionTime || req?.session_time || 'Morning 6:00 AM',
-          whatsapp_number: phone || req?.whatsapp_number || 'N/A',
-          status: 'pending'
-        });
-      };
-
-      // 1. From school_join_requests
-      const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-      reqs.forEach(r => {
-        addIfPending(
-          r.student_email || r.email,
-          r.student_name || r.name,
-          r.school_name || r.school,
-          r.start_date,
-          r.session_time,
-          r.whatsapp_number,
-          r.student_id || r.id
-        );
-      });
-
-      // 2. From savedAccounts
-      const savedAccs = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
-      savedAccs.forEach(u => {
-        if (!u || !u.email) return;
-        if (u.role && u.role !== 'athlete' && u.role !== 'student') return;
-        addIfPending(
-          u.email, u.name, u.school, u.start_date, u.session_time,
-          u.whatsapp_number || u.phone, u.student_id || u.id
-        );
-      });
-
-      // 3. From mock_students_data
-      const mockStudents = JSON.parse(localStorage.getItem('mock_students_data') || '[]');
-      mockStudents.forEach(u => {
-        if (!u || !u.email) return;
-        addIfPending(
-          u.email, u.name, u.school, u.start_date, u.session_time,
-          u.whatsapp_number || u.phone, u.student_id || u.id
-        );
-      });
-
-      // 4. From current logged-in / active user session
-      try {
-        const sessionUser = JSON.parse(sessionStorage.getItem('user') || '{}');
-        if (sessionUser && sessionUser.email && (sessionUser.role === 'athlete' || sessionUser.role === 'student' || !sessionUser.role)) {
-          addIfPending(
-            sessionUser.email, sessionUser.name, sessionUser.school, sessionUser.start_date, sessionUser.session_time,
-            sessionUser.whatsapp_number || sessionUser.phone, sessionUser.student_id || sessionUser.id
-          );
-        }
-      } catch (e) {}
-
-      // 5. From backend students list if unapproved
-      (students || []).forEach(s => {
-        if (!s || !s.email) return;
-        addIfPending(
-          s.email, s.name, s.school, s.start_date, s.session_time,
-          s.whatsapp_number, s.id
-        );
-      });
-
-      return pending;
-    } catch (e) {
-      return [];
-    }
-  }, [reqRefreshKey, students, approvedStudents, approvedEmailsSet]);
+    const list = Array.isArray(students) ? students : [];
+    return list
+      .filter(s => s && s.id && (s.approval_status === 'pending'))
+      .map(s => ({
+        id: s.id,
+        student_id: s.id,
+        student_name: s.name || (s.email ? s.email.split('@')[0] : 'Student'),
+        student_email: s.email,
+        school_name: s.school || activeSchoolName || 'Aquatic Indica Surf School',
+        start_date: s.start_date || 'Today',
+        session_time: s.session_time || 'Morning 6:00 AM',
+        whatsapp_number: s.whatsapp_number || 'N/A',
+        status: 'pending'
+      }));
+  }, [students, activeSchoolName]);
 
   const handleApproveStudentRequest = async (reqId, studentEmail) => {
     try {

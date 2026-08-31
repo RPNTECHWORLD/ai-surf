@@ -163,58 +163,12 @@ const SuperAdminDashboard = () => {
       const keysRes = await fetch(`${API}/api/superadmin/keys`);
       if (keysRes.ok) setKeys(await keysRes.json());
 
-      // 8. Fetch students for management
+      // 8. Fetch students for management (Pure AWS Data Only)
       const studentsRes = await fetch(`${API}/api/students`);
       let allStudents = [];
-      if (studentsRes.ok) allStudents = await studentsRes.json();
-
-      const deletedEmails = new Set(
-        (JSON.parse(localStorage.getItem('deleted_student_emails') || '[]')).map(e => String(e).toLowerCase().trim())
-      );
-      const deletedIds = new Set(
-        (JSON.parse(localStorage.getItem('deleted_student_ids') || '[]')).map(i => String(i))
-      );
-
-      // Filter out deleted students from database response
-      allStudents = allStudents.filter(s => {
-        if (!s) return false;
-        if (deletedIds.has(String(s.id))) return false;
-        if (s.email && deletedEmails.has(s.email.toLowerCase().trim())) return false;
-        return true;
-      });
-
-      // Merge with registered students / requests from localStorage (excluding deleted)
-      try {
-        const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-        const savedAccs = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
-        const mockStudents = JSON.parse(localStorage.getItem('mock_students_data') || '[]');
-        const savedUser = JSON.parse(sessionStorage.getItem('user') || '{}');
-        
-        const allKnown = [...savedReqs, ...savedAccs, ...mockStudents];
-        if (savedUser && savedUser.email && (savedUser.role === 'athlete' || savedUser.role === 'student')) {
-          allKnown.push(savedUser);
-        }
-
-        allKnown.forEach(req => {
-          const emailLower = (req.student_email || req.email || '').toLowerCase().trim();
-          if (emailLower && !deletedEmails.has(emailLower) && !allStudents.some(s => s.email && s.email.toLowerCase().trim() === emailLower)) {
-            allStudents.push({
-              id: req.student_id || req.id || Date.now(),
-              name: req.student_name || req.name || emailLower.split('@')[0],
-              email: emailLower,
-              whatsapp_number: req.whatsapp_number || req.phone || '',
-              level: req.level || 'Beginner',
-              course_duration: req.course_duration || '3 Days Course',
-              session_time: req.session_time || '11:30 AM',
-              start_date: req.start_date || '2026-08-29',
-              staying_at_school: req.staying_at_school || 'Yes',
-              approval_status: req.status || req.approval_status || 'approved',
-              instructor: ''
-            });
-          }
-        });
-      } catch (e) {}
-
+      if (studentsRes.ok) {
+        allStudents = await studentsRes.json();
+      }
       setStudentsList(allStudents);
 
       // 9. Fetch schools for management

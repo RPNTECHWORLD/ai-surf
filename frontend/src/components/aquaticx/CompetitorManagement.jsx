@@ -150,6 +150,7 @@ const CompetitorManagement = () => {
     const [syncSlotFilter, setSyncSlotFilter] = useState('All');
     const [syncDateFilter, setSyncDateFilter] = useState('All');
     const [isSyncingToEvent, setIsSyncingToEvent] = useState(false);
+    const [syncTargetEventId, setSyncTargetEventId] = useState('All'); // which event to add competitors into
 
     // Event filter
     const [events, setEvents] = useState(globalCompetitorCache.events);
@@ -307,6 +308,24 @@ const CompetitorManagement = () => {
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
+    // Auto-open sync modal if redirected from Event card "Add Session Competitors"
+    useEffect(() => {
+        const pendingRaw = sessionStorage.getItem('pending_sync_to_event');
+        if (pendingRaw) {
+            try {
+                const pending = JSON.parse(pendingRaw);
+                sessionStorage.removeItem('pending_sync_to_event');
+                if (pending && pending.eventId) {
+                    // Delay slightly to allow events to load first
+                    const timer = setTimeout(() => {
+                        handleOpenSchoolSyncModal(pending.eventId, pending.sessionSlot || null);
+                    }, 600);
+                    return () => clearTimeout(timer);
+                }
+            } catch (e) {}
+        }
+    }, [events.length]); // Re-run once events are loaded
+
     // Fetch already imported surfers when manual import event changes
     useEffect(() => {
         const fetchManualImportEventSurfers = async () => {
@@ -336,7 +355,24 @@ const CompetitorManagement = () => {
             const adminId = adminInfo.adminId || 'admin';
             const response = await axios.get(`${API_BASE}/surfers`, { params: { admin_id: adminId } });
             
-            // Read deleted names/IDs and deleted student emails from localStorage
+            // Clear school requests and mock students
+            localStorage.removeItem('school_join_requests');
+            localStorage.removeItem('mock_students_data');
+
+            // Fetch active registered students from Super Admin API (/api/students)
+            let registeredStudents = null;
+            try {
+                const SURF_API = import.meta.env.VITE_API_URL || 'http://54.242.160.238:8000';
+                const stRes = await fetch(`${SURF_API}/api/students`);
+                if (stRes.ok) {
+                    const allSt = await stRes.json();
+                    if (Array.isArray(allSt) && allSt.length > 0) {
+                        registeredStudents = allSt;
+                    }
+                }
+            } catch (e) {}
+
+            // Read deleted lists from localStorage to persist user deletions
             const deletedEmails = new Set(
                 (JSON.parse(localStorage.getItem('deleted_student_emails') || '[]')).map(e => String(e).toLowerCase().trim())
             );
@@ -347,29 +383,19 @@ const CompetitorManagement = () => {
                 (JSON.parse(localStorage.getItem('deleted_surfer_ids') || '[]')).map(i => String(i))
             );
 
-            // Fetch active registered students from Super Admin API (/api/students) and localStorage
-            let registeredStudents = null;
-            try {
-                const SURF_API = import.meta.env.VITE_API_URL || 'http://54.242.160.238:8000';
-                const stRes = await fetch(`${SURF_API}/api/students`);
-                let allSt = [];
-                if (stRes.ok) {
-                    allSt = await stRes.json();
-                }
-                const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-                savedReqs.forEach(req => {
-                    const emailLower = (req.student_email || req.email || '').toLowerCase().trim();
-                    if (emailLower && !allSt.some(s => s.email && s.email.toLowerCase().trim() === emailLower)) {
-                        allSt.push({
-                            name: req.student_name || req.name || emailLower.split('@')[0],
-                            email: emailLower
-                        });
-                    }
-                });
-                if (allSt.length > 0) {
-                    registeredStudents = allSt;
-                }
-            } catch (e) {}
+            // Auto-clean approved students from deleted lists so they are never hidden if active
+            if (registeredStudents && registeredStudents.length > 0) {
+                let deletedEmailsList = Array.from(deletedEmails);
+                let deletedNamesList = Array.from(deletedNames);
+                const approvedEmails = new Set(registeredStudents.map(s => (s.email || '').toLowerCase().trim()).filter(Boolean));
+                const approvedNames = new Set(registeredStudents.map(s => (s.name || '').toLowerCase().trim()).filter(Boolean));
+
+                deletedEmailsList = deletedEmailsList.filter(e => !approvedEmails.has(e));
+                deletedNamesList = deletedNamesList.filter(n => !approvedNames.has(n));
+
+                localStorage.setItem('deleted_student_emails', JSON.stringify(deletedEmailsList));
+                localStorage.setItem('deleted_surfer_names', JSON.stringify(deletedNamesList));
+            }
 
             const regEmails = new Set((registeredStudents || []).map(s => (s.email || '').toLowerCase().trim()).filter(Boolean));
             const regNames = new Set((registeredStudents || []).map(s => (s.name || '').toLowerCase().trim()).filter(Boolean));
@@ -386,10 +412,18 @@ const CompetitorManagement = () => {
                 if (deletedNames.has(nameLower) || deletedIds.has(String(s.id))) return;
                 if (emailLower && deletedEmails.has(emailLower)) return;
 
-                // STRICT: Filter out dummy / non-SuperAdmin surfers
-                if (regEmails.size > 0 || regNames.size > 0) {
-                    const isRegistered = (emailLower && regEmails.has(emailLower)) || regNames.has(nameLower);
-                    if (!isRegistered) return; // Skip dummy / non-registered surfers
+                // STRICT: Filter out dummy / non-SuperAdmin surfers - both name and email must match approved student
+                if (registeredStudents && registeredStudents.length > 0) {
+                    const matchedStudent = registeredStudents.find(st => {
+                        const cleanStName = (st.name || '').toLowerCase().trim();
+                        const cleanStEmail = (st.email || '').toLowerCase().trim();
+                        
+                        const nameMatches = nameLower === cleanStName;
+                        const emailMatches = (emailLower && cleanStEmail) ? (emailLower === cleanStEmail) : true;
+                        
+                        return nameMatches && emailMatches;
+                    });
+                    if (!matchedStudent) return; // Skip if no student matches name and email
                 }
 
                 const key = `${nameLower}_${emailLower || (s.school_name || '').toLowerCase().trim()}`;
@@ -446,7 +480,13 @@ const CompetitorManagement = () => {
         }
     };
 
-    const handleOpenSchoolSyncModal = async () => {
+    const handleOpenSchoolSyncModal = async (preSelectEventId = null, preSelectSlot = null) => {
+        // Pre-select target event: if caller passes one, use it; else use current eventFilter
+        const targetEvId = preSelectEventId || (eventFilter !== 'All' ? eventFilter : 'All');
+        setSyncTargetEventId(targetEvId);
+        setSyncDateFilter('All');
+        setSyncSlotFilter('All'); // will auto-set after load if slot is given
+
         setIsSchoolSyncModalOpen(true);
         setIsLoadingSchoolStudents(true);
         try {
@@ -455,7 +495,8 @@ const CompetitorManagement = () => {
             let studentList = [];
             if (res.ok) {
                 const data = await res.json();
-                studentList = Array.isArray(data) ? data : [];
+                // Only approved students
+                studentList = Array.isArray(data) ? data.filter(s => (s.approval_status || 'approved') === 'approved') : [];
             }
 
             const deletedEmails = new Set(
@@ -478,7 +519,34 @@ const CompetitorManagement = () => {
             });
 
             setSchoolStudents(uniqueStudents);
-            setSelectedSchoolStudentIds(new Set(uniqueStudents.map(s => s.id)));
+
+            // Auto-detect slot from the target event and pre-select matching students
+            let autoSlot = preSelectSlot || null;
+            if (!autoSlot && targetEvId && targetEvId !== 'All') {
+                const targetEv = events.find(e => String(e.id) === String(targetEvId));
+                if (targetEv && targetEv.session_slot) {
+                    // Extract just the time part e.g. "08:30 AM" from "08:30 AM (90 min slot)"
+                    autoSlot = targetEv.session_slot.split(' (')[0].trim();
+                }
+            }
+
+            if (autoSlot) {
+                // Find the exact session_time string from students matching this slot
+                const matchingSlot = uniqueStudents.find(st => {
+                    const stTime = (st.session_time || '').trim();
+                    return stTime === autoSlot || stTime.startsWith(autoSlot);
+                });
+                const resolvedSlot = matchingSlot ? matchingSlot.session_time : autoSlot;
+                setSyncSlotFilter(resolvedSlot);
+                // Auto-select all students matching this slot
+                const matching = uniqueStudents.filter(st => {
+                    const stTime = (st.session_time || '').trim();
+                    return stTime === resolvedSlot || stTime === autoSlot;
+                });
+                setSelectedSchoolStudentIds(new Set(matching.map(s => s.id)));
+            } else {
+                setSelectedSchoolStudentIds(new Set(uniqueStudents.map(s => s.id)));
+            }
         } catch (err) {
             console.error('Error fetching school students', err);
             showToast('Failed to load booked students', 'error');
@@ -490,6 +558,10 @@ const CompetitorManagement = () => {
     const handleImportSchoolStudentsSubmit = async () => {
         if (selectedSchoolStudentIds.size === 0) {
             showToast('Please select at least one student', 'warning');
+            return;
+        }
+        if (syncTargetEventId === 'All') {
+            showToast('Please select a target event to add competitors to', 'warning');
             return;
         }
         setIsSyncingToEvent(true);
@@ -542,7 +614,7 @@ const CompetitorManagement = () => {
                         state: 'Tamil Nadu',
                         email: st.email || '',
                         phone: st.whatsapp_number || '',
-                        session_time: st.session_time || 'Morning 6:30 AM',
+                        session_time: st.session_time || '08:30 AM',
                         start_date: st.start_date || new Date().toISOString().split('T')[0],
                         admin_id: adminId
                     };
@@ -566,8 +638,8 @@ const CompetitorManagement = () => {
             const importedSurferIds = importedSurfers.map(s => String(s.id));
 
             if (importedSurferIds.length > 0) {
-                // Link imported surfers to target event or all active events
-                const eventIdsToLink = eventFilter !== 'All' ? [eventFilter] : events.map(e => e.id);
+                // Link imported surfers to the selected target event
+                const eventIdsToLink = [syncTargetEventId];
                 const savedEventSurfers = JSON.parse(localStorage.getItem('event_surfers_map') || '{}');
 
                 for (const evId of eventIdsToLink) {
@@ -585,14 +657,14 @@ const CompetitorManagement = () => {
                 localStorage.setItem('event_surfers_map', JSON.stringify(savedEventSurfers));
             }
 
-            showToast(`Successfully imported ${importedCount} booked students into Competitors!`, 'success');
+            const targetEventName = events.find(e => String(e.id) === String(syncTargetEventId))?.name || 'the event';
+            showToast(`✅ ${importedCount} competitor(s) added to "${targetEventName}" successfully!`, 'success');
             setIsSchoolSyncModalOpen(false);
 
-            // Refetch surfers & re-filter event
+            // Refetch surfers & switch to the linked event filter
             await fetchSurfers(true);
-            if (eventFilter !== 'All') {
-                await handleEventFilterChange(eventFilter);
-            }
+            await handleEventFilterChange(syncTargetEventId);
+            setEventFilter(syncTargetEventId);
         } catch (err) {
             console.error('Failed to import students:', err);
             showToast('Failed to import students', 'error');
@@ -635,9 +707,114 @@ const CompetitorManagement = () => {
             const adminInfo = JSON.parse(sessionStorage.getItem('adminInfo') || '{}');
             const adminId = adminInfo.adminId || 'admin';
             const response = await axios.get(`${API_BASE}/events`, { params: { admin_id: adminId } });
-            setEvents(response.data);
             
-            globalCompetitorCache.events = response.data;
+            // 2. Fetch scheduled sessions virtual events
+            let virtualEvents = [];
+            try {
+                const SURF_API = import.meta.env.VITE_API_URL || 'http://54.242.160.238:8000';
+                const sessionsRes = await fetch(`${SURF_API}/api/sessions`);
+                if (sessionsRes.ok) {
+                    const sessionsData = await sessionsRes.json();
+                    let sessions = Array.isArray(sessionsData) ? sessionsData : [];
+
+                    // Group sessions by date and slot time
+                    const grouped = {};
+                    sessions.forEach(session => {
+                        let eventDate = session.date;
+                        try {
+                            const parsed = new Date(session.date);
+                            if (!isNaN(parsed.getTime())) {
+                                const year = parsed.getFullYear();
+                                const month = String(parsed.getMonth() + 1).padStart(2, '0');
+                                const day = String(parsed.getDate()).padStart(2, '0');
+                                eventDate = `${year}-${month}-${day}`;
+                            }
+                        } catch (e) {}
+
+                        const slotTime = session.time || 'Morning';
+                        const groupKey = `${eventDate}_${slotTime}`;
+
+                        if (!grouped[groupKey]) {
+                            grouped[groupKey] = {
+                                date: eventDate,
+                                time: slotTime,
+                                sessions: [],
+                                duration_mins: session.duration_mins || 90
+                            };
+                        }
+                        grouped[groupKey].sessions.push(session);
+                    });
+
+                    // Format date helper
+                    const formatDateNice = (dateStr) => {
+                        if (!dateStr) return '';
+                        try {
+                            const parts = dateStr.split('-');
+                            if (parts.length === 3) {
+                                const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+                                if (!isNaN(d.getTime())) {
+                                    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+                                }
+                            }
+                            const parsed = new Date(dateStr);
+                            if (!isNaN(parsed.getTime())) {
+                                return parsed.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+                            }
+                        } catch(e) {}
+                        return dateStr;
+                    };
+
+                    virtualEvents = Object.values(grouped).map((group, idx) => {
+                        const studentIds = group.sessions.map(s => s.student_id).filter(Boolean);
+                        const studentNames = group.sessions.map(s => s.student_name || s.student).filter(Boolean);
+                        return {
+                            id: `session-slot-${group.date}-${group.time.replace(/[^a-zA-Z0-9]/g, '')}-${idx}`,
+                            isSessionEvent: true,
+                            name: `Session Slot: ${formatDateNice(group.date)} @ ${group.time}`,
+                            event_type: 'Scheduled Session',
+                            status: 'Active',
+                            location: 'Indica Surf School',
+                            start_date: group.date,
+                            end_date: group.date,
+                            divisions: JSON.stringify([group.time]),
+                            sponsors: JSON.stringify([]),
+                            title_sponsors: JSON.stringify([]),
+                            created_at: group.sessions[0]?.created_at || group.date,
+                            session_slot: group.time.includes('min slot') ? group.time : `${group.time} (${group.duration_mins} min slot)`,
+                            student_ids: studentIds,
+                            student_names: studentNames
+                        };
+                    });
+                }
+            } catch(e) {
+                console.warn('Could not fetch sessions for competitor events list:', e);
+            }
+
+            // Attach student_ids and student_names to the matching real session events from virtual sessions data
+            const combinedDbEvents = response.data.map(event => {
+                if (event.event_type === 'Scheduled Session') {
+                    const match = virtualEvents.find(ve => ve.name === event.name);
+                    if (match) {
+                        return {
+                            ...event,
+                            student_ids: match.student_ids,
+                            student_names: match.student_names
+                        };
+                    }
+                }
+                return event;
+            });
+
+            // Filter out virtual events that have already been created in the database
+            const dbEventNames = new Set(response.data.map(e => e.name));
+            const filteredVirtualEvents = virtualEvents.filter(ve => !dbEventNames.has(ve.name));
+
+            const combinedEvents = [...combinedDbEvents, ...filteredVirtualEvents].sort((a, b) => {
+                return new Date(a.created_at) - new Date(b.created_at);
+            });
+
+            setEvents(combinedEvents);
+            globalCompetitorCache.events = combinedEvents;
 
             // Sync registration forms state from backend
             const syncedForms = {};
@@ -662,6 +839,32 @@ const CompetitorManagement = () => {
             setEventPointsMap({});
             return;
         }
+
+        // Check if virtual session event - group and map booked students locally
+        if (String(selectedEventId).startsWith('session-slot-')) {
+            const selectedEvent = events.find(e => String(e.id) === String(selectedEventId));
+            let ids = new Set();
+            let map = {};
+            if (selectedEvent) {
+                const sIds = selectedEvent.student_ids || [];
+                const sNames = (selectedEvent.student_names || []).map(n => n.toLowerCase().trim());
+                surfers.forEach(s => {
+                    const idMatch = sIds.includes(s.id) || sIds.includes(Number(s.id)) || sIds.includes(String(s.id));
+                    const nameMatch = s.name && sNames.includes(s.name.toLowerCase().trim());
+                    if (idMatch || nameMatch) {
+                        ids.add(s.id);
+                        ids.add(String(s.id));
+                        ids.add(Number(s.id));
+                        map[s.id] = { ...s, is_assigned: 1 };
+                    }
+                });
+            }
+            setEventSurferIds(ids);
+            setEventSurfersMap(map);
+            setEventPointsMap({});
+            return;
+        }
+
         try {
             // Get surfers from event_surfers table (event-scoped is_assigned)
             const importedRes = await axios.get(`${API_BASE}/events/${selectedEventId}/surfers`);
@@ -3558,6 +3761,39 @@ const CompetitorManagement = () => {
                         </div>
 
                         <div style={{ padding: '20px 24px', overflowY: 'auto', flex: 1 }}>
+                            {/* Target Event Selector */}
+                            <div style={{ marginBottom: '18px', padding: '14px 16px', background: 'linear-gradient(135deg, rgba(2,132,199,0.07) 0%, rgba(13,148,136,0.05) 100%)', borderRadius: '12px', border: '1.5px solid rgba(2,132,199,0.2)' }}>
+                                <label style={{ fontSize: '12px', fontWeight: '800', color: '#0284C7', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '8px' }}>
+                                    🎯 Add Competitors to Event
+                                </label>
+                                <select
+                                    value={syncTargetEventId}
+                                    onChange={(e) => setSyncTargetEventId(e.target.value)}
+                                    style={{
+                                        width: '100%',
+                                        padding: '10px 14px',
+                                        borderRadius: '10px',
+                                        border: syncTargetEventId === 'All' ? '1.5px solid #f59e0b' : '1.5px solid #0284C7',
+                                        background: '#FFFFFF',
+                                        fontSize: '14px',
+                                        fontWeight: '700',
+                                        color: '#0F172A',
+                                        outline: 'none',
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    <option value="All">⚠️ Select an event first...</option>
+                                    {events.map(ev => (
+                                        <option key={ev.id} value={ev.id}>{ev.name}</option>
+                                    ))}
+                                </select>
+                                {syncTargetEventId === 'All' && (
+                                    <p style={{ fontSize: '11px', color: '#f59e0b', fontWeight: '700', margin: '6px 0 0' }}>
+                                        ⚠️ You must select an event before importing competitors.
+                                    </p>
+                                )}
+                            </div>
+
                             {/* Date & Slot Filters Inside Modal */}
                             {(() => {
                                 const availableDates = [...new Set(schoolStudents.map(st => st.start_date).filter(Boolean))].sort();
@@ -3596,28 +3832,51 @@ const CompetitorManagement = () => {
                                             </select>
                                         </div>
 
-                                        {/* Slot Filter Inside Modal */}
-                                        <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
-                                            {availableSlots.map(slot => (
-                                                <button
-                                                    key={slot}
-                                                    type="button"
-                                                    onClick={() => setSyncSlotFilter(slot)}
-                                                    style={{
-                                                        padding: '6px 12px',
-                                                        borderRadius: '8px',
-                                                        border: syncSlotFilter === slot ? '1.5px solid #0284C7' : '1px solid #E2E8F0',
-                                                        background: syncSlotFilter === slot ? '#0F172A' : '#F8FAFC',
-                                                        color: syncSlotFilter === slot ? '#00F2FE' : '#475569',
-                                                        fontSize: '12px',
-                                                        fontWeight: '700',
-                                                        cursor: 'pointer'
-                                                    }}
-                                                >
-                                                    {slot === 'All' ? 'All Slots' : slot}
-                                                </button>
-                                            ))}
+                                        {/* Slot Filter Inside Modal - click to auto-select matching students */}
+                                        <div style={{ display: 'flex', gap: '8px', marginBottom: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                                            <span style={{ fontSize: '12px', fontWeight: '700', color: '#475569' }}>⏰ Select Slot:</span>
+                                            {availableSlots.map(slot => {
+                                                const isActive = syncSlotFilter === slot;
+                                                const countForSlot = slot === 'All'
+                                                    ? activeStudentsForDate.length
+                                                    : activeStudentsForDate.filter(st => st.session_time === slot).length;
+                                                return (
+                                                    <button
+                                                        key={slot}
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setSyncSlotFilter(slot);
+                                                            // Auto-select all students in this slot
+                                                            if (slot === 'All') {
+                                                                setSelectedSchoolStudentIds(new Set(activeStudentsForDate.map(s => s.id)));
+                                                            } else {
+                                                                const matching = activeStudentsForDate.filter(st => st.session_time === slot);
+                                                                setSelectedSchoolStudentIds(new Set(matching.map(s => s.id)));
+                                                            }
+                                                        }}
+                                                        style={{
+                                                            padding: '6px 14px',
+                                                            borderRadius: '8px',
+                                                            border: isActive ? '1.5px solid #0284C7' : '1px solid #E2E8F0',
+                                                            background: isActive ? '#0F172A' : '#F8FAFC',
+                                                            color: isActive ? '#00F2FE' : '#475569',
+                                                            fontSize: '12px',
+                                                            fontWeight: '700',
+                                                            cursor: 'pointer',
+                                                            display: 'flex',
+                                                            alignItems: 'center',
+                                                            gap: '6px'
+                                                        }}
+                                                    >
+                                                        {slot === 'All' ? 'All Slots' : slot}
+                                                        <span style={{ fontSize: '10px', background: isActive ? 'rgba(0,242,254,0.2)' : '#E2E8F0', padding: '1px 5px', borderRadius: '4px', fontWeight: '800' }}>{countForSlot}</span>
+                                                    </button>
+                                                );
+                                            })}
                                         </div>
+                                        <p style={{ fontSize: '11px', color: '#0D9488', fontWeight: '600', marginBottom: '16px' }}>
+                                            💡 Clicking a slot auto-selects all students in that slot
+                                        </p>
                                     </>
                                 );
                             })()}
@@ -3737,10 +3996,10 @@ const CompetitorManagement = () => {
                                 type="button"
                                 onClick={handleImportSchoolStudentsSubmit}
                                 className="btn btn-primary"
-                                disabled={isSyncingToEvent || selectedSchoolStudentIds.size === 0}
-                                style={{ padding: '10px 24px', background: 'linear-gradient(135deg, #0284C7 0%, #0D9488 100%)' }}
+                                disabled={isSyncingToEvent || selectedSchoolStudentIds.size === 0 || syncTargetEventId === 'All'}
+                                style={{ padding: '10px 24px', background: syncTargetEventId === 'All' ? '#94a3b8' : 'linear-gradient(135deg, #0284C7 0%, #0D9488 100%)', cursor: syncTargetEventId === 'All' ? 'not-allowed' : 'pointer' }}
                             >
-                                {isSyncingToEvent ? <><Loader2 className="animate-spin" size={16} /> Importing...</> : `Import ${selectedSchoolStudentIds.size} Competitors →`}
+                                {isSyncingToEvent ? <><Loader2 className="animate-spin" size={16} /> Importing...</> : syncTargetEventId === 'All' ? '⚠️ Select an event first' : `🏄 Add ${selectedSchoolStudentIds.size} to "${events.find(e => String(e.id) === String(syncTargetEventId))?.name || 'Event'}" →`}
                             </button>
                         </div>
                     </div>

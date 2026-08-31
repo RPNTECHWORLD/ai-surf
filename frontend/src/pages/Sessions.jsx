@@ -62,7 +62,10 @@ const Sessions = () => {
   });
 
   const isStudent = currentUser?.role === 'athlete';
+  const isCoach = currentUser?.role === 'coach';
   const currentStudentName = currentUser?.name || 'Eric Sheldon';
+  const currentCoachName = currentUser?.name || '';
+  const currentCoachId = currentUser?.instructor_id || currentUser?.id || null;
 
   const fetchSessions = () => {
     setLoading(true);
@@ -79,18 +82,29 @@ const Sessions = () => {
 
   // Role-Scoped Base Sessions List
   const roleScopedSessions = useMemo(() => {
-    if (!isStudent) return sessions; // Admins, School & Coaches see ALL sessions across students
+    // Coach Role: Only show sessions where THIS coach is the instructor
+    if (isCoach && currentCoachName) {
+      return sessions.filter(s => {
+        const nameMatch = s.instructor && s.instructor.toLowerCase() === currentCoachName.toLowerCase();
+        const idMatch = currentCoachId && (s.instructor_id === currentCoachId || String(s.instructor_id) === String(currentCoachId));
+        return nameMatch || idMatch;
+      });
+    }
 
     // Student Role: Strictly isolate to ONLY sessions belonging to this specific student
-    const mySessions = sessions.filter(s => {
-      if (s.student && s.student.toLowerCase() === currentStudentName.toLowerCase()) return true;
-      if (currentUser?.student_id && s.student_id === currentUser.student_id) return true;
-      return false;
-    });
+    if (isStudent) {
+      const mySessions = sessions.filter(s => {
+        if (s.student && s.student.toLowerCase() === currentStudentName.toLowerCase()) return true;
+        if (currentUser?.student_id && s.student_id === currentUser.student_id) return true;
+        return false;
+      });
+      // Fallback: If mock data doesn't match name yet, show sessions matched by name
+      return mySessions.length > 0 ? mySessions : sessions.filter(s => s.student === 'Eric Sheldon' || s.student === currentStudentName);
+    }
 
-    // Fallback: If mock data doesn't match name yet, show sessions matched by name
-    return mySessions.length > 0 ? mySessions : sessions.filter(s => s.student === 'Eric Sheldon' || s.student === currentStudentName);
-  }, [sessions, currentUser, isStudent, currentStudentName]);
+    // Admin / School: See ALL sessions
+    return sessions;
+  }, [sessions, currentUser, isStudent, isCoach, currentStudentName, currentCoachName, currentCoachId]);
 
   // Extract unique instructors and students for dropdowns
   const availableInstructors = useMemo(() => {
