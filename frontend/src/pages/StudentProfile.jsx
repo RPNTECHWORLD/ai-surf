@@ -202,15 +202,46 @@ const StudentProfile = () => {
   const getFallbackStudent = () => {
     const savedUser = JSON.parse(sessionStorage.getItem('user') || '{}');
     const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-    const emailLower = (savedUser.email || '').toLowerCase().trim();
-    const req = reqs.find(r => (r.student_email || r.email)?.toLowerCase().trim() === emailLower);
+    const savedAccs = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
+    const mockStudents = JSON.parse(localStorage.getItem('mock_students_data') || '[]');
     
-    let approvalStatus = savedUser.approval_status || (req ? req.status : 'pending');
+    const emailLower = (savedUser.email || '').toLowerCase().trim();
+    const nameLower = (savedUser.name || '').toLowerCase().trim();
+
+    const req = reqs.find(r => 
+      (emailLower && (r.student_email || r.email || '').toLowerCase().trim() === emailLower) ||
+      (nameLower && (r.student_name || r.name || '').toLowerCase().trim() === nameLower)
+    );
+    const acc = savedAccs.find(a => 
+      (emailLower && (a.email || '').toLowerCase().trim() === emailLower) ||
+      (nameLower && (a.name || '').toLowerCase().trim() === nameLower)
+    );
+    const mock = mockStudents.find(m => 
+      (emailLower && (m.email || '').toLowerCase().trim() === emailLower) ||
+      (nameLower && (m.name || '').toLowerCase().trim() === nameLower)
+    );
+
+    let isApproved = false;
+    if (savedUser.approval_status === 'approved') isApproved = true;
+    if (req && req.status === 'approved') isApproved = true;
+    if (acc && acc.approval_status === 'approved') isApproved = true;
+    if (mock && mock.approval_status === 'approved') isApproved = true;
+
+    // Explicit rejection check
+    if (req && req.status === 'rejected') isApproved = false;
+    if (acc && acc.approval_status === 'rejected') isApproved = false;
+
+    const approvalStatus = isApproved ? 'approved' : 'pending';
+
+    if (isApproved && savedUser && savedUser.approval_status !== 'approved') {
+      savedUser.approval_status = 'approved';
+      sessionStorage.setItem('user', JSON.stringify(savedUser));
+    }
 
     return {
-      id: id,
-      name: savedUser.name || 'Registered Surfer',
-      email: savedUser.email || '',
+      id: id || savedUser.student_id || savedUser.id || 1,
+      name: savedUser.name || req?.student_name || req?.name || 'Registered Surfer',
+      email: savedUser.email || req?.student_email || req?.email || '',
       level: 'Beginner',
       instructor: 'Aquatic Indica Surf Coach',
       image: savedUser.image || '',
@@ -219,13 +250,14 @@ const StudentProfile = () => {
       division: "Men's Open",
       stance: 'regular',
       approval_status: approvalStatus,
+      school: savedUser.school || req?.school_name || req?.school || 'Aquatic Indica Surf School',
       surf_stats: { waves_ridden: 0, max_speed: '0 mph', avg_session_mins: 0 },
       performance_logs: [],
-      whatsapp_number: '',
+      whatsapp_number: savedUser.whatsapp_number || req?.whatsapp_number || '',
       guests_count: 1,
-      course_duration: '3 Days Course',
-      session_time: 'Morning 6:00 AM',
-      staying_at_school: 'Yes',
+      course_duration: savedUser.course_duration || req?.course_duration || '3 Days Course',
+      session_time: savedUser.session_time || req?.session_time || 'Morning 6:00 AM',
+      staying_at_school: savedUser.staying_at_school || req?.staying_at_school || 'Yes',
       reminder_preference: 'WhatsApp Text',
       guests_details: [],
       badges: [
@@ -234,81 +266,153 @@ const StudentProfile = () => {
     };
   };
 
-  const fetchStudent = () => {
-    fetch(`${API}/api/students/${id}`)
-      .then(res => {
-        if (!res.ok) throw new Error('Not found');
-        return res.json();
-      })
-      .then(data => {
-        const cleanStudent = {
-          ...data,
-          surf_stats: data.surf_stats && Object.keys(data.surf_stats).length > 0
-            ? data.surf_stats
-            : { waves_ridden: 0, max_speed: '0 mph', avg_session_mins: 0 },
-          performance_logs: data.performance_logs || [],
-          instructor: data.instructor || 'Aquatic Indica Surf Coach',
-          bio: data.bio || 'Registered athlete at Aquatic Indica Surf School.',
-          division: data.division || (data.gender === 'Female' ? "Women's Open" : "Men's Open"),
-          badges: (data.badges && data.badges.length > 0)
-            ? data.badges.map((b, bIdx) => ({
-                id: bIdx + 1,
-                name: `${b} Badge`,
-                date: 'Earned',
-                color: b === 'YELLOW' ? '#F59E0B' : b === 'GREEN' ? '#10B981' : b === 'BLUE' ? '#3B82F6' : b === 'RED' ? '#EF4444' : '#E2E8F0',
-                textColor: b === 'WHITE' ? '#0F172A' : '#FFFFFF'
-              }))
-            : []
-        };
+  const fetchStudent = async () => {
+    try {
+      const savedUser = JSON.parse(sessionStorage.getItem('user') || '{}');
+      const emailLower = (savedUser.email || '').toLowerCase().trim();
+      const nameLower = (savedUser.name || '').toLowerCase().trim();
 
-        let isApproved = data.approval_status === 'approved' || (Boolean(data.id) && data.approval_status !== 'pending');
-        cleanStudent.approval_status = isApproved ? 'approved' : 'pending';
+      // Check local storage approval markers
+      let isApprovedLocally = false;
+      try {
+        const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+        const req = reqs.find(r => 
+          (emailLower && (r.student_email || r.email || '').toLowerCase().trim() === emailLower) ||
+          (nameLower && (r.student_name || r.name || '').toLowerCase().trim() === nameLower)
+        );
+        if (req && req.status === 'approved') isApprovedLocally = true;
 
-        if (isApproved) {
-          try {
-            const saved = sessionStorage.getItem('user');
-            if (saved) {
-              const u = JSON.parse(saved);
-              u.approval_status = 'approved';
-              sessionStorage.setItem('user', JSON.stringify(u));
-              setCurrentUser(u);
+        const savedAccs = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
+        const acc = savedAccs.find(a => 
+          (emailLower && (a.email || '').toLowerCase().trim() === emailLower) ||
+          (nameLower && (a.name || '').toLowerCase().trim() === nameLower)
+        );
+        if (acc && acc.approval_status === 'approved') isApprovedLocally = true;
+
+        const mockStudents = JSON.parse(localStorage.getItem('mock_students_data') || '[]');
+        const mock = mockStudents.find(m => 
+          (emailLower && (m.email || '').toLowerCase().trim() === emailLower) ||
+          (nameLower && (m.name || '').toLowerCase().trim() === nameLower)
+        );
+        if (mock && mock.approval_status === 'approved') isApprovedLocally = true;
+      } catch (e) {}
+
+      // Try fetching student by ID
+      let data = null;
+      try {
+        const res = await fetch(`${API}/api/students/${id}`);
+        if (res.ok) {
+          data = await res.json();
+        }
+      } catch (e) {}
+
+      // Also check remote approval status if user has email
+      if (emailLower) {
+        try {
+          const appRes = await fetch(`${API}/api/auth/check-approval?email=${encodeURIComponent(emailLower)}`);
+          if (appRes.ok) {
+            const appData = await appRes.json();
+            if (appData.is_approved) {
+              isApprovedLocally = true;
             }
-          } catch (e) {}
+          }
+        } catch (e) {}
+      }
+
+      if (!data) {
+        const fallback = getFallbackStudent();
+        if (isApprovedLocally) {
+          fallback.approval_status = 'approved';
         }
-
-        // Check if password has been updated or student registered manually with password
-        const emailLower = (data.email || cleanStudent.email || '').toLowerCase().trim();
-        const updatedPassEmails = (JSON.parse(localStorage.getItem('passwords_updated_emails') || '[]')).map(e => String(e).toLowerCase().trim());
-        
-        let isPassSet = true; // Default to true for registered students who signed up with password!
-
-        if (data.is_temporary_password || data.has_password === false || data.password_set === false) {
-          isPassSet = emailLower ? updatedPassEmails.includes(emailLower) : false;
+        setStudent(fallback);
+        if (isApprovedLocally && savedUser && savedUser.approval_status !== 'approved') {
+          savedUser.approval_status = 'approved';
+          sessionStorage.setItem('user', JSON.stringify(savedUser));
+          setCurrentUser(savedUser);
         }
+        setLoading(false);
+        return;
+      }
 
+      const stEmail = (data.email || '').toLowerCase().trim();
+      const stName = (data.name || '').toLowerCase().trim();
+
+      let isApproved = data.approval_status === 'approved' || isApprovedLocally;
+      if (data.id && data.approval_status && data.approval_status !== 'pending') {
+        isApproved = true;
+      }
+
+      if (!isApproved) {
         try {
           const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-          const req = reqs.find(r => (r.student_email || r.email || '').toLowerCase().trim() === emailLower);
-          if (req && (req.password_updated || req.has_password || req.password)) {
-            isPassSet = true;
+          const req = reqs.find(r => 
+            (stEmail && (r.student_email || r.email || '').toLowerCase().trim() === stEmail) ||
+            (stName && (r.student_name || r.name || '').toLowerCase().trim() === stName)
+          );
+          if (req && req.status === 'approved') isApproved = true;
+        } catch (e) {}
+      }
+
+      const cleanStudent = {
+        ...data,
+        surf_stats: data.surf_stats && Object.keys(data.surf_stats).length > 0
+          ? data.surf_stats
+          : { waves_ridden: 0, max_speed: '0 mph', avg_session_mins: 0 },
+        performance_logs: data.performance_logs || [],
+        instructor: data.instructor || 'Aquatic Indica Surf Coach',
+        bio: data.bio || 'Registered athlete at Aquatic Indica Surf School.',
+        division: data.division || (data.gender === 'Female' ? "Women's Open" : "Men's Open"),
+        approval_status: isApproved ? 'approved' : (data.approval_status || 'pending'),
+        badges: (data.badges && data.badges.length > 0)
+          ? data.badges.map((b, bIdx) => ({
+              id: bIdx + 1,
+              name: `${b} Badge`,
+              date: 'Earned',
+              color: b === 'YELLOW' ? '#F59E0B' : b === 'GREEN' ? '#10B981' : b === 'BLUE' ? '#3B82F6' : b === 'RED' ? '#EF4444' : '#E2E8F0',
+              textColor: b === 'WHITE' ? '#0F172A' : '#FFFFFF'
+            }))
+          : []
+      };
+
+      if (isApproved) {
+        try {
+          if (savedUser && (savedUser.email?.toLowerCase().trim() === stEmail || savedUser.name?.toLowerCase().trim() === stName)) {
+            savedUser.approval_status = 'approved';
+            sessionStorage.setItem('user', JSON.stringify(savedUser));
+            setCurrentUser(savedUser);
           }
-        } catch(e) {}
+        } catch (e) {}
+      }
 
-        cleanStudent.has_password = isPassSet;
-        cleanStudent.password_updated = isPassSet;
-
-        const urlParams = new URLSearchParams(window.location.search);
-        if (!isPassSet && urlParams.has('token')) {
-          setShowPasswordModal(true);
+      // Check if password has been updated or student registered manually with password
+      const updatedPassEmails = (JSON.parse(localStorage.getItem('passwords_updated_emails') || '[]')).map(e => String(e).toLowerCase().trim());
+      let isPassSet = true;
+      if (data.is_temporary_password || data.has_password === false || data.password_set === false) {
+        isPassSet = stEmail ? updatedPassEmails.includes(stEmail) : false;
+      }
+      try {
+        const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+        const req = reqs.find(r => (r.student_email || r.email || '').toLowerCase().trim() === stEmail);
+        if (req && (req.password_updated || req.has_password || req.password)) {
+          isPassSet = true;
         }
+      } catch (e) {}
 
-        setStudent(cleanStudent);
-      })
-      .catch(() => {
-        const fallback = getFallbackStudent();
-        setStudent(fallback);
-      })
-      .finally(() => setLoading(false));
+      cleanStudent.has_password = isPassSet;
+      cleanStudent.password_updated = isPassSet;
+
+      const urlParams = new URLSearchParams(window.location.search);
+      if (!isPassSet && urlParams.has('token')) {
+        setShowPasswordModal(true);
+      }
+
+      setStudent(cleanStudent);
+    } catch (err) {
+      const fallback = getFallbackStudent();
+      setStudent(fallback);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const fetchMockHeats = () => {
@@ -319,17 +423,40 @@ const StudentProfile = () => {
   };
 
   useEffect(() => {
-    // Get auth user
-    const saved = sessionStorage.getItem('user');
-    let u = null;
-    if (saved) {
-      try {
-        u = JSON.parse(saved);
-        setCurrentUser(u);
-      } catch (e) {}
-    }
-    fetchStudent();
-    fetchMockHeats();
+    const syncUserAndFetch = () => {
+      const saved = sessionStorage.getItem('user');
+      if (saved) {
+        try {
+          let u = JSON.parse(saved);
+          const emailLower = (u.email || '').toLowerCase().trim();
+          const nameLower = (u.name || '').toLowerCase().trim();
+          const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+          const req = reqs.find(r => 
+            (emailLower && (r.student_email || r.email || '').toLowerCase().trim() === emailLower) ||
+            (nameLower && (r.student_name || r.name || '').toLowerCase().trim() === nameLower)
+          );
+          if (req && req.status === 'approved' && u.approval_status !== 'approved') {
+            u.approval_status = 'approved';
+            sessionStorage.setItem('user', JSON.stringify(u));
+          }
+          setCurrentUser(u);
+        } catch (e) {}
+      }
+      fetchStudent();
+      fetchMockHeats();
+    };
+
+    syncUserAndFetch();
+
+    window.addEventListener('storage', syncUserAndFetch);
+    window.addEventListener('focus', syncUserAndFetch);
+    const interval = setInterval(syncUserAndFetch, 2000);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('storage', syncUserAndFetch);
+      window.removeEventListener('focus', syncUserAndFetch);
+    };
   }, [id]);
 
   const toggleHeatExpand = (heatId) => {
@@ -429,7 +556,30 @@ const StudentProfile = () => {
 
   const isPendingApproval = (() => {
     if (student?.approval_status === 'approved') return false;
-    if (student?.id && student?.approval_status !== 'pending') return false;
+    if (currentUser?.approval_status === 'approved') return false;
+
+    // Check if student or user was approved in localStorage
+    try {
+      const emailLower = (student?.email || currentUser?.email || '').toLowerCase().trim();
+      const nameLower = (student?.name || currentUser?.name || '').toLowerCase().trim();
+      if (emailLower || nameLower) {
+        const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+        const req = reqs.find(r => 
+          (emailLower && (r.student_email || r.email || '').toLowerCase().trim() === emailLower) ||
+          (nameLower && (r.student_name || r.name || '').toLowerCase().trim() === nameLower)
+        );
+        if (req && req.status === 'approved') return false;
+
+        const savedAccs = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
+        const acc = savedAccs.find(a => 
+          (emailLower && (a.email || '').toLowerCase().trim() === emailLower) ||
+          (nameLower && (a.name || '').toLowerCase().trim() === nameLower)
+        );
+        if (acc && acc.approval_status === 'approved') return false;
+      }
+    } catch (e) {}
+
+    if (student?.id && student?.approval_status !== 'pending' && student?.approval_status !== undefined) return false;
     if (student?.approval_status === 'pending') return true;
     if (currentUser?.role === 'athlete' && currentUser?.approval_status === 'pending' && !student?.id) return true;
     return false;

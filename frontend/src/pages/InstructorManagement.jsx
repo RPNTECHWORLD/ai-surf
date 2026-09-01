@@ -502,7 +502,11 @@ const InstructorManagement = () => {
                           <div className="im-card-stat">
                             <span className="stat-label">Students</span>
                             <span className="stat-value">
-                              {allStudents.filter(s => s.instructor_id === instructor.id || s.instructor_id === parseInt(instructor.id)).length}
+                              {allStudents.filter(s => 
+                                s.instructor_id === instructor.id || 
+                                s.instructor_id === parseInt(instructor.id) ||
+                                (s.instructor && instructor.name && s.instructor.toLowerCase().trim() === instructor.name.toLowerCase().trim())
+                              ).length}
                             </span>
                           </div>
                           <div className="im-card-stat">

@@ -109,49 +109,38 @@ const InstructorProfile = () => {
     }
   };
 
-  const fetchInstructor = () => {
-    fetch(`${API}/api/instructors/${id}`)
-      .then(r => {
-        if (!r.ok) throw new Error('Not found');
-        return r.json();
-      })
-      .then(data => {
-        if (!data.specializations) data.specializations = [];
-        if (!data.certifications) data.certifications = [];
-        if (!data.reviews) data.reviews = [];
-        setInstructor(data);
-        if (data.email) setCoachEmail(data.email);
-      })
-      .catch(() => {
-        // Mock data based on design
-        setInstructor({
-          id: parseInt(id),
-          name: 'Kai Lenny',
-          age: 30,
-          gender: 'Male',
-          fitness_level: 'Elite',
-          experience: '12 Years',
-          certifications: ['ISA Level 2', 'CPR'],
-          image: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=120',
-          bio: 'Professional surfer with a passion for teaching the next generation of chargers. Specialized in big wave performance and competitive strategy.',
-          specializations: ['S&C', 'Video Analysis', 'Big Wave'],
-          rates: '$150 / hr',
-          location: 'Maui, Hawaii',
-          reviews: [
-            { student: 'Emma Watson', rating: 5, comment: 'Kai is an incredible coach! He breaks down paddling technique so clearly.' }
-          ]
-        });
-      })
-      .finally(() => setLoading(false));
+  const matchesCoach = (item, coachId, coachName) => {
+    if (!item) return false;
+    const targetId = parseInt(coachId);
+    if (targetId && (item.instructor_id === targetId || String(item.instructor_id) === String(targetId) || parseInt(item.instructor_id) === targetId)) {
+      return true;
+    }
+    if (Array.isArray(item.instructor_ids) && targetId && (item.instructor_ids.includes(targetId) || item.instructor_ids.includes(String(targetId)))) {
+      return true;
+    }
+    if (coachName) {
+      const cNameLower = coachName.toLowerCase().trim();
+      const itemInst = (item.instructor || item.instructor_name || item.primary_instructor || '').toLowerCase().trim();
+      if (itemInst && (itemInst === cNameLower || itemInst.includes(cNameLower) || cNameLower.includes(itemInst))) {
+        return true;
+      }
+    }
+    return false;
   };
 
-  const fetchDynamicData = () => {
+  const fetchDynamicData = (coachObj) => {
+    const currentCoach = coachObj || instructor;
+    const coachId = id || currentCoach?.id;
+    const coachName = currentCoach?.name || '';
+
     // Fetch assigned students
     fetch(`${API}/api/students`)
       .then(r => r.json())
       .then(data => {
-        const filtered = data.filter(s => s.instructor_id === parseInt(id));
-        setAssignedStudents(filtered);
+        if (Array.isArray(data)) {
+          const filtered = data.filter(s => matchesCoach(s, coachId, coachName));
+          setAssignedStudents(filtered);
+        }
       })
       .catch(err => console.error("Error fetching students:", err));
 
@@ -159,10 +148,101 @@ const InstructorProfile = () => {
     fetch(`${API}/api/sessions`)
       .then(r => r.json())
       .then(data => {
-        const filtered = data.filter(s => s.instructor_id === parseInt(id));
-        setInstructorSessions(filtered);
+        if (Array.isArray(data)) {
+          const filtered = data.filter(s => matchesCoach(s, coachId, coachName));
+          setInstructorSessions(filtered);
+        }
       })
       .catch(err => console.error("Error fetching sessions:", err));
+  };
+
+  const getFallbackInstructor = (coachId, userObj) => {
+    const saved = userObj || JSON.parse(sessionStorage.getItem('user') || '{}');
+    const savedAccs = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
+    const emailLower = (saved.email || '').toLowerCase().trim();
+    const nameLower = (saved.name || '').toLowerCase().trim();
+    
+    const acc = savedAccs.find(a => 
+      (emailLower && (a.email || '').toLowerCase().trim() === emailLower) ||
+      (nameLower && (a.name || '').toLowerCase().trim() === nameLower) ||
+      (coachId && (a.instructor_id === coachId || a.id === coachId || String(a.id) === String(coachId)))
+    );
+
+    const coachName = acc?.name || saved.name || (saved.role === 'coach' ? saved.name : 'Surf Coach');
+    const coachEmail = acc?.email || saved.email || '';
+    const coachSchool = acc?.school || saved.school || 'Aquatic Indica Surf School';
+
+    return {
+      id: parseInt(coachId) || saved.instructor_id || saved.id || 1,
+      name: coachName && coachName !== 'System Admin' ? coachName : 'Surf Coach',
+      email: coachEmail,
+      age: acc?.age || saved.age || 28,
+      gender: acc?.gender || saved.gender || 'Male',
+      fitness_level: acc?.fitness_level || 'Advanced',
+      experience: acc?.experience || '3 Years',
+      certifications: acc?.certifications || ['ISA Level 1', 'Lifeguard Certified'],
+      image: acc?.image || saved.image || '',
+      bio: acc?.bio || saved.bio || `Professional surf coach at ${coachSchool}. Dedicated to student progression and wave mastery.`,
+      specializations: acc?.specializations || ['S&C', 'Video Analysis'],
+      rates: acc?.rates || '$75 / hr',
+      location: acc?.location || saved.location || 'North Shore, Oahu',
+      school: coachSchool,
+      reviews: []
+    };
+  };
+
+  const fetchInstructor = async () => {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem('user') || '{}');
+
+      // 1. Try direct fetch by ID
+      let data = null;
+      try {
+        const res = await fetch(`${API}/api/instructors/${id}`);
+        if (res.ok) {
+          data = await res.json();
+        }
+      } catch (e) {}
+
+      // 2. If direct ID fetch failed, search all instructors list
+      if (!data) {
+        try {
+          const listRes = await fetch(`${API}/api/instructors`);
+          if (listRes.ok) {
+            const list = await listRes.json();
+            if (Array.isArray(list)) {
+              const matched = list.find(i => 
+                String(i.id) === String(id) ||
+                (saved.email && i.email && i.email.toLowerCase().trim() === saved.email.toLowerCase().trim()) ||
+                (saved.name && i.name && i.name.toLowerCase().trim() === saved.name.toLowerCase().trim())
+              );
+              if (matched) data = matched;
+            }
+          }
+        } catch (e) {}
+      }
+
+      if (data) {
+        if (!data.specializations) data.specializations = [];
+        if (!data.certifications) data.certifications = [];
+        if (!data.reviews) data.reviews = [];
+        setInstructor(data);
+        if (data.email) setCoachEmail(data.email);
+        fetchDynamicData(data);
+      } else {
+        const fallback = getFallbackInstructor(id, saved);
+        setInstructor(fallback);
+        if (fallback.email) setCoachEmail(fallback.email);
+        fetchDynamicData(fallback);
+      }
+    } catch (err) {
+      const saved = JSON.parse(sessionStorage.getItem('user') || '{}');
+      const fallback = getFallbackInstructor(id, saved);
+      setInstructor(fallback);
+      fetchDynamicData(fallback);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -173,7 +253,6 @@ const InstructorProfile = () => {
       } catch (e) {}
     }
     fetchInstructor();
-    fetchDynamicData();
   }, [id]);
 
   const handlePhotoUpload = async (e) => {

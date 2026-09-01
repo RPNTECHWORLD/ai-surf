@@ -67,6 +67,9 @@ const Sessions = () => {
   const currentCoachName = currentUser?.name || '';
   const currentCoachId = currentUser?.instructor_id || currentUser?.id || null;
 
+  const [allInstructorsList, setAllInstructorsList] = useState([]);
+  const [allStudentsList, setAllStudentsList] = useState([]);
+
   const fetchSessions = () => {
     setLoading(true);
     fetch(`${API}/api/sessions`)
@@ -78,28 +81,44 @@ const Sessions = () => {
 
   useEffect(() => {
     fetchSessions();
+    fetch(`${API}/api/instructors`)
+      .then(r => r.json())
+      .then(data => { if (Array.isArray(data)) setAllInstructorsList(data); })
+      .catch(() => {});
+    fetch(`${API}/api/students`)
+      .then(r => r.json())
+      .then(data => { if (Array.isArray(data)) setAllStudentsList(data); })
+      .catch(() => {});
   }, []);
 
   // Role-Scoped Base Sessions List
   const roleScopedSessions = useMemo(() => {
     // Coach Role: Only show sessions where THIS coach is the instructor
-    if (isCoach && currentCoachName) {
+    if (isCoach && (currentCoachName || currentCoachId)) {
       return sessions.filter(s => {
-        const nameMatch = s.instructor && s.instructor.toLowerCase() === currentCoachName.toLowerCase();
-        const idMatch = currentCoachId && (s.instructor_id === currentCoachId || String(s.instructor_id) === String(currentCoachId));
+        const cNameLower = (currentCoachName || '').toLowerCase().trim();
+        const sInstLower = (s.instructor || s.instructor_name || '').toLowerCase().trim();
+        const nameMatch = cNameLower && sInstLower && (sInstLower === cNameLower || sInstLower.includes(cNameLower) || cNameLower.includes(sInstLower));
+        const idMatch = currentCoachId && (
+          s.instructor_id === currentCoachId ||
+          String(s.instructor_id) === String(currentCoachId) ||
+          parseInt(s.instructor_id) === parseInt(currentCoachId) ||
+          (Array.isArray(s.instructor_ids) && (s.instructor_ids.includes(currentCoachId) || s.instructor_ids.includes(parseInt(currentCoachId)) || s.instructor_ids.includes(String(currentCoachId))))
+        );
         return nameMatch || idMatch;
       });
     }
 
     // Student Role: Strictly isolate to ONLY sessions belonging to this specific student
     if (isStudent) {
+      const sNameLower = (currentStudentName || '').toLowerCase().trim();
       const mySessions = sessions.filter(s => {
-        if (s.student && s.student.toLowerCase() === currentStudentName.toLowerCase()) return true;
-        if (currentUser?.student_id && s.student_id === currentUser.student_id) return true;
+        const itemStudent = (s.student || '').toLowerCase().trim();
+        if (sNameLower && itemStudent && (itemStudent === sNameLower || itemStudent.includes(sNameLower) || sNameLower.includes(itemStudent))) return true;
+        if (currentUser?.student_id && (s.student_id === currentUser.student_id || String(s.student_id) === String(currentUser.student_id))) return true;
         return false;
       });
-      // Fallback: If mock data doesn't match name yet, show sessions matched by name
-      return mySessions.length > 0 ? mySessions : sessions.filter(s => s.student === 'Eric Sheldon' || s.student === currentStudentName);
+      return mySessions.length > 0 ? mySessions : sessions.filter(s => (s.student || '').toLowerCase().includes(sNameLower));
     }
 
     // Admin / School: See ALL sessions
@@ -109,13 +128,15 @@ const Sessions = () => {
   // Extract unique instructors and students for dropdowns
   const availableInstructors = useMemo(() => {
     const names = new Set(roleScopedSessions.map(s => s.instructor).filter(Boolean));
+    allInstructorsList.forEach(i => { if (i.name) names.add(i.name); });
     return Array.from(names);
-  }, [roleScopedSessions]);
+  }, [roleScopedSessions, allInstructorsList]);
 
   const availableStudents = useMemo(() => {
     const names = new Set(roleScopedSessions.map(s => s.student).filter(Boolean));
+    allStudentsList.forEach(st => { if (st.name) names.add(st.name); });
     return Array.from(names);
-  }, [roleScopedSessions]);
+  }, [roleScopedSessions, allStudentsList]);
 
   // Filtered sessions
   const filteredSessions = useMemo(() => {
@@ -142,8 +163,11 @@ const Sessions = () => {
       }
 
       // Instructor filter
-      if (instructorFilter !== 'All' && s.instructor !== instructorFilter) {
-        return false;
+      if (instructorFilter !== 'All') {
+        const iFilterLower = instructorFilter.toLowerCase().trim();
+        const sInstLower = (s.instructor || s.instructor_name || '').toLowerCase().trim();
+        const matches = sInstLower === iFilterLower || sInstLower.includes(iFilterLower) || iFilterLower.includes(sInstLower) || String(s.instructor_id) === String(instructorFilter);
+        if (!matches) return false;
       }
 
       // Student filter (for Admins/Coaches)
