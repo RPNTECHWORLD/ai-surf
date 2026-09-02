@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 
-const API = import.meta.env.VITE_API_URL || 'http://54.242.160.238:8000';
+const API = import.meta.env.VITE_API_URL || '';
 
 export default function CoachPortal() {
   const [params] = useSearchParams();

@@ -362,7 +362,7 @@ const CompetitorManagement = () => {
             // Fetch active registered students from Super Admin API (/api/students)
             let registeredStudents = null;
             try {
-                const SURF_API = import.meta.env.VITE_API_URL || 'http://54.242.160.238:8000';
+                const SURF_API = import.meta.env.VITE_API_URL || '';
                 const stRes = await fetch(`${SURF_API}/api/students`);
                 if (stRes.ok) {
                     const allSt = await stRes.json();
@@ -490,7 +490,7 @@ const CompetitorManagement = () => {
         setIsSchoolSyncModalOpen(true);
         setIsLoadingSchoolStudents(true);
         try {
-            const SURF_API = import.meta.env.VITE_API_URL || 'http://54.242.160.238:8000';
+            const SURF_API = import.meta.env.VITE_API_URL || '';
             const res = await fetch(`${SURF_API}/api/students`);
             let studentList = [];
             if (res.ok) {
@@ -711,7 +711,7 @@ const CompetitorManagement = () => {
             // 2. Fetch scheduled sessions virtual events
             let virtualEvents = [];
             try {
-                const SURF_API = import.meta.env.VITE_API_URL || 'http://54.242.160.238:8000';
+                const SURF_API = import.meta.env.VITE_API_URL || '';
                 const sessionsRes = await fetch(`${SURF_API}/api/sessions`);
                 if (sessionsRes.ok) {
                     const sessionsData = await sessionsRes.json();

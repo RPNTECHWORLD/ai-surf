@@ -12,39 +12,93 @@ const Sidebar = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
-    let userSchoolName = null;
-    const savedUser = sessionStorage.getItem('user');
-    if (savedUser) {
-      try {
-        const parsed = JSON.parse(savedUser);
-        setUser(parsed);
-        if (parsed.school_name) userSchoolName = parsed.school_name;
-      } catch (e) {}
-    }
+    const updateHeaderInfo = () => {
+      const savedUserStr = sessionStorage.getItem('user');
+      let parsedUser = null;
+      if (savedUserStr) {
+        try {
+          parsedUser = JSON.parse(savedUserStr);
+          setUser(parsedUser);
+        } catch (e) {}
+      }
 
-    const savedSchool = sessionStorage.getItem('activeSchool');
-    if (savedSchool) {
-      try {
-        const parsedSchool = JSON.parse(savedSchool);
-        if (userSchoolName) parsedSchool.name = userSchoolName;
-        setSchool(parsedSchool);
-      } catch (e) {}
-    } else if (userSchoolName) {
-      setSchool({ name: userSchoolName });
-    } else {
-      fetch(`${API}/api/schools`)
-        .then(res => res.json())
-        .then(data => {
-          if (data && data.length > 0) {
-            const latest = data[0]; // first registered school or user matching
-            setSchool({
-              name: latest.name,
-              owner: latest.owner,
-            });
-          }
-        })
-        .catch(err => console.error("Error fetching school:", err));
-    }
+      const savedSchoolStr = sessionStorage.getItem('activeSchool');
+      let parsedSchool = null;
+      if (savedSchoolStr) {
+        try {
+          parsedSchool = JSON.parse(savedSchoolStr);
+        } catch (e) {}
+      }
+
+      // Determine dynamic display name for top right header
+      let displayName = null;
+
+      // 1. Coach Role: Display Individual Coach Name
+      if (parsedUser?.role === 'coach') {
+        const cName = parsedUser.name || parsedUser.instructor_name;
+        if (cName) {
+          displayName = `Coach: ${cName}`;
+        } else {
+          displayName = 'Individual / Freelance Coach';
+        }
+      } 
+      // 2. Athlete Role: Display Assigned Individual Coach Name
+      else if (parsedUser?.role === 'athlete') {
+        const instName = parsedUser.instructor || parsedUser.instructor_name;
+        if (instName && instName !== 'Assigned Surf Coach' && instName !== 'Aquatic Indica Surf Coach') {
+          displayName = `Coach: ${instName}`;
+        } else if (parsedUser.school_name && parsedUser.school_name !== 'Aquatic Indica Surf School') {
+          displayName = parsedUser.school_name;
+        } else if (parsedUser.school && parsedUser.school !== 'Aquatic Indica Surf School') {
+          displayName = parsedUser.school;
+        } else if (parsedSchool?.name && parsedSchool.name !== 'Aquatic Indica Surf School') {
+          displayName = parsedSchool.name;
+        } else if (instName) {
+          displayName = `Coach: ${instName}`;
+        } else {
+          displayName = 'Individual Surf Athlete';
+        }
+      } 
+      // 3. Admin / School Role: Display School Name
+      else {
+        if (parsedUser?.school_name && parsedUser.school_name !== 'Aquatic Indica Surf School') {
+          displayName = parsedUser.school_name;
+        } else if (parsedUser?.school && parsedUser.school !== 'Aquatic Indica Surf School') {
+          displayName = parsedUser.school;
+        } else if (parsedSchool?.name && parsedSchool.name !== 'Aquatic Indica Surf School') {
+          displayName = parsedSchool.name;
+        }
+      }
+
+      if (displayName) {
+        setSchool({ name: displayName });
+      } else if (parsedUser?.role === 'admin') {
+        fetch(`${API}/api/schools`)
+          .then(res => res.json())
+          .then(data => {
+            if (data && data.length > 0) {
+              setSchool({
+                name: data[0].name,
+                owner: data[0].owner,
+              });
+            }
+          })
+          .catch(() => {});
+      } else {
+        setSchool({ name: 'Individual Surf Coach' });
+      }
+    };
+
+    updateHeaderInfo();
+    window.addEventListener('storage', updateHeaderInfo);
+    window.addEventListener('user_updated', updateHeaderInfo);
+    const interval = setInterval(updateHeaderInfo, 1000);
+
+    return () => {
+      window.removeEventListener('storage', updateHeaderInfo);
+      window.removeEventListener('user_updated', updateHeaderInfo);
+      clearInterval(interval);
+    };
 
     // Fetch quick stats
     fetch(`${API}/api/dashboard/stats`)

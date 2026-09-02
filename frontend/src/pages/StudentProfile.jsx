@@ -243,14 +243,14 @@ const StudentProfile = () => {
       name: savedUser.name || req?.student_name || req?.name || 'Registered Surfer',
       email: savedUser.email || req?.student_email || req?.email || '',
       level: 'Beginner',
-      instructor: 'Aquatic Indica Surf Coach',
+      instructor: savedUser.instructor || req?.instructor || 'Assigned Surf Coach',
       image: savedUser.image || '',
-      bio: 'Registered athlete at Aquatic Indica Surf School.',
+      bio: 'Registered athlete & surf trainee.',
       age: 24,
       division: "Men's Open",
       stance: 'regular',
       approval_status: approvalStatus,
-      school: savedUser.school || req?.school_name || req?.school || 'Aquatic Indica Surf School',
+      school: savedUser.school || req?.school_name || req?.school || (savedUser.instructor ? `${savedUser.instructor} Surf Coaching` : 'Surf Academy'),
       surf_stats: { waves_ridden: 0, max_speed: '0 mph', avg_session_mins: 0 },
       performance_logs: [],
       whatsapp_number: savedUser.whatsapp_number || req?.whatsapp_number || '',
@@ -359,8 +359,8 @@ const StudentProfile = () => {
           ? data.surf_stats
           : { waves_ridden: 0, max_speed: '0 mph', avg_session_mins: 0 },
         performance_logs: data.performance_logs || [],
-        instructor: data.instructor || 'Aquatic Indica Surf Coach',
-        bio: data.bio || 'Registered athlete at Aquatic Indica Surf School.',
+        instructor: data.instructor || 'Assigned Surf Coach',
+        bio: data.bio || 'Registered athlete & surf trainee.',
         division: data.division || (data.gender === 'Female' ? "Women's Open" : "Men's Open"),
         approval_status: isApproved ? 'approved' : (data.approval_status || 'pending'),
         badges: (data.badges && data.badges.length > 0)
@@ -374,14 +374,24 @@ const StudentProfile = () => {
           : []
       };
 
-      if (isApproved) {
-        try {
-          if (savedUser && (savedUser.email?.toLowerCase().trim() === stEmail || savedUser.name?.toLowerCase().trim() === stName)) {
-            savedUser.approval_status = 'approved';
-            sessionStorage.setItem('user', JSON.stringify(savedUser));
-            setCurrentUser(savedUser);
-          }
-        } catch (e) {}
+      if (savedUser) {
+        let userChanged = false;
+        if (isApproved && savedUser.approval_status !== 'approved') {
+          savedUser.approval_status = 'approved';
+          userChanged = true;
+        }
+        if (cleanStudent.instructor && cleanStudent.instructor !== 'Assigned Surf Coach' && savedUser.instructor !== cleanStudent.instructor) {
+          savedUser.instructor = cleanStudent.instructor;
+          userChanged = true;
+        }
+        if (cleanStudent.school && savedUser.school !== cleanStudent.school) {
+          savedUser.school = cleanStudent.school;
+          userChanged = true;
+        }
+        if (userChanged) {
+          sessionStorage.setItem('user', JSON.stringify(savedUser));
+          setCurrentUser(savedUser);
+        }
       }
 
       // Check if password has been updated or student registered manually with password

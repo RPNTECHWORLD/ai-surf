@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 
-const API = import.meta.env.VITE_API_URL || 'http://54.242.160.238:8000';
+const API = import.meta.env.VITE_API_URL || '';
 
 const levelColors = {
   Beginner:     { bg: 'rgba(245,158,11,0.12)', color: '#F59E0B' },
@@ -42,7 +42,8 @@ export default function StudentPortal() {
           email: data.email,
           role: 'athlete',
           image: data.image,
-          school: data.school_name,
+          instructor: data.instructor || data.instructor_name || '',
+          school: data.school_name || data.school || (data.instructor ? `${data.instructor} Surf Coaching` : ''),
           has_password: data.password_set,
           invite_token: token,
           approval_status: data.approval_status || 'approved'

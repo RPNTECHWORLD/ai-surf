@@ -553,7 +553,7 @@ const HeatManagement = ({ currentUser }) => {
                 setServerTimeOffset(serverTime - localTime);
             }
             // Fetch SuperAdmin instructors (Ironman etc.) — ONLY SuperAdmin instructors are valid judges
-            const SURF_API = import.meta.env.VITE_API_URL || 'http://54.242.160.238:8000';
+            const SURF_API = import.meta.env.VITE_API_URL || '';
             let superAdminInstructors = [];
             try {
                 const instRes = await fetch(`${SURF_API}/api/instructors`);

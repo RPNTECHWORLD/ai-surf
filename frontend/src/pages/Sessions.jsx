@@ -30,6 +30,34 @@ const MONTH_NAMES = [
 
 const DAYS_OF_WEEK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+const normalizeToYYYYMMDD = (dVal) => {
+  if (!dVal) return '';
+  const str = String(dVal).trim();
+  
+  // Check YYYY-MM-DD prefix
+  const yyyymmdd = str.match(/^(\d{4})[-/](\d{2})[-/](\d{2})/);
+  if (yyyymmdd) {
+    return `${yyyymmdd[1]}-${yyyymmdd[2]}-${yyyymmdd[3]}`;
+  }
+  
+  // Check DD-MM-YYYY or DD/MM/YYYY
+  const ddmmyyyy = str.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
+  if (ddmmyyyy) {
+    return `${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}`;
+  }
+  
+  // Parse via new Date() and extract LOCAL year, month, day to avoid UTC offset shift
+  const parsed = new Date(str);
+  if (!isNaN(parsed.getTime())) {
+    const y = parsed.getFullYear();
+    const m = String(parsed.getMonth() + 1).padStart(2, '0');
+    const d = String(parsed.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  
+  return str;
+};
+
 const Sessions = () => {
   const navigate = useNavigate();
   const [sessions, setSessions] = useState([]);
@@ -140,24 +168,22 @@ const Sessions = () => {
 
   // Filtered sessions
   const filteredSessions = useMemo(() => {
-    const todayStr = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    const todayObj = new Date();
+    const todayISO = `${todayObj.getFullYear()}-${String(todayObj.getMonth() + 1).padStart(2, '0')}-${String(todayObj.getDate()).padStart(2, '0')}`;
     
     return roleScopedSessions.filter(s => {
       // Date filter
       if (dateFilter) {
-        const sessionDateISO = (() => {
-          if (/^\d{4}-\d{2}-\d{2}$/.test(s.date)) return s.date;
-          const p = new Date(s.date);
-          return isNaN(p) ? s.date : p.toISOString().split('T')[0];
-        })();
-        if (sessionDateISO !== dateFilter && !(s.date || '').includes(dateFilter)) {
+        const sessionDateISO = normalizeToYYYYMMDD(s.date);
+        const filterISO = normalizeToYYYYMMDD(dateFilter);
+        if (sessionDateISO !== filterISO && !String(s.date || '').toLowerCase().includes(dateFilter.toLowerCase())) {
           return false;
         }
       }
 
       // Status & Date filter
       if (statusFilter === 'Today') {
-        if (s.date !== todayStr) return false;
+        if (normalizeToYYYYMMDD(s.date) !== todayISO) return false;
       } else if (statusFilter !== 'All') {
         if (s.status !== statusFilter) return false;
       }
@@ -397,20 +423,22 @@ const Sessions = () => {
               </select>
             </div>
 
-            {/* Instructor Filter */}
-            <div className="ses-select-wrap">
-              <label className="ses-select-label">Instructor</label>
-              <select
-                className="ses-select"
-                value={instructorFilter}
-                onChange={(e) => setInstructorFilter(e.target.value)}
-              >
-                <option value="All">All Instructors</option>
-                {availableInstructors.map(name => (
-                  <option key={name} value={name}>{name}</option>
-                ))}
-              </select>
-            </div>
+            {/* Instructor Filter (Hidden for Coach role) */}
+            {!isCoach && (
+              <div className="ses-select-wrap">
+                <label className="ses-select-label">Instructor</label>
+                <select
+                  className="ses-select"
+                  value={instructorFilter}
+                  onChange={(e) => setInstructorFilter(e.target.value)}
+                >
+                  <option value="All">All Instructors</option>
+                  {availableInstructors.map(name => (
+                    <option key={name} value={name}>{name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             {/* Student Filter / Locked Badge */}
             {!isStudent ? (
@@ -803,7 +831,7 @@ const Sessions = () => {
                             onClick={() => {
                               // Convert "29 Aug 2026" → "2026-08-29" for the date input
                               const isoDate = selectedCalendarDate
-                                ? new Date(selectedCalendarDate).toISOString().split('T')[0]
+                                ? normalizeToYYYYMMDD(selectedCalendarDate)
                                 : '';
                               navigate(`/sessions/new${isoDate ? `?date=${isoDate}` : ''}`);
                             }}

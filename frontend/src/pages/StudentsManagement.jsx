@@ -109,10 +109,27 @@ const StudentsManagement = () => {
     });
   };
 
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('user') || localStorage.getItem('user');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) {
+      return null;
+    }
+  });
+
+  const isStudent = currentUser?.role === 'athlete';
+  const isCoach = currentUser?.role === 'coach';
+  const currentCoachName = currentUser?.name || '';
+  const currentCoachId = currentUser?.instructor_id || currentUser?.id || null;
+
+  const [allSessions, setAllSessions] = useState([]);
+
   const fetchStudents = () => {
+    setLoading(true);
     fetch(`${API}/api/students`)
       .then(r => r.json())
-      .then(data => setStudents(data))
+      .then(data => setStudents(Array.isArray(data) ? data : []))
       .catch(() => {})
       .finally(() => setLoading(false));
   };
@@ -125,9 +142,17 @@ const StudentsManagement = () => {
       .then(r => r.json())
       .then(data => setInstructors(data))
       .catch(() => {});
+    fetch(`${API}/api/sessions`)
+      .then(r => r.json())
+      .then(data => { if (Array.isArray(data)) setAllSessions(data); })
+      .catch(() => {});
 
     const onStorageChange = () => {
       fetchStudents();
+      fetch(`${API}/api/sessions`)
+        .then(r => r.json())
+        .then(data => { if (Array.isArray(data)) setAllSessions(data); })
+        .catch(() => {});
       setReqRefreshKey(k => k + 1);
     };
     window.addEventListener('storage', onStorageChange);
@@ -161,18 +186,57 @@ const StudentsManagement = () => {
 
   const isDefaultSchool = !activeSchoolName || activeSchoolName.toLowerCase() === 'aquatic indica surf school' || activeSchoolName.toLowerCase() === 'school admin';
 
-  const approvedStudents = (() => {
+  const approvedStudents = useMemo(() => {
     // Pure AWS Backend Students Only - Approved students
     const list = Array.isArray(students) ? students : [];
     const seenIds = new Set();
-    return list.filter(s => {
+    const valid = list.filter(s => {
       if (!s || !s.id) return false;
       if (s.approval_status === 'pending' || s.approval_status === 'rejected') return false;
       if (seenIds.has(s.id)) return false;
       seenIds.add(s.id);
       return true;
     });
-  })();
+
+    // Coach Role Isolation: Only show students assigned to THIS coach (via primary instructor assignment or sessions)
+    if (isCoach && (currentCoachName || currentCoachId)) {
+      const cNameLower = (currentCoachName || '').toLowerCase().trim();
+
+      const coachStudentIdsFromSessions = new Set();
+      const coachStudentNamesFromSessions = new Set();
+
+      allSessions.forEach(sess => {
+        const sInstLower = (sess.instructor || sess.instructor_name || '').toLowerCase().trim();
+        const instMatch = 
+          (cNameLower && sInstLower && (sInstLower === cNameLower || sInstLower.includes(cNameLower) || cNameLower.includes(sInstLower))) ||
+          (currentCoachId && (sess.instructor_id === currentCoachId || String(sess.instructor_id) === String(currentCoachId) || parseInt(sess.instructor_id) === parseInt(currentCoachId)));
+
+        if (instMatch) {
+          if (sess.student_id) coachStudentIdsFromSessions.add(String(sess.student_id));
+          if (sess.student) coachStudentNamesFromSessions.add(sess.student.toLowerCase().trim());
+        }
+      });
+
+      return valid.filter(s => {
+        const sInstLower = (s.instructor || s.instructor_name || '').toLowerCase().trim();
+        const sNameLower = (s.name || '').toLowerCase().trim();
+
+        // 1. Match by primary instructor ID or Name
+        const idMatch = currentCoachId && (s.instructor_id === currentCoachId || String(s.instructor_id) === String(currentCoachId) || parseInt(s.instructor_id) === parseInt(currentCoachId));
+        const nameMatch = cNameLower && sInstLower && (sInstLower === cNameLower || sInstLower.includes(cNameLower) || cNameLower.includes(sInstLower));
+        
+        // 2. Match by scheduled session with this coach
+        const sessionMatch = coachStudentIdsFromSessions.has(String(s.id)) || (sNameLower && coachStudentNamesFromSessions.has(sNameLower));
+
+        // 3. Match by creator ID
+        const createdMatch = s.created_by_user_id && currentCoachId && (String(s.created_by_user_id) === String(currentCoachId));
+
+        return idMatch || nameMatch || sessionMatch || createdMatch;
+      });
+    }
+
+    return valid;
+  }, [students, allSessions, isCoach, currentCoachName, currentCoachId]);
 
   const handleStatClick = (label) => {
     setActiveStatFilter(label);
@@ -300,7 +364,7 @@ const StudentsManagement = () => {
           email: form.email,
           password: form.password || undefined,
           level: form.level,
-          instructor_id: form.instructor_id ? parseInt(form.instructor_id) : null,
+          instructor_id: form.instructor_id ? parseInt(form.instructor_id) : (isCoach && currentCoachId ? parseInt(currentCoachId) : null),
           whatsapp_number: form.whatsapp_number,
           course_duration: form.course_duration,
           session_time: form.session_time,
@@ -965,10 +1029,12 @@ const StudentsManagement = () => {
             <option value="All">Level: All</option>
             {levels.map(l => <option key={l}>{l}</option>)}
           </select>
-          <select className="sm-select" value={instructorFilter} onChange={e => setInstructorFilter(e.target.value)}>
-            <option value="All">Instructor: All</option>
-            {instructors.map(i => <option key={i.id}>{i.name}</option>)}
-          </select>
+          {!isCoach && (
+            <select className="sm-select" value={instructorFilter} onChange={e => setInstructorFilter(e.target.value)}>
+              <option value="All">Instructor: All</option>
+              {instructors.map(i => <option key={i.id}>{i.name}</option>)}
+            </select>
+          )}
           <select className="sm-select" value={sessionTimeFilter} onChange={e => setSessionTimeFilter(e.target.value)}>
             <option value="All">Session: All Slots</option>
             <option value="08:30 AM">08:30 AM (90m)</option>
@@ -1366,13 +1432,7 @@ const StudentsManagement = () => {
                     </div>
                   </div>
 
-                  <div className="sm-field">
-                    <label>Lodge Stay</label>
-                    <select value={form.staying_at_school} onChange={e => setForm({...form, staying_at_school: e.target.value})}>
-                      <option value="Yes">Yes (On-site Lodge)</option>
-                      <option value="No">No (Off-site Stay)</option>
-                    </select>
-                  </div>
+
 
                   <div className="sm-form-actions-row">
                     <button type="submit" className="sm-btn-primary" disabled={saving}>

@@ -5,7 +5,7 @@ import { useConfirm } from './ConfirmContext';
 import axios from 'axios';
 
 const API_BASE = 'http://54.84.243.251/api';
-const SURF_API = import.meta.env.VITE_API_URL || 'http://54.242.160.238:8000';
+const SURF_API = import.meta.env.VITE_API_URL || '';
 
 // Global cache for instant tab-switching
 let globalJudgeCache = {

@@ -195,7 +195,10 @@ const NewSession = () => {
       }
       const parsed = new Date(d);
       if (!isNaN(parsed.getTime())) {
-        return parsed.toISOString().split('T')[0];
+        const y = parsed.getFullYear();
+        const m = String(parsed.getMonth() + 1).padStart(2, '0');
+        const day = String(parsed.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
       }
     } catch (e) {}
     return String(d).trim().toLowerCase();
@@ -251,13 +254,7 @@ const NewSession = () => {
         .then(r => r.json())
         .then(data => {
           // Convert stored "27 Aug 2026" → "2026-08-27" for date input
-          const parseToISO = (d) => {
-            if (!d) return '';
-            // Already ISO format
-            if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
-            const p = new Date(d);
-            return isNaN(p) ? d : p.toISOString().split('T')[0];
-          };
+          const parseToISO = (d) => normalizeDate(d);
           // Convert "08:30 AM" → "08:30" for time input (HTML5 type=time uses 24h HH:MM)
           const parseToHHMM = (t) => {
             if (!t) return '08:30';

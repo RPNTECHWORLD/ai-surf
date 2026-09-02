@@ -152,7 +152,7 @@ const EventManagement = () => {
             // 2. Fetch scheduled sessions
             let virtualEvents = [];
             try {
-                const SURF_API = import.meta.env.VITE_API_URL || 'http://54.242.160.238:8000';
+                const SURF_API = import.meta.env.VITE_API_URL || '';
                 const res = await fetch(`${SURF_API}/api/sessions`);
                 const data = res.ok ? await res.json() : [];
                 let sessions = Array.isArray(data) ? data : [];
