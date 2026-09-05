@@ -11,9 +11,11 @@ const Stats = () => {
   useEffect(() => {
     // Optionally fetch stats from the backend
     fetch('/api/stats')
-      .then(res => res.json())
-      .then(data => setStats(data))
-      .catch(err => console.error("Could not fetch stats, using fallback data", err));
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => {
+        if (Array.isArray(data) && data.length > 0) setStats(data);
+      })
+      .catch(err => console.warn("Could not fetch stats, using fallback data", err));
   }, []);
 
   return (

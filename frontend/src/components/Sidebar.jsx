@@ -12,12 +12,28 @@ const Sidebar = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
+    const resolveSchoolName = (val) => {
+      if (!val) return '';
+      if (typeof val === 'string') return val;
+      if (typeof val === 'object') {
+        if (typeof val.name === 'string') return val.name;
+        if (typeof val.name === 'object' && val.name?.name) return String(val.name.name);
+        if (typeof val.school_name === 'string') return val.school_name;
+      }
+      return '';
+    };
+
     const updateHeaderInfo = () => {
       const savedUserStr = sessionStorage.getItem('user');
       let parsedUser = null;
       if (savedUserStr) {
         try {
           parsedUser = JSON.parse(savedUserStr);
+          if (parsedUser && typeof parsedUser.school === 'object' && parsedUser.school?.name) {
+            parsedUser.school_details = parsedUser.school;
+            parsedUser.school = resolveSchoolName(parsedUser.school);
+            sessionStorage.setItem('user', JSON.stringify(parsedUser));
+          }
           setUser(parsedUser);
         } catch (e) {}
       }
@@ -27,6 +43,10 @@ const Sidebar = () => {
       if (savedSchoolStr) {
         try {
           parsedSchool = JSON.parse(savedSchoolStr);
+          if (parsedSchool && typeof parsedSchool.name === 'object') {
+            parsedSchool.name = resolveSchoolName(parsedSchool.name);
+            sessionStorage.setItem('activeSchool', JSON.stringify(parsedSchool));
+          }
         } catch (e) {}
       }
 
@@ -45,41 +65,46 @@ const Sidebar = () => {
       // 2. Athlete Role: Display Assigned Individual Coach Name
       else if (parsedUser?.role === 'athlete') {
         const instName = parsedUser.instructor || parsedUser.instructor_name;
+        const userSch = resolveSchoolName(parsedUser.school_name) || resolveSchoolName(parsedUser.school);
+        const activeSch = resolveSchoolName(parsedSchool?.name);
+
         if (instName && instName !== 'Assigned Surf Coach' && instName !== 'Aquatic Indica Surf Coach') {
           displayName = `Coach: ${instName}`;
-        } else if (parsedUser.school_name && parsedUser.school_name !== 'Aquatic Indica Surf School') {
-          displayName = parsedUser.school_name;
-        } else if (parsedUser.school && parsedUser.school !== 'Aquatic Indica Surf School') {
-          displayName = parsedUser.school;
-        } else if (parsedSchool?.name && parsedSchool.name !== 'Aquatic Indica Surf School') {
-          displayName = parsedSchool.name;
+        } else if (userSch && userSch !== 'Aquatic Indica Surf School') {
+          displayName = userSch;
+        } else if (activeSch && activeSch !== 'Aquatic Indica Surf School') {
+          displayName = activeSch;
         } else if (instName) {
           displayName = `Coach: ${instName}`;
         } else {
-          displayName = 'Individual Surf Athlete';
+          displayName = userSch || activeSch || 'Individual Surf Athlete';
         }
       } 
       // 3. Admin / School Role: Display School Name
       else {
-        if (parsedUser?.school_name && parsedUser.school_name !== 'Aquatic Indica Surf School') {
-          displayName = parsedUser.school_name;
-        } else if (parsedUser?.school && parsedUser.school !== 'Aquatic Indica Surf School') {
-          displayName = parsedUser.school;
-        } else if (parsedSchool?.name && parsedSchool.name !== 'Aquatic Indica Surf School') {
-          displayName = parsedSchool.name;
+        const userSch = resolveSchoolName(parsedUser?.school_name) || resolveSchoolName(parsedUser?.school);
+        const activeSch = resolveSchoolName(parsedSchool?.name);
+
+        if (userSch) {
+          displayName = userSch;
+        } else if (activeSch) {
+          displayName = activeSch;
         }
       }
 
       if (displayName) {
-        setSchool({ name: displayName });
+        setSchool({
+          name: resolveSchoolName(displayName) || 'North Shore Academy',
+          owner: typeof parsedUser?.name === 'string' ? parsedUser.name : (typeof parsedSchool?.owner === 'string' ? parsedSchool.owner : '')
+        });
       } else if (parsedUser?.role === 'admin') {
         fetch(`${API}/api/schools`)
           .then(res => res.json())
           .then(data => {
             if (data && data.length > 0) {
               setSchool({
-                name: data[0].name,
-                owner: data[0].owner,
+                name: resolveSchoolName(data[0].name) || 'Aquatic Indica Surf School',
+                owner: typeof data[0].owner === 'string' ? data[0].owner : '',
               });
             }
           })
@@ -188,13 +213,13 @@ const Sidebar = () => {
         <div className="db-header-right">
           <div className="db-header-userinfo">
             <div className="db-header-usertext">
-              <div className="db-header-school-name">{school ? school.name : 'North Shore Academy'}</div>
+              <div className="db-header-school-name">{typeof school?.name === 'string' ? school.name : (school?.name?.name || 'North Shore Academy')}</div>
               <div className="db-header-user-role" style={{ textTransform: 'capitalize' }}>
                 {user ? (user.role === 'admin' ? 'School Admin' : user.role) : 'School Admin'}
               </div>
             </div>
             <div className="db-header-avatar" style={{ backgroundImage: user?.image ? `url(${user.image})` : 'none', backgroundSize: 'cover', backgroundPosition: 'center' }}>
-              {!user?.image && getInitials(user?.name || school?.owner || 'School Admin')}
+              {!user?.image && getInitials(user?.name || (typeof school?.owner === 'string' ? school.owner : '') || 'School Admin')}
             </div>
             <button className="db-header-logout" onClick={handleLogout} title="Log Out">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

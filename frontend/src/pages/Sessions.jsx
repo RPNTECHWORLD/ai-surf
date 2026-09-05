@@ -95,12 +95,41 @@ const Sessions = () => {
   const currentCoachName = currentUser?.name || '';
   const currentCoachId = currentUser?.instructor_id || currentUser?.id || null;
 
+  const activeSchoolName = (() => {
+    try {
+      const savedSchool = sessionStorage.getItem('activeSchool');
+      if (savedSchool) {
+        const parsed = JSON.parse(savedSchool);
+        if (parsed.name) {
+          return typeof parsed.name === 'string' ? parsed.name : (parsed.name?.name || null);
+        }
+      }
+      const savedUser = sessionStorage.getItem('user');
+      if (savedUser) {
+        const parsed = JSON.parse(savedUser);
+        if (parsed.school) {
+          return typeof parsed.school === 'string' ? parsed.school : (parsed.school?.name || null);
+        }
+        if (parsed.school_name) {
+          return typeof parsed.school_name === 'string' ? parsed.school_name : (parsed.school_name?.name || null);
+        }
+      }
+    } catch (e) {}
+    return null;
+  })();
+
+  const schoolLower = (activeSchoolName || '').toLowerCase().trim();
+  const isSuperAdmin = !schoolLower || schoolLower === 'school admin' || schoolLower === 'super admin' || currentUser?.role === 'superadmin';
+
   const [allInstructorsList, setAllInstructorsList] = useState([]);
   const [allStudentsList, setAllStudentsList] = useState([]);
 
   const fetchSessions = () => {
     setLoading(true);
-    fetch(`${API}/api/sessions`)
+    const url = (activeSchoolName && !isSuperAdmin)
+      ? `${API}/api/sessions?school=${encodeURIComponent(activeSchoolName)}`
+      : `${API}/api/sessions`;
+    fetch(url)
       .then(r => r.json())
       .then(data => setSessions(Array.isArray(data) ? data : []))
       .catch((err) => console.error('Error fetching sessions:', err))
@@ -109,15 +138,22 @@ const Sessions = () => {
 
   useEffect(() => {
     fetchSessions();
-    fetch(`${API}/api/instructors`)
+    const instUrl = (activeSchoolName && !isSuperAdmin)
+      ? `${API}/api/instructors?school=${encodeURIComponent(activeSchoolName)}`
+      : `${API}/api/instructors`;
+    fetch(instUrl)
       .then(r => r.json())
       .then(data => { if (Array.isArray(data)) setAllInstructorsList(data); })
       .catch(() => {});
-    fetch(`${API}/api/students`)
+
+    const stUrl = (activeSchoolName && !isSuperAdmin)
+      ? `${API}/api/students?school=${encodeURIComponent(activeSchoolName)}`
+      : `${API}/api/students`;
+    fetch(stUrl)
       .then(r => r.json())
       .then(data => { if (Array.isArray(data)) setAllStudentsList(data); })
       .catch(() => {});
-  }, []);
+  }, [activeSchoolName, isSuperAdmin]);
 
   // Role-Scoped Base Sessions List
   const roleScopedSessions = useMemo(() => {
@@ -149,9 +185,16 @@ const Sessions = () => {
       return mySessions.length > 0 ? mySessions : sessions.filter(s => (s.student || '').toLowerCase().includes(sNameLower));
     }
 
-    // Admin / School: See ALL sessions
+    // Admin / School: Filter by active school
+    if (!isSuperAdmin && schoolLower) {
+      return sessions.filter(s => {
+        const sSchool = (s.school || '').toLowerCase().trim();
+        return sSchool === schoolLower;
+      });
+    }
+
     return sessions;
-  }, [sessions, currentUser, isStudent, isCoach, currentStudentName, currentCoachName, currentCoachId]);
+  }, [sessions, currentUser, isStudent, isCoach, currentStudentName, currentCoachName, currentCoachId, schoolLower, isSuperAdmin]);
 
   // Extract unique instructors and students for dropdowns
   const availableInstructors = useMemo(() => {

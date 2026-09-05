@@ -3,6 +3,14 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 
 const API = import.meta.env.VITE_API_URL || '';
 
+const safeJson = async (res) => {
+  try {
+    return await res.json();
+  } catch (e) {
+    return { detail: `Server response error (${res.status || 'unknown'}). Please try again in a few moments.` };
+  }
+};
+
 
 const calculateAge = (dobString) => {
   if (!dobString) return '';
@@ -111,7 +119,7 @@ const AuthPage = () => {
   // Always fetch all registered surf schools for dropdown options on load
   useEffect(() => {
     fetch(`${API}/api/schools`)
-      .then(r => r.json())
+      .then(r => (r.ok ? r.json() : []))
       .then(data => {
         const deletedIds = new Set(JSON.parse(localStorage.getItem('deleted_school_ids') || '[]').map(String));
         const deletedNames = new Set(JSON.parse(localStorage.getItem('deleted_school_names') || '[]').map(n => String(n).toLowerCase().trim()));
@@ -148,7 +156,7 @@ const AuthPage = () => {
     if (!inviteToken) return;
     setInviteLoading(true);
     fetch(`${API}/api/invite/${inviteToken}`)
-      .then(r => r.json())
+      .then(r => (r.ok ? r.json() : { valid: false }))
       .then(data => {
         if (data.valid) {
           setInviteData(data);
@@ -219,7 +227,7 @@ const AuthPage = () => {
       try {
         const res = await fetch(`${API}/api/auth/check-approval?email=${encodeURIComponent(studentEmail)}`);
         if (res.ok) {
-          const data = await res.json();
+          const data = await safeJson(res);
           if (data.is_approved) {
             isApprovedOnServer = true;
             serverStudentId = data.student_id;
@@ -251,17 +259,23 @@ const AuthPage = () => {
         const approvedUser = { ...pendingApprovalUser, approval_status: 'approved' };
         if (serverStudentId) approvedUser.student_id = serverStudentId;
 
+        const schoolNameStr = typeof approvedUser.school === 'string'
+          ? approvedUser.school
+          : (approvedUser.school?.name || approvedUser.school_name || 'Aquatic Indica Surf School');
         sessionStorage.setItem('token', sessionStorage.getItem('token') || 'session_active_token');
         sessionStorage.setItem('user', JSON.stringify(approvedUser));
         sessionStorage.setItem('activeSchool', JSON.stringify({
-          name: approvedUser.school || 'Aquatic Indica Surf School',
+          name: schoolNameStr,
           owner: approvedUser.name,
           email: approvedUser.email,
         }));
         setPendingApprovalUser(null);
         navigate(`/students/${serverStudentId || approvedUser.student_id || approvedUser.id || 1}`);
       } else {
-        setErrorMsg(`⏳ Your join request to "${pendingApprovalUser.school || 'your selected Surf School'}" is STILL PENDING approval from the School Admin.`);
+        const pendingSchoolName = typeof pendingApprovalUser.school === 'string'
+          ? pendingApprovalUser.school
+          : (pendingApprovalUser.school?.name || 'your selected Surf School');
+        setErrorMsg(`⏳ Your join request to "${pendingSchoolName}" is STILL PENDING approval from the School Admin.`);
       }
     } catch (e) {
       setErrorMsg('Could not verify status. Please try again.');
@@ -326,8 +340,13 @@ const AuthPage = () => {
       return;
     }
 
+    const activeSchoolName = (typeof user.school_name === 'string' ? user.school_name : user.school_name?.name)
+      || (typeof user.school === 'string' ? user.school : user.school?.name)
+      || formData.school
+      || (user.role === 'admin' ? 'School Admin' : user.role === 'coach' ? 'Coach Portal' : 'Student Portal');
+
     sessionStorage.setItem('activeSchool', JSON.stringify({
-      name: user.school_name || formData.school || (user.role === 'admin' ? 'School Admin' : user.role === 'coach' ? 'Coach Portal' : 'Student Portal'),
+      name: activeSchoolName,
       owner: user.name,
       email: user.email,
     }));
@@ -358,11 +377,11 @@ const AuthPage = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (res.ok) handleAuthSuccess(data.token, data.user);
       else setErrorMsg(data.detail || 'Incorrect email or password.');
     } catch (err) {
-      setErrorMsg('Login request failed.');
+      setErrorMsg('Login request failed. Please try again.');
     } finally { setLoading(false); }
   };
 
@@ -377,7 +396,7 @@ const AuthPage = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: formData.email.trim(), purpose: 'signup', role })
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (res.ok) {
         setResendCooldown(60);
         if (!isResend) setOtpSent(true);
@@ -390,10 +409,10 @@ const AuthPage = () => {
         }
       } else {
         setOtpSent(false);
-        setErrorMsg(data.detail || 'Failed to send OTP. Please try again.');
+        setErrorMsg(data.detail || `Failed to send OTP (${res.status}). Please try again.`);
       }
     } catch (err) {
-      setErrorMsg('Failed to send OTP. Please check your network.');
+      setErrorMsg('Failed to send OTP. Please check your connection and try again.');
     } finally { setLoading(false); }
   };
 
@@ -407,11 +426,11 @@ const AuthPage = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: formData.email.trim(), otp: otpCode.trim(), purpose: 'signup', role })
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (res.ok) setOtpVerified(true);
       else setErrorMsg(data.detail || 'Invalid OTP. Please check and try again.');
     } catch (err) {
-      setErrorMsg('OTP verification failed.');
+      setErrorMsg('OTP verification failed. Please try again.');
     } finally { setLoading(false); }
   };
 
@@ -457,7 +476,7 @@ const AuthPage = () => {
           ...(inviteToken ? { invite_token: inviteToken } : {}),
         })
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (res.ok) {
         const userObj = data.user || {
           id: Date.now(),
@@ -558,7 +577,7 @@ const AuthPage = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: forgotEmail.trim(), purpose: 'reset' })
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (res.ok) {
         setResendCooldown(60);
         if (!isResend) setForgotStep(2);
@@ -573,7 +592,7 @@ const AuthPage = () => {
         setErrorMsg(data.detail || 'Failed to send reset code.');
       }
     } catch (err) {
-      setErrorMsg('Failed to send OTP. Please check your network.');
+      setErrorMsg('Failed to send OTP. Please check your connection and try again.');
     } finally { setLoading(false); }
   };
 
@@ -598,7 +617,7 @@ const AuthPage = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: forgotEmail.trim().toLowerCase(), otp: forgotOtp.trim(), new_password: newPassword })
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (res.ok) {
         setFormData(prev => ({ ...prev, email: forgotEmail.trim(), password: '' }));
         setForgotStep(0); setForgotOtp(''); setNewPassword(''); setConfirmNewPassword('');
@@ -628,7 +647,7 @@ const AuthPage = () => {
           image: image || ''
         })
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (res.ok) { setShowGoogleModal(false); handleAuthSuccess(data.token, data.user); }
       else setErrorMsg(data.detail || 'Google sign-in failed.');
     } catch (err) {
@@ -711,7 +730,7 @@ const AuthPage = () => {
             <div style={{ fontSize: '48px', marginBottom: '12px', textAlign: 'center' }}>⏳</div>
             <h2 className="auth-title" style={{ textAlign: 'center', marginBottom: '8px' }}>Registration Pending</h2>
             <p className="auth-subtitle" style={{ textAlign: 'center', marginBottom: '24px' }}>
-              Your join request to <strong style={{ color: '#00F2FE' }}>{pendingApprovalUser.school || 'your selected Surf School'}</strong> has been submitted successfully!
+              Your join request to <strong style={{ color: '#00F2FE' }}>{typeof pendingApprovalUser.school === 'string' ? pendingApprovalUser.school : (pendingApprovalUser.school?.name || 'your selected Surf School')}</strong> has been submitted successfully!
             </p>
 
             <div style={{ background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)', borderRadius: '12px', padding: '16px', color: '#FCD34D', fontSize: '13px', lineHeight: '1.6', marginBottom: '24px' }}>

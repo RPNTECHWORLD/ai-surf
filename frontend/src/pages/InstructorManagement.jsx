@@ -50,13 +50,19 @@ const InstructorManagement = () => {
       const activeSchool = sessionStorage.getItem('activeSchool');
       if (activeSchool) {
         const parsed = JSON.parse(activeSchool);
-        if (parsed.name) return parsed.name;
+        if (parsed.name) {
+          return typeof parsed.name === 'string' ? parsed.name : (parsed.name?.name || 'Aquatic Indica Surf School');
+        }
       }
       const user = sessionStorage.getItem('user');
       if (user) {
         const parsed = JSON.parse(user);
-        if (parsed.school) return parsed.school;
-        if (parsed.school_name) return parsed.school_name;
+        if (parsed.school) {
+          return typeof parsed.school === 'string' ? parsed.school : (parsed.school?.name || 'Aquatic Indica Surf School');
+        }
+        if (parsed.school_name) {
+          return typeof parsed.school_name === 'string' ? parsed.school_name : (parsed.school_name?.name || 'Aquatic Indica Surf School');
+        }
       }
     } catch (e) {}
     return 'Aquatic Indica Surf School';
@@ -135,8 +141,15 @@ const InstructorManagement = () => {
 
   const [allStudents, setAllStudents] = useState([]);
 
+  const currentSchool = getActiveSchoolName();
+  const isSuperAdmin = !currentSchool || currentSchool.toLowerCase() === 'super admin' || currentSchool.toLowerCase() === 'school admin';
+
   const fetchInstructors = () => {
-    fetch(`${API}/api/instructors`)
+    const url = (!isSuperAdmin && currentSchool)
+      ? `${API}/api/instructors?school=${encodeURIComponent(currentSchool)}`
+      : `${API}/api/instructors`;
+
+    fetch(url)
       .then(r => {
         if (!r.ok) throw new Error('Failed to fetch');
         return r.json();
@@ -151,7 +164,10 @@ const InstructorManagement = () => {
       })
       .finally(() => setLoading(false));
 
-    fetch(`${API}/api/students`)
+    const stUrl = (!isSuperAdmin && currentSchool)
+      ? `${API}/api/students?school=${encodeURIComponent(currentSchool)}`
+      : `${API}/api/students`;
+    fetch(stUrl)
       .then(r => r.json())
       .then(data => {
         if (Array.isArray(data)) {
@@ -172,13 +188,19 @@ const InstructorManagement = () => {
         }
       })
       .catch(() => {});
-  }, []);
+  }, [currentSchool]);
 
-  const filtered = instructors.filter(i =>
-    i.name.toLowerCase().includes(search.toLowerCase()) ||
-    i.fitness_level.toLowerCase().includes(search.toLowerCase()) ||
-    (i.certifications && i.certifications.some(c => c.toLowerCase().includes(search.toLowerCase())))
-  );
+  const filtered = instructors.filter(i => {
+    if (!isSuperAdmin && currentSchool) {
+      const iSchool = (i.school || '').toLowerCase().trim();
+      if (iSchool && iSchool !== currentSchool.toLowerCase().trim()) return false;
+    }
+    return (
+      i.name.toLowerCase().includes(search.toLowerCase()) ||
+      i.fitness_level.toLowerCase().includes(search.toLowerCase()) ||
+      (i.certifications && i.certifications.some(c => c.toLowerCase().includes(search.toLowerCase())))
+    );
+  });
 
   const handleSaveCoachPassword = async (e) => {
     e.preventDefault();

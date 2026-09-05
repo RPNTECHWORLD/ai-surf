@@ -1,5 +1,6 @@
 # pyrefly: ignore [missing-import]
-from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Header
+from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Header, Request
+from fastapi.responses import JSONResponse
 # pyrefly: ignore [missing-import]
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -44,12 +45,27 @@ try:
             db_name = parsed.path.lstrip("/")
             
             connection_uri = f"postgresql+psycopg2://{db_user}@{db_host}:{db_port}/{db_name}"
-            engine = create_engine(connection_uri, connect_args={"sslmode": "require", "connect_timeout": 15})
+            engine = create_engine(
+                connection_uri,
+                connect_args={
+                    "sslmode": "require",
+                    "connect_timeout": 30,
+                    "keepalives": 1,
+                    "keepalives_idle": 30,
+                    "keepalives_interval": 10,
+                    "keepalives_count": 5
+                },
+                pool_pre_ping=True,
+                pool_recycle=300,
+                pool_size=10,
+                max_overflow=20
+            )
             
+            rds_auth_client = boto3.client("rds", region_name=os.getenv("AWS_REGION", "us-east-1"))
+
             @event.listens_for(engine, "do_connect")
             def provide_token(dialect, conn_rec, cargs, cparams):
-                client = boto3.client("rds", region_name=os.getenv("AWS_REGION", "us-east-1"))
-                token = client.generate_db_auth_token(
+                token = rds_auth_client.generate_db_auth_token(
                     DBHostname=db_host,
                     Port=db_port,
                     DBUsername=db_user,
@@ -61,7 +77,7 @@ try:
             with engine.connect() as test_conn:
                 pass
         else:
-            engine = create_engine(DATABASE_URL)
+            engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=300)
 except Exception as err:
     print(f"Notice: AWS RDS Direct connection error ({err}).")
     DATABASE_URL = "sqlite:///./aisurf.db"
@@ -851,14 +867,16 @@ def seed_database(db: OrmSession, force: bool = False):
         db.add(a)
 
     # Demo schools
-    db.add(School(name="Aquatic Indica Surf School", owner="Aquatic Admin",
-                  email="rpntechworld@gmail.com", phone="+91 9876543210",
-                  country="India", city="Kovalam / Chennai",
-                  instructor_count="5–15", website="https://aquaticindica.com"))
-    db.add(School(name="Pipeline Surf School", owner="John Doe",
-                  email="hello@pipeline.com", phone="+1 808 555 0100",
-                  country="United States", city="Honolulu",
-                  instructor_count="6–15", website="https://pipeline.com"))
+    if not db.query(School).filter(func.lower(School.email) == "rpntechworld@gmail.com").first():
+        db.add(School(name="Aquatic Indica Surf School", owner="Aquatic Admin",
+                      email="rpntechworld@gmail.com", phone="+91 9876543210",
+                      country="India", city="Kovalam / Chennai",
+                      instructor_count="5–15", website="https://aquaticindica.com"))
+    if not db.query(School).filter(func.lower(School.email) == "hello@pipeline.com").first():
+        db.add(School(name="Pipeline Surf School", owner="John Doe",
+                      email="hello@pipeline.com", phone="+1 808 555 0100",
+                      country="United States", city="Honolulu",
+                      instructor_count="6–15", website="https://pipeline.com"))
 
     # Seed Chloe Kim Logs (student_id=1)
     chloe_nutrition = [
@@ -937,6 +955,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    import traceback
+    traceback.print_exc()
+    err_str = str(exc)
+    if "OperationalError" in type(exc).__name__ or "SSL connection" in err_str or "connection to server" in err_str:
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Database connection is temporarily reconnecting. Please retry in a few seconds."}
+        )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Server error: {err_str[:120]}"}
+    )
 
 # Static Uploads directory
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
@@ -1111,6 +1144,7 @@ class StudentCreate(BaseModel):
     guests_details: Optional[List[dict]] = []
     invite_token: Optional[str] = None
     password: Optional[str] = None # Admin can set initial password directly
+    school: Optional[str] = "Aquatic Indica Surf School"
 
 
 class SessionCreate(BaseModel):
@@ -1465,6 +1499,7 @@ def session_to_dict(s: SurfSession):
         "duration_mins": s.duration_mins,
         "student_id": s.student_id,
         "student": s.student_rel.name if s.student_rel else "",
+        "school": s.student_rel.school if s.student_rel else "",
         "instructor_id": s.instructor_id,
         "instructor": s.instructor_rel.name if s.instructor_rel else "",
         "location": s.location,
@@ -1531,7 +1566,8 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
             if sch:
                 res["school_name"] = sch.name
                 res["school_id"] = sch.id
-                res["school"] = {"id": sch.id, "name": sch.name, "owner": sch.owner, "email": sch.email}
+                res["school"] = sch.name
+                res["school_details"] = {"id": sch.id, "name": sch.name, "owner": sch.owner, "email": sch.email}
                 if sch.owner and user.role == "admin":
                     res["name"] = sch.owner
     except Exception as e:
@@ -1571,8 +1607,15 @@ def auth_signup(data: UserSignup, db: OrmSession = Depends(get_db)):
         auth_provider="email",
         approval_status=initial_approval
     )
-    db.add(user)
-    db.flush()
+    try:
+        db.add(user)
+        db.flush()
+    except Exception as e:
+        db.rollback()
+        err_str = str(e).lower()
+        if "unique" in err_str or "duplicate" in err_str:
+            raise HTTPException(status_code=400, detail=f"This email is already registered as {role}. Please log in instead.")
+        raise HTTPException(status_code=500, detail="Failed to create account. Please try again.")
 
     if role == "athlete":
         computed_age = calculate_age_from_dob(data.dob) if data.dob else data.age
@@ -2614,31 +2657,42 @@ def upload_image(file: UploadFile = File(...)):
 # ─── Dashboard ────────────────────────────────────────────────────────────────
 
 @app.get("/api/dashboard/stats")
-def dashboard_stats(db: OrmSession = Depends(get_db)):
-    today_str = datetime.now().strftime("%d %b %Y")
+def dashboard_stats(school: Optional[str] = None, db: OrmSession = Depends(get_db)):
+    student_q = db.query(Student)
+    instructor_q = db.query(Instructor)
+    session_q = db.query(SurfSession)
+    
+    if school and school.lower().strip() not in ["all", "super admin", "school admin"]:
+        sch_clean = school.lower().strip()
+        student_q = student_q.filter(func.lower(Student.school) == sch_clean)
+        instructor_q = instructor_q.filter(func.lower(Instructor.school) == sch_clean)
+        session_q = session_q.join(Student, SurfSession.student_id == Student.id).filter(func.lower(Student.school) == sch_clean)
+
     return {
-        "active_instructors": db.query(Instructor).count(),
-        "active_students": db.query(Student).count(),
-        "sessions_this_month": db.query(SurfSession).filter(
+        "active_instructors": instructor_q.count(),
+        "active_students": student_q.count(),
+        "sessions_this_month": session_q.filter(
             SurfSession.status == "Completed"
         ).count(),
-        "upcoming_sessions": db.query(SurfSession).filter(
+        "upcoming_sessions": session_q.filter(
             SurfSession.status == "Upcoming"
         ).count(),
     }
 
 
 @app.get("/api/dashboard/sessions")
-def dashboard_sessions(db: OrmSession = Depends(get_db)):
+def dashboard_sessions(school: Optional[str] = None, db: OrmSession = Depends(get_db)):
     today_str = datetime.now().strftime("%d %b %Y")
-    sessions = db.query(SurfSession).filter(
-        SurfSession.date == today_str
-    ).all()
+    query = db.query(SurfSession).filter(SurfSession.date == today_str)
+    if school and school.lower().strip() not in ["all", "super admin", "school admin"]:
+        query = query.join(Student, SurfSession.student_id == Student.id).filter(func.lower(Student.school) == school.lower().strip())
+    sessions = query.all()
     return [
         {
             "time": s.time,
             "instructor": s.instructor_rel.name if s.instructor_rel else "",
             "student": s.student_rel.name if s.student_rel else "",
+            "school": s.student_rel.school if s.student_rel else "",
             "status": s.status,
         }
         for s in sessions
@@ -2665,8 +2719,11 @@ def dashboard_activity(db: OrmSession = Depends(get_db)):
 # ─── Instructors ──────────────────────────────────────────────────────────────
 
 @app.get("/api/instructors")
-def get_instructors(db: OrmSession = Depends(get_db)):
-    return [instructor_to_dict(i) for i in db.query(Instructor).all()]
+def get_instructors(school: Optional[str] = None, db: OrmSession = Depends(get_db)):
+    query = db.query(Instructor)
+    if school and school.lower().strip() not in ["all", "super admin", "school admin"]:
+        query = query.filter(func.lower(Instructor.school) == school.lower().strip())
+    return [instructor_to_dict(i) for i in query.all()]
 
 
 @app.get("/api/instructors/{instructor_id}")
@@ -2762,8 +2819,11 @@ def delete_instructor(instructor_id: int, db: OrmSession = Depends(get_db)):
 # ─── Students ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/students")
-def get_students(db: OrmSession = Depends(get_db)):
-    return [student_to_dict(s) for s in db.query(Student).all()]
+def get_students(school: Optional[str] = None, db: OrmSession = Depends(get_db)):
+    query = db.query(Student)
+    if school and school.lower().strip() not in ["all", "super admin", "school admin"]:
+        query = query.filter(func.lower(Student.school) == school.lower().strip())
+    return [student_to_dict(s) for s in query.all()]
 
 
 @app.get("/api/students/{student_id}")
@@ -2829,7 +2889,8 @@ def create_student(data: StudentCreate, db: OrmSession = Depends(get_db)):
         staying_at_school=data.staying_at_school or "Yes",
         reminder_preference=data.reminder_preference or "WhatsApp Text",
         reminder_sent=bool(data.reminder_sent),
-        guests_details=json.dumps(data.guests_details or [])
+        guests_details=json.dumps(data.guests_details or []),
+        school=data.school or "Aquatic Indica Surf School",
     )
     db.add(student)
     db.commit()
@@ -2879,7 +2940,8 @@ def create_students_bulk(students_data: List[StudentCreate], db: OrmSession = De
             staying_at_school=data.staying_at_school or "Yes",
             reminder_preference=data.reminder_preference or "WhatsApp Text",
             reminder_sent=bool(data.reminder_sent),
-            guests_details=json.dumps(data.guests_details or [])
+            guests_details=json.dumps(data.guests_details or []),
+            school=data.school or "Aquatic Indica Surf School",
         )
         db.add(student)
         db.flush()
@@ -3359,8 +3421,11 @@ def delete_student(student_id: int, db: OrmSession = Depends(get_db)):
 # ─── Sessions ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/sessions")
-def get_sessions(db: OrmSession = Depends(get_db)):
-    sessions = db.query(SurfSession).order_by(SurfSession.id.desc()).all()
+def get_sessions(school: Optional[str] = None, db: OrmSession = Depends(get_db)):
+    query = db.query(SurfSession).order_by(SurfSession.id.desc())
+    if school and school.lower().strip() not in ["all", "super admin", "school admin"]:
+        query = query.join(Student, SurfSession.student_id == Student.id).filter(func.lower(Student.school) == school.lower().strip())
+    sessions = query.all()
     return [session_to_dict(s) for s in sessions]
 
 

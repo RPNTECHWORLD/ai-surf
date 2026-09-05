@@ -24,7 +24,11 @@ const SchoolDashboard = () => {
     if (savedUser) {
       try {
         const parsedUser = JSON.parse(savedUser);
-        if (parsedUser.school_name) userSchoolName = parsedUser.school_name;
+        if (parsedUser.school_name) {
+          userSchoolName = typeof parsedUser.school_name === 'string' ? parsedUser.school_name : parsedUser.school_name?.name;
+        } else if (parsedUser.school) {
+          userSchoolName = typeof parsedUser.school === 'string' ? parsedUser.school : parsedUser.school?.name;
+        }
         if (parsedUser.role === 'athlete') {
           navigate(`/students/${parsedUser.student_id || parsedUser.id || 1}`);
           return;
@@ -39,7 +43,11 @@ const SchoolDashboard = () => {
     if (savedSchool) {
       try {
         const parsedSchool = JSON.parse(savedSchool);
-        if (userSchoolName) parsedSchool.name = userSchoolName;
+        if (userSchoolName) {
+          parsedSchool.name = userSchoolName;
+        } else if (parsedSchool.name && typeof parsedSchool.name === 'object') {
+          parsedSchool.name = parsedSchool.name?.name || 'North Shore Academy';
+        }
         setSchool(parsedSchool);
       } catch (e) {}
     } else if (userSchoolName) {
@@ -51,8 +59,8 @@ const SchoolDashboard = () => {
           if (data && data.length > 0) {
             const latest = data[data.length - 1];
             setSchool({
-              name: latest.name,
-              owner: latest.owner,
+              name: typeof latest.name === 'string' ? latest.name : (latest.name?.name || 'North Shore Academy'),
+              owner: typeof latest.owner === 'string' ? latest.owner : '',
             });
           }
         })
@@ -60,9 +68,30 @@ const SchoolDashboard = () => {
     }
 
     // Fetch dashboard stats, sessions and activities
+    const currentSchoolName = (() => {
+      try {
+        const saved = sessionStorage.getItem('activeSchool');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed.name) return typeof parsed.name === 'string' ? parsed.name : parsed.name?.name;
+        }
+        const user = sessionStorage.getItem('user');
+        if (user) {
+          const parsed = JSON.parse(user);
+          if (parsed.school) return typeof parsed.school === 'string' ? parsed.school : parsed.school?.name;
+          if (parsed.school_name) return typeof parsed.school_name === 'string' ? parsed.school_name : parsed.school_name?.name;
+        }
+      } catch (e) {}
+      return userSchoolName || null;
+    })();
+
+    const schoolLower = (currentSchoolName || '').toLowerCase().trim();
+    const isSuperAdmin = !schoolLower || schoolLower === 'school admin' || schoolLower === 'super admin' || currentUser?.role === 'superadmin';
+    const schoolParam = (!isSuperAdmin && currentSchoolName) ? `?school=${encodeURIComponent(currentSchoolName)}` : '';
+
     Promise.all([
-      fetch(`${API}/api/dashboard/stats`).then((r) => r.json()),
-      fetch(`${API}/api/dashboard/sessions`).then((r) => r.json()),
+      fetch(`${API}/api/dashboard/stats${schoolParam}`).then((r) => r.json()),
+      fetch(`${API}/api/dashboard/sessions${schoolParam}`).then((r) => r.json()),
       fetch(`${API}/api/dashboard/activity`).then((r) => r.json()),
     ])
       .then(([s, ses, act]) => {
@@ -72,7 +101,7 @@ const SchoolDashboard = () => {
       })
       .catch(() => {
         // Fallback clean data (0 students, 0 sessions)
-        setStats({ active_instructors: 5, active_students: 0, sessions_this_month: 0, upcoming_sessions: 0 });
+        setStats({ active_instructors: 0, active_students: 0, sessions_this_month: 0, upcoming_sessions: 0 });
         setSessions([]);
         setActivity([]);
       })
@@ -113,7 +142,7 @@ const SchoolDashboard = () => {
             {/* Turquoise Welcome Banner */}
             <div className="db-welcome-banner">
               <div className="banner-content">
-                <h2 className="banner-heading">Good morning, {school ? school.name : 'North Shore Academy'}!</h2>
+                <h2 className="banner-heading">Good morning, {typeof school?.name === 'string' ? school.name : (school?.name?.name || 'North Shore Academy')}!</h2>
                 <p className="banner-subtext">
                   You have {sessions.length} sessions scheduled for today. Surf conditions are 4-6ft and clean.
                 </p>

@@ -123,11 +123,41 @@ const StudentsManagement = () => {
   const currentCoachName = currentUser?.name || '';
   const currentCoachId = currentUser?.instructor_id || currentUser?.id || null;
 
+  const activeSchoolName = (() => {
+    try {
+      const savedSchool = sessionStorage.getItem('activeSchool');
+      if (savedSchool) {
+        const parsed = JSON.parse(savedSchool);
+        if (parsed.name) {
+          return typeof parsed.name === 'string' ? parsed.name : (parsed.name?.name || null);
+        }
+      }
+      const savedUser = sessionStorage.getItem('user');
+      if (savedUser) {
+        const parsed = JSON.parse(savedUser);
+        if (parsed.school) {
+          return typeof parsed.school === 'string' ? parsed.school : (parsed.school?.name || null);
+        }
+        if (parsed.school_name) {
+          return typeof parsed.school_name === 'string' ? parsed.school_name : (parsed.school_name?.name || null);
+        }
+      }
+    } catch (e) {}
+    return null;
+  })();
+
+  const schoolLower = (activeSchoolName || '').toLowerCase().trim();
+  const isSuperAdmin = !schoolLower || schoolLower === 'school admin' || schoolLower === 'super admin' || currentUser?.role === 'superadmin';
+  const isDefaultSchool = !activeSchoolName || (typeof activeSchoolName === 'string' && (activeSchoolName.toLowerCase() === 'aquatic indica surf school' || activeSchoolName.toLowerCase() === 'school admin'));
+
   const [allSessions, setAllSessions] = useState([]);
 
   const fetchStudents = () => {
     setLoading(true);
-    fetch(`${API}/api/students`)
+    const url = (activeSchoolName && !isSuperAdmin)
+      ? `${API}/api/students?school=${encodeURIComponent(activeSchoolName)}`
+      : `${API}/api/students`;
+    fetch(url)
       .then(r => r.json())
       .then(data => setStudents(Array.isArray(data) ? data : []))
       .catch(() => {})
@@ -138,18 +168,25 @@ const StudentsManagement = () => {
 
   useEffect(() => {
     fetchStudents();
-    fetch(`${API}/api/instructors`)
+    const instUrl = (activeSchoolName && !isSuperAdmin)
+      ? `${API}/api/instructors?school=${encodeURIComponent(activeSchoolName)}`
+      : `${API}/api/instructors`;
+    fetch(instUrl)
       .then(r => r.json())
       .then(data => setInstructors(data))
       .catch(() => {});
-    fetch(`${API}/api/sessions`)
+
+    const sessUrl = (activeSchoolName && !isSuperAdmin)
+      ? `${API}/api/sessions?school=${encodeURIComponent(activeSchoolName)}`
+      : `${API}/api/sessions`;
+    fetch(sessUrl)
       .then(r => r.json())
       .then(data => { if (Array.isArray(data)) setAllSessions(data); })
       .catch(() => {});
 
     const onStorageChange = () => {
       fetchStudents();
-      fetch(`${API}/api/sessions`)
+      fetch(sessUrl)
         .then(r => r.json())
         .then(data => { if (Array.isArray(data)) setAllSessions(data); })
         .catch(() => {});
@@ -163,28 +200,9 @@ const StudentsManagement = () => {
       window.removeEventListener('storage', onStorageChange);
       window.removeEventListener('focus', onStorageChange);
     };
-  }, []);
+  }, [activeSchoolName, isSuperAdmin]);
 
   const levels = ['Beginner', 'Intermediate', 'Advanced', 'Master'];
-
-  const activeSchoolName = (() => {
-    try {
-      const savedSchool = sessionStorage.getItem('activeSchool');
-      if (savedSchool) {
-        const parsed = JSON.parse(savedSchool);
-        if (parsed.name) return parsed.name;
-      }
-      const savedUser = sessionStorage.getItem('user');
-      if (savedUser) {
-        const parsed = JSON.parse(savedUser);
-        if (parsed.school) return parsed.school;
-        if (parsed.school_name) return parsed.school_name;
-      }
-    } catch (e) {}
-    return null;
-  })();
-
-  const isDefaultSchool = !activeSchoolName || activeSchoolName.toLowerCase() === 'aquatic indica surf school' || activeSchoolName.toLowerCase() === 'school admin';
 
   const approvedStudents = useMemo(() => {
     // Pure AWS Backend Students Only - Approved students
@@ -195,6 +213,13 @@ const StudentsManagement = () => {
       if (s.approval_status === 'pending' || s.approval_status === 'rejected') return false;
       if (seenIds.has(s.id)) return false;
       seenIds.add(s.id);
+
+      // School-level multi-tenant isolation
+      if (schoolLower && !isSuperAdmin) {
+        const studentSchool = (s.school || s.school_name || '').toLowerCase().trim();
+        if (studentSchool !== schoolLower) return false;
+      }
+
       return true;
     });
 
@@ -236,7 +261,7 @@ const StudentsManagement = () => {
     }
 
     return valid;
-  }, [students, allSessions, isCoach, currentCoachName, currentCoachId]);
+  }, [students, allSessions, isCoach, currentCoachName, currentCoachId, schoolLower, isSuperAdmin]);
 
   const handleStatClick = (label) => {
     setActiveStatFilter(label);
@@ -371,6 +396,7 @@ const StudentsManagement = () => {
           start_date: form.start_date,
           end_date: form.end_date,
           staying_at_school: form.staying_at_school,
+          school: activeSchoolName || 'Aquatic Indica Surf School',
         }),
       });
       if (res.ok) {
@@ -476,7 +502,8 @@ const StudentsManagement = () => {
         instructor_id: r.instructor_id ? parseInt(r.instructor_id) : null,
         course_duration: '3 Days Course',
         session_time: 'Morning 6:00 AM',
-        staying_at_school: 'Yes'
+        staying_at_school: 'Yes',
+        school: activeSchoolName || 'Aquatic Indica Surf School'
       }));
       const res = await fetch(`${API}/api/students/bulk`, {
         method: 'POST',
@@ -1271,7 +1298,7 @@ const StudentsManagement = () => {
                 ))}
                 {filtered.length === 0 && !loading && (
                   <tr>
-                    <td colSpan="6" style={{ textAlign: 'center', padding: '40px', color: '#94A3B8' }}>
+                    <td colSpan="7" style={{ textAlign: 'center', padding: '40px', color: '#94A3B8' }}>
                       {students.length === 0 ? 'No students yet — add one above.' : 'No students match your search.'}
                     </td>
                   </tr>
