@@ -17,26 +17,30 @@ const SchoolDashboard = () => {
   const [activity, setActivity] = useState([]);
   const [loading, setLoading] = useState(true);
   const [school, setSchool] = useState(null);
+  const [currentUser] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('user');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
 
   useEffect(() => {
     let userSchoolName = null;
-    const savedUser = sessionStorage.getItem('user');
-    if (savedUser) {
-      try {
-        const parsedUser = JSON.parse(savedUser);
-        if (parsedUser.school_name) {
-          userSchoolName = typeof parsedUser.school_name === 'string' ? parsedUser.school_name : parsedUser.school_name?.name;
-        } else if (parsedUser.school) {
-          userSchoolName = typeof parsedUser.school === 'string' ? parsedUser.school : parsedUser.school?.name;
-        }
-        if (parsedUser.role === 'athlete') {
-          navigate(`/students/${parsedUser.student_id || parsedUser.id || 1}`);
-          return;
-        } else if (parsedUser.role === 'coach') {
-          navigate(`/instructors/${parsedUser.instructor_id || parsedUser.id || 1}`);
-          return;
-        }
-      } catch (e) {}
+    if (currentUser) {
+      if (currentUser.school_name) {
+        userSchoolName = typeof currentUser.school_name === 'string' ? currentUser.school_name : currentUser.school_name?.name;
+      } else if (currentUser.school) {
+        userSchoolName = typeof currentUser.school === 'string' ? currentUser.school : currentUser.school?.name;
+      }
+      if (currentUser.role === 'athlete') {
+        navigate(`/students/${currentUser.student_id || currentUser.id || 1}`);
+        return;
+      } else if (currentUser.role === 'coach') {
+        navigate(`/instructors/${currentUser.instructor_id || currentUser.id || 1}`);
+        return;
+      }
     }
 
     const savedSchool = sessionStorage.getItem('activeSchool');
@@ -86,13 +90,16 @@ const SchoolDashboard = () => {
     })();
 
     const schoolLower = (currentSchoolName || '').toLowerCase().trim();
-    const isSuperAdmin = !schoolLower || schoolLower === 'school admin' || schoolLower === 'super admin' || currentUser?.role === 'superadmin';
-    const schoolParam = (!isSuperAdmin && currentSchoolName) ? `?school=${encodeURIComponent(currentSchoolName)}` : '';
+    const isSuperAdmin = currentUser?.role === 'superadmin' || schoolLower === 'super admin';
+    const effectiveSchool = (currentSchoolName && schoolLower !== 'school admin' && schoolLower !== 'super admin')
+      ? currentSchoolName
+      : 'Aquatic Indica Surf School';
+    const schoolParam = (!isSuperAdmin && effectiveSchool) ? `?school=${encodeURIComponent(effectiveSchool)}` : '';
 
     Promise.all([
       fetch(`${API}/api/dashboard/stats${schoolParam}`).then((r) => r.json()),
       fetch(`${API}/api/dashboard/sessions${schoolParam}`).then((r) => r.json()),
-      fetch(`${API}/api/dashboard/activity`).then((r) => r.json()),
+      fetch(`${API}/api/dashboard/activity${schoolParam}`).then((r) => r.json()),
     ])
       .then(([s, ses, act]) => {
         setStats(s);

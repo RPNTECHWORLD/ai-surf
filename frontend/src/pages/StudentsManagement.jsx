@@ -147,15 +147,19 @@ const StudentsManagement = () => {
   })();
 
   const schoolLower = (activeSchoolName || '').toLowerCase().trim();
-  const isSuperAdmin = !schoolLower || schoolLower === 'school admin' || schoolLower === 'super admin' || currentUser?.role === 'superadmin';
+  const isSuperAdmin = currentUser?.role === 'superadmin' || schoolLower === 'super admin';
+  const effectiveSchool = (activeSchoolName && schoolLower !== 'school admin' && schoolLower !== 'super admin')
+    ? activeSchoolName
+    : 'Aquatic Indica Surf School';
+  const effectiveSchoolLower = effectiveSchool.toLowerCase().trim();
   const isDefaultSchool = !activeSchoolName || (typeof activeSchoolName === 'string' && (activeSchoolName.toLowerCase() === 'aquatic indica surf school' || activeSchoolName.toLowerCase() === 'school admin'));
 
   const [allSessions, setAllSessions] = useState([]);
 
   const fetchStudents = () => {
     setLoading(true);
-    const url = (activeSchoolName && !isSuperAdmin)
-      ? `${API}/api/students?school=${encodeURIComponent(activeSchoolName)}`
+    const url = (effectiveSchool && !isSuperAdmin)
+      ? `${API}/api/students?school=${encodeURIComponent(effectiveSchool)}`
       : `${API}/api/students`;
     fetch(url)
       .then(r => r.json())
@@ -168,16 +172,16 @@ const StudentsManagement = () => {
 
   useEffect(() => {
     fetchStudents();
-    const instUrl = (activeSchoolName && !isSuperAdmin)
-      ? `${API}/api/instructors?school=${encodeURIComponent(activeSchoolName)}`
+    const instUrl = (effectiveSchool && !isSuperAdmin)
+      ? `${API}/api/instructors?school=${encodeURIComponent(effectiveSchool)}`
       : `${API}/api/instructors`;
     fetch(instUrl)
       .then(r => r.json())
       .then(data => setInstructors(data))
       .catch(() => {});
 
-    const sessUrl = (activeSchoolName && !isSuperAdmin)
-      ? `${API}/api/sessions?school=${encodeURIComponent(activeSchoolName)}`
+    const sessUrl = (effectiveSchool && !isSuperAdmin)
+      ? `${API}/api/sessions?school=${encodeURIComponent(effectiveSchool)}`
       : `${API}/api/sessions`;
     fetch(sessUrl)
       .then(r => r.json())
@@ -200,7 +204,7 @@ const StudentsManagement = () => {
       window.removeEventListener('storage', onStorageChange);
       window.removeEventListener('focus', onStorageChange);
     };
-  }, [activeSchoolName, isSuperAdmin]);
+  }, [effectiveSchool, isSuperAdmin]);
 
   const levels = ['Beginner', 'Intermediate', 'Advanced', 'Master'];
 
@@ -214,10 +218,22 @@ const StudentsManagement = () => {
       if (seenIds.has(s.id)) return false;
       seenIds.add(s.id);
 
-      // School-level multi-tenant isolation
-      if (schoolLower && !isSuperAdmin) {
-        const studentSchool = (s.school || s.school_name || '').toLowerCase().trim();
-        if (studentSchool !== schoolLower) return false;
+      const studentSchool = (s.school || s.school_name || '').toLowerCase().trim();
+
+      // 1. In School View (!isCoach): Exclude students assigned to an Individual / Freelance Coach
+      if (!isCoach) {
+        if (studentSchool === 'individual / freelance coach') return false;
+        if (s.instructor_id) {
+          const inst = instructors.find(i => String(i.id) === String(s.instructor_id));
+          if (inst && (inst.school || '').toLowerCase().trim() === 'individual / freelance coach') {
+            return false;
+          }
+        }
+      }
+
+      // 2. School-level multi-tenant isolation
+      if (effectiveSchoolLower && !isSuperAdmin && !isCoach) {
+        if (studentSchool && studentSchool !== effectiveSchoolLower) return false;
       }
 
       return true;
@@ -261,7 +277,7 @@ const StudentsManagement = () => {
     }
 
     return valid;
-  }, [students, allSessions, isCoach, currentCoachName, currentCoachId, schoolLower, isSuperAdmin]);
+  }, [students, instructors, allSessions, isCoach, currentCoachName, currentCoachId, effectiveSchoolLower, isSuperAdmin]);
 
   const handleStatClick = (label) => {
     setActiveStatFilter(label);
@@ -381,6 +397,10 @@ const StudentsManagement = () => {
     e.preventDefault();
     setSaving(true);
     try {
+      const selectedInst = instructors.find(i => String(i.id) === String(form.instructor_id));
+      const isInstFreelance = (selectedInst?.school || '').toLowerCase().trim() === 'individual / freelance coach';
+      const studentSchool = isInstFreelance ? 'Individual / Freelance Coach' : (effectiveSchool || 'Aquatic Indica Surf School');
+
       const res = await fetch(`${API}/api/students`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -396,7 +416,7 @@ const StudentsManagement = () => {
           start_date: form.start_date,
           end_date: form.end_date,
           staying_at_school: form.staying_at_school,
-          school: activeSchoolName || 'Aquatic Indica Surf School',
+          school: studentSchool,
         }),
       });
       if (res.ok) {
@@ -1425,7 +1445,15 @@ const StudentsManagement = () => {
                       <label>Assign Instructor</label>
                       <select value={form.instructor_id} onChange={e => setForm({...form, instructor_id: e.target.value})}>
                         <option value="">Auto-Assign (Or Select Coach)</option>
-                        {instructors.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+                        {instructors
+                          .filter(i => {
+                            if (!isCoach) {
+                              const iSchool = (i.school || '').toLowerCase().trim();
+                              if (iSchool === 'individual / freelance coach') return false;
+                            }
+                            return true;
+                          })
+                          .map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
                       </select>
                     </div>
                   </div>

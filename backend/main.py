@@ -236,6 +236,7 @@ class ActivityLog(Base):
     id = Column(Integer, primary_key=True, index=True)
     text = Column(String)
     type = Column(String)   # badge / session / group
+    school = Column(String, nullable=True, default="Aquatic Indica Surf School", index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -459,6 +460,32 @@ try:
         db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS school VARCHAR(150) DEFAULT 'Aquatic Indica Surf School'"))
         db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS approval_status VARCHAR(50) DEFAULT 'approved'"))
         db_migrate.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS approval_status VARCHAR(50) DEFAULT 'approved'"))
+        db_migrate.execute(text("ALTER TABLE activity_log ADD COLUMN IF NOT EXISTS school VARCHAR(150) DEFAULT 'Aquatic Indica Surf School'"))
+        try:
+            db_migrate.execute(text("""
+                UPDATE activity_log
+                SET school = s.school
+                FROM students s
+                WHERE (activity_log.text LIKE s.name || ' %' OR activity_log.text LIKE '% with ' || s.name || '%')
+                  AND s.school IS NOT NULL AND s.school != ''
+            """))
+            db_migrate.execute(text("""
+                UPDATE activity_log
+                SET school = i.school
+                FROM instructors i
+                WHERE (activity_log.text LIKE '%' || i.name || '%' OR activity_log.text LIKE 'New instructor ' || i.name || '%')
+                  AND i.school IS NOT NULL AND i.school != ''
+                  AND (activity_log.school IS NULL OR activity_log.school = 'Aquatic Indica Surf School')
+            """))
+            db_migrate.execute(text("""
+                UPDATE activity_log
+                SET school = sch.name
+                FROM schools sch
+                WHERE activity_log.text LIKE '%' || sch.owner || '%'
+                  AND activity_log.text LIKE 'School Admin account created%'
+            """))
+        except Exception:
+            pass
         db_migrate.execute(text("""
             CREATE TABLE IF NOT EXISTS attendance_records (
                 id SERIAL PRIMARY KEY,
@@ -857,11 +884,11 @@ def seed_database(db: OrmSession, force: bool = False):
 
     # Activity Log
     activities = [
-        ActivityLog(text="Emma Watson earned 'First Barrel' badge", type="badge"),
-        ActivityLog(text="John Miller completed session with Kai", type="session"),
-        ActivityLog(text="Rick Grimes joined 'Intermediate' cohort", type="group"),
-        ActivityLog(text="Chloe Kim scored personal best this session", type="session"),
-        ActivityLog(text="James Bond earned RED badge — Master level!", type="badge"),
+        ActivityLog(text="Emma Watson earned 'First Barrel' badge", type="badge", school="Aquatic Indica Surf School"),
+        ActivityLog(text="John Miller completed session with Kai", type="session", school="Aquatic Indica Surf School"),
+        ActivityLog(text="Rick Grimes joined 'Intermediate' cohort", type="group", school="Aquatic Indica Surf School"),
+        ActivityLog(text="Chloe Kim scored personal best this session", type="session", school="Aquatic Indica Surf School"),
+        ActivityLog(text="James Bond earned RED badge — Master level!", type="badge", school="Aquatic Indica Surf School"),
     ]
     for a in activities:
         db.add(a)
@@ -1638,7 +1665,7 @@ def auth_signup(data: UserSignup, db: OrmSession = Depends(get_db)):
             existing_student.invite_token = None  # Consume/invalidate token
             existing_student.last_active = "Today"
             existing_student.approval_status = "approved"
-            db.add(ActivityLog(text=f"{existing_student.name} activated their student account", type="group"))
+            db.add(ActivityLog(text=f"{existing_student.name} activated their student account", type="group", school=existing_student.school or "Aquatic Indica Surf School"))
         else:
             student = Student(
                 user_id=user.id,
@@ -1668,7 +1695,7 @@ def auth_signup(data: UserSignup, db: OrmSession = Depends(get_db)):
                 approval_status=initial_approval
             )
             db.add(student)
-            db.add(ActivityLog(text=f"{data.name} signed up for {data.course_duration or '3 Days Course'}", type="group"))
+            db.add(ActivityLog(text=f"{data.name} signed up for {data.course_duration or '3 Days Course'}", type="group", school=student.school or "Aquatic Indica Surf School"))
     elif role == "coach":
         instructor = Instructor(
             user_id=user.id,
@@ -1687,7 +1714,7 @@ def auth_signup(data: UserSignup, db: OrmSession = Depends(get_db)):
             reviews=json.dumps([])
         )
         db.add(instructor)
-        db.add(ActivityLog(text=f"New coach {data.name} joined the academy", type="individual"))
+        db.add(ActivityLog(text=f"New coach {data.name} joined the academy", type="individual", school=instructor.school or "Individual / Freelance Coach"))
     elif role == "admin":
         requested_school = (data.school or "").strip()
         existing_school = db.query(School).filter(func.lower(School.email) == data.email.lower()).first()
@@ -1706,7 +1733,8 @@ def auth_signup(data: UserSignup, db: OrmSession = Depends(get_db)):
         elif requested_school:
             existing_school.name = requested_school
             existing_school.owner = data.name
-        db.add(ActivityLog(text=f"School Admin account created for {data.name}", type="individual"))
+        created_sch_name = requested_school if requested_school else (existing_school.name if existing_school else f"{data.name}'s Surf School")
+        db.add(ActivityLog(text=f"School Admin account created for {data.name}", type="individual", school=created_sch_name))
 
     db.commit()
     db.refresh(user)
@@ -2369,7 +2397,7 @@ def create_mock_heat(data: MockHeatCreate, db: OrmSession = Depends(get_db)):
     db.refresh(heat)
     
     # Log activity
-    db.add(ActivityLog(text=f"Coach {coach.name} initiated mock heat with {student.name}", type="session"))
+    db.add(ActivityLog(text=f"Coach {coach.name} initiated mock heat with {student.name}", type="session", school=student.school or coach.school or "Aquatic Indica Surf School"))
     db.commit()
     
     return {"heat_id": heat.id, "message": "Mock heat started"}
@@ -2700,8 +2728,11 @@ def dashboard_sessions(school: Optional[str] = None, db: OrmSession = Depends(ge
 
 
 @app.get("/api/dashboard/activity")
-def dashboard_activity(db: OrmSession = Depends(get_db)):
-    activities = db.query(ActivityLog).order_by(ActivityLog.created_at.desc()).limit(5).all()
+def dashboard_activity(school: Optional[str] = None, db: OrmSession = Depends(get_db)):
+    query = db.query(ActivityLog)
+    if school and school.lower().strip() not in ["all", "super admin", "school admin"]:
+        query = query.filter(func.lower(ActivityLog.school) == school.lower().strip())
+    activities = query.order_by(ActivityLog.created_at.desc()).limit(5).all()
     result = []
     for i, a in enumerate(activities):
         delta = datetime.utcnow() - a.created_at
@@ -2712,7 +2743,7 @@ def dashboard_activity(db: OrmSession = Depends(get_db)):
             time_str = f"{mins // 60}h ago"
         else:
             time_str = f"{mins // 1440}d ago"
-        result.append({"id": a.id, "text": a.text, "type": a.type, "time": time_str})
+        result.append({"id": a.id, "text": a.text, "type": a.type, "time": time_str, "school": a.school})
     return result
 
 
@@ -2791,7 +2822,7 @@ def create_instructor(data: InstructorCreate, db: OrmSession = Depends(get_db)):
     db.add(instructor)
     db.commit()
     db.refresh(instructor)
-    db.add(ActivityLog(text=f"New instructor {data.name} joined the team", type="group"))
+    db.add(ActivityLog(text=f"New instructor {data.name} joined the team", type="group", school=instructor.school or data.school or "Aquatic Indica Surf School"))
     db.commit()
     return instructor_to_dict(instructor)
 
@@ -2874,6 +2905,17 @@ def create_student(data: StudentCreate, db: OrmSession = Depends(get_db)):
         else:
             user_id = existing_user.id
 
+    student_school = data.school
+    if data.instructor_id:
+        inst = db.query(Instructor).filter(Instructor.id == data.instructor_id).first()
+        if inst and inst.school:
+            if inst.school.lower().strip() == "individual / freelance coach":
+                student_school = "Individual / Freelance Coach"
+            elif not student_school:
+                student_school = inst.school
+    if not student_school:
+        student_school = "Aquatic Indica Surf School"
+
     student = Student(
         user_id=user_id,
         name=data.name, email=data.email, level=data.level,
@@ -2890,12 +2932,12 @@ def create_student(data: StudentCreate, db: OrmSession = Depends(get_db)):
         reminder_preference=data.reminder_preference or "WhatsApp Text",
         reminder_sent=bool(data.reminder_sent),
         guests_details=json.dumps(data.guests_details or []),
-        school=data.school or "Aquatic Indica Surf School",
+        school=student_school,
     )
     db.add(student)
     db.commit()
     db.refresh(student)
-    db.add(ActivityLog(text=f"{data.name} joined as a new student", type="group"))
+    db.add(ActivityLog(text=f"{data.name} joined as a new student", type="group", school=student_school or "Aquatic Indica Surf School"))
     db.commit()
     db.refresh(student)
     return student_to_dict(student)
@@ -2948,7 +2990,8 @@ def create_students_bulk(students_data: List[StudentCreate], db: OrmSession = De
         created.append(student_to_dict(student))
     
     db.commit()
-    db.add(ActivityLog(text=f"Bulk imported {len(created)} new students", type="group"))
+    bulk_school = (students_data[0].school if students_data and students_data[0].school else "Aquatic Indica Surf School")
+    db.add(ActivityLog(text=f"Bulk imported {len(created)} new students", type="group", school=bulk_school))
     db.commit()
     return {"message": f"Successfully created {len(created)} students", "students": created}
 
@@ -3199,7 +3242,7 @@ def set_invite_password(token: str, data: dict, db: OrmSession = Depends(get_db)
     student.user_id = user.id
     student.invite_token = None
     student.approval_status = "approved"
-    db.add(ActivityLog(text=f"{student.name} set their password and activated their account", type="group"))
+    db.add(ActivityLog(text=f"{student.name} set their password and activated their account", type="group", school=student.school or "Aquatic Indica Surf School"))
     db.commit()
     return {"success": True, "message": "Password set! You can now log in with your email."}
 
@@ -3454,9 +3497,11 @@ def create_session(data: SessionCreate, db: OrmSession = Depends(get_db)):
     db.refresh(session)
     student_name = student.name if student else "Unknown"
     instructor_name = instructor.name if instructor else "Unknown"
+    session_school = (student.school if student and student.school else (instructor.school if instructor and instructor.school else "Aquatic Indica Surf School"))
     db.add(ActivityLog(
         text=f"{student_name} session with {instructor_name} scheduled at {data.location}",
-        type="session"
+        type="session",
+        school=session_school
     ))
     db.commit()
     return session_to_dict(session)
@@ -3488,9 +3533,13 @@ def create_sessions_bulk(data: SessionBulkCreate, db: OrmSession = Depends(get_d
     
     count = len(created)
     names_summary = ", ".join(student_names[:3]) + (f" and {count - 3} more" if count > 3 else "")
+    bulk_inst_school = instructor.school if instructor and instructor.school else "Aquatic Indica Surf School"
+    first_st = db.query(Student).filter(Student.id == data.student_ids[0]).first() if data.student_ids else None
+    bulk_session_school = first_st.school if first_st and first_st.school else bulk_inst_school
     db.add(ActivityLog(
         text=f"Group Session for {count} student(s) ({names_summary}) with {instructor_name} scheduled at {data.location} ({data.time})",
-        type="session"
+        type="session",
+        school=bulk_session_school
     ))
     db.commit()
     return [session_to_dict(s) for s in created]

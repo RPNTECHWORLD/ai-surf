@@ -125,7 +125,12 @@ window.fetch = async function (input, init) {
     }
 
     if (path === '/api/dashboard/activity' && method === 'GET') {
-      return jsonResponse(state.activityLogs || []);
+      const school = url.searchParams.get('school');
+      let filtered = state.activityLogs || [];
+      if (school && school.toLowerCase() !== 'all' && school.toLowerCase() !== 'super admin') {
+        filtered = filtered.filter(a => !a.school || a.school.toLowerCase() === school.toLowerCase());
+      }
+      return jsonResponse(filtered);
     }
 
     // Helper for stats logic matching backend code
@@ -749,7 +754,12 @@ window.fetch = async function (input, init) {
     }
 
     if (path === '/api/dashboard/activity' && method === 'GET') {
-      return jsonResponse(state.activityLogs.slice(0, 5));
+      const school = url.searchParams.get('school');
+      let filtered = state.activityLogs || [];
+      if (school && school.toLowerCase() !== 'all' && school.toLowerCase() !== 'super admin') {
+        filtered = filtered.filter(a => !a.school || a.school.toLowerCase() === school.toLowerCase());
+      }
+      return jsonResponse(filtered.slice(0, 5));
     }
 
     // ─── 8. Analytics Routes ───

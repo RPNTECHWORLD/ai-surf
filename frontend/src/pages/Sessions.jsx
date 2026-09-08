@@ -119,15 +119,19 @@ const Sessions = () => {
   })();
 
   const schoolLower = (activeSchoolName || '').toLowerCase().trim();
-  const isSuperAdmin = !schoolLower || schoolLower === 'school admin' || schoolLower === 'super admin' || currentUser?.role === 'superadmin';
+  const isSuperAdmin = currentUser?.role === 'superadmin' || schoolLower === 'super admin';
+  const effectiveSchool = (activeSchoolName && schoolLower !== 'school admin' && schoolLower !== 'super admin')
+    ? activeSchoolName
+    : 'Aquatic Indica Surf School';
+  const effectiveSchoolLower = effectiveSchool.toLowerCase().trim();
 
   const [allInstructorsList, setAllInstructorsList] = useState([]);
   const [allStudentsList, setAllStudentsList] = useState([]);
 
   const fetchSessions = () => {
     setLoading(true);
-    const url = (activeSchoolName && !isSuperAdmin)
-      ? `${API}/api/sessions?school=${encodeURIComponent(activeSchoolName)}`
+    const url = (effectiveSchool && !isSuperAdmin)
+      ? `${API}/api/sessions?school=${encodeURIComponent(effectiveSchool)}`
       : `${API}/api/sessions`;
     fetch(url)
       .then(r => r.json())
@@ -138,8 +142,8 @@ const Sessions = () => {
 
   useEffect(() => {
     fetchSessions();
-    const instUrl = (activeSchoolName && !isSuperAdmin)
-      ? `${API}/api/instructors?school=${encodeURIComponent(activeSchoolName)}`
+    const instUrl = (effectiveSchool && !isSuperAdmin)
+      ? `${API}/api/instructors?school=${encodeURIComponent(effectiveSchool)}`
       : `${API}/api/instructors`;
     fetch(instUrl)
       .then(r => r.json())
@@ -186,15 +190,16 @@ const Sessions = () => {
     }
 
     // Admin / School: Filter by active school
-    if (!isSuperAdmin && schoolLower) {
+    if (!isSuperAdmin && !isCoach && effectiveSchoolLower) {
       return sessions.filter(s => {
         const sSchool = (s.school || '').toLowerCase().trim();
-        return sSchool === schoolLower;
+        if (sSchool === 'individual / freelance coach') return false;
+        return sSchool === effectiveSchoolLower;
       });
     }
 
     return sessions;
-  }, [sessions, currentUser, isStudent, isCoach, currentStudentName, currentCoachName, currentCoachId, schoolLower, isSuperAdmin]);
+  }, [sessions, currentUser, isStudent, isCoach, currentStudentName, currentCoachName, currentCoachId, effectiveSchoolLower, isSuperAdmin]);
 
   // Extract unique instructors and students for dropdowns
   const availableInstructors = useMemo(() => {

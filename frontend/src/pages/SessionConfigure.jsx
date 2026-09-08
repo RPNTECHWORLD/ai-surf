@@ -66,6 +66,8 @@ const SessionConfigure = () => {
               onClick={() => { 
                 setSaving(true); 
                 localStorage.setItem('session_slots', JSON.stringify(slots));
+                window.dispatchEvent(new Event('storage'));
+                window.dispatchEvent(new CustomEvent('session_slots_updated', { detail: slots }));
                 setTimeout(() => { setSaving(false); alert("Session Configuration Saved Successfully!"); }, 500); 
               }}
               disabled={saving}

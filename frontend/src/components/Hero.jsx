@@ -5,17 +5,17 @@ const Hero = () => {
   const navigate = useNavigate();
 
   return (
-    <section className="hero-section" style={{ position: 'relative' }}>
+    <section className="hero-section">
       {/* Header Navigation */}
-      <div className="hero-header" style={{ position: 'absolute', top: 0, left: 0, right: 0, display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '24px 80px', zIndex: 10 }}>
-        <div className="hero-brand" onClick={() => navigate('/')} style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
-          <span style={{ width: '12px', height: '12px', backgroundColor: '#FF4D6D', borderRadius: '50%' }} />
-          <span style={{ fontFamily: 'Outfit, sans-serif', fontWeight: 800, fontSize: '24px', color: '#FFF', letterSpacing: '-0.5px' }}>AiSurf</span>
+      <header className="hero-header">
+        <div className="hero-brand" onClick={() => navigate('/')}>
+          <span className="hero-brand-dot" />
+          <span className="hero-brand-text">AiSurf</span>
         </div>
-        <button className="btn-secondary" onClick={() => navigate('/auth')} style={{ padding: '10px 24px', fontSize: '15px', borderRadius: '10px', height: 'auto', border: '1.5px solid rgba(255,255,255,0.4)', background: 'rgba(255,255,255,0.1)' }}>
+        <button className="btn-secondary hero-signin-btn" onClick={() => navigate('/auth')}>
           Sign In
         </button>
-      </div>
+      </header>
 
       <div className="hero-content">
         <h1>Ride. Train.<br />Dominate.</h1>
@@ -34,6 +34,9 @@ const Hero = () => {
           </button>
         </div>
       </div>
+
+      {/* Balance spacer */}
+      <div className="hero-bottom-spacer" aria-hidden="true" />
     </section>
   );
 };
