@@ -227,6 +227,8 @@ class SurfSession(Base):
     status = Column(String)      # Upcoming / IN PROGRESS / Completed
     notes = Column(Text)
     video_url = Column(String, default="")
+    image_url = Column(String, default="")
+    group_name = Column(String, nullable=True, default="")  # e.g. "Group A (Beginner)"
     student_rel = relationship("Student", back_populates="sessions")
     instructor_rel = relationship("Instructor", back_populates="sessions")
 
@@ -513,6 +515,11 @@ try:
             db_migrate.execute(text("ALTER TABLE otp_tokens ALTER COLUMN used TYPE INTEGER USING (used::integer)"))
         except Exception:
             pass
+        # sessions.group_name migration
+        try:
+            db_migrate.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS group_name VARCHAR(200) DEFAULT ''"))
+        except Exception:
+            pass
         db_migrate.commit()
     except Exception:
         db_migrate.rollback()
@@ -559,6 +566,11 @@ try:
                     used BOOLEAN DEFAULT 0
                 )
             """))
+            # sessions.group_name migration (SQLite)
+            try:
+                db_migrate.execute(text("ALTER TABLE sessions ADD COLUMN group_name VARCHAR(200) DEFAULT ''"))
+            except Exception:
+                pass
             db_migrate.commit()
         except Exception:
             db_migrate.rollback()
@@ -1186,6 +1198,8 @@ class SessionCreate(BaseModel):
     status: Optional[str] = "Upcoming"
     notes: Optional[str] = ""
     video_url: Optional[str] = ""
+    image_url: Optional[str] = ""
+    group_name: Optional[str] = ""
 
 
 class SessionUpdate(BaseModel):
@@ -1200,6 +1214,8 @@ class SessionUpdate(BaseModel):
     status: Optional[str] = None
     notes: Optional[str] = None
     video_url: Optional[str] = None
+    image_url: Optional[str] = None
+    group_name: Optional[str] = None
 
 
 class SessionBulkCreate(BaseModel):
@@ -1214,6 +1230,8 @@ class SessionBulkCreate(BaseModel):
     status: Optional[str] = "Upcoming"
     notes: Optional[str] = ""
     video_url: Optional[str] = ""
+    image_url: Optional[str] = ""
+    group_name: Optional[str] = ""
 
 
 class SchoolCreate(BaseModel):
@@ -1535,6 +1553,8 @@ def session_to_dict(s: SurfSession):
         "status": s.status,
         "notes": s.notes or "",
         "video_url": s.video_url or "",
+        "image_url": getattr(s, 'image_url', '') or "",
+        "group_name": getattr(s, 'group_name', '') or "",
     }
 
 
@@ -3491,6 +3511,8 @@ def create_session(data: SessionCreate, db: OrmSession = Depends(get_db)):
         type=data.type, status=data.status or "Upcoming",
         notes=data.notes or "",
         video_url=data.video_url or "",
+        image_url=data.image_url or "",
+        group_name=data.group_name or "",
     )
     db.add(session)
     db.commit()
@@ -3524,6 +3546,8 @@ def create_sessions_bulk(data: SessionBulkCreate, db: OrmSession = Depends(get_d
             type=data.type, status=data.status or "Upcoming",
             notes=data.notes or "",
             video_url=data.video_url or "",
+            image_url=data.image_url or "",
+            group_name=data.group_name or "",
         )
         db.add(session)
         created.append(session)
@@ -3572,6 +3596,10 @@ def update_session(session_id: int, data: SessionUpdate, db: OrmSession = Depend
         s.notes = data.notes
     if data.video_url is not None:
         s.video_url = data.video_url
+    if data.image_url is not None:
+        s.image_url = data.image_url
+    if data.group_name is not None:
+        s.group_name = data.group_name
 
     db.commit()
     db.refresh(s)

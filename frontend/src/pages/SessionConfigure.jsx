@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -10,12 +10,11 @@ const defaultSlots = [
   { id: 4, time: "01:00 PM", duration: "120", maxStudents: 4, days: ["Tue", "Thu", "Sat", "Sun"], active: true },
   { id: 5, time: "03:30 PM", duration: "90", maxStudents: 4, days: ["Fri", "Sat", "Sun"], active: false },
 ];
-const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-function getDaysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
-function getFirstDay(y, m) { return (new Date(y, m, 1).getDay() + 6) % 7; }
-
 const SessionConfigure = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const fromSource = searchParams.get('from');
+
   const [slots, setSlots] = useState(() => {
     try {
       const saved = localStorage.getItem('session_slots');
@@ -23,21 +22,29 @@ const SessionConfigure = () => {
     } catch(e) { return defaultSlots; }
   });
   const [settings, setSettings] = useState({ defaultDuration: "90", maxStudents: "4", breakBetween: "30", cancellationWindow: "24" });
-  const today = new Date();
-  const [calYear, setCalYear] = useState(today.getFullYear());
-  const [calMonth, setCalMonth] = useState(today.getMonth());
-  const [blackoutDates, setBlackoutDates] = useState(new Set([`${today.getFullYear()}-${today.getMonth()}-19`]));
   const [saving, setSaving] = useState(false);
 
   const toggleDay = (sid, day) => setSlots(p => p.map(s => { if (s.id !== sid) return s; const h = s.days.includes(day); return { ...s, days: h ? s.days.filter(d => d !== day) : [...s.days, day] }; }));
   const updateSlot = (sid, f, v) => setSlots(p => p.map(s => s.id === sid ? { ...s, [f]: v } : s));
   const deleteSlot = (sid) => setSlots(p => p.filter(s => s.id !== sid));
   const addSlot = () => setSlots(p => [...p, { id: Date.now(), time: "09:00 AM", duration: "90", maxStudents: 4, days: ["Mon", "Tue", "Wed", "Thu", "Fri"], active: true }]);
-  const toggleBlackout = (k) => setBlackoutDates(p => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n; });
 
-  const daysInMonth = getDaysInMonth(calYear, calMonth);
-  const firstDay = getFirstDay(calYear, calMonth);
   const inp = { border: "1.5px solid #E2E8F0", borderRadius: "8px", padding: "8px 12px", background: "#F8FAFC", outline: "none", boxSizing: "border-box", fontSize: "14px", fontWeight: 600, color: "#0F172A", width: "100%", fontFamily: "inherit" };
+
+  const handleSaveConfiguration = () => {
+    setSaving(true);
+    localStorage.setItem('session_slots', JSON.stringify(slots));
+    window.dispatchEvent(new Event('storage'));
+    window.dispatchEvent(new CustomEvent('session_slots_updated', { detail: slots }));
+    setTimeout(() => {
+      setSaving(false);
+      if (fromSource === 'new_session' || fromSource === 'schedule') {
+        navigate('/sessions?action=new_session');
+      } else {
+        alert("Session Configuration Saved Successfully!");
+      }
+    }, 400);
+  };
 
   return (
     <div className="sc-page-wrapper">
@@ -54,32 +61,6 @@ const SessionConfigure = () => {
             <p className="sc-subtitle">
               Set up your school's available session time slots and manage scheduling preferences.
             </p>
-          </div>
-          <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
-            <button
-              onClick={() => navigate("/sessions")}
-              className="sc-btn-back"
-            >
-              Back to Sessions
-            </button>
-            <button
-              onClick={() => { 
-                setSaving(true); 
-                localStorage.setItem('session_slots', JSON.stringify(slots));
-                window.dispatchEvent(new Event('storage'));
-                window.dispatchEvent(new CustomEvent('session_slots_updated', { detail: slots }));
-                setTimeout(() => { setSaving(false); alert("Session Configuration Saved Successfully!"); }, 500); 
-              }}
-              disabled={saving}
-              className="sc-btn-save"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-                <polyline points="17 21 17 13 7 13 7 21" />
-                <polyline points="7 3 7 8 15 8" />
-              </svg>
-              {saving ? "Saving..." : "Save Configuration"}
-            </button>
           </div>
         </div>
 
@@ -135,59 +116,59 @@ const SessionConfigure = () => {
           </div>
 
           <div className="sc-bottom-grid">
-            <div className="sc-panel">
+            <div className="sc-panel" style={{ width: "100%" }}>
               <h2 style={{ fontFamily: "'Outfit', sans-serif", fontSize: "18px", fontWeight: 800, color: "#0F172A", margin: "0 0 6px 0" }}>Default Session Settings</h2>
               <p style={{ fontSize: "12.5px", color: "#64748B", margin: "0 0 20px 0", lineHeight: 1.5 }}>Global timing constraints and booking policies applied across all lessons</p>
-              {[
-                { label: "Default Session Duration", key: "defaultDuration", type: "select", options: ["30", "45", "60", "90", "120"], suffix: "min" },
-                { label: "Default Max Students per Session", key: "maxStudents", type: "number" },
-                { label: "Break Between Sessions (min)", key: "breakBetween", type: "number" },
-                { label: "Cancellation Window (hours)", key: "cancellationWindow", type: "number" },
-              ].map(({ label, key, type, options, suffix }) => (
-                <div key={key} style={{ marginBottom: "16px" }}>
-                  <label style={{ fontSize: "13px", fontWeight: 600, color: "#475569", display: "block", marginBottom: "6px" }}>{label}</label>
-                  {type === "select" ? (
-                    <select value={settings[key]} onChange={e => setSettings(s => ({ ...s, [key]: e.target.value }))} style={{ ...inp, cursor: "pointer" }}>
-                      {options.map(o => <option key={o} value={o}>{o} {suffix}</option>)}
-                    </select>
-                  ) : (
-                    <input type="number" value={settings[key]} onChange={e => setSettings(s => ({ ...s, [key]: e.target.value }))} style={inp} />
-                  )}
-                </div>
-              ))}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "20px" }}>
+                {[
+                  { label: "Default Session Duration", key: "defaultDuration", type: "select", options: ["30", "45", "60", "90", "120"], suffix: "min" },
+                  { label: "Default Max Students per Session", key: "maxStudents", type: "number" },
+                  { label: "Break Between Sessions (min)", key: "breakBetween", type: "number" },
+                  { label: "Cancellation Window (hours)", key: "cancellationWindow", type: "number" },
+                ].map(({ label, key, type, options, suffix }) => (
+                  <div key={key}>
+                    <label style={{ fontSize: "13px", fontWeight: 600, color: "#475569", display: "block", marginBottom: "6px" }}>{label}</label>
+                    {type === "select" ? (
+                      <select value={settings[key]} onChange={e => setSettings(s => ({ ...s, [key]: e.target.value }))} style={{ ...inp, cursor: "pointer" }}>
+                        {options.map(o => <option key={o} value={o}>{o} {suffix}</option>)}
+                      </select>
+                    ) : (
+                      <input type="number" value={settings[key]} onChange={e => setSettings(s => ({ ...s, [key]: e.target.value }))} style={inp} />
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
+          </div>
 
-            <div className="sc-panel">
-              <h2 style={{ fontFamily: "'Outfit', sans-serif", fontSize: "18px", fontWeight: 800, color: "#0F172A", margin: "0 0 6px 0" }}>Blackout Dates</h2>
-              <p style={{ fontSize: "12.5px", color: "#64748B", margin: "0 0 16px 0", lineHeight: 1.5 }}>Select days where no public lesson bookings are permitted (holidays, ocean safety drills).</p>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                <span style={{ fontSize: "14px", fontWeight: 700, color: "#0F172A" }}>{MONTH_NAMES[calMonth]} {calYear}</span>
-                <div style={{ display: "flex", gap: "4px" }}>
-                  <button onClick={() => { if (calMonth === 0) { setCalMonth(11); setCalYear(y => y - 1); } else setCalMonth(m => m - 1); }} style={{ background: "none", border: "1px solid #E2E8F0", borderRadius: "6px", width: "28px", height: "28px", cursor: "pointer", color: "#64748B" }}>&#8249;</button>
-                  <button onClick={() => { if (calMonth === 11) { setCalMonth(0); setCalYear(y => y + 1); } else setCalMonth(m => m + 1); }} style={{ background: "none", border: "1px solid #E2E8F0", borderRadius: "6px", width: "28px", height: "28px", cursor: "pointer", color: "#64748B" }}>&#8250;</button>
-                </div>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "4px", marginBottom: "6px" }}>
-                {["M", "T", "W", "T", "F", "S", "S"].map((d, i) => <div key={i} style={{ textAlign: "center", fontSize: "11px", fontWeight: 700, color: "#94A3B8" }}>{d}</div>)}
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "4px" }}>
-                {Array.from({ length: firstDay }).map((_, i) => <div key={"e" + i} />)}
-                {Array.from({ length: daysInMonth }).map((_, i) => {
-                  const day = i + 1;
-                  const iso = `${calYear}-${String(calMonth + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-                  const isBlocked = blackoutDates.has(iso);
-                  return (
-                    <button key={day} onClick={() => toggleBlackout(iso)} style={{ height: "36px", borderRadius: "8px", border: isBlocked ? "none" : "1px solid #F1F5F9", background: isBlocked ? "#EF4444" : "#F8FAFC", color: isBlocked ? "#FFFFFF" : "#334155", fontSize: "12px", fontWeight: 700, cursor: "pointer", transition: "all 0.15s" }}>{day}</button>
-                  );
-                })}
-              </div>
-              {blackoutDates.size > 0 && (
-                <div style={{ marginTop: "16px", paddingTop: "12px", borderTop: "1px solid #F1F5F9", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontSize: "12px", color: "#64748B" }}>{blackoutDates.size} date{blackoutDates.size > 1 ? "s" : ""} blacked out</span>
-                  <button onClick={() => setBlackoutDates(new Set())} style={{ background: "none", border: "none", color: "#EF4444", fontSize: "12px", fontWeight: 700, cursor: "pointer" }}>Clear All</button>
-                </div>
-              )}
-            </div>
+          {/* Bottom Action Footer Row (Placed at the bottom for easy access) */}
+          <div className="sc-footer-actions">
+            <button
+              type="button"
+              onClick={() => {
+                if (fromSource === 'new_session' || fromSource === 'schedule') {
+                  navigate("/sessions?action=new_session");
+                } else {
+                  navigate("/sessions");
+                }
+              }}
+              className="sc-btn-back sc-btn-back-bottom"
+            >
+              {fromSource === 'new_session' ? '← Back to Schedule Session' : 'Back to Sessions'}
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveConfiguration}
+              disabled={saving}
+              className="sc-btn-save sc-btn-save-bottom"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                <polyline points="17 21 17 13 7 13 7 21" />
+                <polyline points="7 3 7 8 15 8" />
+              </svg>
+              {saving ? "Saving..." : "Save Configuration"}
+            </button>
           </div>
         </div>
       </main>
@@ -224,13 +205,31 @@ const SessionConfigure = () => {
         .sc-btn-save:hover { background: #E11D48; }
         .sc-vertical-layout { display: flex; flex-direction: column; gap: 28px; width: 100%; box-sizing: border-box; }
         .sc-card-slots { width: 100%; box-sizing: border-box; background: #FFFFFF; border-radius: 16px; border: 1px solid #E2E8F0; padding: 28px 32px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.03); }
-        .sc-bottom-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; width: 100%; box-sizing: border-box; }
+        .sc-bottom-grid { display: block; width: 100%; box-sizing: border-box; }
         .sc-panel { background: #FFFFFF; border-radius: 16px; border: 1px solid #E2E8F0; padding: 24px 28px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.03); box-sizing: border-box; }
         .sc-btn-add-slot { display: flex; align-items: center; gap: 6px; background: #E6F9F5; color: #0D9488; border: 1.5px solid #0D9488; border-radius: 10px; padding: 8px 16px; font-size: 13px; font-weight: 700; cursor: pointer; font-family: 'Outfit', sans-serif; transition: all 0.2s; }
         .sc-btn-add-slot:hover { background: #CCFBF1; }
+        .sc-footer-actions {
+          display: flex;
+          justify-content: flex-end;
+          align-items: center;
+          gap: 12px;
+          padding: 8px 0 16px 0;
+          margin-top: 0px;
+        }
+        .sc-btn-back-bottom {
+          padding: 10px 18px;
+          font-size: 13px;
+        }
+        .sc-btn-save-bottom {
+          padding: 10px 20px;
+          font-size: 13px;
+          box-shadow: 0 2px 8px rgba(244, 63, 94, 0.2);
+        }
         @media (max-width: 1000px) {
           .sc-bottom-grid { grid-template-columns: 1fr; }
           .sc-main-content { padding: 90px 20px 60px 20px; }
+          .sc-footer-actions { justify-content: flex-end; gap: 10px; }
         }
       `}</style>
     </div>

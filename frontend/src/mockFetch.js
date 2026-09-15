@@ -424,7 +424,22 @@ window.fetch = async function (input, init) {
       }
       console.log("[Mock API] Created local Blob URL for uploaded video:", localBlobUrl);
       return jsonResponse({
-        video_url: localBlobUrl
+        video_url: localBlobUrl,
+        url: localBlobUrl
+      });
+    }
+
+    // ─── 3b. Image Upload Route ───
+    if (path === '/api/upload-image' && method === 'POST') {
+      let file = null;
+      if (init && init.body instanceof FormData) {
+        file = init.body.get('file');
+      }
+      let localBlobUrl = file ? URL.createObjectURL(file) : '';
+      console.log("[Mock API] Created local Blob URL for uploaded image:", localBlobUrl);
+      return jsonResponse({
+        image_url: localBlobUrl,
+        url: localBlobUrl
       });
     }
 
@@ -718,6 +733,8 @@ window.fetch = async function (input, init) {
         if (body.status !== undefined) session.status = body.status;
         if (body.notes !== undefined) session.notes = body.notes;
         if (body.video_url !== undefined) session.video_url = body.video_url;
+        if (body.image_url !== undefined) session.image_url = body.image_url;
+        if (body.group_name !== undefined) session.group_name = body.group_name;
 
         return jsonResponse(session);
       }

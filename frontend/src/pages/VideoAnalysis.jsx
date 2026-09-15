@@ -1,54 +1,672 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 
-const CLIPS = [
-  { id: 1, name: 'Clip 1', url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4', bg: 'https://images.unsplash.com/photo-1502680390469-be75c86b636f?auto=format&fit=crop&q=80&w=400' },
-  { id: 2, name: 'Clip 2', url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4', bg: 'https://images.unsplash.com/photo-1439405326854-014607f694d7?auto=format&fit=crop&q=80&w=400' },
-  { id: 3, name: 'Clip 3', url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4', bg: 'https://images.unsplash.com/photo-1518182170546-076616fd6738?auto=format&fit=crop&q=80&w=400' },
+const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+const DEFAULT_CLIPS = [
+  { 
+    id: 1, 
+    name: 'Clip 1', 
+    waveName: 'Wave #1 (Takeoff & Pop-up)', 
+    startTime: 0, 
+    duration: '0:15',
+    url: 'https://assets.mixkit.co/videos/preview/mixkit-surfer-riding-a-wave-in-the-sea-39828-large.mp4', 
+    bg: 'https://images.unsplash.com/photo-1502680390469-be75c86b636f?auto=format&fit=crop&w=600&q=80' 
+  },
+  { 
+    id: 2, 
+    name: 'Clip 2', 
+    waveName: 'Wave #2 (Bottom Turn & Drive)', 
+    startTime: 0, 
+    duration: '0:20',
+    url: 'https://assets.mixkit.co/videos/preview/mixkit-surfer-catching-a-wave-in-the-sea-39827-large.mp4', 
+    bg: 'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?auto=format&fit=crop&w=600&q=80' 
+  },
+  { 
+    id: 3, 
+    name: 'Clip 3', 
+    waveName: 'Wave #3 (Carve & Wave Exit)', 
+    startTime: 0, 
+    duration: '0:25',
+    url: 'https://assets.mixkit.co/videos/preview/mixkit-surfer-sliding-a-wave-in-the-sea-39829-large.mp4', 
+    bg: 'https://images.unsplash.com/photo-1516815231560-8f41ec531527?auto=format&fit=crop&w=600&q=80' 
+  },
 ];
+
+const ATHLETE_PALETTE = ['#06B6D4', '#10B981', '#F59E0B', '#EC4899', '#8B5CF6', '#3B82F6', '#14B8A6'];
+
+const generateAthleteProfile = (name, index = 0, level = 'Athlete') => {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = (hash << 5) - hash + name.charCodeAt(i);
+    hash |= 0;
+  }
+  const baseScore = 72 + Math.abs(hash % 22);
+  const takeoff = Math.min(96, Math.max(68, baseScore + (hash % 6)));
+  const positioning = Math.min(96, Math.max(65, baseScore - ((hash >> 2) % 7)));
+  const balance = Math.min(98, Math.max(70, baseScore + ((hash >> 4) % 8)));
+  const waveReading = Math.min(95, Math.max(64, baseScore - ((hash >> 6) % 9)));
+
+  return {
+    id: `surfer_${name.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase()}_${index}`,
+    name,
+    level,
+    color: ATHLETE_PALETTE[index % ATHLETE_PALETTE.length],
+    score: baseScore,
+    skills: {
+      takeoff,
+      positioning,
+      balance,
+      waveReading
+    }
+  };
+};
+
+// Helper to capture dynamic thumbnail image from video element using Canvas
+const captureVideoThumbnail = (videoUrl, seekTime = 1) => {
+  return new Promise((resolve) => {
+    if (!videoUrl || videoUrl.includes('ForBigger') || videoUrl.includes('gtv-videos') || videoUrl.includes('BigBuck')) {
+      resolve('');
+      return;
+    }
+    try {
+      const vid = document.createElement('video');
+      vid.src = videoUrl;
+      vid.crossOrigin = 'anonymous';
+      vid.muted = true;
+      vid.preload = 'auto';
+
+      let resolved = false;
+      const finish = (result) => {
+        if (!resolved) {
+          resolved = true;
+          try {
+            vid.removeAttribute('src');
+            vid.load();
+          } catch (e) {}
+          resolve(result || '');
+        }
+      };
+
+      vid.addEventListener('loadeddata', () => {
+        try {
+          const target = Math.max(0.2, seekTime);
+          vid.currentTime = target;
+        } catch (e) {
+          finish('');
+        }
+      }, { once: true });
+
+      vid.addEventListener('seeked', () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = 400;
+          canvas.height = 225;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          finish(dataUrl);
+        } catch (e) {
+          finish('');
+        }
+      }, { once: true });
+
+      vid.addEventListener('error', () => finish(''), { once: true });
+      setTimeout(() => finish(''), 4000);
+    } catch (err) {
+      resolve('');
+    }
+  });
+};
+
+// Helper to extract 3 distinct thumbnails at proportional timestamps (10%, 45%, 80%) from the video
+const extractMultiClipThumbnails = (videoUrl) => {
+  return new Promise((resolve) => {
+    if (!videoUrl || videoUrl.includes('ForBigger') || videoUrl.includes('gtv-videos') || videoUrl.includes('BigBuck')) {
+      resolve([null, null, null]);
+      return;
+    }
+    try {
+      const vid = document.createElement('video');
+      vid.src = videoUrl;
+      vid.crossOrigin = 'anonymous';
+      vid.muted = true;
+      vid.preload = 'auto';
+
+      let resolved = false;
+      const finish = (thumbs) => {
+        if (!resolved) {
+          resolved = true;
+          try {
+            vid.removeAttribute('src');
+            vid.load();
+          } catch (e) {}
+          resolve(thumbs);
+        }
+      };
+
+      const canvas = document.createElement('canvas');
+      canvas.width = 400;
+      canvas.height = 225;
+      const ctx = canvas.getContext('2d');
+
+      const captureCurrentFrame = () => {
+        try {
+          ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
+          return canvas.toDataURL('image/jpeg', 0.85);
+        } catch (e) {
+          return null;
+        }
+      };
+
+      vid.onloadedmetadata = () => {
+        try {
+          const dur = vid.duration || 30;
+          const t1 = Math.max(0.5, Math.min(1.5, dur * 0.08));
+          const t2 = Math.max(t1 + 1.5, Math.min(dur * 0.45, dur - 1.5));
+          const t3 = Math.max(t2 + 1.5, Math.min(dur * 0.82, dur - 0.5));
+
+          const times = [t1, t2, t3];
+          const results = [null, null, null];
+          let currentIndex = 0;
+
+          const onSeeked = () => {
+            results[currentIndex] = captureCurrentFrame();
+            currentIndex++;
+            if (currentIndex < times.length) {
+              vid.currentTime = times[currentIndex];
+            } else {
+              vid.removeEventListener('seeked', onSeeked);
+              finish(results);
+            }
+          };
+
+          vid.addEventListener('seeked', onSeeked);
+          vid.currentTime = times[0];
+        } catch (err) {
+          finish([null, null, null]);
+        }
+      };
+
+      vid.onerror = () => finish([null, null, null]);
+      setTimeout(() => finish([null, null, null]), 6000);
+    } catch (err) {
+      resolve([null, null, null]);
+    }
+  });
+};
 
 const VideoAnalysis = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const initialVideoUrl = searchParams.get('video') || CLIPS[0].url;
+  const initialVideoUrl = searchParams.get('video');
   const studentName = searchParams.get('student') || 'Chloe Kim';
   const sessionDate = searchParams.get('date') || '12 Jun 2025';
 
-  // Video State
-  const foundClip = CLIPS.find(c => c.url === initialVideoUrl);
-  const [currentClip, setCurrentClip] = useState(foundClip || { id: 99, name: 'Custom Video', url: initialVideoUrl, bg: '' });
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
+  // Tagged Surfers in this Video (Real Athletes only)
+  const [availableSurfers, setAvailableSurfers] = useState([]);
+  const [taggedSurfers, setTaggedSurfers] = useState([]);
+  const [activeSurferId, setActiveSurferId] = useState('');
+  const [isSurferDropdownOpen, setIsSurferDropdownOpen] = useState(false);
+  const surferDropdownRef = useRef(null);
 
-  // Drawing State
-  const [tool, setTool] = useState('pen'); // 'select' | 'pen' | 'eraser'
-  const [color, setColor] = useState('#F43F5E'); // Default crimson red
-  const [lineWidth, setLineWidth] = useState(4);
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [strokes, setStrokes] = useState([]);
+  // Load ONLY real athletes present in this specific group or session
+  useEffect(() => {
+    let rawNames = [];
+
+    // 1. From URL athletes query param
+    const athletesParam = searchParams.get('athletes') || searchParams.get('students');
+    if (athletesParam) {
+      try {
+        const parsed = JSON.parse(decodeURIComponent(athletesParam));
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          rawNames = parsed.filter(Boolean);
+        }
+      } catch (e) {
+        if (athletesParam.includes(',')) {
+          rawNames = athletesParam.split(',').map(s => s.trim()).filter(Boolean);
+        }
+      }
+    }
+
+    const normalizeDateStr = (d) => {
+      if (!d) return '';
+      const s = String(d).trim().toLowerCase();
+      const clean = s.replace(/^(monday|tuesday|wednesday|thursday|friday|saturday|sunday)[,\s]*/i, '').trim();
+      const parsed = new Date(clean);
+      if (!isNaN(parsed.getTime())) {
+        return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}`;
+      }
+      return clean;
+    };
+
+    const loadRealAthletes = async () => {
+      // 2. Fetch from backend /api/sessions for this session/group if URL didn't provide athletes list
+      if (rawNames.length === 0) {
+        try {
+          const res = await fetch(`${API}/api/sessions`);
+          if (res.ok) {
+            const sessions = await res.json();
+            const targetISO = normalizeDateStr(sessionDate);
+
+            const matching = sessions.filter(s => {
+              const grpName = s.group_name || (s.notes && s.notes.includes(' - Automated') ? s.notes.split(' - Automated')[0].trim() : (s.notes || ''));
+              const sISO = normalizeDateStr(s.date);
+              
+              const dateMatch = !targetISO || !sISO || sISO === targetISO || s.date === sessionDate || (s.date && sessionDate && (s.date.includes(sessionDate) || sessionDate.includes(s.date)));
+              
+              const groupMatch = (grpName && studentName && (
+                grpName.toLowerCase() === studentName.toLowerCase() ||
+                grpName.toLowerCase().includes(studentName.toLowerCase()) ||
+                studentName.toLowerCase().includes(grpName.toLowerCase())
+              ));
+
+              const studentMatch = s.student && studentName && s.student.toLowerCase() === studentName.toLowerCase();
+
+              return (groupMatch || studentMatch) && dateMatch;
+            });
+
+            const groupAthletes = matching.map(s => s.student).filter(Boolean);
+            if (groupAthletes.length > 0) {
+              rawNames = Array.from(new Set(groupAthletes));
+            }
+          }
+        } catch (err) {
+          console.warn('Failed to load group session athletes', err);
+        }
+      }
+
+      // If single student session or group name fallback
+      if (rawNames.length === 0) {
+        rawNames = [studentName];
+      }
+
+      const profiles = rawNames.map((n, i) => generateAthleteProfile(n, i));
+      setAvailableSurfers(profiles);
+      setTaggedSurfers(profiles);
+      setActiveSurferId(profiles[0]?.id || '');
+    };
+
+    loadRealAthletes();
+  }, [studentName, sessionDate, searchParams]);
+
+  // Derive active surfer details for score/skills
+  const currentActiveSurfer = useMemo(() => {
+    return taggedSurfers.find(s => s.id === activeSurferId) || taggedSurfers[0] || (availableSurfers[0] || { name: studentName, score: 78, skills: { takeoff: 82, positioning: 71, balance: 85, waveReading: 68 } });
+  }, [taggedSurfers, activeSurferId, availableSurfers, studentName]);
+
+  // Handle outside clicks for surfer dropdown
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (surferDropdownRef.current && !surferDropdownRef.current.contains(e.target)) {
+        setIsSurferDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleToggleSurfer = (surfer) => {
+    setTaggedSurfers(prev => {
+      const exists = prev.some(s => s.id === surfer.id);
+      if (exists) {
+        if (prev.length <= 1) return prev; // Always keep at least 1 surfer
+        const filtered = prev.filter(s => s.id !== surfer.id);
+        if (activeSurferId === surfer.id) {
+          setActiveSurferId(filtered[0]?.id || '');
+        }
+        return filtered;
+      } else {
+        const next = [...prev, surfer];
+        setActiveSurferId(surfer.id);
+        return next;
+      }
+    });
+  };
+
+  // Dynamic Clips State
+  const [clips, setClips] = useState(DEFAULT_CLIPS);
+  const [currentClip, setCurrentClip] = useState(DEFAULT_CLIPS[0]);
+  const [isUploadingClip, setIsUploadingClip] = useState(false);
+  const [targetClipIdForUpload, setTargetClipIdForUpload] = useState(null);
 
   // Refs
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const currentStrokeRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const targetFileInputRef = useRef(null);
+  const addClipInputRef = useRef(null);
 
-  // Synchronize playback state on mount/src change
+  // Video Player Playback State
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+
+  // Drawing Canvas Annotation State
+  const [tool, setTool] = useState('select'); // 'select' | 'pen' | 'eraser'
+  const [color, setColor] = useState('#F43F5E');
+  const [lineWidth, setLineWidth] = useState(4);
+  const [strokes, setStrokes] = useState([]);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [activeMarkerColor, setActiveMarkerColor] = useState(null);
+
+  // Group strokes into clean individual markers for the timeline
+  const momentMarkers = useMemo(() => {
+    const map = new Map();
+    strokes
+      .filter(s => s.tool !== 'eraser' && (s.clipId === undefined || s.clipId === currentClip.id))
+      .forEach(s => {
+        const timeKey = Math.round((s.timestamp || 0) * 10) / 10;
+        const key = `${timeKey}_${s.color}`;
+        if (!map.has(key)) {
+          map.set(key, {
+            timestamp: s.timestamp || 0,
+            color: s.color,
+            key
+          });
+        }
+      });
+    return Array.from(map.values());
+  }, [strokes, currentClip]);
+
+  // Parse multiple video URLs from query string or payload
+  const parseVideoUrls = (rawUrl) => {
+    if (!rawUrl) return [];
+    let str = String(rawUrl).trim();
+    if (str.startsWith('[') && str.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(str);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map(p => typeof p === 'string' ? p : (p?.url || '')).filter(Boolean);
+        }
+      } catch (e) {}
+    }
+    if (str.includes('|||')) {
+      return str.split('|||').map(s => s.trim()).filter(Boolean);
+    }
+    if (str.includes('%5B') || str.includes('%7B')) {
+      try {
+        const decoded = decodeURIComponent(str);
+        if (decoded.startsWith('[') || decoded.startsWith('{')) {
+          const parsed = JSON.parse(decoded);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed.map(p => typeof p === 'string' ? p : (p?.url || '')).filter(Boolean);
+          }
+          if (parsed?.url) return [parsed.url];
+        }
+      } catch (e) {}
+    }
+    return [str];
+  };
+
+  // Helper to extract a clean single video URL string from various formats
+  const extractValidVideoUrl = (rawUrl) => {
+    const parsedList = parseVideoUrls(rawUrl);
+    return parsedList[0] || '';
+  };
+
+  // Auto split video into 3 distinct wave clips when a new session video is loaded
+  const generateWaveClipsFromVideo = async (videoUrl, label = 'Session Wave') => {
+    const cleanUrl = extractValidVideoUrl(videoUrl);
+    const isLegacyOrInvalid = !cleanUrl || cleanUrl.includes('ForBigger') || cleanUrl.includes('gtv-videos');
+    const effectiveVideoUrl = isLegacyOrInvalid
+      ? 'https://assets.mixkit.co/videos/preview/mixkit-surfer-riding-a-wave-in-the-sea-39828-large.mp4'
+      : cleanUrl;
+
+    const waveClips = [
+      {
+        id: 1,
+        name: 'Clip 1',
+        waveName: 'Wave #1 (Takeoff & Pop-up)',
+        startTime: 0,
+        duration: '0:15',
+        url: effectiveVideoUrl,
+        bg: ''
+      },
+      {
+        id: 2,
+        name: 'Clip 2',
+        waveName: 'Wave #2 (Bottom Turn & Drive)',
+        startTime: 15,
+        duration: '0:20',
+        url: effectiveVideoUrl,
+        bg: ''
+      },
+      {
+        id: 3,
+        name: 'Clip 3',
+        waveName: 'Wave #3 (Carve & Wave Exit)',
+        startTime: 35,
+        duration: '0:25',
+        url: effectiveVideoUrl,
+        bg: ''
+      }
+    ];
+
+    setClips(waveClips);
+    setCurrentClip(waveClips[0]);
+
+    try {
+      const [thumb1, thumb2, thumb3] = await extractMultiClipThumbnails(effectiveVideoUrl);
+
+      setClips(prev => prev.map(c => {
+        if (c.id === 1 && thumb1) return { ...c, bg: thumb1 };
+        if (c.id === 2 && thumb2) return { ...c, bg: thumb2 };
+        if (c.id === 3 && thumb3) return { ...c, bg: thumb3 };
+        return c;
+      }));
+    } catch (err) {
+      console.warn('Clip thumbnail extraction failed', err);
+    }
+  };
+
+  // Synchronize on mount if query param contains video URL(s)
   useEffect(() => {
-    setIsPlaying(false);
-    setCurrentTime(0);
-    setStrokes([]);
-  }, [currentClip]);
+    if (initialVideoUrl) {
+      const allUrls = parseVideoUrls(initialVideoUrl);
+      if (allUrls.length > 1) {
+        // Multiple videos provided for this session!
+        const initialClips = allUrls.map((url, idx) => ({
+          id: idx + 1,
+          name: `Video ${idx + 1}`,
+          waveName: `Wave Video #${idx + 1}`,
+          startTime: 0,
+          duration: '0:30',
+          url: url,
+          bg: ''
+        }));
+        setClips(initialClips);
+        setCurrentClip(initialClips[0]);
 
-  // Redraw canvas drawings when strokes state changes or canvas resizes
-  const redraw = () => {
+        // Capture thumbnails for each distinct video in parallel
+        Promise.all(allUrls.map(u => captureVideoThumbnail(u, 1))).then(thumbs => {
+          setClips(prev => prev.map((c, i) => ({
+            ...c,
+            bg: thumbs[i] || c.bg
+          })));
+        }).catch(() => {});
+      } else {
+        const clean = extractValidVideoUrl(initialVideoUrl);
+        if (clean) {
+          if (clean.includes('ForBigger') || clean.includes('gtv-videos')) {
+            generateWaveClipsFromVideo('https://assets.mixkit.co/videos/preview/mixkit-surfer-riding-a-wave-in-the-sea-39828-large.mp4');
+          } else {
+            const match = DEFAULT_CLIPS.find(c => c.url === clean);
+            if (match) {
+              setCurrentClip(match);
+            } else {
+              generateWaveClipsFromVideo(clean);
+            }
+          }
+        } else {
+          generateWaveClipsFromVideo('https://assets.mixkit.co/videos/preview/mixkit-surfer-riding-a-wave-in-the-sea-39828-large.mp4');
+        }
+      }
+    }
+  }, [initialVideoUrl]);
+
+  // Handle uploading video file from local device
+  const handleUploadVideoFile = async (e, targetClipId = null) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingClip(true);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      let videoUrl = '';
+      try {
+        const res = await fetch(`${API}/api/upload-video`, {
+          method: 'POST',
+          body: formData
+        });
+        if (res.ok) {
+          const data = await res.json();
+          videoUrl = data.video_url;
+        }
+      } catch (err) {
+        console.warn('Backend upload skipped, using local URL', err);
+      }
+
+      if (!videoUrl) {
+        videoUrl = URL.createObjectURL(file);
+      }
+
+      if (targetClipId) {
+        // Update single clip slot
+        const thumb = await captureVideoThumbnail(videoUrl, 1);
+        setClips(prev => prev.map(c => c.id === targetClipId ? { ...c, url: videoUrl, bg: thumb || c.bg } : c));
+        setCurrentClip(prev => prev.id === targetClipId ? { ...prev, url: videoUrl, bg: thumb || prev.bg } : prev);
+      } else {
+        // Auto-split into 3 wave clips
+        await generateWaveClipsFromVideo(videoUrl, file.name.replace(/\.[^/.]+$/, ""));
+      }
+    } catch (err) {
+      console.error('Video upload error:', err);
+    } finally {
+      setIsUploadingClip(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      if (targetFileInputRef.current) targetFileInputRef.current.value = '';
+    }
+  };
+
+  // Handle adding an entirely new video as a new clip (appending to list)
+  const handleAddNewVideoClip = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingClip(true);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      let videoUrl = '';
+      try {
+        const res = await fetch(`${API}/api/upload-video`, {
+          method: 'POST',
+          body: formData
+        });
+        if (res.ok) {
+          const data = await res.json();
+          videoUrl = data.video_url;
+        }
+      } catch (err) {
+        console.warn('Backend upload skipped, using local URL', err);
+      }
+
+      if (!videoUrl) {
+        videoUrl = URL.createObjectURL(file);
+      }
+
+      const thumb = await captureVideoThumbnail(videoUrl, 1);
+      const newId = (clips.length > 0 ? Math.max(...clips.map(c => c.id)) : 0) + 1;
+      const cleanFileName = file.name.replace(/\.[^/.]+$/, "");
+      const newClip = {
+        id: newId,
+        name: `Clip ${newId}`,
+        waveName: cleanFileName || `Wave #${newId} (Uploaded Footage)`,
+        startTime: 0,
+        duration: '0:30',
+        url: videoUrl,
+        bg: thumb || ''
+      };
+
+      setClips(prev => [...prev, newClip]);
+      handleSelectClip(newClip);
+    } catch (err) {
+      console.error('Add new clip error:', err);
+    } finally {
+      setIsUploadingClip(false);
+      if (addClipInputRef.current) addClipInputRef.current.value = '';
+    }
+  };
+
+  // Next / Previous Clip Switchers
+  const handleNextClip = () => {
+    if (clips.length <= 1) return;
+    const currentIndex = clips.findIndex(c => c.id === currentClip.id);
+    const nextIndex = (currentIndex + 1) % clips.length;
+    handleSelectClip(clips[nextIndex]);
+  };
+
+  const handlePrevClip = () => {
+    if (clips.length <= 1) return;
+    const currentIndex = clips.findIndex(c => c.id === currentClip.id);
+    const prevIndex = (currentIndex - 1 + clips.length) % clips.length;
+    handleSelectClip(clips[prevIndex]);
+  };
+
+  const handleDeleteClip = (clipId) => {
+    if (clips.length <= 1) return;
+    const filtered = clips.filter(c => c.id !== clipId);
+    setClips(filtered);
+    if (currentClip.id === clipId) {
+      handleSelectClip(filtered[0]);
+    }
+  };
+
+  // Handle switching active clip
+  const handleSelectClip = (clip) => {
+    setCurrentClip(clip);
+    if (videoRef.current) {
+      if (videoRef.current.src !== clip.url) {
+        videoRef.current.src = clip.url;
+      }
+      const seekTarget = clip.startTime || 0;
+      videoRef.current.currentTime = seekTarget;
+      setCurrentTime(seekTarget);
+      videoRef.current.pause();
+      setIsPlaying(false);
+    }
+  };
+
+  // Redraw canvas drawings strictly for the clicked color
+  const redraw = (targetColor = null) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    strokes.forEach(stroke => {
+    // When video is actively playing, keep screen clear of drawings
+    if (videoRef.current && !videoRef.current.paused) {
+      return;
+    }
+
+    const colorFilter = targetColor !== null ? targetColor : activeMarkerColor;
+
+    // Strictly show strokes for this clip matching the selected marker color
+    const activeStrokes = strokes.filter(s => {
+      if (s.clipId !== undefined && s.clipId !== currentClip.id) return false;
+      if (colorFilter) {
+        return s.color === colorFilter;
+      }
+      return true;
+    });
+
+    activeStrokes.forEach(stroke => {
       if (!stroke || !stroke.points || stroke.points.length < 1) return;
       ctx.beginPath();
       
@@ -71,28 +689,30 @@ const VideoAnalysis = () => {
     });
   };
 
-  // Adjust canvas bounds on window resize
+  // Adjust canvas bounds on window resize without accidental canvas wipes
   useEffect(() => {
     const resizeCanvas = () => {
       const canvas = canvasRef.current;
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
-      canvas.width = rect.width;
-      canvas.height = rect.height;
+      const newW = Math.round(rect.width);
+      const newH = Math.round(rect.height);
+      if (newW > 0 && newH > 0 && (canvas.width !== newW || canvas.height !== newH)) {
+        canvas.width = newW;
+        canvas.height = newH;
+      }
       redraw();
     };
 
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
-    
-    // Give browser a split second to settle layout before checking bounding rect
     const timer = setTimeout(resizeCanvas, 100);
 
     return () => {
       window.removeEventListener('resize', resizeCanvas);
       clearTimeout(timer);
     };
-  }, [strokes, currentClip]);
+  }, [strokes, currentClip, activeMarkerColor]);
 
   // Video time format helper
   const formatTime = (seconds) => {
@@ -108,7 +728,13 @@ const VideoAnalysis = () => {
     if (isPlaying) {
       videoRef.current.pause();
       setIsPlaying(false);
+      redraw();
     } else {
+      // Clear drawings on play
+      const canvas = canvasRef.current;
+      if (canvas) {
+        canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+      }
       videoRef.current.play().then(() => {
         setIsPlaying(true);
       }).catch(err => console.error("Playback failed", err));
@@ -117,22 +743,51 @@ const VideoAnalysis = () => {
 
   const handleSeekForward = () => {
     if (!videoRef.current) return;
-    videoRef.current.currentTime = Math.min(duration, videoRef.current.currentTime + 10);
+    const nextTime = Math.min(duration, videoRef.current.currentTime + 10);
+    videoRef.current.currentTime = nextTime;
+    setCurrentTime(nextTime);
+    redraw(nextTime);
   };
 
   const handleSeekBackward = () => {
     if (!videoRef.current) return;
-    videoRef.current.currentTime = Math.max(0, videoRef.current.currentTime - 10);
+    const prevTime = Math.max(0, videoRef.current.currentTime - 10);
+    videoRef.current.currentTime = prevTime;
+    setCurrentTime(prevTime);
+    redraw(prevTime);
   };
 
   const handleTimeUpdate = () => {
     if (!videoRef.current) return;
-    setCurrentTime(videoRef.current.currentTime);
+    const t = videoRef.current.currentTime;
+    setCurrentTime(t);
+
+    if (!videoRef.current.paused) {
+      // While playing, keep drawings cleared
+      const canvas = canvasRef.current;
+      if (canvas) {
+        canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+      }
+    } else {
+      redraw(t);
+    }
   };
 
   const handleLoadedMetadata = () => {
     if (!videoRef.current) return;
-    setDuration(videoRef.current.duration);
+    const dur = videoRef.current.duration;
+    setDuration(dur);
+
+    if (currentClip?.url && (!clips[0]?.bg || !clips[1]?.bg || !clips[2]?.bg)) {
+      extractMultiClipThumbnails(currentClip.url).then(([thumb1, thumb2, thumb3]) => {
+        setClips(prev => prev.map(c => {
+          if (c.id === 1 && thumb1) return { ...c, bg: thumb1 };
+          if (c.id === 2 && thumb2) return { ...c, bg: thumb2 };
+          if (c.id === 3 && thumb3) return { ...c, bg: thumb3 };
+          return c;
+        }));
+      }).catch(() => {});
+    }
   };
 
   const handleProgressBarClick = (e) => {
@@ -173,6 +828,8 @@ const VideoAnalysis = () => {
       setIsPlaying(false);
     }
 
+    setActiveMarkerColor(color);
+
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -198,6 +855,8 @@ const VideoAnalysis = () => {
       tool,
       color,
       lineWidth,
+      timestamp: videoRef.current ? videoRef.current.currentTime : currentTime,
+      clipId: currentClip.id,
       points: [{ x, y }]
     };
   };
@@ -255,10 +914,91 @@ const VideoAnalysis = () => {
             <button className="va-back-btn" onClick={() => navigate(-1)}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
             </button>
-            <h1 className="va-title">AI Video Analysis — {studentName} — {sessionDate}</h1>
+            <div>
+              <h1 className="va-title">AI Video Analysis — {studentName} — {sessionDate}</h1>
+              
+              {/* Multi-Surfer Tagging Dropdown & Badges */}
+              <div className="va-surfer-tag-row">
+                <span className="va-surfer-tag-label">
+                  🏄 Tagged Surfers ({taggedSurfers.length}):
+                </span>
+                
+                <div className="va-surfer-chips-wrap">
+                  {taggedSurfers.map(surfer => {
+                    const isSelected = activeSurferId === surfer.id;
+                    return (
+                      <button
+                        key={surfer.id}
+                        type="button"
+                        className={`va-surfer-chip ${isSelected ? 'active' : ''}`}
+                        onClick={() => setActiveSurferId(surfer.id)}
+                        title={`Click to view analysis for ${surfer.name}`}
+                      >
+                        <span className="va-surfer-dot" style={{ backgroundColor: surfer.color }}></span>
+                        <span className="va-surfer-chip-name">{surfer.name}</span>
+                        {taggedSurfers.length > 1 && (
+                          <span 
+                            className="va-surfer-chip-remove"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleToggleSurfer(surfer);
+                            }}
+                            title={`Remove ${surfer.name} from this video`}
+                          >
+                            ×
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+
+                  {/* Dropdown to add / tag more surfers */}
+                  <div className="va-surfer-dropdown-box" ref={surferDropdownRef}>
+                    <button
+                      type="button"
+                      className="va-tag-surfer-btn"
+                      onClick={() => setIsSurferDropdownOpen(prev => !prev)}
+                    >
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 5v14M5 12h14"/></svg>
+                      Tag Surfer
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ transform: isSurferDropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+
+                    {isSurferDropdownOpen && (
+                      <div className="va-surfer-menu">
+                        <div className="va-surfer-menu-title">Select Athletes in this Video</div>
+                        <div className="va-surfer-menu-list">
+                          {availableSurfers.map(surfer => {
+                            const isTagged = taggedSurfers.some(s => s.id === surfer.id);
+                            return (
+                              <div
+                                key={surfer.id}
+                                className={`va-surfer-menu-item ${isTagged ? 'selected' : ''}`}
+                                onClick={() => handleToggleSurfer(surfer)}
+                              >
+                                <div className={`va-checkbox ${isTagged ? 'checked' : ''}`}>
+                                  {isTagged && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="3.5"><polyline points="20 6 9 17 4 12"/></svg>}
+                                </div>
+                                <span className="va-surfer-menu-avatar" style={{ backgroundColor: surfer.color }}>
+                                  {surfer.name.charAt(0)}
+                                </span>
+                                <div className="va-surfer-menu-info">
+                                  <div className="va-surfer-menu-name">{surfer.name}</div>
+                                  <div className="va-surfer-menu-sub">{surfer.level} • Avg {surfer.score}%</div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
-          <div className="va-header-actions" style={{ display: 'flex', gap: '12px' }}>
-            <button className="va-btn-report" onClick={() => navigate(`/sessions/report?student=${encodeURIComponent(studentName)}&date=${encodeURIComponent(sessionDate)}`)}>
+          <div className="va-header-actions" style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+            <button className="va-btn-report" onClick={() => navigate(`/sessions/report?student=${encodeURIComponent(currentActiveSurfer?.name || studentName)}&date=${encodeURIComponent(sessionDate)}`)}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
               View Coaching Report
             </button>
@@ -276,16 +1016,36 @@ const VideoAnalysis = () => {
           <div className="va-col-left">
             {/* Main Player Container */}
             <div className="va-player-container">
-              {currentClip.url && (
+              {currentClip?.url && (
                 <video 
+                  key={currentClip.url}
                   ref={videoRef}
                   src={currentClip.url} 
                   autoPlay={false}
                   loop 
                   muted 
+                  playsInline
+                  preload="auto"
+                  onPlay={() => {
+                    setIsPlaying(true);
+                    const canvas = canvasRef.current;
+                    if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+                  }}
+                  onPause={() => {
+                    setIsPlaying(false);
+                    redraw();
+                  }}
                   onTimeUpdate={handleTimeUpdate}
                   onLoadedMetadata={handleLoadedMetadata}
-                  style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'absolute', top: 0, left: 0, zIndex: 1 }} 
+                  onError={(e) => {
+                    console.warn('Video failed to load from primary source, falling back to guaranteed high-res wave clip:', currentClip?.url);
+                    const fallbackUrl = 'https://assets.mixkit.co/videos/preview/mixkit-surfer-riding-a-wave-in-the-sea-39828-large.mp4';
+                    if (currentClip?.url !== fallbackUrl) {
+                      setCurrentClip(prev => ({ ...prev, url: fallbackUrl }));
+                      setClips(prev => prev.map(c => ({ ...c, url: fallbackUrl })));
+                    }
+                  }}
+                  style={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: '#000000', position: 'absolute', top: 0, left: 0, zIndex: 1 }} 
                 />
               )}
 
@@ -332,10 +1092,10 @@ const VideoAnalysis = () => {
                 {/* Pen color selectors */}
                 {tool === 'pen' && (
                   <div className="va-color-picker">
-                    <button className={`va-color-dot ${color === '#F43F5E' ? 'active' : ''}`} style={{ backgroundColor: '#F43F5E' }} onClick={() => setColor('#F43F5E')} title="Red"></button>
-                    <button className={`va-color-dot ${color === '#F59E0B' ? 'active' : ''}`} style={{ backgroundColor: '#F59E0B' }} onClick={() => setColor('#F59E0B')} title="Yellow"></button>
-                    <button className={`va-color-dot ${color === '#3B82F6' ? 'active' : ''}`} style={{ backgroundColor: '#3B82F6' }} onClick={() => setColor('#3B82F6')} title="Blue"></button>
-                    <button className={`va-color-dot ${color === '#10B981' ? 'active' : ''}`} style={{ backgroundColor: '#10B981' }} onClick={() => setColor('#10B981')} title="Green"></button>
+                    <button className={`va-color-dot ${color === '#F43F5E' ? 'active' : ''}`} style={{ backgroundColor: '#F43F5E' }} onClick={() => { setColor('#F43F5E'); setActiveMarkerColor('#F43F5E'); redraw('#F43F5E'); }} title="Red"></button>
+                    <button className={`va-color-dot ${color === '#F59E0B' ? 'active' : ''}`} style={{ backgroundColor: '#F59E0B' }} onClick={() => { setColor('#F59E0B'); setActiveMarkerColor('#F59E0B'); redraw('#F59E0B'); }} title="Yellow / Orange"></button>
+                    <button className={`va-color-dot ${color === '#3B82F6' ? 'active' : ''}`} style={{ backgroundColor: '#3B82F6' }} onClick={() => { setColor('#3B82F6'); setActiveMarkerColor('#3B82F6'); redraw('#3B82F6'); }} title="Blue"></button>
+                    <button className={`va-color-dot ${color === '#10B981' ? 'active' : ''}`} style={{ backgroundColor: '#10B981' }} onClick={() => { setColor('#10B981'); setActiveMarkerColor('#10B981'); redraw('#10B981'); }} title="Green"></button>
                   </div>
                 )}
 
@@ -381,10 +1141,39 @@ const VideoAnalysis = () => {
                   {/* Progress Bar */}
                   <div className="va-progress-bar-container" onClick={handleProgressBarClick}>
                     <div className="va-progress-bar-bg">
-                      {/* Detected Key Moments indicators on timeline */}
-                      <div className="va-progress-marker" style={{ left: '13.6%', backgroundColor: '#F43F5E' }} title="Late pop-up (0:34)"></div>
-                      <div className="va-progress-marker" style={{ left: '28.8%', backgroundColor: '#F59E0B' }} title="Weight shifting (1:12)"></div>
-                      <div className="va-progress-marker" style={{ left: '66%', backgroundColor: '#0D9488' }} title="Perfect stance (2:45)"></div>
+                      {/* Dynamic Drawing Annotation Markers by Color */}
+                      {momentMarkers.map((marker) => {
+                        const pct = duration > 0 ? (marker.timestamp / duration) * 100 : 0;
+                        const isSelected = activeMarkerColor === marker.color;
+                        return (
+                          <div
+                            key={marker.key}
+                            className={`va-progress-marker va-drawing-marker ${isSelected ? 'va-marker-selected' : ''}`}
+                            style={{
+                              left: `${pct}%`,
+                              backgroundColor: marker.color || '#F43F5E',
+                              boxShadow: `0 0 10px ${marker.color || '#F43F5E'}`,
+                              transform: isSelected ? 'translateX(-50%) scale(1.4)' : 'translateX(-50%)',
+                              zIndex: isSelected ? 8 : 6
+                            }}
+                            title={`Drawing Annotation at ${formatTime(marker.timestamp)} (${marker.color}) - Click to show this drawing only`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (videoRef.current) {
+                                videoRef.current.currentTime = marker.timestamp;
+                                setCurrentTime(marker.timestamp);
+                                videoRef.current.pause();
+                                setIsPlaying(false);
+                                setActiveMarkerColor(marker.color);
+                                setColor(marker.color);
+                                setTimeout(() => redraw(marker.color), 30);
+                              }
+                            }}
+                          />
+                        );
+                      })}
+
+
                       
                       <div className="va-progress-fill" style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }}></div>
                       <div className="va-progress-handle" style={{ left: `${duration ? (currentTime / duration) * 100 : 0}%` }}></div>
@@ -393,18 +1182,24 @@ const VideoAnalysis = () => {
 
                   {/* Playback Controls & Timings */}
                   <div className="va-playback-controls">
-                    <button className="va-control-icon-btn" onClick={handlePlayPause}>
+                    <button className="va-control-icon-btn" onClick={handlePrevClip} title="Switch to Previous Video / Clip (⏮)">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5"></line></svg>
+                    </button>
+                    <button className="va-control-icon-btn" onClick={handleSeekBackward} title="-10s">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="11 17 6 12 11 7"></polyline><polyline points="18 17 13 12 18 7"></polyline></svg>
+                    </button>
+                    <button className="va-control-icon-btn va-play-btn" onClick={handlePlayPause}>
                       {isPlaying ? (
                         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="4" x2="18" y2="20"></line><line x1="6" y1="4" x2="6" y2="20"></line></svg>
                       ) : (
                         <svg width="22" height="22" viewBox="0 0 24 24" fill="#FFFFFF" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
                       )}
                     </button>
-                    <button className="va-control-icon-btn" onClick={handleSeekBackward} title="-10s">
-                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5"></line></svg>
-                    </button>
                     <button className="va-control-icon-btn" onClick={handleSeekForward} title="+10s">
-                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19"></line></svg>
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="13 17 18 12 13 7"></polyline><polyline points="6 17 11 12 6 7"></polyline></svg>
+                    </button>
+                    <button className="va-control-icon-btn" onClick={handleNextClip} title="Switch to Next Video / Clip (⏭)">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19"></line></svg>
                     </button>
                     <span className="va-time-display">{formatTime(currentTime)} / {formatTime(duration)}</span>
                   </div>
@@ -412,29 +1207,239 @@ const VideoAnalysis = () => {
               </div>
             </div>
 
+            {/* Hidden File Inputs for Full Video, Single Clip Replacement, and Adding New Clips */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="video/*"
+              style={{ display: 'none' }}
+              onChange={(e) => handleUploadVideoFile(e, null)}
+            />
+            <input
+              ref={targetFileInputRef}
+              type="file"
+              accept="video/*"
+              style={{ display: 'none' }}
+              onChange={(e) => handleUploadVideoFile(e, targetClipIdForUpload)}
+            />
+            <input
+              ref={addClipInputRef}
+              type="file"
+              accept="video/*"
+              style={{ display: 'none' }}
+              onChange={handleAddNewVideoClip}
+            />
+
+            {/* Clips Section Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px', marginBottom: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '12px', fontWeight: 800, color: 'rgba(255,255,255,0.7)', letterSpacing: '0.8px', textTransform: 'uppercase' }}>
+                  🌊 Session Videos & Wave Clips ({clips.length})
+                </span>
+                <span style={{ fontSize: '11px', background: 'rgba(13, 148, 136, 0.25)', color: '#2DD4BF', border: '1px solid rgba(45, 212, 191, 0.4)', padding: '1px 8px', borderRadius: '12px', fontWeight: 700 }}>
+                  {clips.findIndex(c => c.id === currentClip.id) + 1} of {clips.length} Active
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                {/* Fast Next / Prev Video Switching Controls */}
+                <div style={{ display: 'flex', gap: '4px', background: 'rgba(255,255,255,0.06)', padding: '2px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)' }}>
+                  <button
+                    type="button"
+                    onClick={handlePrevClip}
+                    title="Switch to Previous Video"
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: '#FFFFFF',
+                      padding: '4px 8px',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      borderRadius: '6px',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}
+                  >
+                    ◀ Prev
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleNextClip}
+                    title="Switch to Next Video"
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: '#2DD4BF',
+                      padding: '4px 8px',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      borderRadius: '6px',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}
+                  >
+                    Next ▶
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => addClipInputRef.current?.click()}
+                  disabled={isUploadingClip}
+                  style={{
+                    background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
+                    color: '#FFFFFF',
+                    border: 'none',
+                    borderRadius: '8px',
+                    padding: '6px 14px',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    boxShadow: '0 4px 10px rgba(13, 148, 136, 0.3)'
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M12 5v14M5 12h14"/>
+                  </svg>
+                  {isUploadingClip ? 'Processing Video…' : '+ Add More Video'}
+                </button>
+              </div>
+            </div>
+
             {/* Clips Selector */}
             <div className="va-clips-row">
-              {CLIPS.map(clip => (
-                <div 
-                  key={clip.id} 
-                  className={`va-clip-item ${currentClip.id === clip.id ? 'va-clip-active' : ''}`}
-                  onClick={() => setCurrentClip(clip)}
-                  style={{ backgroundImage: `linear-gradient(0deg, rgba(0,0,0,0.3), rgba(0,0,0,0.1)), url('${clip.bg}')` }}
-                >
-                  <div className="va-clip-badge">{clip.name}</div>
-                </div>
-              ))}
+              {clips.map((clip, index) => {
+                const fallbackImg = clip.id === 2 
+                  ? 'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?auto=format&fit=crop&w=600&q=80'
+                  : clip.id === 3 
+                    ? 'https://images.unsplash.com/photo-1516815231560-8f41ec531527?auto=format&fit=crop&w=600&q=80'
+                    : 'https://images.unsplash.com/photo-1502680390469-be75c86b636f?auto=format&fit=crop&w=600&q=80';
+                const effectiveBg = clip.bg && clip.bg.trim() !== '' ? clip.bg : fallbackImg;
+                const isActive = currentClip.id === clip.id;
+
+                return (
+                  <div 
+                    key={clip.id} 
+                    className={`va-clip-item ${isActive ? 'va-clip-active' : ''}`}
+                    onClick={() => handleSelectClip(clip)}
+                    style={{
+                      backgroundImage: `linear-gradient(180deg, rgba(5, 11, 26, 0.25) 0%, rgba(5, 11, 26, 0.35) 45%, rgba(5, 11, 26, 0.95) 100%), url('${effectiveBg}')`
+                    }}
+                  >
+                    {/* Top Bar with Badge and Actions */}
+                    <div className="va-clip-top-row">
+                      <div className="va-clip-badge">
+                        <span className="va-clip-badge-dot" style={{ backgroundColor: isActive ? '#2DD4BF' : 'rgba(255,255,255,0.45)' }}></span>
+                        {clip.name || `Video ${index + 1}`}
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '4px' }}>
+                        {/* Quick Replace Video on Hover */}
+                        <button
+                          type="button"
+                          className="va-clip-replace-btn"
+                          title={`Upload/Change video specifically for ${clip.name}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setTargetClipIdForUpload(clip.id);
+                            targetFileInputRef.current?.click();
+                          }}
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="17 8 12 3 7 8"/>
+                            <line x1="12" y1="3" x2="12" y2="15"/>
+                          </svg>
+                        </button>
+
+                        {/* Delete/Remove this clip */}
+                        {clips.length > 1 && (
+                          <button
+                            type="button"
+                            className="va-clip-replace-btn"
+                            title={`Remove this video clip`}
+                            style={{ color: '#F43F5E' }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteClip(clip.id);
+                            }}
+                          >
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Center Hover Play Indicator */}
+                    <div className="va-clip-play-center">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                    </div>
+                    
+                    {/* Bottom Metadata */}
+                    <div className="va-clip-bottom-info">
+                      <div className="va-clip-wave-name" title={clip.waveName || clip.name}>{clip.waveName || clip.name}</div>
+                      <div className="va-clip-duration-tag">
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                        <span>{clip.duration || (formatTime(clip.startTime) + ' ➔')}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Add New Clip Slot */}
+              <div
+                className="va-clip-add-card"
+                onClick={() => addClipInputRef.current?.click()}
+                title="Upload and append another session video"
+              >
+                <div className="va-clip-add-icon">+</div>
+                <div className="va-clip-add-text">Add Wave Video</div>
+                <div className="va-clip-add-subtext">Upload footage</div>
+              </div>
             </div>
           </div>
 
           {/* Right Column (Analytics Panels) */}
           <div className="va-col-right">
             
+            {/* Multi-Surfer Switcher Tab if more than 1 surfer tagged */}
+            {taggedSurfers.length > 1 && (
+              <div className="va-surfer-tabs-box">
+                <div className="va-surfer-tabs-label">ANALYSIS METRICS FOR:</div>
+                <div className="va-surfer-tabs">
+                  {taggedSurfers.map(surfer => {
+                    const isSelected = activeSurferId === surfer.id;
+                    return (
+                      <button
+                        key={surfer.id}
+                        type="button"
+                        className={`va-surfer-tab-btn ${isSelected ? 'active' : ''}`}
+                        onClick={() => setActiveSurferId(surfer.id)}
+                      >
+                        <span className="va-surfer-tab-dot" style={{ backgroundColor: surfer.color }}></span>
+                        {surfer.name} ({surfer.score})
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Score panel */}
             <div className="va-section">
-              <div className="va-section-title">PERFORMANCE SCORE</div>
+              <div className="va-section-title">
+                PERFORMANCE SCORE {taggedSurfers.length > 1 && `— ${currentActiveSurfer.name.toUpperCase()}`}
+              </div>
               <div className="va-score-row">
-                <span className="va-score-big">78</span>
+                <span className="va-score-big">{currentActiveSurfer.score}</span>
                 <span className="va-score-small">/ 100</span>
               </div>
             </div>
@@ -446,40 +1451,40 @@ const VideoAnalysis = () => {
               <div className="va-skill-row">
                 <div className="va-skill-header">
                   <span>Take-off</span>
-                  <span className="va-skill-pct">82%</span>
+                  <span className="va-skill-pct">{currentActiveSurfer.skills?.takeoff || 82}%</span>
                 </div>
                 <div className="va-skill-bar-bg">
-                  <div className="va-skill-bar-fill" style={{ width: '82%' }}></div>
+                  <div className="va-skill-bar-fill" style={{ width: `${currentActiveSurfer.skills?.takeoff || 82}%` }}></div>
                 </div>
               </div>
 
               <div className="va-skill-row">
                 <div className="va-skill-header">
                   <span>Positioning</span>
-                  <span className="va-skill-pct">71%</span>
+                  <span className="va-skill-pct">{currentActiveSurfer.skills?.positioning || 71}%</span>
                 </div>
                 <div className="va-skill-bar-bg">
-                  <div className="va-skill-bar-fill" style={{ width: '71%' }}></div>
+                  <div className="va-skill-bar-fill" style={{ width: `${currentActiveSurfer.skills?.positioning || 71}%` }}></div>
                 </div>
               </div>
 
               <div className="va-skill-row">
                 <div className="va-skill-header">
                   <span>Balance</span>
-                  <span className="va-skill-pct">85%</span>
+                  <span className="va-skill-pct">{currentActiveSurfer.skills?.balance || 85}%</span>
                 </div>
                 <div className="va-skill-bar-bg">
-                  <div className="va-skill-bar-fill" style={{ width: '85%' }}></div>
+                  <div className="va-skill-bar-fill" style={{ width: `${currentActiveSurfer.skills?.balance || 85}%` }}></div>
                 </div>
               </div>
 
               <div className="va-skill-row">
                 <div className="va-skill-header">
                   <span>Wave Reading</span>
-                  <span className="va-skill-pct">68%</span>
+                  <span className="va-skill-pct">{currentActiveSurfer.skills?.waveReading || 68}%</span>
                 </div>
                 <div className="va-skill-bar-bg">
-                  <div className="va-skill-bar-fill" style={{ width: '68%' }}></div>
+                  <div className="va-skill-bar-fill" style={{ width: `${currentActiveSurfer.skills?.waveReading || 68}%` }}></div>
                 </div>
               </div>
             </div>
@@ -580,15 +1585,248 @@ const VideoAnalysis = () => {
         }
 
         /* Header */
-        .va-header { display: flex; justify-content: space-between; align-items: center; }
-        .va-header-left { display: flex; align-items: center; gap: 16px; }
+        .va-header { display: flex; justify-content: space-between; align-items: flex-start; }
+        .va-header-left { display: flex; align-items: flex-start; gap: 16px; }
         .va-back-btn {
           width: 44px; height: 44px; background: rgba(255,255,255,0.07); border-radius: 50%;
           border: none; display: flex; align-items: center; justify-content: center; cursor: pointer;
           transition: background 0.2s;
+          margin-top: 2px;
         }
         .va-back-btn:hover { background: rgba(255,255,255,0.15); }
-        .va-title { font-family: 'Outfit', sans-serif; font-size: 32px; font-weight: 700; color: #FFFFFF; margin: 0; }
+        .va-title { font-family: 'Outfit', sans-serif; font-size: 28px; font-weight: 700; color: #FFFFFF; margin: 0 0 6px 0; }
+        
+        /* Multi-Surfer Tagging Bar */
+        .va-surfer-tag-row {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
+          margin-top: 4px;
+        }
+        .va-surfer-tag-label {
+          font-size: 12px;
+          font-weight: 700;
+          color: rgba(255, 255, 255, 0.65);
+          letter-spacing: 0.3px;
+        }
+        .va-surfer-chips-wrap {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+        .va-surfer-chip {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 4px 10px;
+          background: rgba(15, 23, 42, 0.7);
+          border: 1px solid rgba(255, 255, 255, 0.15);
+          border-radius: 20px;
+          color: #E2E8F0;
+          font-size: 12px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .va-surfer-chip:hover {
+          background: rgba(255, 255, 255, 0.1);
+          border-color: rgba(255, 255, 255, 0.3);
+        }
+        .va-surfer-chip.active {
+          background: rgba(13, 148, 136, 0.25);
+          border-color: #2DD4BF;
+          color: #FFFFFF;
+          box-shadow: 0 0 10px rgba(45, 212, 191, 0.25);
+        }
+        .va-surfer-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+        }
+        .va-surfer-chip-name {
+          font-size: 12px;
+        }
+        .va-surfer-chip-remove {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 14px;
+          height: 14px;
+          border-radius: 50%;
+          font-size: 13px;
+          color: rgba(255, 255, 255, 0.5);
+          margin-left: 2px;
+          cursor: pointer;
+          transition: color 0.15s, background 0.15s;
+        }
+        .va-surfer-chip-remove:hover {
+          color: #FFFFFF;
+          background: rgba(244, 63, 94, 0.4);
+        }
+
+        /* Dropdown Container */
+        .va-surfer-dropdown-box {
+          position: relative;
+        }
+        .va-tag-surfer-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 4px 10px;
+          background: rgba(255, 255, 255, 0.08);
+          border: 1px dashed rgba(45, 212, 191, 0.6);
+          border-radius: 20px;
+          color: #2DD4BF;
+          font-size: 12px;
+          font-weight: 700;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .va-tag-surfer-btn:hover {
+          background: rgba(45, 212, 191, 0.15);
+          border-color: #2DD4BF;
+        }
+
+        /* Dropdown Menu */
+        .va-surfer-menu {
+          position: absolute;
+          top: calc(100% + 6px);
+          left: 0;
+          width: 260px;
+          background: #0B132B;
+          border: 1px solid rgba(255, 255, 255, 0.18);
+          border-radius: 12px;
+          padding: 8px;
+          box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+          z-index: 100;
+          backdrop-filter: blur(14px);
+        }
+        .va-surfer-menu-title {
+          font-size: 11px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          color: rgba(255, 255, 255, 0.5);
+          padding: 4px 8px 8px 8px;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+          margin-bottom: 6px;
+        }
+        .va-surfer-menu-list {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          max-height: 220px;
+          overflow-y: auto;
+        }
+        .va-surfer-menu-item {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 6px 8px;
+          border-radius: 8px;
+          cursor: pointer;
+          transition: background 0.15s;
+        }
+        .va-surfer-menu-item:hover {
+          background: rgba(255, 255, 255, 0.08);
+        }
+        .va-surfer-menu-item.selected {
+          background: rgba(13, 148, 136, 0.15);
+        }
+        .va-checkbox {
+          width: 16px;
+          height: 16px;
+          border-radius: 4px;
+          border: 1.5px solid rgba(255, 255, 255, 0.3);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: rgba(255, 255, 255, 0.05);
+          transition: all 0.15s;
+        }
+        .va-checkbox.checked {
+          background: #0D9488;
+          border-color: #2DD4BF;
+        }
+        .va-surfer-menu-avatar {
+          width: 24px;
+          height: 24px;
+          border-radius: 50%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 11px;
+          font-weight: 700;
+          color: #FFFFFF;
+        }
+        .va-surfer-menu-info {
+          flex: 1;
+          min-width: 0;
+        }
+        .va-surfer-menu-name {
+          font-size: 13px;
+          font-weight: 600;
+          color: #FFFFFF;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .va-surfer-menu-sub {
+          font-size: 11px;
+          color: rgba(255, 255, 255, 0.45);
+        }
+
+        /* Right Panel Surfer Tabs */
+        .va-surfer-tabs-box {
+          background: rgba(15, 23, 42, 0.6);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 12px;
+          padding: 10px 12px;
+          margin-bottom: 12px;
+        }
+        .va-surfer-tabs-label {
+          font-size: 10px;
+          font-weight: 800;
+          letter-spacing: 0.8px;
+          color: rgba(255, 255, 255, 0.5);
+          margin-bottom: 6px;
+        }
+        .va-surfer-tabs {
+          display: flex;
+          gap: 6px;
+          flex-wrap: wrap;
+        }
+        .va-surfer-tab-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 5px 10px;
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          border-radius: 6px;
+          color: rgba(255, 255, 255, 0.7);
+          font-size: 12px;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .va-surfer-tab-btn:hover {
+          background: rgba(255, 255, 255, 0.1);
+          color: #FFFFFF;
+        }
+        .va-surfer-tab-btn.active {
+          background: #0D9488;
+          border-color: #2DD4BF;
+          color: #FFFFFF;
+          box-shadow: 0 2px 8px rgba(13, 148, 136, 0.4);
+        }
+        .va-surfer-tab-dot {
+          width: 7px;
+          height: 7px;
+          border-radius: 50%;
+        }
         .va-btn-report {
           padding: 8px 16px; background: #0D9488; border-radius: 8px; border: none;
           font-family: 'Outfit', sans-serif; font-size: 14px; font-weight: 600; color: #FFFFFF;
@@ -605,17 +1843,22 @@ const VideoAnalysis = () => {
         .va-btn-export:hover { transform: translateY(-1px); background: #E11D48; }
 
         /* Layout */
-        .va-layout { display: flex; gap: 32px; align-items: stretch; }
+        .va-layout { display: flex; gap: 24px; align-items: stretch; width: 100%; box-sizing: border-box; min-width: 0; }
 
         /* Left Column */
-        .va-col-left { flex: 1; display: flex; flex-direction: column; gap: 16px; }
+        .va-col-left { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 16px; width: 100%; box-sizing: border-box; }
         
         .va-player-container {
-          background-color: #0F172A;
-          border-radius: 24px;
+          background-color: #000000;
+          border-radius: 20px;
           aspect-ratio: 16/9; position: relative; overflow: hidden;
           box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-          border: 1px solid rgba(255,255,255,0.05);
+          border: 1px solid rgba(255,255,255,0.08);
+          width: 100%;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          box-sizing: border-box;
         }
 
         .va-canvas {
@@ -722,14 +1965,37 @@ const VideoAnalysis = () => {
         }
         
         /* Progress Bar */
-        .va-progress-bar-container { flex: 1; position: relative; height: 16px; display: flex; align-items: center; cursor: pointer; }
+        .va-progress-bar-container { flex: 1; position: relative; height: 18px; display: flex; align-items: center; cursor: pointer; }
         .va-progress-bar-bg { width: 100%; height: 6px; background: rgba(255,255,255,0.25); border-radius: 3px; position: relative; }
         .va-progress-fill { position: absolute; left: 0; top: 0; height: 100%; background: #0D9488; border-radius: 3px; }
-        .va-progress-marker { position: absolute; top: -3px; width: 4px; height: 12px; border-radius: 2px; }
+        .va-progress-marker {
+          position: absolute;
+          top: -4px;
+          width: 5px;
+          height: 14px;
+          border-radius: 2px;
+          transform: translateX(-50%);
+          z-index: 5;
+          cursor: pointer;
+          transition: transform 0.15s ease, filter 0.15s ease;
+        }
+        .va-progress-marker:hover {
+          transform: translateX(-50%) scaleY(1.4);
+          filter: brightness(1.25);
+        }
+        .va-drawing-marker {
+          width: 5px;
+          height: 16px;
+          top: -5px;
+          border-radius: 2px;
+          border: 1px solid rgba(255, 255, 255, 0.9);
+          z-index: 6;
+        }
         .va-progress-handle {
           position: absolute; top: -5px; width: 16px; height: 16px; background: #FFFFFF; border: 3px solid #0D9488;
           border-radius: 50%; transform: translateX(-50%);
           transition: transform 0.1s;
+          z-index: 7;
         }
         .va-progress-bar-container:hover .va-progress-handle {
           transform: translateX(-50%) scale(1.2);
@@ -753,22 +2019,223 @@ const VideoAnalysis = () => {
         }
         .va-time-display { font-size: 15px; font-weight: 700; color: #FFFFFF; margin-left: 8px; }
 
-        /* Clips */
-        .va-clips-row { display: flex; gap: 16px; height: 140px; }
+        /* Clips Horizontal Carousel */
+        .va-clips-row {
+          display: flex;
+          gap: 16px;
+          align-items: stretch;
+          width: 100%;
+          box-sizing: border-box;
+          overflow-x: auto;
+          overflow-y: hidden;
+          padding: 6px 4px 14px 4px;
+          scroll-behavior: smooth;
+          scrollbar-width: thin;
+          scrollbar-color: #0D9488 rgba(255, 255, 255, 0.06);
+        }
+        .va-clips-row::-webkit-scrollbar {
+          height: 6px;
+        }
+        .va-clips-row::-webkit-scrollbar-track {
+          background: rgba(255, 255, 255, 0.05);
+          border-radius: 4px;
+        }
+        .va-clips-row::-webkit-scrollbar-thumb {
+          background: #0D9488;
+          border-radius: 4px;
+        }
+        .va-clips-row::-webkit-scrollbar-thumb:hover {
+          background: #14B8A6;
+        }
+
         .va-clip-item {
-          flex: 1;
-          background-size: cover; background-position: center; border-radius: 16px;
-          border: 2px solid rgba(255,255,255,0.1); position: relative; cursor: pointer;
-          transition: all 0.3s;
+          flex: 0 0 240px;
+          width: 240px;
+          height: 135px;
+          background-size: cover;
+          background-position: center;
+          background-repeat: no-repeat;
+          background-color: #0F172A;
+          border-radius: 14px;
+          border: 2px solid rgba(255, 255, 255, 0.14);
+          position: relative;
+          cursor: pointer;
+          transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+          padding: 12px 14px;
+          overflow: hidden;
+          box-sizing: border-box;
+          box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
         }
         .va-clip-item:hover {
-          border-color: rgba(255,255,255,0.4);
+          border-color: #0D9488;
+          transform: translateY(-3px) scale(1.02);
+          box-shadow: 0 10px 24px rgba(0, 0, 0, 0.55), 0 0 12px rgba(13, 148, 136, 0.35);
+        }
+        .va-clip-item:hover .va-clip-replace-btn {
+          opacity: 1; pointer-events: auto;
+        }
+        .va-clip-active {
+          border: 2.5px solid #2DD4BF !important;
+          box-shadow: 0 0 20px rgba(13, 148, 136, 0.65), 0 6px 16px rgba(0, 0, 0, 0.45);
           transform: translateY(-2px);
         }
-        .va-clip-active { border: 3px solid #0D9488; box-shadow: 0 0 15px rgba(13, 148, 136, 0.4); }
+
+        .va-clip-top-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          width: 100%;
+          z-index: 2;
+        }
         .va-clip-badge {
-          position: absolute; top: 12px; left: 12px; background: rgba(0,0,0,0.65); border-radius: 6px;
-          padding: 4px 8px; font-size: 11px; color: #FFFFFF; font-weight: 700;
+          background: rgba(5, 11, 26, 0.85);
+          backdrop-filter: blur(8px);
+          border-radius: 8px;
+          padding: 3px 10px;
+          font-size: 11px;
+          color: #FFFFFF;
+          font-weight: 800;
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          letter-spacing: 0.3px;
+          display: flex;
+          align-items: center;
+          gap: 5px;
+        }
+        .va-clip-badge-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+        }
+
+        .va-clip-play-center {
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          transform: translate(-50%, -50%) scale(0.85);
+          width: 36px;
+          height: 36px;
+          border-radius: 50%;
+          background: rgba(13, 148, 136, 0.85);
+          backdrop-filter: blur(6px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: #FFFFFF;
+          opacity: 0;
+          pointer-events: none;
+          transition: all 0.2s ease;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+          z-index: 2;
+        }
+        .va-clip-item:hover .va-clip-play-center {
+          opacity: 1;
+          transform: translate(-50%, -50%) scale(1);
+        }
+
+        .va-clip-bottom-info {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          z-index: 2;
+        }
+        .va-clip-wave-name {
+          font-size: 12px;
+          font-weight: 700;
+          color: #FFFFFF;
+          text-shadow: 0 2px 6px rgba(0, 0, 0, 0.95);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .va-clip-duration-tag {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          font-size: 10.5px;
+          font-weight: 700;
+          color: #2DD4BF;
+          background: rgba(13, 148, 136, 0.3);
+          border: 1px solid rgba(45, 212, 191, 0.4);
+          padding: 2px 8px;
+          border-radius: 6px;
+          width: fit-content;
+        }
+
+        .va-clip-replace-btn {
+          width: 24px;
+          height: 24px;
+          border-radius: 50%;
+          background: rgba(15, 23, 42, 0.88);
+          border: 1px solid rgba(255,255,255,0.25);
+          color: #FFFFFF;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          opacity: 0;
+          pointer-events: none;
+          transition: opacity 0.2s, transform 0.2s;
+        }
+        .va-clip-replace-btn:hover {
+          background: #0D9488;
+          transform: scale(1.1);
+        }
+
+        .va-clip-add-card {
+          flex: 0 0 240px;
+          width: 240px;
+          height: 135px;
+          border: 2px dashed rgba(45, 212, 191, 0.45);
+          border-radius: 14px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          cursor: pointer;
+          transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+          background: rgba(13, 148, 136, 0.07);
+          box-sizing: border-box;
+          box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+        }
+        .va-clip-add-card:hover {
+          border-color: #2DD4BF;
+          background: rgba(13, 148, 136, 0.16);
+          transform: translateY(-3px) scale(1.02);
+          box-shadow: 0 8px 22px rgba(13, 148, 136, 0.25);
+        }
+        .va-clip-add-icon {
+          width: 36px;
+          height: 36px;
+          border-radius: 50%;
+          background: rgba(45, 212, 191, 0.16);
+          color: #2DD4BF;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 20px;
+          font-weight: 700;
+          line-height: 1;
+          transition: transform 0.25s ease, background 0.25s ease, color 0.25s ease;
+        }
+        .va-clip-add-card:hover .va-clip-add-icon {
+          transform: scale(1.12) rotate(90deg);
+          background: #0D9488;
+          color: #FFFFFF;
+        }
+        .va-clip-add-text {
+          font-size: 13px;
+          font-weight: 700;
+          color: #F1F5F9;
+          letter-spacing: 0.2px;
+        }
+        .va-clip-add-subtext {
+          font-size: 11px;
+          font-weight: 500;
+          color: rgba(255, 255, 255, 0.55);
         }
 
         /* Right Column (Analytics) */

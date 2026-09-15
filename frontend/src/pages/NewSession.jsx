@@ -132,24 +132,11 @@ function getSlotSubtitle(slot) {
   if (slot.title && !slot.title.startsWith('Slot ')) return slot.title;
 
   const dur = slot.duration ? `${slot.duration} min` : '90 min';
-  const cap = slot.maxStudents ? `Max ${slot.maxStudents} students` : 'Max 4 students';
   const days = slot.days && slot.days.length > 0
     ? (slot.days.length === 7 ? 'Daily' : slot.days.join(', '))
     : 'Mon - Fri';
 
-  const timeStr = slot.startTime || slot.time || '';
-  let flavor = 'Morning offshore wave ride';
-  const match = timeStr.match(/^(\d{1,2})/);
-  const h = match ? parseInt(match[1], 10) : 8;
-  const isPM = timeStr.toLowerCase().includes('pm');
-  const h24 = isPM && h < 12 ? h + 12 : (!isPM && h === 12 ? 0 : h);
-
-  if (h24 >= 10 && h24 < 12) flavor = 'Mid-morning peak surf';
-  else if (h24 >= 12 && h24 < 15) flavor = 'Midday surf & paddle drill';
-  else if (h24 >= 15 && h24 < 17) flavor = 'Afternoon reef clinic';
-  else if (h24 >= 17) flavor = 'Sunset wind down run';
-
-  return `${flavor} · ${dur} · ${cap} · (${days})`;
+  return `${dur} · (${days})`;
 }
 
 function normalizeConfiguredSlots(rawSlots) {
@@ -187,7 +174,46 @@ function loadConfiguredSlots() {
   return normalizeConfiguredSlots(DEFAULT_CONFIGURED_SLOTS);
 }
 
-const NewSession = () => {
+function getStudentCourseDayInfo(s, idx = 0) {
+  let totalDays = 3;
+  const durStr = s.course_duration || s.course || s.waitlistGroup || '3 Days Course';
+  const match = String(durStr).match(/(\d+)\s*Day/i);
+  if (match) {
+    totalDays = parseInt(match[1], 10);
+  } else if (s.total_days) {
+    totalDays = parseInt(s.total_days, 10);
+  }
+
+  let whichDay = 1;
+  if (s.which_day !== undefined && s.which_day !== null && !isNaN(parseInt(s.which_day, 10))) {
+    whichDay = parseInt(s.which_day, 10);
+  } else if (s.current_day !== undefined && s.current_day !== null && !isNaN(parseInt(s.current_day, 10))) {
+    whichDay = parseInt(s.current_day, 10);
+  } else if (s.day_number !== undefined && s.day_number !== null && !isNaN(parseInt(s.day_number, 10))) {
+    whichDay = parseInt(s.day_number, 10);
+  } else if (s.start_date) {
+    try {
+      const parts = String(s.start_date).trim().split(/[-/]/);
+      let sYear, sMonth, sDay;
+      if (parts.length === 3) {
+        if (parts[0].length === 4) { sYear = parseInt(parts[0]); sMonth = parseInt(parts[1]) - 1; sDay = parseInt(parts[2]); }
+        else if (parts[2].length === 4) { sYear = parseInt(parts[2]); sMonth = parseInt(parts[1]) - 1; sDay = parseInt(parts[0]); }
+      }
+      if (sYear && !isNaN(sYear)) {
+        const sDate = new Date(sYear, sMonth, sDay);
+        const today = new Date();
+        const diffDays = Math.floor((today.getTime() - sDate.getTime()) / (1000 * 60 * 60 * 24));
+        whichDay = Math.max(1, Math.min(totalDays, diffDays + 1));
+      }
+    } catch (e) {}
+  } else {
+    whichDay = (idx % totalDays) + 1;
+  }
+
+  return { whichDay, totalDays, courseDuration: durStr };
+}
+
+const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } = {}) => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -195,9 +221,26 @@ const NewSession = () => {
   const [currentStep, setCurrentStep] = useState(1);
 
   // ─── Step 1 State: Session Setup ───
-  const [currentCalendarDate, setCurrentCalendarDate] = useState(new Date(2026, 8, 6)); // Default Sept 2026
-  const [selectedDayNumber, setSelectedDayNumber] = useState(6);
+  const [currentCalendarDate, setCurrentCalendarDate] = useState(() => new Date());
+  const [selectedDayNumber, setSelectedDayNumber] = useState(() => new Date().getDate());
   const [capacity, setCapacity] = useState(30);
+
+  // Initialize from initialDate or searchParams
+  useEffect(() => {
+    const targetDateStr = initialDate || searchParams.get('date');
+    if (targetDateStr) {
+      const parts = targetDateStr.split('-');
+      if (parts.length === 3) {
+        const y = parseInt(parts[0], 10);
+        const m = parseInt(parts[1], 10) - 1;
+        const d = parseInt(parts[2], 10);
+        if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+          setCurrentCalendarDate(new Date(y, m, 1));
+          setSelectedDayNumber(d);
+        }
+      }
+    }
+  }, [initialDate, searchParams]);
 
   // Dynamic slots loaded directly from Session Configuration
   const [slots, setSlots] = useState(() => loadConfiguredSlots());
@@ -206,12 +249,13 @@ const NewSession = () => {
     const firstActive = initialSlots.find(s => s.active);
     return firstActive ? firstActive.id : initialSlots[0]?.id || 1;
   });
-  const [spotName, setSpotName] = useState('Banzai Pipeline, North Shore, Oahu');
+  const [spotName, setSpotName] = useState('');
   const [editingSlotModal, setEditingSlotModal] = useState(null);
 
   // ─── Step 2 State: Roster Selector Pool (Real School Students) ───
   const [dbStudents, setDbStudents] = useState([]);
   const [levelFilter, setLevelFilter] = useState('all'); // 'all' | 'Beginner' | 'Intermediate' | 'Advanced'
+  const [courseDayFilter, setCourseDayFilter] = useState('all'); // 'all' | '1' | '2' | '3' | ... | '7'
   const [dayFilter, setDayFilter] = useState('all');
   const [selectedSlotStep2, setSelectedSlotStep2] = useState(1);
   const [studentSearchStep2, setStudentSearchStep2] = useState('');
@@ -227,6 +271,8 @@ const NewSession = () => {
 
   const [trainingGroups, setTrainingGroups] = useState([]);
   const [activeDropGroupId, setActiveDropGroupId] = useState(null);
+  const [dragOverGroupId, setDragOverGroupId] = useState(null);
+  const [draggingType, setDraggingType] = useState(null);
   const [isPublishing, setIsPublishing] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
 
@@ -238,6 +284,8 @@ const NewSession = () => {
       try {
         const parsed = JSON.parse(activeSchoolStr);
         schoolName = typeof parsed.name === 'string' ? parsed.name : parsed.name?.name;
+        const loc = parsed.city || parsed.location || schoolName;
+        if (loc) setSpotName(`${loc} Beach`);
       } catch (e) {}
     }
     const schoolParam = schoolName ? `?school=${encodeURIComponent(schoolName)}` : '';
@@ -246,15 +294,21 @@ const NewSession = () => {
       .then(r => r.json())
       .then(data => {
         if (Array.isArray(data)) {
-          const mapped = data.map((s, idx) => ({
-            id: s.id,
-            name: s.name,
-            level: s.level || 'Beginner',
-            day: idx % 2 === 0 ? 'day1' : 'day2',
-            waitlistGroup: s.course_duration || 'Standard Session',
-            avatar: (s.image && !s.image.includes('unsplash.com') && !s.image.includes('1500648767791')) ? s.image : '',
-            isReal: true
-          }));
+          const mapped = data.map((s, idx) => {
+            const dayInfo = getStudentCourseDayInfo(s, idx);
+            return {
+              id: s.id,
+              name: s.name,
+              level: s.level || 'Beginner',
+              day: idx % 2 === 0 ? 'day1' : 'day2',
+              whichDay: s.which_day || s.whichDay || dayInfo.whichDay,
+              totalDays: s.total_days || s.totalDays || dayInfo.totalDays,
+              courseDuration: s.course_duration || dayInfo.courseDuration,
+              waitlistGroup: s.course_duration || `${dayInfo.totalDays} Days Course`,
+              avatar: (s.image && !s.image.includes('unsplash.com') && !s.image.includes('1500648767791')) ? s.image : '',
+              isReal: true
+            };
+          });
           setDbStudents(mapped);
           setSelectedStudentIds(mapped.map(s => s.id));
         }
@@ -434,49 +488,41 @@ const NewSession = () => {
     }
   };
 
+  // Step 2 Available Course Days (e.g. Day 1, Day 2, Day 3, ... Day 7)
+  const availableDays = useMemo(() => {
+    const dayNumbers = allPoolStudents.map(s => s.whichDay || 1);
+    const totalDayNumbers = allPoolStudents.map(s => s.totalDays || 3);
+    const maxDay = Math.min(10, Math.max(7, ...dayNumbers, ...totalDayNumbers));
+    const days = [];
+    for (let d = 1; d <= maxDay; d++) {
+      days.push(d);
+    }
+    return days;
+  }, [allPoolStudents]);
+
   // Step 2 Filtered students from database
   const filteredStudents = useMemo(() => {
     return allPoolStudents
       .filter(s => levelFilter === 'all' || s.level.toLowerCase() === levelFilter.toLowerCase())
+      .filter(s => courseDayFilter === 'all' || String(s.whichDay) === String(courseDayFilter))
       .filter(s => !studentSearchStep2 || s.name.toLowerCase().includes(studentSearchStep2.toLowerCase()));
-  }, [allPoolStudents, levelFilter, studentSearchStep2]);
+  }, [allPoolStudents, levelFilter, courseDayFilter, studentSearchStep2]);
 
-  // Transition from Step 2 to Step 3 with automatic grouping of real students
+  // Transition from Step 2 to Step 3: No auto-grouping or auto-instructor assignment
   const proceedToStep3 = () => {
-    const selStudents = allPoolStudents.filter(s => selectedStudentIds.includes(s.id));
-    if (trainingGroups.length === 0 || trainingGroups.every(g => g.studentIds.length === 0)) {
-      const chunks = [];
-      const chunkSize = 4;
-      for (let i = 0; i < selStudents.length; i += chunkSize) {
-        chunks.push(selStudents.slice(i, i + chunkSize));
-      }
-      const newGroups = chunks.map((chunk, idx) => {
-        const letter = String.fromCharCode(65 + idx);
-        const assignedInst = allInstructors[idx % Math.max(1, allInstructors.length)];
-        return {
-          id: `group-${idx + 1}`,
-          name: `Group ${letter} (${chunk[0]?.level || 'General'})`,
-          day: `Day ${idx + 1}`,
-          level: chunk[0]?.level || 'All Levels',
-          studentIds: chunk.map(s => s.id),
-          assignedInstructorId: assignedInst ? assignedInst.id : null,
-        };
-      });
-      if (newGroups.length > 0) {
-        setTrainingGroups(newGroups);
-        setActiveDropGroupId(newGroups[0].id);
-      } else if (selStudents.length > 0) {
-        const fallbackGrp = {
-          id: 'group-1',
-          name: 'Group A (General)',
-          day: 'Day 1',
-          level: 'All Levels',
-          studentIds: selStudents.map(s => s.id),
-          assignedInstructorId: allInstructors[0]?.id || null,
-        };
-        setTrainingGroups([fallbackGrp]);
-        setActiveDropGroupId('group-1');
-      }
+    // If no groups exist yet, create 1 clean initial empty Group Card for user to start dragging or creating
+    if (trainingGroups.length === 0) {
+      setTrainingGroups([
+        {
+          id: `group-1`,
+          name: `Group A`,
+          day: `Day 1`,
+          level: 'General',
+          studentIds: [],
+          assignedInstructorId: null, // Left unassigned for user to drag & drop
+        }
+      ]);
+      setActiveDropGroupId('group-1');
     }
     setCurrentStep(3);
   };
@@ -490,10 +536,13 @@ const NewSession = () => {
     return importedStudents
       .filter(s => {
         if (studentTab === 'All Active') return true;
+        const isAssigned = trainingGroups.some(g => g.studentIds.includes(s.id));
+        if (studentTab === 'Unassigned') return !isAssigned;
+        if (studentTab === 'Assigned') return isAssigned;
         return s.level?.toLowerCase() === studentTab.toLowerCase();
       })
       .filter(s => !studentSearch || s.name.toLowerCase().includes(studentSearch.toLowerCase()));
-  }, [importedStudents, studentTab, studentSearch]);
+  }, [importedStudents, studentTab, studentSearch, trainingGroups]);
 
   // Step 3: Toggle check in Column 1
   const toggleStep3StudentCheck = (id) => {
@@ -502,25 +551,44 @@ const NewSession = () => {
     );
   };
 
-  // Create Group from checked students
+  // Create Group from checked students or create a fresh empty group card
   const handleCreateGroup = () => {
-    if (step3CheckedStudentIds.length === 0) {
-      alert('Please check at least one student from the left column to create a group.');
-      return;
-    }
     const newGroupLetter = String.fromCharCode(65 + trainingGroups.length);
-    const assignedInst = allInstructors[trainingGroups.length % Math.max(1, allInstructors.length)];
+    const checkedStudents = importedStudents.filter(s => step3CheckedStudentIds.includes(s.id));
+    const levelLabel = checkedStudents.length > 0 ? (checkedStudents[0]?.level || 'General') : 'General';
     const newGroup = {
       id: `group-${Date.now()}`,
-      name: `Group ${newGroupLetter} (${importedStudents.find(s => step3CheckedStudentIds.includes(s.id))?.level || 'Custom'})`,
+      name: `Group ${newGroupLetter}`,
       day: `Day ${trainingGroups.length + 1}`,
-      level: importedStudents.find(s => step3CheckedStudentIds.includes(s.id))?.level || 'All Levels',
+      level: levelLabel,
       studentIds: [...step3CheckedStudentIds],
-      assignedInstructorId: assignedInst ? assignedInst.id : null,
+      assignedInstructorId: null, // Left unassigned for user to drag & drop or choose
     };
     setTrainingGroups(prev => [...prev, newGroup]);
     setActiveDropGroupId(newGroup.id);
     setStep3CheckedStudentIds([]);
+  };
+
+  // Delete group card
+  const deleteGroup = (groupId) => {
+    setTrainingGroups(prev => prev.filter(g => g.id !== groupId));
+    if (activeDropGroupId === groupId) {
+      const remaining = trainingGroups.filter(g => g.id !== groupId);
+      setActiveDropGroupId(remaining.length > 0 ? remaining[0].id : null);
+    }
+  };
+
+  // Clear all groups for fresh manual creation
+  const clearAllGroups = () => {
+    setTrainingGroups([]);
+    setActiveDropGroupId(null);
+  };
+
+  // Remove individual student from a group
+  const removeStudentFromGroup = (groupId, studentId) => {
+    setTrainingGroups(prev =>
+      prev.map(g => g.id === groupId ? { ...g, studentIds: g.studentIds.filter(id => id !== studentId) } : g)
+    );
   };
 
   // Assign Instructor to Group
@@ -534,6 +602,53 @@ const NewSession = () => {
     setTrainingGroups(prev =>
       prev.map(g => g.id === groupId ? { ...g, assignedInstructorId: null } : g)
     );
+  };
+
+  // Drag and Drop Handler on Group Cards
+  const handleDropOnGroup = (e, targetGroupId) => {
+    e.preventDefault();
+    setDragOverGroupId(null);
+    setDraggingType(null);
+    try {
+      const raw = e.dataTransfer.getData('application/json');
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (data.type === 'instructor') {
+        assignInstructorToGroup(targetGroupId, data.id);
+      } else if (data.type === 'student') {
+        const sIds = data.studentIds || [];
+        setTrainingGroups(prev => prev.map(g => {
+          if (g.id === targetGroupId) {
+            const merged = Array.from(new Set([...g.studentIds, ...sIds]));
+            return { ...g, studentIds: merged };
+          }
+          if (data.fromGroupId && g.id === data.fromGroupId) {
+            return { ...g, studentIds: g.studentIds.filter(id => !sIds.includes(id)) };
+          }
+          return g;
+        }));
+        setStep3CheckedStudentIds([]);
+      }
+    } catch (err) {
+      console.error('Drop error:', err);
+    }
+  };
+
+  // Drag and Drop Handler to Unassign Students back to Column 1
+  const handleDropOnColumn1 = (e) => {
+    e.preventDefault();
+    setDraggingType(null);
+    try {
+      const raw = e.dataTransfer.getData('application/json');
+      if (!raw) return;
+      const data = JSON.parse(raw);
+      if (data.type === 'student' && data.fromGroupId) {
+        const sIds = data.studentIds || [];
+        setTrainingGroups(prev => prev.map(g =>
+          g.id === data.fromGroupId ? { ...g, studentIds: g.studentIds.filter(id => !sIds.includes(id)) } : g
+        ));
+      }
+    } catch (err) {}
   };
 
   // Finalize & Publish to Backend API
@@ -561,6 +676,7 @@ const NewSession = () => {
           type: grp.level || 'Intermediate',
           status: 'Upcoming',
           notes: `${grp.name} - Automated schedule with ${grp.studentIds.length} athletes`,
+          group_name: grp.name || '',
         };
 
         await fetch(`${API}/api/sessions/bulk`, {
@@ -587,67 +703,113 @@ const NewSession = () => {
     return { bg: '#F3E8FF', text: '#7E22CE', border: '#E9D5FF' }; // Advanced
   };
 
-  return (
-    <div className="ns-root">
-      <Sidebar />
+  const renderContent = () => (
+    <>
+      {/* Top Header & Breadcrumb Stepper */}
+      <header className="ns-header" style={isModal ? { padding: '16px 24px', background: '#FFFFFF', borderBottom: '1px solid #E2E8F0', flexShrink: 0 } : {}}>
+        <div className="ns-header-left" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {currentStep > 1 && (
+            <button
+              type="button"
+              className="ns-header-back-btn"
+              onClick={() => setCurrentStep(prev => Math.max(1, prev - 1))}
+              title={`Back to Step ${currentStep - 1}`}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                background: '#F1F5F9',
+                border: '1px solid #CBD5E1',
+                borderRadius: '8px',
+                padding: '6px 12px',
+                fontSize: '13px',
+                fontWeight: 600,
+                color: '#1E293B',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+              <span>Back</span>
+            </button>
+          )}
+          <h1 className="ns-title" style={isModal ? { fontSize: '20px' } : {}}>
+            {currentStep === 1 && 'Schedule Surf Session'}
+            {currentStep === 2 && 'Roster Selector Pool'}
+            {currentStep === 3 && 'Instructor Groups Matching'}
+          </h1>
+          <span className={`ns-status-tag ${currentStep === 3 ? 'review' : 'upcoming'}`}>
+            {currentStep === 3 ? 'Review' : 'Upcoming'}
+          </span>
+        </div>
 
-      <main className="ns-container">
-        {/* Top Header & Breadcrumb Stepper */}
-        <header className="ns-header">
-          <div className="ns-header-left">
-            <h1 className="ns-title">
-              {currentStep === 1 && 'Create New Session'}
-              {currentStep === 2 && 'Roster Selector Pool'}
-              {currentStep === 3 && 'Instructor Groups Matching'}
-            </h1>
-            <span className={`ns-status-tag ${currentStep === 3 ? 'review' : 'upcoming'}`}>
-              {currentStep === 3 ? 'Review' : 'Upcoming'}
-            </span>
+        {/* Stepper Navigation */}
+        <div className="ns-stepper">
+          <div
+            className={`ns-step-item ${currentStep === 1 ? 'active' : ''} ${currentStep > 1 ? 'completed' : ''}`}
+            onClick={() => setCurrentStep(1)}
+          >
+            <div className="ns-step-circle">
+              {currentStep > 1 ? (
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              ) : '1'}
+            </div>
+            <span className="ns-step-text">1. Session Setup</span>
+            <span className="ns-step-chevron">&gt;</span>
           </div>
 
-          {/* Stepper Navigation */}
-          <div className="ns-stepper">
-            <div
-              className={`ns-step-item ${currentStep === 1 ? 'active' : ''} ${currentStep > 1 ? 'completed' : ''}`}
-              onClick={() => setCurrentStep(1)}
-            >
-              <div className="ns-step-circle">
-                {currentStep > 1 ? (
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                ) : '1'}
-              </div>
-              <span className="ns-step-text">1. Session Setup</span>
-              <span className="ns-step-chevron">&gt;</span>
+          <div
+            className={`ns-step-item ${currentStep === 2 ? 'active' : ''} ${currentStep > 2 ? 'completed' : ''}`}
+            onClick={() => setCurrentStep(2)}
+          >
+            <div className="ns-step-circle">
+              {currentStep > 2 ? (
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              ) : '2'}
             </div>
-
-            <div
-              className={`ns-step-item ${currentStep === 2 ? 'active' : ''} ${currentStep > 2 ? 'completed' : ''}`}
-              onClick={() => setCurrentStep(2)}
-            >
-              <div className="ns-step-circle">
-                {currentStep > 2 ? (
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                ) : '2'}
-              </div>
-              <span className="ns-step-text">2. Import Students</span>
-              <span className="ns-step-chevron">&gt;</span>
-            </div>
-
-            <div
-              className={`ns-step-item ${currentStep === 3 ? 'active' : ''}`}
-              onClick={() => setCurrentStep(3)}
-            >
-              <div className="ns-step-circle">3</div>
-              <span className="ns-step-text">3. Assign Instructors</span>
-            </div>
+            <span className="ns-step-text">2. Import Students</span>
+            <span className="ns-step-chevron">&gt;</span>
           </div>
 
-          <div className="ns-header-right">
-            <span className="ns-forecast-label">Next Swell Forecast:</span>
-            <span className="ns-forecast-val">4-6ft @ 12s</span>
-            <span className="ns-forecast-icon" role="img" aria-label="swell">🌊</span>
+          <div
+            className={`ns-step-item ${currentStep === 3 ? 'active' : ''}`}
+            onClick={() => setCurrentStep(3)}
+          >
+            <div className="ns-step-circle">3</div>
+            <span className="ns-step-text">3. Assign Instructors</span>
           </div>
-        </header>
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {isModal && (
+            <button
+              type="button"
+              className="ses-modal-close"
+              onClick={onClose}
+              style={{
+                width: '34px',
+                height: '34px',
+                borderRadius: '50%',
+                background: '#F1F5F9',
+                border: 'none',
+                cursor: 'pointer',
+                fontWeight: 700,
+                fontSize: '15px',
+                color: '#475569',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'all 0.2s'
+              }}
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      </header>
+
+      {/* Main Form Scrollable Container */}
+      <div style={isModal ? { padding: '24px 28px', overflowY: 'auto', flex: 1, maxHeight: 'calc(90vh - 85px)' } : {}}>
 
         {/* ═════════════════════════════════════════════════════════════════ */}
         {/* STEP 1: SESSION SETUP                                           */}
@@ -700,7 +862,7 @@ const NewSession = () => {
                   <button
                     type="button"
                     className="ns-config-link-btn"
-                    onClick={() => navigate('/sessions/configure')}
+                    onClick={() => navigate('/sessions/configure?from=new_session')}
                     title="Manage daily time slots, durations, and operational days in Session Configuration"
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -785,15 +947,40 @@ const NewSession = () => {
                   </div>
                   <div className="ns-cap-stepper">
                     <button
+                      type="button"
                       className="ns-stepper-btn"
-                      onClick={() => setCapacity(Math.max(5, capacity - 5))}
+                      onClick={() => setCapacity(Math.max(1, (parseInt(capacity, 10) || 5) - 5))}
+                      title="Decrease capacity by 5"
                     >
                       -
                     </button>
-                    <span className="ns-stepper-num">{capacity}</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max="500"
+                      value={capacity}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === '') {
+                          setCapacity('');
+                        } else {
+                          const num = parseInt(val, 10);
+                          setCapacity(isNaN(num) ? '' : Math.max(1, num));
+                        }
+                      }}
+                      onBlur={() => {
+                        if (!capacity || parseInt(capacity, 10) < 1) {
+                          setCapacity(5);
+                        }
+                      }}
+                      className="ns-stepper-input"
+                      title="Type capacity limit directly"
+                    />
                     <button
+                      type="button"
                       className="ns-stepper-btn"
-                      onClick={() => setCapacity(capacity + 5)}
+                      onClick={() => setCapacity((parseInt(capacity, 10) || 0) + 5)}
+                      title="Increase capacity by 5"
                     >
                       +
                     </button>
@@ -844,82 +1031,7 @@ const NewSession = () => {
                 </div>
                 <div className="ns-pool-footer">
                   <span>Selected Roster Count:</span>
-                  <span className="ns-pool-space">{selectedStudentIds.length} / {capacity}</span>
-                </div>
-              </div>
-
-              {/* Today's Tides Card (Dark Mode Widget) */}
-              <div className="ns-tides-card">
-                <div className="ns-tides-search">
-                  <span className="ns-search-icon">🔍</span>
-                  <input
-                    type="text"
-                    value={spotName}
-                    onChange={(e) => setSpotName(e.target.value)}
-                    placeholder="Enter spot or beach name..."
-                    className="ns-tides-input"
-                  />
-                </div>
-
-                <div className="ns-tides-header">
-                  <h4 className="ns-tides-title">Today's Tides</h4>
-                  <span className="ns-tides-sub">Surfline Forecast &middot; Sep 2</span>
-                </div>
-
-                {/* SVG Curve Chart */}
-                <div className="ns-tide-chart-wrap">
-                  <svg viewBox="0 0 400 120" className="ns-tide-svg" preserveAspectRatio="none">
-                    <defs>
-                      <linearGradient id="tideGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#38BDF8" stopOpacity="0.4" />
-                        <stop offset="100%" stopColor="#38BDF8" stopOpacity="0.0" />
-                      </linearGradient>
-                    </defs>
-                    <path
-                      d="M 0 100 Q 80 80 140 40 T 260 20 T 400 30 L 400 120 L 0 120 Z"
-                      fill="url(#tideGrad)"
-                    />
-                    <path
-                      d="M 0 100 Q 80 80 140 40 T 260 20 T 400 30"
-                      fill="none"
-                      stroke="#38BDF8"
-                      strokeWidth="3"
-                    />
-                  </svg>
-                  <div className="ns-tide-axis">
-                    <span>6am</span>
-                    <span>12pm</span>
-                    <span>6pm</span>
-                  </div>
-                </div>
-
-                {/* Tides Timeline items */}
-                <div className="ns-tide-rows">
-                  <div className="ns-tide-row">
-                    <span className="ns-tide-tag high">High</span>
-                    <span className="ns-tide-height">5.2 ft</span>
-                    <span className="ns-tide-time">6:14 AM</span>
-                  </div>
-                  <div className="ns-tide-row">
-                    <span className="ns-tide-tag low">Low</span>
-                    <span className="ns-tide-height">1.1 ft</span>
-                    <span className="ns-tide-time">12:32 PM</span>
-                  </div>
-                  <div className="ns-tide-row">
-                    <span className="ns-tide-tag high">High</span>
-                    <span className="ns-tide-height">4.8 ft</span>
-                    <span className="ns-tide-time">6:47 PM</span>
-                  </div>
-                  <div className="ns-tide-row">
-                    <span className="ns-tide-tag low">Low</span>
-                    <span className="ns-tide-height">0.8 ft</span>
-                    <span className="ns-tide-time">11:58 PM</span>
-                  </div>
-                </div>
-
-                <div className="ns-tides-footer">
-                  <span>Water Temp: <strong>68&deg;F</strong></span>
-                  <span>Swell: <strong>4-6ft @ 12s WSW</strong></span>
+                  <span className="ns-pool-space">{selectedStudentIds.length} Athletes Selected</span>
                 </div>
               </div>
             </div>
@@ -939,9 +1051,38 @@ const NewSession = () => {
               </span>
             </div>
 
-            {/* Filter Bar */}
+            {/* Filter & Slot Selection Bar */}
             <div className="ns-filters-card">
-              <div className="ns-filter-row">
+              {/* Slot Selection Row (Moved to Top for High Visibility) */}
+              <div className="ns-filter-row ns-slot-filter-row">
+                <span className="ns-filter-label" style={{ fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span>⏰</span> Select Time Slot:
+                </span>
+                <div className="ns-slot-pills-wrap">
+                  {slots.filter(s => s.active !== false).map((s, idx) => {
+                    const isSelected = selectedSlotId === s.id;
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        className={`ns-slot-pill-btn ${isSelected ? 'active' : ''}`}
+                        onClick={() => {
+                          setSelectedSlotId(s.id);
+                          setSelectedSlotStep2(idx + 1);
+                        }}
+                        title={`${s.time} (${s.title || ''})`}
+                      >
+                        <span className="ns-slot-pill-num">{idx + 1}</span>
+                        <span className="ns-slot-pill-time">{s.startTime || s.time || `Slot ${idx + 1}`}</span>
+                        {isSelected && <span className="ns-slot-pill-active-badge">Active</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Filter by Level */}
+              <div className="ns-filter-row" style={{ marginTop: '14px', paddingTop: '14px', borderTop: '1px solid #F1F5F9' }}>
                 <span className="ns-filter-label">Filter by Level:</span>
                 <div className="ns-pill-group">
                   <button
@@ -971,6 +1112,32 @@ const NewSession = () => {
                 </div>
               </div>
 
+              {/* Filter by Day (Which Day Athlete is Attending) */}
+              <div className="ns-filter-row" style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #F1F5F9' }}>
+                <span className="ns-filter-label">Filter by Day:</span>
+                <div className="ns-pill-group" style={{ flexWrap: 'wrap', gap: '6px' }}>
+                  <button
+                    className={`ns-pill ${courseDayFilter === 'all' ? 'active' : ''}`}
+                    onClick={() => setCourseDayFilter('all')}
+                  >
+                    All Days ({allPoolStudents.length})
+                  </button>
+                  {availableDays.map(d => {
+                    const count = allPoolStudents.filter(s => String(s.whichDay) === String(d)).length;
+                    return (
+                      <button
+                        key={d}
+                        className={`ns-pill ${String(courseDayFilter) === String(d) ? 'active' : ''}`}
+                        onClick={() => setCourseDayFilter(String(d))}
+                      >
+                        Day {d} ({count})
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Search Athlete */}
               <div className="ns-filter-row" style={{ marginTop: '12px' }}>
                 <span className="ns-filter-label">Search Athlete:</span>
                 <input
@@ -998,20 +1165,35 @@ const NewSession = () => {
                   <span className="ns-ps-title">School Athlete Roster</span>
                   <span className="ns-ps-count">({filteredStudents.length} available)</span>
                 </div>
-                <button
-                  className="ns-select-all-btn"
-                  onClick={() => {
-                    const poolIds = filteredStudents.map(s => s.id);
-                    const allSelected = poolIds.length > 0 && poolIds.every(id => selectedStudentIds.includes(id));
-                    if (allSelected) {
-                      setSelectedStudentIds(prev => prev.filter(id => !poolIds.includes(id)));
-                    } else {
-                      setSelectedStudentIds(prev => Array.from(new Set([...prev, ...poolIds])));
-                    }
-                  }}
-                >
-                  {filteredStudents.length > 0 && filteredStudents.every(s => selectedStudentIds.includes(s.id)) ? 'Deselect All' : 'Select All'}
-                </button>
+                {(() => {
+                  const poolIds = filteredStudents.map(s => s.id);
+                  const isAllSelected = poolIds.length > 0 && poolIds.every(id => selectedStudentIds.includes(id));
+                  return (
+                    <button
+                      type="button"
+                      className={`ns-select-all-btn ${isAllSelected ? 'deselect' : ''}`}
+                      onClick={() => {
+                        if (isAllSelected) {
+                          setSelectedStudentIds(prev => prev.filter(id => !poolIds.includes(id)));
+                        } else {
+                          setSelectedStudentIds(prev => Array.from(new Set([...prev, ...poolIds])));
+                        }
+                      }}
+                    >
+                      {isAllSelected ? (
+                        <>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                          <span>Deselect All</span>
+                        </>
+                      ) : (
+                        <>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                          <span>Select All</span>
+                        </>
+                      )}
+                    </button>
+                  );
+                })()}
               </div>
 
               {filteredStudents.length === 0 ? (
@@ -1036,7 +1218,10 @@ const NewSession = () => {
                         </div>
                         <UserAvatar src={student.avatar} name={student.name} size={32} className="ns-student-avatar" />
                         <span className="ns-student-name">{student.name}</span>
-                        <span className="ns-student-group-label">{student.waitlistGroup || 'Student'}</span>
+                        <span className="ns-day-progress-badge">
+                          📅 Day {student.whichDay} of {student.totalDays}
+                        </span>
+                        <span className="ns-student-group-label">{student.courseDuration || student.waitlistGroup || `${student.totalDays} Days Course`}</span>
                         <span
                           className="ns-level-badge"
                           style={{ backgroundColor: badge.bg, color: badge.text, borderColor: badge.border }}
@@ -1053,48 +1238,45 @@ const NewSession = () => {
             {/* Bottom Sticky Target Bar */}
             <div className="ns-sticky-bar">
               <div className="ns-sb-left">
-                <span className="ns-sb-target-label">SELECTED TARGET</span>
+                <span className="ns-sb-target-label">SELECTED ROSTER</span>
                 <span className="ns-sb-capacity">
-                  {selectedStudentIds.length} / {capacity} Students Selected
+                  {selectedStudentIds.length} Students Selected (Any Group Size)
                 </span>
-                {/* Circular Dial */}
-                <div className="ns-cap-dial">
-                  <svg width="34" height="34" viewBox="0 0 36 36">
-                    <path
-                      d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                      fill="none"
-                      stroke="rgba(255,255,255,0.15)"
-                      strokeWidth="4"
-                    />
-                    <path
-                      d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                      fill="none"
-                      stroke="#10B981"
-                      strokeWidth="4"
-                      strokeDasharray={`${Math.min(100, Math.round((selectedStudentIds.length / (capacity || 1)) * 100))}, 100`}
-                    />
-                  </svg>
-                </div>
               </div>
 
               <div className="ns-sb-center">
-                {slots.filter(s => s.active !== false).map((s, idx) => (
-                  <div
-                    key={s.id}
-                    className={`ns-slot-indicator ${selectedSlotId === s.id ? 'active' : ''}`}
-                    onClick={() => {
-                      setSelectedSlotId(s.id);
-                      setSelectedSlotStep2(idx + 1);
-                    }}
-                    title={`${s.time} (${s.title || ''})`}
-                  >
-                    <div className="ns-slot-dot">{idx + 1}</div>
-                    <span>{s.startTime || `Slot ${idx + 1}`}</span>
-                  </div>
-                ))}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(255,255,255,0.08)', padding: '6px 14px', borderRadius: '20px', border: '1px solid rgba(255,255,255,0.12)' }}>
+                  <span style={{ fontSize: '12px', color: '#94A3B8' }}>Selected Slot:</span>
+                  <span style={{ fontSize: '13px', fontWeight: 700, color: '#10B981' }}>
+                    ⏰ {selectedSlot?.startTime || selectedSlot?.time || 'Slot'}
+                  </span>
+                </div>
               </div>
 
-              <div className="ns-sb-right">
+              <div className="ns-sb-right" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <button
+                  type="button"
+                  className="ns-sb-back-btn"
+                  onClick={() => setCurrentStep(1)}
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.12)',
+                    color: '#FFFFFF',
+                    border: '1px solid rgba(255, 255, 255, 0.25)',
+                    borderRadius: '8px',
+                    padding: '10px 18px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    transition: 'all 0.15s ease'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)'}
+                  onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)'}
+                >
+                  ← Back to Session Setup
+                </button>
                 <button
                   className="ns-primary-btn"
                   onClick={proceedToStep3}
@@ -1141,16 +1323,20 @@ const NewSession = () => {
 
             {/* 3-Column Workspace */}
             <div className="ns-step3-workspace">
-              {/* Column 1: Students List */}
-              <div className="ns-ws-col">
+              {/* Column 1: Students List (Draggable Source + Dropzone to unassign) */}
+              <div
+                className="ns-ws-col ns-ws-col-students"
+                onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
+                onDrop={handleDropOnColumn1}
+              >
                 <div className="ns-col-head">
                   <h3 className="ns-col-title">Students List</h3>
                   <span className="ns-col-badge">{importedStudents.length} Total</span>
                 </div>
 
-                {/* Level Tabs */}
-                <div className="ns-day-tabs">
-                  {['All Active', 'Beginner', 'Intermediate', 'Advanced'].map(tab => (
+                {/* Level & Group Filter Tabs */}
+                <div className="ns-day-tabs" style={{ flexWrap: 'wrap', gap: '4px' }}>
+                  {['All Active', 'Unassigned', 'Assigned', 'Beginner', 'Intermediate', 'Advanced'].map(tab => (
                     <button
                       key={tab}
                       className={`ns-day-tab ${studentTab === tab ? 'active' : ''}`}
@@ -1172,58 +1358,147 @@ const NewSession = () => {
                   />
                 </div>
 
+                {/* Helper Tip */}
+                <div style={{ fontSize: '11px', color: '#64748B', display: 'flex', alignItems: 'center', gap: '4px', background: '#F8FAFC', padding: '6px 10px', borderRadius: '6px' }}>
+                  <span>💡</span> Drag students directly into Group Cards on the right.
+                </div>
+
                 {/* Students Checklist */}
                 <div className="ns-ws-student-list">
-                  {filteredColumn1Students.map(student => {
-                    const isChecked = step3CheckedStudentIds.includes(student.id);
-                    const badge = getBadgeStyle(student.level);
-                    return (
-                      <div
-                        key={student.id}
-                        className={`ns-ws-student-item ${isChecked ? 'active' : ''}`}
-                        onClick={() => toggleStep3StudentCheck(student.id)}
-                      >
-                        <div className={`ns-checkbox-box ${isChecked ? 'checked' : ''}`}>
-                          {isChecked && (
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                          )}
-                        </div>
-                        <UserAvatar src={student.avatar} name={student.name} size={28} className="ns-ws-avatar" />
-                        <span className="ns-ws-name">{student.name}</span>
-                        <span className="ns-ws-day-tag">{student.waitlistGroup}</span>
-                        <span
-                          className="ns-level-badge"
-                          style={{ backgroundColor: badge.bg, color: badge.text, borderColor: badge.border }}
+                  {filteredColumn1Students.length === 0 ? (
+                    <div style={{ padding: '24px 12px', textAlign: 'center', color: '#94A3B8', fontSize: '12px' }}>
+                      No students found in this tab.
+                    </div>
+                  ) : (
+                    filteredColumn1Students.map(student => {
+                      const isChecked = step3CheckedStudentIds.includes(student.id);
+                      const badge = getBadgeStyle(student.level);
+                      const assignedGroup = trainingGroups.find(g => g.studentIds.includes(student.id));
+
+                      return (
+                        <div
+                          key={student.id}
+                          className={`ns-ws-student-item ${isChecked ? 'active' : ''}`}
+                          draggable={true}
+                          onDragStart={(e) => {
+                            const ids = step3CheckedStudentIds.includes(student.id) && step3CheckedStudentIds.length > 0
+                              ? step3CheckedStudentIds
+                              : [student.id];
+                            e.dataTransfer.setData('application/json', JSON.stringify({
+                              type: 'student',
+                              studentIds: ids,
+                              fromGroupId: assignedGroup?.id || null
+                            }));
+                            e.dataTransfer.effectAllowed = 'copyMove';
+                            setDraggingType('student');
+                          }}
+                          onDragEnd={() => {
+                            setDraggingType(null);
+                            setDragOverGroupId(null);
+                          }}
+                          onClick={() => toggleStep3StudentCheck(student.id)}
+                          title="Drag this student into any Group Card, or check to create a group"
                         >
-                          {student.level}
-                        </span>
-                      </div>
-                    );
-                  })}
+                          <span className="ns-drag-grip" title="Drag">⠿</span>
+                          <div className={`ns-checkbox-box ${isChecked ? 'checked' : ''}`}>
+                            {isChecked && (
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                            )}
+                          </div>
+                          <UserAvatar src={student.avatar} name={student.name} size={28} className="ns-ws-avatar" />
+                          <span className="ns-ws-name">{student.name}</span>
+                          
+                          <span
+                            className="ns-day-progress-badge"
+                            style={{ fontSize: '10.5px', padding: '1px 6px', borderRadius: '4px' }}
+                          >
+                            Day {student.whichDay}/{student.totalDays}
+                          </span>
+
+                          {/* Group Assignment Badge */}
+                          {assignedGroup ? (
+                            <span
+                              className="ns-ws-group-badge"
+                              style={{
+                                backgroundColor: '#E0F2FE',
+                                color: '#0284C7',
+                                borderColor: '#BAE6FD',
+                                padding: '2px 8px',
+                                borderRadius: '12px',
+                                fontSize: '11px',
+                                fontWeight: 600,
+                                border: '1px solid #BAE6FD'
+                              }}
+                            >
+                              ✓ {assignedGroup.name}
+                            </span>
+                          ) : (
+                            <span
+                              className="ns-ws-group-badge"
+                              style={{
+                                backgroundColor: '#F8FAFC',
+                                color: '#94A3B8',
+                                borderColor: '#E2E8F0',
+                                padding: '2px 8px',
+                                borderRadius: '12px',
+                                fontSize: '11px',
+                                fontWeight: 500,
+                                border: '1px dashed #CBD5E1'
+                              }}
+                            >
+                              Unassigned
+                            </span>
+                          )}
+
+                          <span
+                            className="ns-level-badge"
+                            style={{ backgroundColor: badge.bg, color: badge.text, borderColor: badge.border }}
+                          >
+                            {student.level}
+                          </span>
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
 
                 <div className="ns-ws-col-footer">
                   <span className="ns-selected-count">{step3CheckedStudentIds.length} Selected</span>
                   <button className="ns-create-grp-btn" onClick={handleCreateGroup}>
-                    Create Group
+                    + Group ({step3CheckedStudentIds.length})
                   </button>
                 </div>
               </div>
 
-              {/* Column 2: Assigned Training Groups */}
-              <div className="ns-ws-col">
-                <div className="ns-col-head">
+              {/* Column 2: Assigned Training Groups (Dropzone for Students & Instructors) */}
+              <div className="ns-ws-col ns-ws-col-groups">
+                <div className="ns-col-head" style={{ gap: '8px', flexWrap: 'wrap' }}>
                   <h3 className="ns-col-title">Assigned Training Groups</h3>
-                  <button className="ns-add-grp-btn" onClick={handleCreateGroup}>
-                    + Create Group Card
-                  </button>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    {trainingGroups.length > 0 && (
+                      <button
+                        className="ns-add-grp-btn"
+                        style={{ background: '#F1F5F9', color: '#64748B', borderColor: '#CBD5E1' }}
+                        onClick={clearAllGroups}
+                        title="Clear all groups"
+                      >
+                        Clear All
+                      </button>
+                    )}
+                    <button className="ns-add-grp-btn" onClick={handleCreateGroup}>
+                      + Create Group Card
+                    </button>
+                  </div>
                 </div>
 
                 <div className="ns-training-groups-list">
                   {trainingGroups.length === 0 ? (
-                    <div style={{ padding: '28px', textAlign: 'center', color: '#64748B', background: '#FFFFFF', borderRadius: '10px', border: '1px dashed #CBD5E1' }}>
-                      <p style={{ margin: 0, fontWeight: 600 }}>No training groups created yet.</p>
-                      <p style={{ margin: '4px 0 12px 0', fontSize: '12px' }}>Check students in Column 1 and click "Create Group" to assemble coaching groups.</p>
+                    <div style={{ padding: '36px 20px', textAlign: 'center', color: '#64748B', background: '#FFFFFF', borderRadius: '12px', border: '1.5px dashed #CBD5E1' }}>
+                      <p style={{ margin: 0, fontWeight: 700, fontSize: '14px', color: '#0F172A' }}>No training groups created yet</p>
+                      <p style={{ margin: '6px 0 16px 0', fontSize: '12px' }}>Click <strong>"+ Create Group Card"</strong> or check students on the left to start grouping.</p>
+                      <button className="ns-create-grp-btn" onClick={handleCreateGroup} style={{ margin: '0 auto' }}>
+                        + Create First Group
+                      </button>
                     </div>
                   ) : (
                     trainingGroups.map(grp => {
@@ -1231,50 +1506,125 @@ const NewSession = () => {
                       const grpStudents = grp.studentIds
                         .map(id => allPoolStudents.find(s => s.id === id))
                         .filter(Boolean);
+                      const isDragOver = dragOverGroupId === grp.id;
 
                       return (
                         <div
                           key={grp.id}
-                          className={`ns-group-card ${activeDropGroupId === grp.id ? 'focused' : ''}`}
+                          className={`ns-group-card ${activeDropGroupId === grp.id ? 'focused' : ''} ${isDragOver ? 'drag-over' : ''}`}
                           onClick={() => setActiveDropGroupId(grp.id)}
+                          onDragOver={(e) => {
+                            e.preventDefault();
+                            e.dataTransfer.dropEffect = 'copy';
+                            if (dragOverGroupId !== grp.id) setDragOverGroupId(grp.id);
+                          }}
+                          onDragLeave={() => {
+                            if (dragOverGroupId === grp.id) setDragOverGroupId(null);
+                          }}
+                          onDrop={(e) => handleDropOnGroup(e, grp.id)}
                         >
-                          <div className="ns-gc-header">
-                            <span className="ns-gc-day">{grp.day}</span>
-                          </div>
-                          <div className="ns-gc-title-row">
-                            <h4 className="ns-gc-title">{grp.name}</h4>
-                            <span className="ns-gc-count">{grpStudents.length} Students</span>
+                          <div className="ns-gc-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span className="ns-gc-day">{grp.day}</span>
+                              <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 600 }}>{grp.level}</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteGroup(grp.id);
+                              }}
+                              style={{
+                                background: 'none',
+                                border: 'none',
+                                color: '#94A3B8',
+                                cursor: 'pointer',
+                                fontSize: '18px',
+                                padding: '2px 6px',
+                                borderRadius: '4px',
+                                lineHeight: 1
+                              }}
+                              title="Delete group"
+                            >
+                              &times;
+                            </button>
                           </div>
 
-                          {/* Overlapping Avatar Stack */}
-                          <div className="ns-avatar-stack">
-                            {grpStudents.slice(0, 4).map((s, idx) => (
-                              <UserAvatar
-                                key={s.id || idx}
-                                src={s.avatar}
-                                name={s.name}
-                                size={28}
-                                className="ns-stack-avatar"
-                                style={{ zIndex: 5 - idx }}
-                              />
-                            ))}
-                            {grpStudents.length > 4 && (
-                              <div className="ns-stack-plus">+{grpStudents.length - 4}</div>
+                          <div className="ns-gc-title-row">
+                            <h4 className="ns-gc-title">{grp.name}</h4>
+                            <span className="ns-gc-count" style={{ fontWeight: 700, color: grpStudents.length > 0 ? '#0F172A' : '#94A3B8' }}>
+                              {grpStudents.length} Students
+                            </span>
+                          </div>
+
+                          {/* Students Inside Group */}
+                          <div className="ns-group-students-box">
+                            {grpStudents.length === 0 ? (
+                              <div className="ns-empty-students-dropzone">
+                                <span>📥 Drag &amp; Drop students here</span>
+                              </div>
+                            ) : (
+                              <div className="ns-group-students-grid">
+                                {grpStudents.map((s) => (
+                                  <div
+                                    key={s.id}
+                                    className="ns-group-student-chip"
+                                    draggable={true}
+                                    onDragStart={(e) => {
+                                      e.dataTransfer.setData('application/json', JSON.stringify({
+                                        type: 'student',
+                                        studentIds: [s.id],
+                                        fromGroupId: grp.id
+                                      }));
+                                      e.dataTransfer.effectAllowed = 'copyMove';
+                                      setDraggingType('student');
+                                    }}
+                                    onDragEnd={() => {
+                                      setDraggingType(null);
+                                      setDragOverGroupId(null);
+                                    }}
+                                    title="Drag to another group or click × to remove"
+                                  >
+                                    <UserAvatar src={s.avatar} name={s.name} size={20} className="ns-chip-avatar" />
+                                    <span className="ns-chip-name">{s.name}</span>
+                                    <button
+                                      type="button"
+                                      className="ns-chip-remove"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        removeStudentFromGroup(grp.id, s.id);
+                                      }}
+                                    >
+                                      &times;
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
                             )}
                           </div>
 
                           {/* Assigned Instructor Slot */}
                           {assignedInstructor ? (
-                            <div className="ns-assigned-inst-box">
+                            <div
+                              className="ns-assigned-inst-box"
+                              onDragOver={(e) => {
+                                e.preventDefault();
+                                e.dataTransfer.dropEffect = 'copy';
+                              }}
+                              onDrop={(e) => handleDropOnGroup(e, grp.id)}
+                            >
                               <UserAvatar src={assignedInstructor.avatar} name={assignedInstructor.name} size={26} className="ns-ai-avatar" />
-                              <span className="ns-ai-name">{assignedInstructor.name} Assigned</span>
+                              <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
+                                <span className="ns-ai-name">{assignedInstructor.name}</span>
+                                <span style={{ fontSize: '10.5px', color: '#0369A1' }}>Assigned Instructor</span>
+                              </div>
                               <button
                                 className="ns-ai-remove"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   removeInstructorFromGroup(grp.id);
                                 }}
-                                title="Unassign"
+                                title="Unassign Instructor"
                               >
                                 &times;
                               </button>
@@ -1287,7 +1637,7 @@ const NewSession = () => {
                                 setActiveDropGroupId(grp.id);
                               }}
                             >
-                              Drag and drop instructor here
+                              <span>🖐️ <strong>Drag Instructor Here</strong> (or click instructor)</span>
                             </div>
                           )}
                         </div>
@@ -1297,11 +1647,15 @@ const NewSession = () => {
                 </div>
               </div>
 
-              {/* Column 3: Available Instructors */}
-              <div className="ns-ws-col">
+              {/* Column 3: Available Instructors (Draggable) */}
+              <div className="ns-ws-col ns-ws-col-instructors">
                 <div className="ns-col-head">
                   <h3 className="ns-col-title">Available Instructors</h3>
                   <span className="ns-col-badge">{allInstructors.length} Staff</span>
+                </div>
+
+                <div style={{ fontSize: '11px', color: '#64748B', display: 'flex', alignItems: 'center', gap: '4px', background: '#F8FAFC', padding: '6px 10px', borderRadius: '6px' }}>
+                  <span>🖐️</span> Drag instructor card into any Group Card in the center.
                 </div>
 
                 <div className="ns-instructors-list">
@@ -1311,13 +1665,28 @@ const NewSession = () => {
                     </div>
                   ) : (
                     allInstructors.map(inst => {
-                      const isAssigned = trainingGroups.some(g => String(g.assignedInstructorId) === String(inst.id));
+                      const assignedCount = trainingGroups.filter(g => String(g.assignedInstructorId) === String(inst.id)).length;
+                      const isAssigned = assignedCount > 0;
                       const isOnLeave = inst.status === 'On Leave';
 
                       return (
                         <div
                           key={inst.id}
                           className={`ns-inst-card ${isAssigned ? 'assigned' : ''} ${isOnLeave ? 'leave' : ''}`}
+                          draggable={!isOnLeave}
+                          onDragStart={(e) => {
+                            if (isOnLeave) return;
+                            e.dataTransfer.setData('application/json', JSON.stringify({
+                              type: 'instructor',
+                              id: inst.id
+                            }));
+                            e.dataTransfer.effectAllowed = 'copy';
+                            setDraggingType('instructor');
+                          }}
+                          onDragEnd={() => {
+                            setDraggingType(null);
+                            setDragOverGroupId(null);
+                          }}
                           onClick={() => {
                             if (isOnLeave) {
                               alert(`${inst.name} is currently On Leave.`);
@@ -1326,23 +1695,26 @@ const NewSession = () => {
                             if (activeDropGroupId) {
                               assignInstructorToGroup(activeDropGroupId, inst.id);
                             } else {
-                              // Find first unassigned group
                               const unassigned = trainingGroups.find(g => !g.assignedInstructorId);
                               if (unassigned) {
                                 assignInstructorToGroup(unassigned.id, inst.id);
+                              } else if (trainingGroups.length > 0) {
+                                assignInstructorToGroup(trainingGroups[0].id, inst.id);
                               } else {
-                                alert('Please select or create a Training Group in the middle column first.');
+                                alert('Please create a Group Card in the center column first.');
                               }
                             }
                           }}
+                          title={isOnLeave ? 'On Leave' : 'Drag into a group or click to assign'}
                         >
+                          <span className="ns-drag-grip" style={{ color: '#0D9488', fontSize: '13px' }}>⠿</span>
                           <UserAvatar src={inst.avatar} name={inst.name} size={36} className="ns-inst-avatar" />
                           <div className="ns-inst-info">
                             <h4 className="ns-inst-name">{inst.name}</h4>
                             <span className="ns-inst-role">{inst.role}</span>
                           </div>
                           <span className={`ns-inst-badge ${isOnLeave ? 'leave' : isAssigned ? 'assigned' : 'available'}`}>
-                            {isOnLeave ? 'On Leave' : isAssigned ? '1 Assigned' : 'Available'}
+                            {isOnLeave ? 'On Leave' : isAssigned ? `${assignedCount} Assigned` : 'Available'}
                           </span>
                         </div>
                       );
@@ -1353,7 +1725,30 @@ const NewSession = () => {
             </div>
 
             {/* Finalize Action Bottom Bar */}
-            <div className="ns-bottom-action-bar">
+            <div className="ns-bottom-action-bar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
+              <button
+                type="button"
+                className="ns-sec-btn"
+                onClick={() => setCurrentStep(2)}
+                style={{
+                  padding: '12px 22px',
+                  fontSize: '13.5px',
+                  fontWeight: 600,
+                  borderRadius: '10px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  background: '#FFFFFF',
+                  border: '1.5px solid #CBD5E1',
+                  color: '#334155',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.borderColor = '#94A3B8'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = '#FFFFFF'; e.currentTarget.style.borderColor = '#CBD5E1'; }}
+              >
+                ← Back to Import Students
+              </button>
               <button
                 className="ns-primary-btn finalize-btn"
                 onClick={handleFinalizeAndPublish}
@@ -1495,44 +1890,19 @@ const NewSession = () => {
             </div>
           </div>
         )}
+      </div>
 
-        {/* Success Modal */}
-        {showSuccessModal && (
-          <div className="ns-modal-overlay">
-            <div className="ns-modal-card">
-              <div className="ns-modal-icon">🎉</div>
-              <h2 className="ns-modal-title">Session Created &amp; Published!</h2>
-              <p className="ns-modal-desc">
-                Your session for <strong>{formattedSessionDate} ({selectedSlot.time})</strong> with {trainingGroups.length} training groups has been successfully saved into the schedule.
-              </p>
-              <div className="ns-modal-actions">
-                <button
-                  className="ns-secondary-btn"
-                  onClick={() => {
-                    setShowSuccessModal(false);
-                    setCurrentStep(1);
-                  }}
-                >
-                  Create Another Session
-                </button>
-                <button
-                  className="ns-primary-btn"
-                  onClick={() => navigate('/sessions')}
-                >
-                  View in Sessions List &rarr;
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </main>
-
-      {/* Scoped Styling for the 3-Step Wizard Flow */}
+      {/* Scoped Styling for the 3-Step Wizard Flow (Rendered for both Modal & Standalone page) */}
       <style>{`
         .ns-root {
           display: flex;
           min-height: 100vh;
           background-color: #F8FAFC;
+          font-family: 'Instrument Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          color: #0F172A;
+        }
+
+        .ns-container, .ns-modal-container {
           font-family: 'Instrument Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
           color: #0F172A;
         }
@@ -1600,7 +1970,13 @@ const NewSession = () => {
           font-size: 13px;
           font-weight: 500;
           color: #64748B;
-          transition: color 0.15s;
+          transition: all 0.15s;
+          padding: 4px 6px;
+          border-radius: 6px;
+        }
+        .ns-step-item:hover {
+          color: #0284C7;
+          background-color: #F8FAFC;
         }
         .ns-step-item.active {
           color: #0284C7;
@@ -1997,6 +2373,34 @@ const NewSession = () => {
           min-width: 24px;
           text-align: center;
         }
+        .ns-stepper-input {
+          font-family: 'Outfit', sans-serif;
+          font-weight: 700;
+          font-size: 15px;
+          color: #0F172A;
+          width: 52px;
+          height: 32px;
+          text-align: center;
+          background: #FFFFFF;
+          border: 1px solid #CBD5E1;
+          border-radius: 6px;
+          padding: 0 4px;
+          outline: none;
+          box-sizing: border-box;
+          transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        .ns-stepper-input:focus {
+          border-color: #0284C7;
+          box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.15);
+        }
+        .ns-stepper-input::-webkit-outer-spin-button,
+        .ns-stepper-input::-webkit-inner-spin-button {
+          -webkit-appearance: none;
+          margin: 0;
+        }
+        .ns-stepper-input[type=number] {
+          -moz-appearance: textfield;
+        }
 
         /* Right Available Pool Card */
         .ns-pool-card {
@@ -2171,7 +2575,8 @@ const NewSession = () => {
           display: flex;
           flex-direction: column;
           gap: 20px;
-          padding-bottom: 80px; /* Space for bottom sticky bar */
+          padding-bottom: 12px;
+          position: relative;
         }
 
         .ns-filters-card {
@@ -2226,31 +2631,69 @@ const NewSession = () => {
           align-items: center;
           margin-bottom: 16px;
         }
-        .ns-ps-title-wrap {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-        }
-        .ns-ps-title {
+        .ns-pool-sec-title {
           font-family: 'Outfit', sans-serif;
           font-size: 16px;
           font-weight: 700;
+          margin: 0;
           color: #0F172A;
         }
-        .ns-ps-count {
-          font-size: 13px;
-          color: #64748B;
+        .ns-pool-sec-actions {
+          display: flex;
+          gap: 8px;
         }
-        .ns-select-all-btn {
-          background: none;
-          border: none;
-          color: #0284C7;
-          font-size: 13px;
+        .ns-sec-btn {
+          background: #F8FAFC;
+          border: 1px solid #E2E8F0;
+          border-radius: 6px;
+          padding: 6px 12px;
+          font-size: 12px;
           font-weight: 600;
+          color: #475569;
           cursor: pointer;
         }
+        .ns-sec-btn:hover {
+          background: #F1F5F9;
+        }
 
-        .ns-student-grid {
+        .ns-select-all-btn {
+          background: linear-gradient(135deg, #0284C7 0%, #0369A1 100%);
+          color: #FFFFFF;
+          border: 1px solid #0284C7;
+          border-radius: 8px;
+          padding: 7px 15px;
+          font-size: 12.5px;
+          font-weight: 700;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+          box-shadow: 0 2px 6px rgba(2, 132, 199, 0.25);
+          letter-spacing: 0.2px;
+        }
+        .ns-select-all-btn:hover {
+          background: linear-gradient(135deg, #0369A1 0%, #075985 100%);
+          border-color: #0369A1;
+          transform: translateY(-1px);
+          box-shadow: 0 4px 12px rgba(2, 132, 199, 0.35);
+        }
+        .ns-select-all-btn:active {
+          transform: translateY(0);
+        }
+        .ns-select-all-btn.deselect {
+          background: #F1F5F9;
+          color: #475569;
+          border: 1px solid #CBD5E1;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+        }
+        .ns-select-all-btn.deselect:hover {
+          background: #E2E8F0;
+          color: #0F172A;
+          border-color: #94A3B8;
+        }
+
+        .ns-student-list {
           display: flex;
           flex-direction: column;
           gap: 8px;
@@ -2258,42 +2701,47 @@ const NewSession = () => {
         .ns-student-row {
           display: flex;
           align-items: center;
-          gap: 14px;
-          padding: 10px 16px;
+          padding: 12px 16px;
           border-radius: 10px;
-          border: 1px solid transparent;
-          background-color: #F8FAFC;
+          border: 1px solid #E2E8F0;
+          background: #FFFFFF;
           cursor: pointer;
           transition: all 0.15s;
+          gap: 14px;
         }
         .ns-student-row:hover {
-          background-color: #F1F5F9;
+          border-color: #CBD5E1;
+          background-color: #F8FAFC;
         }
         .ns-student-row.selected {
+          border-color: #0284C7;
           background-color: #F0F9FF;
-          border-color: #BAE6FD;
         }
-
-        .ns-checkbox-box {
+        .ns-custom-checkbox {
           width: 18px;
           height: 18px;
-          border: 1.5px solid #CBD5E1;
           border-radius: 4px;
+          border: 1.5px solid #CBD5E1;
           display: flex;
           align-items: center;
           justify-content: center;
-          transition: all 0.15s;
+          background: #FFFFFF;
+          font-size: 11px;
+          font-weight: 700;
+          color: #FFFFFF;
+          flex-shrink: 0;
         }
-        .ns-checkbox-box.checked {
+        .ns-student-row.selected .ns-custom-checkbox {
           background-color: #0284C7;
           border-color: #0284C7;
         }
-        .ns-avatar-fallback {
-          display: inline-flex;
+        .ns-avatar-initials {
+          width: 32px;
+          height: 32px;
+          display: flex;
           align-items: center;
           justify-content: center;
-          user-select: none;
-          font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+          font-size: 11px;
           font-weight: 700;
           color: #FFFFFF;
           border-radius: 50%;
@@ -2312,10 +2760,26 @@ const NewSession = () => {
           color: #0F172A;
           flex: 1;
         }
+        .ns-day-progress-badge {
+          font-size: 11.5px;
+          font-weight: 700;
+          color: #0284C7;
+          background: #E0F2FE;
+          border: 1px solid #BAE6FD;
+          padding: 3px 10px;
+          border-radius: 6px;
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          white-space: nowrap;
+          letter-spacing: 0.2px;
+          flex-shrink: 0;
+        }
         .ns-student-group-label {
           font-size: 12px;
           color: #64748B;
           margin-right: 16px;
+          flex-shrink: 0;
         }
 
         .ns-level-badge {
@@ -2324,22 +2788,42 @@ const NewSession = () => {
           padding: 3px 10px;
           border-radius: 9999px;
           border: 1px solid;
+          flex-shrink: 0;
         }
 
         /* Bottom Sticky Bar */
         .ns-sticky-bar {
-          position: fixed;
+          position: sticky;
           bottom: 0;
-          left: 260px; /* Sidebar width */
+          left: 0;
           right: 0;
+          width: 100%;
+          box-sizing: border-box;
           background-color: #0A0F1D;
           color: #FFFFFF;
-          padding: 16px 36px;
+          padding: 14px 28px;
           display: flex;
           align-items: center;
           justify-content: space-between;
-          z-index: 100;
-          box-shadow: 0 -4px 20px rgba(0,0,0,0.15);
+          z-index: 50;
+          box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.08);
+          border-radius: 14px;
+          margin-top: 16px;
+        }
+
+        .ns-modal-container .ns-sticky-bar {
+          position: sticky;
+          bottom: 0;
+          left: 0;
+          right: 0;
+          width: 100%;
+          box-sizing: border-box;
+          border-radius: 14px;
+          margin-top: 16px;
+          padding: 14px 24px;
+          background-color: #0A0F1D;
+          z-index: 50;
+          box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.08);
         }
         .ns-sb-left {
           display: flex;
@@ -2358,10 +2842,70 @@ const NewSession = () => {
           font-size: 15px;
           font-weight: 700;
         }
-        .ns-sb-center {
+        .ns-slot-pills-wrap {
           display: flex;
-          gap: 16px;
+          flex-wrap: wrap;
+          gap: 10px;
+          align-items: center;
         }
+        .ns-slot-pill-btn {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 6px 14px 6px 8px;
+          background: #F8FAFC;
+          border: 1.5px solid #E2E8F0;
+          border-radius: 9999px;
+          cursor: pointer;
+          transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+          color: #334155;
+          font-size: 13px;
+          font-weight: 600;
+          outline: none;
+        }
+        .ns-slot-pill-btn:hover {
+          background: #F1F5F9;
+          border-color: #CBD5E1;
+          transform: translateY(-1px);
+        }
+        .ns-slot-pill-btn.active {
+          background: #ECFDF5;
+          border-color: #10B981;
+          color: #065F46;
+          box-shadow: 0 2px 8px rgba(16, 185, 129, 0.2);
+        }
+        .ns-slot-pill-num {
+          width: 22px;
+          height: 22px;
+          border-radius: 50%;
+          background: #E2E8F0;
+          color: #64748B;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 11px;
+          font-weight: 700;
+          transition: all 0.2s;
+        }
+        .ns-slot-pill-btn.active .ns-slot-pill-num {
+          background: #10B981;
+          color: #FFFFFF;
+        }
+        .ns-slot-pill-time {
+          font-size: 13px;
+          font-weight: 700;
+        }
+        .ns-slot-pill-active-badge {
+          font-size: 10px;
+          font-weight: 700;
+          background: #10B981;
+          color: #FFFFFF;
+          padding: 2px 7px;
+          border-radius: 9999px;
+          text-transform: uppercase;
+          letter-spacing: 0.3px;
+        }
+
         .ns-slot-indicator {
           display: flex;
           align-items: center;
@@ -2580,6 +3124,19 @@ const NewSession = () => {
           max-height: 440px;
           overflow-y: auto;
         }
+        .ns-drag-grip {
+          color: #94A3B8;
+          font-size: 14px;
+          cursor: grab;
+          user-select: none;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .ns-drag-grip:active {
+          cursor: grabbing;
+        }
+
         .ns-group-card {
           border: 1.5px solid #E2E8F0;
           border-radius: 12px;
@@ -2587,12 +3144,19 @@ const NewSession = () => {
           display: flex;
           flex-direction: column;
           gap: 12px;
-          transition: all 0.15s;
+          transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
           cursor: pointer;
+          background: #FFFFFF;
         }
         .ns-group-card.focused {
           border-color: #0284C7;
           box-shadow: 0 0 0 2px rgba(2,132,199,0.15);
+        }
+        .ns-group-card.drag-over {
+          border: 2px dashed #0284C7 !important;
+          background-color: #F0F9FF !important;
+          box-shadow: 0 4px 16px rgba(2, 132, 199, 0.2);
+          transform: scale(1.01);
         }
         .ns-gc-day {
           font-size: 11px;
@@ -2617,44 +3181,80 @@ const NewSession = () => {
           color: #64748B;
         }
 
-        .ns-avatar-stack {
+        .ns-group-students-box {
+          background: #F8FAFC;
+          border: 1px solid #E2E8F0;
+          border-radius: 8px;
+          padding: 8px;
+          min-height: 48px;
+        }
+        .ns-empty-students-dropzone {
+          padding: 10px;
+          text-align: center;
+          font-size: 11.5px;
+          color: #94A3B8;
+          border: 1px dashed #CBD5E1;
+          border-radius: 6px;
+        }
+        .ns-group-students-grid {
           display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+        }
+        .ns-group-student-chip {
+          display: inline-flex;
           align-items: center;
+          gap: 6px;
+          background: #FFFFFF;
+          border: 1px solid #CBD5E1;
+          border-radius: 20px;
+          padding: 3px 8px 3px 4px;
+          font-size: 11.5px;
+          font-weight: 600;
+          color: #1E293B;
+          cursor: grab;
+          transition: all 0.15s;
         }
-        .ns-stack-avatar {
-          width: 28px;
-          height: 28px;
+        .ns-group-student-chip:hover {
+          border-color: #0284C7;
+          background: #F0F9FF;
+        }
+        .ns-chip-avatar {
+          width: 20px;
+          height: 20px;
           border-radius: 50%;
-          border: 2px solid #FFFFFF;
-          margin-left: -8px;
-          object-fit: cover;
         }
-        .ns-stack-avatar:first-child {
-          margin-left: 0;
+        .ns-chip-name {
+          max-width: 100px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
-        .ns-stack-plus {
-          width: 28px;
-          height: 28px;
-          border-radius: 50%;
-          background: #E2E8F0;
-          color: #475569;
-          font-size: 11px;
-          font-weight: 700;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          border: 2px solid #FFFFFF;
-          margin-left: -8px;
+        .ns-chip-remove {
+          background: none;
+          border: none;
+          font-size: 14px;
+          color: #94A3B8;
+          cursor: pointer;
+          padding: 0;
+          line-height: 1;
+        }
+        .ns-chip-remove:hover {
+          color: #EF4444;
         }
 
         .ns-assigned-inst-box {
           background-color: #E0F2FE;
-          border: 1px solid #BAE6FD;
+          border: 1.5px solid #7DD3FC;
           border-radius: 8px;
-          padding: 10px 14px;
+          padding: 8px 12px;
           display: flex;
           align-items: center;
           gap: 10px;
+          transition: all 0.15s;
+        }
+        .ns-assigned-inst-box:hover {
+          border-color: #0284C7;
         }
         .ns-ai-avatar {
           width: 26px;
@@ -2664,26 +3264,35 @@ const NewSession = () => {
         }
         .ns-ai-name {
           font-size: 13px;
-          font-weight: 600;
-          color: #0284C7;
-          flex: 1;
+          font-weight: 700;
+          color: #0369A1;
         }
         .ns-ai-remove {
           background: none;
           border: none;
-          font-size: 16px;
+          font-size: 18px;
           color: #0284C7;
           cursor: pointer;
+          padding: 0 4px;
+        }
+        .ns-ai-remove:hover {
+          color: #EF4444;
         }
 
         .ns-dropzone-box {
-          border: 1.5px dashed #CBD5E1;
+          border: 1.5px dashed #0D9488;
           border-radius: 8px;
-          padding: 14px;
+          padding: 12px;
           text-align: center;
           font-size: 12px;
-          color: #94A3B8;
-          background-color: #F8FAFC;
+          color: #0F766E;
+          background-color: #F0FDFA;
+          cursor: pointer;
+          transition: all 0.15s;
+        }
+        .ns-dropzone-box:hover {
+          border-color: #14B8A6;
+          background-color: #CCFBF1;
         }
 
         /* Column 3: Instructors */
@@ -2695,25 +3304,32 @@ const NewSession = () => {
           overflow-y: auto;
         }
         .ns-inst-card {
-          border: 1.5px solid #00D1B2;
+          border: 1.5px solid #0D9488;
           border-radius: 12px;
-          padding: 12px 14px;
+          padding: 10px 12px;
           display: flex;
           align-items: center;
-          gap: 12px;
-          cursor: pointer;
+          gap: 10px;
+          cursor: grab;
           transition: all 0.15s;
           background: #FFFFFF;
+          user-select: none;
+        }
+        .ns-inst-card:active {
+          cursor: grabbing;
         }
         .ns-inst-card:hover {
           background-color: #F0FDFA;
+          border-color: #14B8A6;
+          transform: translateY(-1px);
+          box-shadow: 0 4px 12px rgba(13, 148, 136, 0.12);
         }
         .ns-inst-card.assigned {
           border-color: #F59E0B;
         }
         .ns-inst-card.leave {
           border-color: #E2E8F0;
-          opacity: 0.7;
+          opacity: 0.6;
           cursor: not-allowed;
         }
         .ns-inst-avatar {
@@ -2726,7 +3342,7 @@ const NewSession = () => {
           flex: 1;
         }
         .ns-inst-name {
-          font-size: 14px;
+          font-size: 13.5px;
           font-weight: 700;
           color: #0F172A;
           margin: 0;
@@ -2743,11 +3359,11 @@ const NewSession = () => {
         }
         .ns-inst-badge.available {
           background: #E6F9F5;
-          color: #00D1B2;
+          color: #0D9488;
         }
         .ns-inst-badge.assigned {
           background: #FEF3C7;
-          color: #D97706;
+          color: #B45309;
         }
         .ns-inst-badge.leave {
           background: #F1F5F9;
@@ -2806,6 +3422,105 @@ const NewSession = () => {
           justify-content: center;
         }
       `}</style>
+    </>
+  );
+
+  if (isModal) {
+    return (
+      <div className="ses-modal-overlay" onClick={onClose} style={{ zIndex: 1100, padding: '20px' }}>
+        <div
+          className="ses-modal-box ns-modal-container"
+          style={{
+            maxWidth: '1240px',
+            width: '96%',
+            maxHeight: '92vh',
+            padding: '0',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            borderRadius: '20px',
+            background: '#F8FAFC',
+            boxShadow: '0 25px 60px rgba(0,0,0,0.35)'
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {renderContent()}
+
+          {/* Success Modal for Modal Mode */}
+          {showSuccessModal && (
+            <div className="ns-modal-overlay" style={{ zIndex: 1200 }}>
+              <div className="ns-modal-card">
+                <div className="ns-modal-icon">🎉</div>
+                <h2 className="ns-modal-title">Session Created &amp; Published!</h2>
+                <p className="ns-modal-desc">
+                  Your session for <strong>{formattedSessionDate} ({selectedSlot.time})</strong> with {trainingGroups.length} training groups has been successfully saved into the schedule.
+                </p>
+                <div className="ns-modal-actions">
+                  <button
+                    className="ns-secondary-btn"
+                    onClick={() => {
+                      setShowSuccessModal(false);
+                      setCurrentStep(1);
+                    }}
+                  >
+                    Create Another Session
+                  </button>
+                  <button
+                    className="ns-primary-btn"
+                    onClick={() => {
+                      setShowSuccessModal(false);
+                      if (onSessionCreated) onSessionCreated();
+                      if (onClose) onClose();
+                    }}
+                  >
+                    Done & View Sessions &rarr;
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="ns-root">
+      <Sidebar />
+
+      <main className="ns-container">
+        {renderContent()}
+
+        {/* Success Modal for Standalone Page */}
+        {showSuccessModal && (
+          <div className="ns-modal-overlay">
+            <div className="ns-modal-card">
+              <div className="ns-modal-icon">🎉</div>
+              <h2 className="ns-modal-title">Session Created &amp; Published!</h2>
+              <p className="ns-modal-desc">
+                Your session for <strong>{formattedSessionDate} ({selectedSlot.time})</strong> with {trainingGroups.length} training groups has been successfully saved into the schedule.
+              </p>
+              <div className="ns-modal-actions">
+                <button
+                  className="ns-secondary-btn"
+                  onClick={() => {
+                    setShowSuccessModal(false);
+                    setCurrentStep(1);
+                  }}
+                >
+                  Create Another Session
+                </button>
+                <button
+                  className="ns-primary-btn"
+                  onClick={() => navigate('/sessions')}
+                >
+                  View in Sessions List &rarr;
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
     </div>
   );
 };
