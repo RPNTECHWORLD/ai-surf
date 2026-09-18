@@ -12,16 +12,23 @@ const conditionColor = (c) => {
   return '#F59E0B';
 };
 
+const formatSessionStatus = (s) => {
+  if (!s || s === 'Upcoming' || s === 'upcoming' || s === 'Scheduled') return 'Pending';
+  return s;
+};
+
 const statusColor = (s) => {
-  if (s === 'Completed') return '#0D9488';
-  if (s === 'IN PROGRESS') return '#00D1B2';
-  return '#F59E0B';
+  const norm = formatSessionStatus(s);
+  if (norm === 'Completed') return '#0D9488';
+  if (norm === 'IN PROGRESS' || norm === 'In Progress') return '#00D1B2';
+  return '#F59E0B'; // Pending
 };
 
 const statusBg = (s) => {
-  if (s === 'Completed') return 'rgba(13, 148, 136, 0.12)';
-  if (s === 'IN PROGRESS') return 'rgba(0, 209, 178, 0.15)';
-  return 'rgba(245, 158, 11, 0.12)';
+  const norm = formatSessionStatus(s);
+  if (norm === 'Completed') return 'rgba(13, 148, 136, 0.12)';
+  if (norm === 'IN PROGRESS' || norm === 'In Progress') return 'rgba(0, 209, 178, 0.15)';
+  return 'rgba(245, 158, 11, 0.12)'; // Pending
 };
 
 const MONTH_NAMES = [
@@ -209,6 +216,49 @@ const Sessions = () => {
     setHubSaveSuccess(false);
   };
 
+  const autoSaveHubVideo = async (videosList) => {
+    if (!selectedHubSession) return;
+    try {
+      const sessionIds = selectedHubSession.sessions ? selectedHubSession.sessions.map(s => s.id) : [selectedHubSession.id];
+      const serializedVideoUrl = videosList.length === 1
+        ? videosList[0].url
+        : (videosList.length > 1 ? JSON.stringify(videosList) : '');
+      const primaryVideoUrl = videosList[0]?.url || '';
+
+      const payload = {
+        video_url: serializedVideoUrl || primaryVideoUrl,
+      };
+
+      await Promise.all(
+        sessionIds.map(id =>
+          fetch(`${API}/api/sessions/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          }).catch(err => console.error('Failed updating session video', id, err))
+        )
+      );
+
+      // Update local sessions state
+      setSessions(prev =>
+        prev.map(s => {
+          if (sessionIds.includes(s.id)) {
+            return {
+              ...s,
+              video_url: serializedVideoUrl || primaryVideoUrl,
+              video_urls: videosList,
+            };
+          }
+          return s;
+        })
+      );
+      setHubSaveSuccess(true);
+      setTimeout(() => setHubSaveSuccess(false), 3000);
+    } catch (e) {
+      console.error('Auto save video error:', e);
+    }
+  };
+
   const handleHubVideoUpload = async (files) => {
     if (!files || files.length === 0) return;
     const fileList = Array.from(files);
@@ -244,17 +294,14 @@ const Sessions = () => {
         });
       }
 
-      setHubVideos(prev => {
-        const combined = [...prev, ...newUploadedVideos];
-        if (!hubActiveVideoId && combined.length > 0) {
-          setHubActiveVideoId(combined[0].id);
-        }
-        return combined;
-      });
-
-      if (!hubActiveVideoId && newUploadedVideos.length > 0) {
-        setHubActiveVideoId(newUploadedVideos[0].id);
+      const combined = [...hubVideos, ...newUploadedVideos];
+      setHubVideos(combined);
+      if (!hubActiveVideoId && combined.length > 0) {
+        setHubActiveVideoId(combined[0].id);
       }
+
+      // Auto-save uploaded video to backend session record so students & coaches see it immediately
+      autoSaveHubVideo(combined);
     } catch (err) {
       console.error('Video upload error:', err);
     } finally {
@@ -273,19 +320,20 @@ const Sessions = () => {
       title: `Wave Clip ${clipNum}`,
       uploadedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
-    setHubVideos(prev => [...prev, newVideo]);
+    const combined = [...hubVideos, newVideo];
+    setHubVideos(combined);
     if (!hubActiveVideoId) setHubActiveVideoId(newVideo.id);
     setHubNewVideoUrl('');
+    autoSaveHubVideo(combined);
   };
 
   const handleDeleteHubVideo = (vidId) => {
-    setHubVideos(prev => {
-      const remaining = prev.filter(v => v.id !== vidId);
-      if (hubActiveVideoId === vidId) {
-        setHubActiveVideoId(remaining.length > 0 ? remaining[0].id : null);
-      }
-      return remaining;
-    });
+    const remaining = hubVideos.filter(v => v.id !== vidId);
+    setHubVideos(remaining);
+    if (hubActiveVideoId === vidId) {
+      setHubActiveVideoId(remaining.length > 0 ? remaining[0].id : null);
+    }
+    autoSaveHubVideo(remaining);
   };
 
   const handleHubImageUpload = async (file) => {
@@ -435,7 +483,7 @@ const Sessions = () => {
     }
   });
 
-  const isStudent = currentUser?.role === 'athlete';
+  const isStudent = currentUser?.role === 'athlete' || currentUser?.role === 'student' || currentUser?.role === 'user';
   const isCoach = currentUser?.role === 'coach';
   const currentStudentName = currentUser?.name || 'Eric Sheldon';
   const currentCoachName = currentUser?.name || '';
@@ -466,6 +514,20 @@ const Sessions = () => {
 
   const schoolLower = (activeSchoolName || '').toLowerCase().trim();
   const isSuperAdmin = currentUser?.role === 'superadmin' || schoolLower === 'super admin';
+  const isAdminOrSuperAdmin = isSuperAdmin || currentUser?.role === 'admin' || currentUser?.role === 'school_admin' || currentUser?.role === 'schooladmin' || schoolLower === 'school admin';
+
+  const isIndividualSurfer = (
+    (currentUser?.school || currentUser?.school_name || '').toLowerCase().trim().includes('individual') ||
+    (currentUser?.school || currentUser?.school_name || '').toLowerCase().trim().includes('freelance') ||
+    currentUser?.is_individual === true ||
+    schoolLower.includes('individual') ||
+    schoolLower.includes('freelance')
+  );
+
+  // Only Individual/Freelance Surfers/Coaches and Admins can Schedule, Configure & Delete sessions.
+  // School Coaches & School Students cannot schedule/configure/delete school sessions.
+  const canManageSessions = Boolean(isAdminOrSuperAdmin || isIndividualSurfer);
+
   const effectiveSchool = (activeSchoolName && schoolLower !== 'school admin' && schoolLower !== 'super admin')
     ? activeSchoolName
     : 'Aquatic Indica Surf School';
@@ -560,13 +622,34 @@ const Sessions = () => {
     return Array.from(names);
   }, [roleScopedSessions, allStudentsList]);
 
-  // Extract unique slots / times
+  // Extract unique slots / times (combining configured slots + active sessions)
   const availableSlots = useMemo(() => {
-    const times = new Set();
+    const timesSet = new Set();
+    try {
+      const raw = localStorage.getItem('session_slots');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          parsed.filter(s => s.active !== false).forEach(s => {
+            const t = s.time || s.startTime;
+            if (t) timesSet.add(t);
+          });
+        }
+      }
+    } catch (e) {}
+
     roleScopedSessions.forEach(s => {
-      if (s.time) times.add(s.time);
+      if (s.time) {
+        const cleanT = s.time.includes(' - ') ? s.time.split(' - ')[0].trim() : s.time;
+        timesSet.add(cleanT);
+      }
     });
-    return Array.from(times).sort();
+
+    if (timesSet.size === 0) {
+      ['08:30 AM', '10:30 AM', '11:30 AM', '01:00 PM', '04:00 PM'].forEach(t => timesSet.add(t));
+    }
+
+    return Array.from(timesSet);
   }, [roleScopedSessions]);
 
   // Filtered sessions
@@ -616,44 +699,69 @@ const Sessions = () => {
     });
   }, [roleScopedSessions, dateFilter, slotFilter, instructorFilter, searchQuery]);
 
-  // Group filtered sessions into parent Group objects and ungrouped sessions
-  const groupedData = useMemo(() => {
-    const groupsMap = new Map();
-    const ungrouped = [];
+  // Helper function to group sessions by explicit group_name OR by Date + Time + Instructor
+  const buildSessionGrouping = (sessionList) => {
+    const buckets = new Map();
 
-    filteredSessions.forEach(session => {
-      const grpName = session.group_name ||
+    (sessionList || []).forEach(session => {
+      const explicitGrp = session.group_name ||
         (session.notes && session.notes.includes(' - Automated')
           ? session.notes.split(' - Automated')[0].trim()
           : null);
 
-      if (grpName) {
-        const key = `${grpName}__${session.date || ''}`;
-        if (!groupsMap.has(key)) {
-          groupsMap.set(key, {
-            key,
-            groupName: grpName,
-            date: session.date,
-            time: session.time,
-            duration_mins: session.duration_mins,
-            instructor: session.instructor,
-            location: session.location,
-            condition: session.condition,
-            type: session.type,
-            status: session.status,
-            sessions: []
-          });
-        }
-        groupsMap.get(key).sessions.push(session);
+      let key;
+      let groupTitle;
+      let isExplicit = false;
+
+      if (explicitGrp) {
+        key = `EXPLICIT__${explicitGrp}__${session.date || ''}`;
+        groupTitle = explicitGrp;
+        isExplicit = true;
       } else {
-        ungrouped.push(session);
+        const datePart = (session.date || '').trim();
+        const timePart = (session.time || '').trim();
+        const instPart = (session.instructor || '').trim();
+        key = `AUTO__${datePart}__${timePart}__${instPart}`;
+        groupTitle = `${timePart || 'Session'} Group`;
+        isExplicit = false;
+      }
+
+      if (!buckets.has(key)) {
+        buckets.set(key, {
+          key,
+          groupName: groupTitle,
+          isExplicit,
+          date: session.date,
+          time: session.time,
+          duration_mins: session.duration_mins,
+          instructor: session.instructor,
+          location: session.location,
+          condition: session.condition,
+          type: session.type,
+          status: session.status,
+          sessions: []
+        });
+      }
+      buckets.get(key).sessions.push(session);
+    });
+
+    const groups = [];
+    const ungrouped = [];
+
+    buckets.forEach(bucket => {
+      if (bucket.isExplicit || bucket.sessions.length > 1) {
+        groups.push(bucket);
+      } else {
+        ungrouped.push(...bucket.sessions);
       }
     });
 
-    return {
-      groups: Array.from(groupsMap.values()),
-      ungrouped
-    };
+    return { groups, ungrouped };
+  };
+
+  // Group filtered sessions into parent Group objects and ungrouped sessions
+  const groupedData = useMemo(() => {
+    return buildSessionGrouping(filteredSessions);
   }, [filteredSessions]);
 
   // Extract unique group names (group_name field OR parsed from notes for legacy sessions)
@@ -685,24 +793,8 @@ const Sessions = () => {
 
   // Helper to count unique group sessions (1 group on a date = 1 session, + ungrouped sessions)
   const getGroupSessionCount = (sessionList) => {
-    const groupsMap = new Set();
-    let ungroupedCount = 0;
-
-    sessionList.forEach(session => {
-      const grpName = session.group_name ||
-        (session.notes && session.notes.includes(' - Automated')
-          ? session.notes.split(' - Automated')[0].trim()
-          : null);
-
-      if (grpName) {
-        const key = `${grpName}__${session.date || ''}`;
-        groupsMap.add(key);
-      } else {
-        ungroupedCount += 1;
-      }
-    });
-
-    return groupsMap.size + ungroupedCount;
+    const { groups, ungrouped } = buildSessionGrouping(sessionList);
+    return groups.length + ungrouped.length;
   };
 
   // Derived stats (1 group = 1 session)
@@ -787,8 +879,8 @@ const Sessions = () => {
     ? Math.round(roleScopedSessions.reduce((sum, s) => sum + (s.duration_mins || 60), 0) / roleScopedSessions.length)
     : 0;
 
-  // 3-Card Status Metrics (Pending / Booked / Completed)
-  const pendingSessionsList = roleScopedSessions.filter(s => s.status === 'Scheduled' || s.status === 'Pending' || s.status === 'In Progress' || !s.status);
+  // Status Metrics (Pending / Completed)
+  const pendingSessionsList = roleScopedSessions.filter(s => formatSessionStatus(s.status) === 'Pending' || s.status === 'In Progress');
   const pendingCount = getGroupSessionCount(pendingSessionsList);
   const pendingDays = new Set(pendingSessionsList.map(s => s.date).filter(Boolean)).size;
 
@@ -858,31 +950,9 @@ const Sessions = () => {
 
   // Group breakdown for active day roster drawer
   const activeDayGroups = useMemo(() => {
-    const groups = {};
-    const ungrouped = [];
-    activeDaySessions.forEach(s => {
-      const grpName = s.group_name ||
-        (s.notes && s.notes.includes(' - Automated')
-          ? s.notes.split(' - Automated')[0].trim()
-          : null);
-      if (grpName) {
-        if (!groups[grpName]) {
-          groups[grpName] = {
-            groupName: grpName,
-            time: s.time,
-            instructor: s.instructor,
-            location: s.location,
-            status: s.status,
-            sessions: []
-          };
-        }
-        groups[grpName].sessions.push(s);
-      } else {
-        ungrouped.push(s);
-      }
-    });
+    const { groups, ungrouped } = buildSessionGrouping(activeDaySessions);
     return {
-      groupedList: Object.values(groups),
+      groupedList: groups,
       ungroupedList: ungrouped
     };
   }, [activeDaySessions]);
@@ -905,30 +975,30 @@ const Sessions = () => {
             </p>
           </div>
           <div className="ses-actions">
-            {!isStudent && (
+            <button
+              className="ses-btn-secondary"
+              onClick={() => {
+                if (assignedDatesList.length > 0) {
+                  const first = assignedDatesList[0];
+                  const parts = first.iso.split('-');
+                  if (parts.length === 3) {
+                    setCurrentDate(new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10)));
+                    setSelectedCalendarDate(first.iso);
+                  }
+                }
+                setShowCalendarModal(true);
+              }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0D9488" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                <line x1="16" y1="2" x2="16" y2="6"></line>
+                <line x1="8" y1="2" x2="8" y2="6"></line>
+                <line x1="3" y1="10" x2="21" y2="10"></line>
+              </svg>
+              Interactive Calendar & Schedule
+            </button>
+            {canManageSessions && (
               <>
-                <button
-                  className="ses-btn-secondary"
-                  onClick={() => {
-                    if (assignedDatesList.length > 0) {
-                      const first = assignedDatesList[0];
-                      const parts = first.iso.split('-');
-                      if (parts.length === 3) {
-                        setCurrentDate(new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10)));
-                        setSelectedCalendarDate(first.iso);
-                      }
-                    }
-                    setShowCalendarModal(true);
-                  }}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#0D9488" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
-                    <line x1="16" y1="2" x2="16" y2="6"></line>
-                    <line x1="8" y1="2" x2="8" y2="6"></line>
-                    <line x1="3" y1="10" x2="21" y2="10"></line>
-                  </svg>
-                  Interactive Calendar & Schedule
-                </button>
                 <button
                   className="ses-btn-primary"
                   onClick={() => {
@@ -943,7 +1013,7 @@ const Sessions = () => {
                   Schedule Session
                 </button>
                 <button className="ses-btn-primary" onClick={() => navigate('/sessions/configure')}>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                     <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
                     <line x1="16" y1="2" x2="16" y2="6"></line>
                     <line x1="8" y1="2" x2="8" y2="6"></line>
@@ -1018,27 +1088,6 @@ const Sessions = () => {
               </div>
             </div>
 
-            {/* Slot (Time) Filter */}
-            <div className="ses-select-wrap">
-              <label className="ses-select-label">Slot</label>
-              <select
-                className="ses-select"
-                value={slotFilter}
-                onChange={(e) => setSlotFilter(e.target.value)}
-                style={{
-                  fontWeight: slotFilter !== 'All' ? 700 : 500,
-                  color: slotFilter !== 'All' ? '#0D9488' : '#0F172A',
-                  borderColor: slotFilter !== 'All' ? '#0D9488' : '#E2E8F0',
-                  background: slotFilter !== 'All' ? '#E6F9F5' : '#F8FAFC'
-                }}
-              >
-                <option value="All">All Slots</option>
-                {availableSlots.map(slot => (
-                  <option key={slot} value={slot}>{slot}</option>
-                ))}
-              </select>
-            </div>
-
             {/* Instructor Filter (Hidden for Coach role) */}
             {!isCoach && (
               <div className="ses-select-wrap">
@@ -1072,6 +1121,165 @@ const Sessions = () => {
                 Reset
               </button>
             )}
+          </div>
+
+          {/* Horizontal Slot Tabs Bar (Always Visible) */}
+          <div className="ses-slot-tabs-bar" style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            padding: '12px 16px',
+            background: '#FFFFFF',
+            borderRadius: '12px',
+            border: '1px solid #E2E8F0',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+            margin: '12px 0 16px 0',
+            overflowX: 'auto',
+            scrollbarWidth: 'thin'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap', fontWeight: 700, fontSize: '13px', color: '#0F172A', marginRight: '4px' }}>
+              <span style={{ fontSize: '15px' }}>⏰</span> Select Time Slot:
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'nowrap' }}>
+              {/* All Slots Tab */}
+              {(() => {
+                const isSelected = slotFilter === 'All';
+                const count = roleScopedSessions.length;
+                return (
+                  <button
+                    type="button"
+                    key="All"
+                    onClick={() => setSlotFilter('All')}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: '6px 14px',
+                      borderRadius: '24px',
+                      cursor: 'pointer',
+                      fontSize: '12.5px',
+                      fontWeight: 700,
+                      whiteSpace: 'nowrap',
+                      transition: 'all 0.2s ease',
+                      border: isSelected ? '2px solid #0D9488' : '1px solid #CBD5E1',
+                      background: isSelected ? '#ECFDF5' : '#FFFFFF',
+                      color: isSelected ? '#0D9488' : '#475569',
+                      boxShadow: isSelected ? '0 2px 8px rgba(13, 148, 136, 0.15)' : 'none'
+                    }}
+                  >
+                    <span style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: '20px',
+                      height: '20px',
+                      borderRadius: '50%',
+                      background: isSelected ? '#0D9488' : '#94A3B8',
+                      color: '#FFFFFF',
+                      fontSize: '11px',
+                      fontWeight: 800
+                    }}>
+                      ★
+                    </span>
+                    <span>All Slots</span>
+                    <span style={{
+                      background: isSelected ? '#0D9488' : '#E2E8F0',
+                      color: isSelected ? '#FFFFFF' : '#475569',
+                      padding: '2px 8px',
+                      borderRadius: '10px',
+                      fontSize: '11px',
+                      fontWeight: 700
+                    }}>
+                      {count} Sessions
+                    </span>
+                    {isSelected && (
+                      <span style={{
+                        background: '#0D9488',
+                        color: '#FFFFFF',
+                        padding: '2px 8px',
+                        borderRadius: '10px',
+                        fontSize: '10.5px',
+                        fontWeight: 800
+                      }}>
+                        ✓ SELECTED TAB
+                      </span>
+                    )}
+                  </button>
+                );
+              })()}
+
+              {/* Dynamic Slot Tabs */}
+              {availableSlots.map((slotTime, index) => {
+                const isSelected = slotFilter === slotTime || (slotFilter !== 'All' && (slotTime.includes(slotFilter) || slotFilter.includes(slotTime)));
+                const matchingCount = roleScopedSessions.filter(s => {
+                  if (!s.time) return false;
+                  return s.time.includes(slotTime) || slotTime.includes(s.time);
+                }).length;
+
+                return (
+                  <button
+                    type="button"
+                    key={slotTime}
+                    onClick={() => setSlotFilter(slotTime)}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      padding: '6px 14px',
+                      borderRadius: '24px',
+                      cursor: 'pointer',
+                      fontSize: '12.5px',
+                      fontWeight: 700,
+                      whiteSpace: 'nowrap',
+                      transition: 'all 0.2s ease',
+                      border: isSelected ? '2px solid #0D9488' : '1px solid #CBD5E1',
+                      background: isSelected ? '#ECFDF5' : '#FFFFFF',
+                      color: isSelected ? '#0D9488' : '#475569',
+                      boxShadow: isSelected ? '0 2px 8px rgba(13, 148, 136, 0.15)' : 'none'
+                    }}
+                  >
+                    <span style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      width: '20px',
+                      height: '20px',
+                      borderRadius: '50%',
+                      background: isSelected ? '#0D9488' : '#94A3B8',
+                      color: '#FFFFFF',
+                      fontSize: '11px',
+                      fontWeight: 800
+                    }}>
+                      {index + 1}
+                    </span>
+                    <span>{slotTime}</span>
+                    <span style={{
+                      background: isSelected ? '#0D9488' : '#E2E8F0',
+                      color: isSelected ? '#FFFFFF' : '#475569',
+                      padding: '2px 8px',
+                      borderRadius: '10px',
+                      fontSize: '11px',
+                      fontWeight: 700
+                    }}>
+                      {matchingCount} {matchingCount === 1 ? 'Session' : 'Sessions'}
+                    </span>
+                    {isSelected && (
+                      <span style={{
+                        background: '#0D9488',
+                        color: '#FFFFFF',
+                        padding: '2px 8px',
+                        borderRadius: '10px',
+                        fontSize: '10.5px',
+                        fontWeight: 800
+                      }}>
+                        ✓ SELECTED TAB
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           <div className="ses-filter-summary" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
@@ -1158,12 +1366,6 @@ const Sessions = () => {
             <div className="ses-smc-sub">Days Pending: {loading ? '…' : pendingDays}</div>
           </div>
 
-          <div className="ses-status-metric-card booked-card">
-            <div className="ses-smc-label">SESSIONS BOOKED</div>
-            <div className="ses-smc-value">{loading ? '…' : bookedCount}</div>
-            <div className="ses-smc-sub">Days Booked: {loading ? '…' : bookedDays}</div>
-          </div>
-
           <div className="ses-status-metric-card completed-card">
             <div className="ses-smc-label">SESSIONS COMPLETED</div>
             <div className="ses-smc-value">{loading ? '…' : completedCount}</div>
@@ -1192,7 +1394,7 @@ const Sessions = () => {
                     />
                   </th>
                   <th style={{ width: '18%', minWidth: '160px' }}>DATE & TIME</th>
-                  <th style={{ width: '22%', minWidth: '180px' }}>SESSION / ATHLETE</th>
+                  <th style={{ width: '22%', minWidth: '180px' }}>SESSION / STUDENT</th>
                   <th style={{ width: '14%', minWidth: '130px' }}>INSTRUCTOR</th>
                   <th style={{ width: '10%', minWidth: '95px' }}>TYPE</th>
                   <th style={{ width: '11%', minWidth: '105px' }}>STATUS</th>
@@ -1249,7 +1451,7 @@ const Sessions = () => {
                             className="ses-checkbox-custom"
                             checked={allInGroupSelected}
                             onChange={(e) => toggleSelectGroup(groupObj, e)}
-                            title={`Select all ${groupObj.sessions.length} athletes in ${groupObj.groupName}`}
+                            title={`Select all ${groupObj.sessions.length} students in ${groupObj.groupName}`}
                           />
                         </td>
                         <td>
@@ -1283,7 +1485,7 @@ const Sessions = () => {
                               {groupObj.groupName}
                             </span>
                             <span style={{ fontSize: '12px', color: '#64748B', fontWeight: 600, whiteSpace: 'nowrap' }}>
-                              ({groupObj.sessions.length} Athletes)
+                              ({groupObj.sessions.length} Students)
                             </span>
                           </div>
                         </td>
@@ -1303,7 +1505,7 @@ const Sessions = () => {
                             }}
                           >
                             <span className="ses-status-dot" style={{ backgroundColor: statusColor(groupObj.status) }}></span>
-                            {groupObj.status || 'Upcoming'}
+                            {formatSessionStatus(groupObj.status)}
                           </span>
                         </td>
                         <td style={{ textAlign: 'right' }}>
@@ -1329,7 +1531,9 @@ const Sessions = () => {
                                 }}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  navigate(`/analysis?student=${encodeURIComponent(groupObj.groupName || studentNames[0] || 'Group')}&date=${encodeURIComponent(groupObj.date || '')}&video=${encodeURIComponent(groupVideoUrl)}&athletes=${encodeURIComponent(JSON.stringify(studentNames))}`);
+                                  const allGroupVideos = Array.from(new Set(groupObj.sessions.map(s => s.video_url).filter(Boolean)));
+                                  const videoParamVal = allGroupVideos.length > 1 ? JSON.stringify(allGroupVideos) : (groupVideoUrl || '');
+                                  navigate(`/analysis?student=${encodeURIComponent(groupObj.groupName || studentNames[0] || 'Group')}&date=${encodeURIComponent(groupObj.date || '')}&video=${encodeURIComponent(videoParamVal)}&athletes=${encodeURIComponent(JSON.stringify(studentNames))}`);
                                 }}
                               >
                                 <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
@@ -1408,29 +1612,31 @@ const Sessions = () => {
                                 toggleGroupExpand(groupObj.key);
                               }}
                             >
-                              <span>{isExpanded ? 'Hide' : `Athletes (${groupObj.sessions.length})`}</span>
+                              <span>{isExpanded ? 'Hide' : `Students (${groupObj.sessions.length})`}</span>
                               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease' }}>
                                 <polyline points="6 9 12 15 18 9"></polyline>
                               </svg>
                             </button>
 
                             {/* Delete Entire Group */}
-                            <button
-                              type="button"
-                              className="ses-btn-delete-session"
-                              title="Delete entire session group"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteGroupSessions(groupObj);
-                              }}
-                            >
-                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                                <polyline points="3 6 5 6 21 6"></polyline>
-                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                                <line x1="10" y1="11" x2="10" y2="17"></line>
-                                <line x1="14" y1="11" x2="14" y2="17"></line>
-                              </svg>
-                            </button>
+                            {canManageSessions && (
+                              <button
+                                type="button"
+                                className="ses-btn-delete-session"
+                                title="Delete entire session group"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteGroupSessions(groupObj);
+                                }}
+                              >
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                                  <polyline points="3 6 5 6 21 6"></polyline>
+                                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                  <line x1="10" y1="11" x2="10" y2="17"></line>
+                                  <line x1="14" y1="11" x2="14" y2="17"></line>
+                                </svg>
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -1470,7 +1676,7 @@ const Sessions = () => {
                               image_url: session.image_url || '',
                               notes: session.notes || '',
                             })}
-                            title="Click to view details & media for this athlete"
+                            title="Click to view details & media for this student"
                           >
                             <td style={{ textAlign: 'center', width: '42px', padding: '14px 6px 14px 14px' }} onClick={(e) => e.stopPropagation()}>
                               <input
@@ -1510,24 +1716,11 @@ const Sessions = () => {
                                 }}
                               >
                                 <span className="ses-status-dot" style={{ backgroundColor: statusColor(session.status) }}></span>
-                                {session.status || 'Upcoming'}
+                                {formatSessionStatus(session.status)}
                               </span>
                             </td>
                             <td style={{ textAlign: 'right' }}>
                               <div className="ses-actions-row" style={{ justifyContent: 'flex-end', gap: '6px' }}>
-                                <button
-                                  className="ses-icon-btn"
-                                  title="Edit Session"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    navigate(`/sessions/${session.id}/edit`);
-                                  }}
-                                >
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                                  </svg>
-                                </button>
                                 <button
                                   className={`ses-btn-view-analysis ${hasMedia ? 'ses-btn-analysis-active' : 'ses-btn-analysis-muted'}`}
                                   style={{ padding: '5px 10px', fontSize: '11.5px', whiteSpace: 'nowrap' }}
@@ -1544,22 +1737,24 @@ const Sessions = () => {
                                   </svg>
                                   Analysis
                                 </button>
-                                <button
-                                  type="button"
-                                  className="ses-btn-delete-session"
-                                  title="Delete this session"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleDeleteSingleSession(session.id, session.student);
-                                  }}
-                                >
-                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                                    <polyline points="3 6 5 6 21 6"></polyline>
-                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                                    <line x1="10" y1="11" x2="10" y2="17"></line>
-                                    <line x1="14" y1="11" x2="14" y2="17"></line>
-                                  </svg>
-                                </button>
+                                {canManageSessions && (
+                                  <button
+                                    type="button"
+                                    className="ses-btn-delete-session"
+                                    title="Delete this session"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteSingleSession(session.id, session.student);
+                                    }}
+                                  >
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                                      <polyline points="3 6 5 6 21 6"></polyline>
+                                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                      <line x1="10" y1="11" x2="10" y2="17"></line>
+                                      <line x1="14" y1="11" x2="14" y2="17"></line>
+                                    </svg>
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -1641,24 +1836,11 @@ const Sessions = () => {
                           }}
                         >
                           <span className="ses-status-dot" style={{ backgroundColor: statusColor(session.status) }}></span>
-                          {session.status || 'Upcoming'}
+                          {formatSessionStatus(session.status)}
                         </span>
                       </td>
                       <td style={{ textAlign: 'right' }}>
                         <div className="ses-actions-row" style={{ justifyContent: 'flex-end', gap: '6px' }}>
-                          <button
-                            className="ses-icon-btn"
-                            title="Edit Session"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              navigate(`/sessions/${session.id}/edit`);
-                            }}
-                          >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                            </svg>
-                          </button>
                           <button
                             className="ses-btn-view-analysis"
                             title="Open Details & Media"
@@ -1720,22 +1902,24 @@ const Sessions = () => {
                             </svg>
                             Analysis
                           </button>
-                          <button
-                            type="button"
-                            className="ses-btn-delete-session"
-                            title="Delete this session"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteSingleSession(session.id, session.student);
-                            }}
-                          >
-                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                              <polyline points="3 6 5 6 21 6"></polyline>
-                              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                              <line x1="10" y1="11" x2="10" y2="17"></line>
-                              <line x1="14" y1="11" x2="14" y2="17"></line>
-                            </svg>
-                          </button>
+                          {canManageSessions && (
+                            <button
+                              type="button"
+                              className="ses-btn-delete-session"
+                              title="Delete this session"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteSingleSession(session.id, session.student);
+                              }}
+                            >
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                <line x1="10" y1="11" x2="10" y2="17"></line>
+                                <line x1="14" y1="11" x2="14" y2="17"></line>
+                              </svg>
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1804,7 +1988,7 @@ const Sessions = () => {
                         : (selectedHubSession.student ? `${selectedHubSession.student}'s Session` : 'Session Details')}
                     </h2>
                     <span style={{ fontSize: '12px', color: '#64748B', fontWeight: 500 }}>
-                      ({selectedHubSession.sessions ? selectedHubSession.sessions.length : 1} Athletes)
+                      ({selectedHubSession.sessions ? selectedHubSession.sessions.length : 1} Students)
                     </span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px', fontSize: '12px', color: '#64748B', flexWrap: 'wrap' }}>
@@ -1819,25 +2003,41 @@ const Sessions = () => {
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <select
-                    value={hubStatus}
-                    onChange={(e) => setHubStatus(e.target.value)}
-                    style={{
-                      background: statusBg(hubStatus),
-                      color: statusColor(hubStatus),
-                      border: `1px solid ${statusColor(hubStatus)}40`,
-                      borderRadius: '8px',
-                      padding: '5px 10px',
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      outline: 'none'
-                    }}
-                  >
-                    <option value="Upcoming">Upcoming</option>
-                    <option value="IN PROGRESS">In Progress</option>
-                    <option value="Completed">Completed</option>
-                  </select>
+                  {isStudent ? (
+                    <span
+                      style={{
+                        background: statusBg(hubStatus),
+                        color: statusColor(hubStatus),
+                        border: `1px solid ${statusColor(hubStatus)}40`,
+                        borderRadius: '8px',
+                        padding: '5px 10px',
+                        fontSize: '12px',
+                        fontWeight: 600
+                      }}
+                    >
+                      {hubStatus}
+                    </span>
+                  ) : (
+                    <select
+                      value={hubStatus}
+                      onChange={(e) => setHubStatus(e.target.value)}
+                      style={{
+                        background: statusBg(hubStatus),
+                        color: statusColor(hubStatus),
+                        border: `1px solid ${statusColor(hubStatus)}40`,
+                        borderRadius: '8px',
+                        padding: '5px 10px',
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        outline: 'none'
+                      }}
+                    >
+                      <option value="Upcoming">Upcoming</option>
+                      <option value="IN PROGRESS">In Progress</option>
+                      <option value="Completed">Completed</option>
+                    </select>
+                  )}
 
                   <button
                     className="ses-modal-close"
@@ -1862,7 +2062,7 @@ const Sessions = () => {
                   className={`ses-modal-tab ${hubActiveTab === 'overview' ? 'active' : ''}`}
                   onClick={() => setHubActiveTab('overview')}
                 >
-                  Athletes ({selectedHubSession.sessions ? selectedHubSession.sessions.length : 1})
+                  Students ({selectedHubSession.sessions ? selectedHubSession.sessions.length : 1})
                 </button>
 
                 <button
@@ -1897,7 +2097,7 @@ const Sessions = () => {
                         <thead>
                           <tr>
                             <th style={{ width: '40px', padding: '10px 14px' }}>#</th>
-                            <th style={{ padding: '10px 14px' }}>Athlete Name</th>
+                            <th style={{ padding: '10px 14px' }}>Student Name</th>
                             <th style={{ padding: '10px 14px' }}>Level</th>
                             <th style={{ padding: '10px 14px' }}>Status</th>
                             <th style={{ textAlign: 'right', padding: '10px 14px' }}>Actions</th>
@@ -2070,7 +2270,10 @@ const Sessions = () => {
                                       e.stopPropagation();
                                       const hubStudents = (selectedHubSession.sessions || []).map(s => s.student).filter(Boolean);
                                       if (hubStudents.length === 0 && selectedHubSession.student) hubStudents.push(selectedHubSession.student);
-                                      navigate(`/analysis?video=${encodeURIComponent(vid.url)}&student=${encodeURIComponent(selectedHubSession.groupName || selectedHubSession.student || '')}&date=${encodeURIComponent(selectedHubSession.date || '')}&athletes=${encodeURIComponent(JSON.stringify(hubStudents))}`);
+                                      const allHubUrls = hubVideos.map(v => v.url).filter(Boolean);
+                                      const activeFirst = [vid.url, ...allHubUrls.filter(u => u !== vid.url)];
+                                      const videoParamVal = activeFirst.length > 1 ? JSON.stringify(activeFirst) : (vid.url || '');
+                                      navigate(`/analysis?video=${encodeURIComponent(videoParamVal)}&student=${encodeURIComponent(selectedHubSession.groupName || selectedHubSession.student || '')}&date=${encodeURIComponent(selectedHubSession.date || '')}&athletes=${encodeURIComponent(JSON.stringify(hubStudents))}`);
                                     }}
                                   >
                                     ▶ Analyze
@@ -2198,24 +2401,26 @@ const Sessions = () => {
                                 ▶ Playing: {activeVideo.title}
                               </span>
                             </div>
-                            <div style={{ display: 'flex', gap: '8px' }}>
-                              <button
-                                type="button"
-                                className="ses-btn-secondary"
-                                style={{ padding: '6px 12px', fontSize: '12px' }}
-                                onClick={() => hubVideoFileRef.current?.click()}
-                                disabled={hubIsUploadingVideo}
-                              >
-                                + Upload More Videos
-                              </button>
-                              <button
-                                type="button"
-                                style={{ background: '#FEE2E2', color: '#DC2626', border: '1px solid #FCA5A5', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-                                onClick={() => handleDeleteHubVideo(activeVideo.id)}
-                              >
-                                🗑️ Remove Clip
-                              </button>
-                            </div>
+                            {!isStudent && (
+                              <div style={{ display: 'flex', gap: '8px' }}>
+                                <button
+                                  type="button"
+                                  className="ses-btn-secondary"
+                                  style={{ padding: '6px 12px', fontSize: '12px' }}
+                                  onClick={() => hubVideoFileRef.current?.click()}
+                                  disabled={hubIsUploadingVideo}
+                                >
+                                  + Upload More Videos
+                                </button>
+                                <button
+                                  type="button"
+                                  style={{ background: '#FEE2E2', color: '#DC2626', border: '1px solid #FCA5A5', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+                                  onClick={() => handleDeleteHubVideo(activeVideo.id)}
+                                >
+                                  🗑️ Remove Clip
+                                </button>
+                              </div>
+                            )}
                           </div>
 
                           <div style={{ borderRadius: '12px', overflow: 'hidden', background: '#0F172A', border: '2px solid #334155', boxShadow: '0 8px 24px rgba(0,0,0,0.15)' }}>
@@ -2239,7 +2444,10 @@ const Sessions = () => {
                               onClick={() => {
                                 const hubStudents = (selectedHubSession.sessions || []).map(s => s.student).filter(Boolean);
                                 if (hubStudents.length === 0 && selectedHubSession.student) hubStudents.push(selectedHubSession.student);
-                                navigate(`/analysis?video=${encodeURIComponent(activeVideo.url)}&student=${encodeURIComponent(selectedHubSession.groupName || selectedHubSession.student || '')}&date=${encodeURIComponent(selectedHubSession.date || '')}&athletes=${encodeURIComponent(JSON.stringify(hubStudents))}`);
+                                const allHubUrls = hubVideos.map(v => v.url).filter(Boolean);
+                                const activeFirst = [activeVideo.url, ...allHubUrls.filter(u => u !== activeVideo.url)];
+                                const videoParamVal = activeFirst.length > 1 ? JSON.stringify(activeFirst) : (activeVideo.url || '');
+                                navigate(`/analysis?video=${encodeURIComponent(videoParamVal)}&student=${encodeURIComponent(selectedHubSession.groupName || selectedHubSession.student || '')}&date=${encodeURIComponent(selectedHubSession.date || '')}&athletes=${encodeURIComponent(JSON.stringify(hubStudents))}`);
                               }}
                             >
                               Launch AI Video Analysis ↗
@@ -2247,31 +2455,33 @@ const Sessions = () => {
                           </div>
 
                           {/* Add URL for additional video */}
-                          <div style={{ marginTop: '14px', display: 'flex', gap: '8px' }}>
-                            <input
-                              type="text"
-                              placeholder="Add another video by external link / S3 URL..."
-                              value={hubNewVideoUrl}
-                              onChange={(e) => setHubNewVideoUrl(e.target.value)}
-                              style={{
-                                flex: 1,
-                                padding: '8px 12px',
-                                border: '1.5px solid #CBD5E1',
-                                borderRadius: '8px',
-                                fontSize: '12.5px',
-                                outline: 'none'
-                              }}
-                              onKeyDown={(e) => { if (e.key === 'Enter') handleAddVideoUrl(); }}
-                            />
-                            <button
-                              type="button"
-                              className="ses-btn-secondary"
-                              onClick={handleAddVideoUrl}
-                              style={{ padding: '8px 14px', fontSize: '12.5px', fontWeight: 600, whiteSpace: 'nowrap' }}
-                            >
-                              + Add Link
-                            </button>
-                          </div>
+                          {!isStudent && (
+                            <div style={{ marginTop: '14px', display: 'flex', gap: '8px' }}>
+                              <input
+                                type="text"
+                                placeholder="Add another video by external link / S3 URL..."
+                                value={hubNewVideoUrl}
+                                onChange={(e) => setHubNewVideoUrl(e.target.value)}
+                                style={{
+                                  flex: 1,
+                                  padding: '8px 12px',
+                                  border: '1.5px solid #CBD5E1',
+                                  borderRadius: '8px',
+                                  fontSize: '12.5px',
+                                  outline: 'none'
+                                }}
+                                onKeyDown={(e) => { if (e.key === 'Enter') handleAddVideoUrl(); }}
+                              />
+                              <button
+                                type="button"
+                                className="ses-btn-secondary"
+                                onClick={handleAddVideoUrl}
+                                style={{ padding: '8px 14px', fontSize: '12.5px', fontWeight: 600, whiteSpace: 'nowrap' }}
+                              >
+                                + Add Link
+                              </button>
+                            </div>
+                          )}
                         </div>
                       );
                     })()}
@@ -2299,24 +2509,26 @@ const Sessions = () => {
                           <span style={{ fontSize: '14px', fontWeight: 700, color: '#0F172A' }}>
                             📸 Session Action Shot
                           </span>
-                          <div style={{ display: 'flex', gap: '8px' }}>
-                            <button
-                              type="button"
-                              className="ses-btn-secondary"
-                              style={{ padding: '6px 12px', fontSize: '12px' }}
-                              onClick={() => hubImageFileRef.current?.click()}
-                              disabled={hubIsUploadingImage}
-                            >
-                              🔄 Change Photo
-                            </button>
-                            <button
-                              type="button"
-                              style={{ background: '#FEE2E2', color: '#DC2626', border: '1px solid #FCA5A5', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-                              onClick={() => setHubImageUrl('')}
-                            >
-                              🗑️ Remove
-                            </button>
-                          </div>
+                          {!isStudent && (
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              <button
+                                type="button"
+                                className="ses-btn-secondary"
+                                style={{ padding: '6px 12px', fontSize: '12px' }}
+                                onClick={() => hubImageFileRef.current?.click()}
+                                disabled={hubIsUploadingImage}
+                              >
+                                🔄 Change Photo
+                              </button>
+                              <button
+                                type="button"
+                                style={{ background: '#FEE2E2', color: '#DC2626', border: '1px solid #FCA5A5', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+                                onClick={() => setHubImageUrl('')}
+                              >
+                                🗑️ Remove
+                              </button>
+                            </div>
+                          )}
                         </div>
 
                         <div
@@ -2418,8 +2630,9 @@ const Sessions = () => {
                       </label>
                       <textarea
                         rows="6"
-                        placeholder="Add training goals, wave count, board setup notes, pop-up corrections, or student feedback for this session..."
+                        placeholder={isStudent ? "No coach notes available yet..." : "Add training goals, wave count, board setup notes, pop-up corrections, or student feedback for this session..."}
                         value={hubNotes}
+                        readOnly={isStudent}
                         onChange={(e) => setHubNotes(e.target.value)}
                         style={{
                           width: '100%',
@@ -2455,7 +2668,7 @@ const Sessions = () => {
                     <span style={{ color: '#0D9488', fontWeight: 600, fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                       ✓ All changes saved successfully!
                     </span>
-                  ) : (
+                  ) : canManageSessions ? (
                     <div style={{ display: 'flex', gap: '8px' }}>
                       <button
                         type="button"
@@ -2480,12 +2693,12 @@ const Sessions = () => {
                       >
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
                           <polyline points="3 6 5 6 21 6"></polyline>
-                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2 2v2"></path>
                         </svg>
                         Delete
                       </button>
                     </div>
-                  )}
+                  ) : null}
                 </div>
 
                 <div style={{ display: 'flex', gap: '8px' }}>
@@ -2564,7 +2777,7 @@ const Sessions = () => {
                   <div>
                     <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: '#0F172A' }}>Upload Group Video</h3>
                     <p style={{ margin: '2px 0 0', fontSize: '12px', color: '#64748B' }}>
-                      Select 1 video file for <strong>{selectedGroupForVideo.sessions.length} athletes</strong> in {selectedGroupForVideo.groupName}
+                      Select 1 video file for <strong>{selectedGroupForVideo.sessions.length} students</strong> in {selectedGroupForVideo.groupName}
                     </p>
                   </div>
                 </div>
@@ -2643,7 +2856,7 @@ const Sessions = () => {
                   onClick={handleSaveGroupVideo}
                   disabled={isSavingGroupVideo || !groupVideoInput.trim()}
                 >
-                  {isSavingGroupVideo ? 'Uploading Video…' : `Upload & Save for ${selectedGroupForVideo.sessions.length} Athletes`}
+                  {isSavingGroupVideo ? 'Uploading Video…' : `Upload & Save for ${selectedGroupForVideo.sessions.length} Students`}
                 </button>
               </div>
             </div>
@@ -2852,7 +3065,7 @@ const Sessions = () => {
                                 </div>
 
                                 {/* Quick + Create Button for Future/Today Dates */}
-                                {!isPastDate && (
+                                {!isPastDate && canManageSessions && (
                                   <button
                                     type="button"
                                     className="ses-cal-add-btn"
@@ -2957,12 +3170,14 @@ const Sessions = () => {
                       >
                         Launch AI Video Analysis
                       </button>
-                      <button
-                        className="ses-btn-secondary"
-                        onClick={() => navigate(`/sessions/${selectedSessionDetail.id}/edit`)}
-                      >
-                        Edit Slot
-                      </button>
+                      {!isStudent && (
+                        <button
+                          className="ses-btn-secondary"
+                          onClick={() => navigate(`/sessions/${selectedSessionDetail.id}/edit`)}
+                        >
+                          Edit Slot
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>

@@ -64,6 +64,11 @@ const AuthPage = () => {
   const [otpCode, setOtpCode] = useState('');
   const [resendCooldown, setResendCooldown] = useState(0);
 
+  // Password Visibility Toggles
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+
   // Forgot Password states
   const [forgotStep, setForgotStep] = useState(0); // 0=none, 1=email, 2=otp, 3=new password
   const [forgotEmail, setForgotEmail] = useState('');
@@ -491,7 +496,7 @@ const AuthPage = () => {
 
 
         // If direct signup without invite token, ALWAYS record pending join request for school admin
-        if (!inviteToken && role === 'athlete') {
+        if (!inviteToken && (role === 'athlete' || role === 'student' || role === 'user')) {
           try {
             const existingReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
             const studentEmail = formData.email.toLowerCase().trim();
@@ -534,7 +539,7 @@ const AuthPage = () => {
         approval_status: inviteToken ? 'approved' : 'pending'
       };
 
-      if (!inviteToken && role === 'athlete') {
+      if (!inviteToken && (role === 'athlete' || role === 'student' || role === 'user')) {
         try {
           const existingReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
           const studentEmail = formData.email.toLowerCase().trim();
@@ -899,8 +904,46 @@ const AuthPage = () => {
                   </div>
                   <div className="auth-field">
                     <label>Password</label>
-                    <input type="password" name="password" placeholder="••••••••"
-                      value={formData.password} onChange={handleChange} required />
+                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                      <input
+                        type={showLoginPassword ? 'text' : 'password'}
+                        name="password"
+                        placeholder="••••••••"
+                        value={formData.password}
+                        onChange={handleChange}
+                        required
+                        style={{ paddingRight: '40px', width: '100%' }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowLoginPassword(!showLoginPassword)}
+                        style={{
+                          position: 'absolute',
+                          right: '10px',
+                          background: 'none',
+                          border: 'none',
+                          color: '#94A3B8',
+                          cursor: 'pointer',
+                          padding: '4px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                        }}
+                        title={showLoginPassword ? 'Hide password' : 'Show password'}
+                      >
+                        {showLoginPassword ? (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                            <line x1="1" y1="1" x2="23" y2="23"></line>
+                          </svg>
+                        ) : (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                            <circle cx="12" cy="12" r="3"></circle>
+                          </svg>
+                        )}
+                      </button>
+                    </div>
                   </div>
                   <button type="button" className="auth-forgot-btn" onClick={() => { setForgotStep(1); setErrorMsg(''); setSuccessMsg(''); }}>
                     Forgot password?
@@ -1037,15 +1080,92 @@ const AuthPage = () => {
                     <div className="auth-fields-row">
                       <div className="auth-field">
                         <label>Password</label>
-                        <input type="password" name="password" placeholder="Enter password"
-                          autoComplete="new-password"
-                          value={formData.password || ''} onChange={handleChange} required />
+                        <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                          <input
+                            type={showPassword ? 'text' : 'password'}
+                            name="password"
+                            placeholder="Enter password"
+                            autoComplete="new-password"
+                            value={formData.password || ''}
+                            onChange={handleChange}
+                            required
+                            style={{ paddingRight: '40px', width: '100%' }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowPassword(!showPassword)}
+                            style={{
+                              position: 'absolute',
+                              right: '10px',
+                              background: 'none',
+                              border: 'none',
+                              color: '#94A3B8',
+                              cursor: 'pointer',
+                              padding: '4px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center'
+                            }}
+                            title={showPassword ? 'Hide password' : 'Show password'}
+                          >
+                            {showPassword ? (
+                              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                                <line x1="1" y1="1" x2="23" y2="23"></line>
+                              </svg>
+                            ) : (
+                              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                <circle cx="12" cy="12" r="3"></circle>
+                              </svg>
+                            )}
+                          </button>
+                        </div>
                       </div>
+
                       <div className="auth-field">
                         <label>Confirm Password</label>
-                        <input type="password" name="confirmPassword" placeholder="Re-enter password"
-                          autoComplete="new-password"
-                          value={formData.confirmPassword || ''} onChange={handleChange} required />
+                        <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                          <input
+                            type={showConfirmPassword ? 'text' : 'password'}
+                            name="confirmPassword"
+                            placeholder="Re-enter password"
+                            autoComplete="new-password"
+                            value={formData.confirmPassword || ''}
+                            onChange={handleChange}
+                            required
+                            style={{ paddingRight: '40px', width: '100%' }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                            style={{
+                              position: 'absolute',
+                              right: '10px',
+                              background: 'none',
+                              border: 'none',
+                              color: '#94A3B8',
+                              cursor: 'pointer',
+                              padding: '4px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center'
+                            }}
+                            title={showConfirmPassword ? 'Hide password' : 'Show password'}
+                          >
+                            {showConfirmPassword ? (
+                              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                                <line x1="1" y1="1" x2="23" y2="23"></line>
+                              </svg>
+                            ) : (
+                              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                <circle cx="12" cy="12" r="3"></circle>
+                              </svg>
+                            )}
+                          </button>
+                        </div>
                       </div>
                     </div>
 
@@ -1185,34 +1305,7 @@ const AuthPage = () => {
                           </div>
                         </div>
 
-                        <div className="auth-fields-row" style={{ marginTop: '10px' }}>
-                          <div className="auth-field">
-                            <label>⏰ Session Time Slot</label>
-                            <select name="session_time" value={formData.session_time} onChange={handleChange}>
-                              <option value="08:30 AM">08:30 AM · Morning Slot 1 (90m)</option>
-                              <option value="10:30 AM">10:30 AM · Morning Slot 2 (90m)</option>
-                              <option value="11:30 AM">11:30 AM · Midday Slot (60m)</option>
-                              <option value="01:00 PM">01:00 PM · Afternoon Slot (120m)</option>
-                              <option value="03:30 PM">03:30 PM · Late Afternoon (90m)</option>
-                            </select>
-                          </div>
-                          <div className="auth-field">
-                            <label>🏨 Staying at School?</label>
-                            <select name="staying_at_school" value={formData.staying_at_school} onChange={handleChange}>
-                              <option value="Yes">Yes (On-site Lodge)</option>
-                              <option value="No">No (Off-site Stay)</option>
-                            </select>
-                          </div>
-                        </div>
 
-                        <div className="auth-field" style={{ marginTop: '10px' }}>
-                          <label>🔔 Reminder Preference</label>
-                          <select name="reminder_preference" value={formData.reminder_preference} onChange={handleChange}>
-                            <option value="WhatsApp Text">WhatsApp Text Message</option>
-                            <option value="Phone Call">Over the Call Alert</option>
-                            <option value="Notice Board">Notice Board Only</option>
-                          </select>
-                        </div>
 
                         <div className="auth-field" style={{ marginTop: '12px' }}>
                           <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

@@ -50,68 +50,25 @@ const Sidebar = () => {
         } catch (e) {}
       }
 
-      // Determine dynamic display name for top right header
-      let displayName = null;
+      // Determine dynamic display name for top right header (School Name)
+      const userSch = resolveSchoolName(parsedUser?.school_name) || resolveSchoolName(parsedUser?.school);
+      const activeSch = resolveSchoolName(parsedSchool?.name);
 
-      // 1. Coach Role: Display Individual Coach Name
-      if (parsedUser?.role === 'coach') {
-        const cName = parsedUser.name || parsedUser.instructor_name;
-        if (cName) {
-          displayName = `Coach: ${cName}`;
+      let displayName = userSch || activeSch;
+
+      if (!displayName) {
+        if (parsedUser?.role === 'coach') {
+          const cName = parsedUser.name || parsedUser.instructor_name;
+          displayName = cName ? `Coach: ${cName}` : 'Individual Surf Coach';
         } else {
-          displayName = 'Individual / Freelance Coach';
-        }
-      } 
-      // 2. Athlete Role: Display Assigned Individual Coach Name
-      else if (parsedUser?.role === 'athlete') {
-        const instName = parsedUser.instructor || parsedUser.instructor_name;
-        const userSch = resolveSchoolName(parsedUser.school_name) || resolveSchoolName(parsedUser.school);
-        const activeSch = resolveSchoolName(parsedSchool?.name);
-
-        if (instName && instName !== 'Assigned Surf Coach' && instName !== 'Aquatic Indica Surf Coach') {
-          displayName = `Coach: ${instName}`;
-        } else if (userSch && userSch !== 'Aquatic Indica Surf School') {
-          displayName = userSch;
-        } else if (activeSch && activeSch !== 'Aquatic Indica Surf School') {
-          displayName = activeSch;
-        } else if (instName) {
-          displayName = `Coach: ${instName}`;
-        } else {
-          displayName = userSch || activeSch || 'Individual Surf Athlete';
-        }
-      } 
-      // 3. Admin / School Role: Display School Name
-      else {
-        const userSch = resolveSchoolName(parsedUser?.school_name) || resolveSchoolName(parsedUser?.school);
-        const activeSch = resolveSchoolName(parsedSchool?.name);
-
-        if (userSch) {
-          displayName = userSch;
-        } else if (activeSch) {
-          displayName = activeSch;
+          displayName = 'Aquatic Indica Surf School';
         }
       }
 
-      if (displayName) {
-        setSchool({
-          name: resolveSchoolName(displayName) || 'North Shore Academy',
-          owner: typeof parsedUser?.name === 'string' ? parsedUser.name : (typeof parsedSchool?.owner === 'string' ? parsedSchool.owner : '')
-        });
-      } else if (parsedUser?.role === 'admin') {
-        fetch(`${API}/api/schools`)
-          .then(res => res.json())
-          .then(data => {
-            if (data && data.length > 0) {
-              setSchool({
-                name: resolveSchoolName(data[0].name) || 'Aquatic Indica Surf School',
-                owner: typeof data[0].owner === 'string' ? data[0].owner : '',
-              });
-            }
-          })
-          .catch(() => {});
-      } else {
-        setSchool({ name: 'Individual Surf Coach' });
-      }
+      setSchool({
+        name: resolveSchoolName(displayName) || 'Aquatic Indica Surf School',
+        owner: typeof parsedUser?.name === 'string' ? parsedUser.name : (typeof parsedSchool?.owner === 'string' ? parsedSchool.owner : '')
+      });
     };
 
     updateHeaderInfo();
@@ -213,9 +170,9 @@ const Sidebar = () => {
         <div className="db-header-right">
           <div className="db-header-userinfo">
             <div className="db-header-usertext">
-              <div className="db-header-school-name">{typeof school?.name === 'string' ? school.name : (school?.name?.name || 'North Shore Academy')}</div>
+              <div className="db-header-school-name">{typeof school?.name === 'string' ? school.name : (school?.name?.name || 'Aquatic Indica Surf School')}</div>
               <div className="db-header-user-role" style={{ textTransform: 'capitalize' }}>
-                {user ? (user.role === 'admin' ? 'School Admin' : user.role) : 'School Admin'}
+                {user ? (user.role === 'admin' ? 'School Admin' : (user.role === 'athlete' ? 'Student' : (user.role === 'coach' ? 'Coach' : user.role))) : 'School Admin'}
               </div>
             </div>
             <div className="db-header-avatar" style={{ backgroundImage: user?.image ? `url(${user.image})` : 'none', backgroundSize: 'cover', backgroundPosition: 'center' }}>

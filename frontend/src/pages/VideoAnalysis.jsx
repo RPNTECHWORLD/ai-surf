@@ -8,30 +8,13 @@ const DEFAULT_CLIPS = [
   { 
     id: 1, 
     name: 'Clip 1', 
-    waveName: 'Wave #1 (Takeoff & Pop-up)', 
+    waveName: 'Demo Surfing Video', 
     startTime: 0, 
     duration: '0:15',
     url: 'https://assets.mixkit.co/videos/preview/mixkit-surfer-riding-a-wave-in-the-sea-39828-large.mp4', 
-    bg: 'https://images.unsplash.com/photo-1502680390469-be75c86b636f?auto=format&fit=crop&w=600&q=80' 
-  },
-  { 
-    id: 2, 
-    name: 'Clip 2', 
-    waveName: 'Wave #2 (Bottom Turn & Drive)', 
-    startTime: 0, 
-    duration: '0:20',
-    url: 'https://assets.mixkit.co/videos/preview/mixkit-surfer-catching-a-wave-in-the-sea-39827-large.mp4', 
-    bg: 'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?auto=format&fit=crop&w=600&q=80' 
-  },
-  { 
-    id: 3, 
-    name: 'Clip 3', 
-    waveName: 'Wave #3 (Carve & Wave Exit)', 
-    startTime: 0, 
-    duration: '0:25',
-    url: 'https://assets.mixkit.co/videos/preview/mixkit-surfer-sliding-a-wave-in-the-sea-39829-large.mp4', 
-    bg: 'https://images.unsplash.com/photo-1516815231560-8f41ec531527?auto=format&fit=crop&w=600&q=80' 
-  },
+    bg: 'https://images.unsplash.com/photo-1502680390469-be75c86b636f?auto=format&fit=crop&w=600&q=80',
+    isSessionClip: true
+  }
 ];
 
 const ATHLETE_PALETTE = ['#06B6D4', '#10B981', '#F59E0B', '#EC4899', '#8B5CF6', '#3B82F6', '#14B8A6'];
@@ -61,6 +44,49 @@ const generateAthleteProfile = (name, index = 0, level = 'Athlete') => {
       waveReading
     }
   };
+};
+
+// Helper to get real video duration in seconds from video URL
+const getVideoDuration = (videoUrl) => {
+  return new Promise((resolve) => {
+    if (!videoUrl || videoUrl.includes('ForBigger') || videoUrl.includes('gtv-videos') || videoUrl.includes('BigBuck')) {
+      resolve(0);
+      return;
+    }
+    try {
+      const vid = document.createElement('video');
+      vid.src = videoUrl;
+      vid.preload = 'metadata';
+      vid.crossOrigin = 'anonymous';
+
+      let resolved = false;
+      const finish = (dur) => {
+        if (!resolved) {
+          resolved = true;
+          try {
+            vid.removeAttribute('src');
+            vid.load();
+          } catch (e) {}
+          resolve(dur || 0);
+        }
+      };
+
+      vid.onloadedmetadata = () => {
+        finish(vid.duration || 0);
+      };
+      vid.onerror = () => finish(0);
+      setTimeout(() => finish(0), 4000);
+    } catch (e) {
+      resolve(0);
+    }
+  });
+};
+
+const formatDurationString = (seconds) => {
+  if (!seconds || isNaN(seconds) || !isFinite(seconds) || seconds <= 0) return '00:00';
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 };
 
 // Helper to capture dynamic thumbnail image from video element using Canvas
@@ -343,6 +369,8 @@ const VideoAnalysis = () => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [isMuted, setIsMuted] = useState(false);
+  const [volume, setVolume] = useState(1);
 
   // Drawing Canvas Annotation State
   const [tool, setTool] = useState('select'); // 'select' | 'pen' | 'eraser'
@@ -407,103 +435,47 @@ const VideoAnalysis = () => {
     return parsedList[0] || '';
   };
 
-  // Auto split video into 3 distinct wave clips when a new session video is loaded
-  const generateWaveClipsFromVideo = async (videoUrl, label = 'Session Wave') => {
-    const cleanUrl = extractValidVideoUrl(videoUrl);
-    const isLegacyOrInvalid = !cleanUrl || cleanUrl.includes('ForBigger') || cleanUrl.includes('gtv-videos');
-    const effectiveVideoUrl = isLegacyOrInvalid
-      ? 'https://assets.mixkit.co/videos/preview/mixkit-surfer-riding-a-wave-in-the-sea-39828-large.mp4'
-      : cleanUrl;
+  // Load actual videos into individual clips (1 uploaded video = 1 distinct clip)
+  const loadVideosIntoClips = async (videoInput, label = '') => {
+    const urls = parseVideoUrls(videoInput);
+    const validUrls = urls.filter(u => u && !u.includes('ForBigger') && !u.includes('gtv-videos'));
+    const finalUrls = validUrls.length > 0 ? validUrls : ['https://assets.mixkit.co/videos/preview/mixkit-surfer-riding-a-wave-in-the-sea-39828-large.mp4'];
 
-    const waveClips = [
-      {
-        id: 1,
-        name: 'Clip 1',
-        waveName: 'Wave #1 (Takeoff & Pop-up)',
-        startTime: 0,
-        duration: '0:15',
-        url: effectiveVideoUrl,
-        bg: ''
-      },
-      {
-        id: 2,
-        name: 'Clip 2',
-        waveName: 'Wave #2 (Bottom Turn & Drive)',
-        startTime: 15,
-        duration: '0:20',
-        url: effectiveVideoUrl,
-        bg: ''
-      },
-      {
-        id: 3,
-        name: 'Clip 3',
-        waveName: 'Wave #3 (Carve & Wave Exit)',
-        startTime: 35,
-        duration: '0:25',
-        url: effectiveVideoUrl,
-        bg: ''
-      }
-    ];
+    const newClips = finalUrls.map((url, idx) => ({
+      id: idx + 1,
+      name: `Clip ${idx + 1}`,
+      waveName: label || (finalUrls.length === 1 ? 'Session Video' : `Session Clip ${idx + 1}`),
+      startTime: 0,
+      duration: '0:00',
+      url,
+      bg: '',
+      isSessionClip: true
+    }));
 
-    setClips(waveClips);
-    setCurrentClip(waveClips[0]);
+    setClips(newClips);
+    setCurrentClip(newClips[0]);
 
     try {
-      const [thumb1, thumb2, thumb3] = await extractMultiClipThumbnails(effectiveVideoUrl);
+      const [thumbs, durations] = await Promise.all([
+        Promise.all(finalUrls.map(u => captureVideoThumbnail(u, 1))),
+        Promise.all(finalUrls.map(u => getVideoDuration(u)))
+      ]);
 
-      setClips(prev => prev.map(c => {
-        if (c.id === 1 && thumb1) return { ...c, bg: thumb1 };
-        if (c.id === 2 && thumb2) return { ...c, bg: thumb2 };
-        if (c.id === 3 && thumb3) return { ...c, bg: thumb3 };
-        return c;
-      }));
+      setClips(prev => prev.map((c, i) => ({
+        ...c,
+        bg: thumbs[i] || c.bg,
+        duration: durations[i] > 0 ? formatDurationString(durations[i]) : '0:00',
+        realDuration: durations[i] || 0
+      })));
     } catch (err) {
-      console.warn('Clip thumbnail extraction failed', err);
+      console.warn('Clip media extraction failed', err);
     }
   };
 
   // Synchronize on mount if query param contains video URL(s)
   useEffect(() => {
     if (initialVideoUrl) {
-      const allUrls = parseVideoUrls(initialVideoUrl);
-      if (allUrls.length > 1) {
-        // Multiple videos provided for this session!
-        const initialClips = allUrls.map((url, idx) => ({
-          id: idx + 1,
-          name: `Video ${idx + 1}`,
-          waveName: `Wave Video #${idx + 1}`,
-          startTime: 0,
-          duration: '0:30',
-          url: url,
-          bg: ''
-        }));
-        setClips(initialClips);
-        setCurrentClip(initialClips[0]);
-
-        // Capture thumbnails for each distinct video in parallel
-        Promise.all(allUrls.map(u => captureVideoThumbnail(u, 1))).then(thumbs => {
-          setClips(prev => prev.map((c, i) => ({
-            ...c,
-            bg: thumbs[i] || c.bg
-          })));
-        }).catch(() => {});
-      } else {
-        const clean = extractValidVideoUrl(initialVideoUrl);
-        if (clean) {
-          if (clean.includes('ForBigger') || clean.includes('gtv-videos')) {
-            generateWaveClipsFromVideo('https://assets.mixkit.co/videos/preview/mixkit-surfer-riding-a-wave-in-the-sea-39828-large.mp4');
-          } else {
-            const match = DEFAULT_CLIPS.find(c => c.url === clean);
-            if (match) {
-              setCurrentClip(match);
-            } else {
-              generateWaveClipsFromVideo(clean);
-            }
-          }
-        } else {
-          generateWaveClipsFromVideo('https://assets.mixkit.co/videos/preview/mixkit-surfer-riding-a-wave-in-the-sea-39828-large.mp4');
-        }
-      }
+      loadVideosIntoClips(initialVideoUrl);
     }
   }, [initialVideoUrl]);
 
@@ -536,13 +508,16 @@ const VideoAnalysis = () => {
       }
 
       if (targetClipId) {
-        // Update single clip slot
-        const thumb = await captureVideoThumbnail(videoUrl, 1);
-        setClips(prev => prev.map(c => c.id === targetClipId ? { ...c, url: videoUrl, bg: thumb || c.bg } : c));
-        setCurrentClip(prev => prev.id === targetClipId ? { ...prev, url: videoUrl, bg: thumb || prev.bg } : prev);
+        // Update single clip slot with thumbnail & real duration
+        const [thumb, actualDur] = await Promise.all([
+          captureVideoThumbnail(videoUrl, 1),
+          getVideoDuration(videoUrl)
+        ]);
+        const formattedDur = actualDur > 0 ? formatDurationString(actualDur) : '0:00';
+        setClips(prev => prev.map(c => c.id === targetClipId ? { ...c, url: videoUrl, bg: thumb || c.bg, duration: formattedDur, realDuration: actualDur } : c));
+        setCurrentClip(prev => prev.id === targetClipId ? { ...prev, url: videoUrl, bg: thumb || prev.bg, duration: formattedDur, realDuration: actualDur } : prev);
       } else {
-        // Auto-split into 3 wave clips
-        await generateWaveClipsFromVideo(videoUrl, file.name.replace(/\.[^/.]+$/, ""));
+        await loadVideosIntoClips(videoUrl, file.name.replace(/\.[^/.]+$/, ""));
       }
     } catch (err) {
       console.error('Video upload error:', err);
@@ -581,30 +556,59 @@ const VideoAnalysis = () => {
         videoUrl = URL.createObjectURL(file);
       }
 
-      const thumb = await captureVideoThumbnail(videoUrl, 1);
-      const newId = (clips.length > 0 ? Math.max(...clips.map(c => c.id)) : 0) + 1;
+      const [thumb, actualDur] = await Promise.all([
+        captureVideoThumbnail(videoUrl, 1),
+        getVideoDuration(videoUrl)
+      ]);
       const cleanFileName = file.name.replace(/\.[^/.]+$/, "");
-      const newClip = {
-        id: newId,
-        name: `Clip ${newId}`,
-        waveName: cleanFileName || `Wave #${newId} (Uploaded Footage)`,
-        startTime: 0,
-        duration: '0:30',
-        url: videoUrl,
-        bg: thumb || ''
-      };
+      const formattedDur = actualDur > 0 ? formatDurationString(actualDur) : '0:00';
 
-      setClips(prev => [...prev, newClip]);
-      handleSelectClip(newClip);
+      // If only default placeholder demo video is currently loaded, replace it with this first real video
+      const isOnlyDemoPlaceholder = clips.length === 1 && (clips[0].url.includes('mixkit-surfer-riding-a-wave') || clips[0].waveName.includes('Demo'));
+
+      // Count how many uploaded (non-session) videos already exist
+      const uploadedCount = clips.filter(c => c.isSessionClip === false).length;
+
+      if (isOnlyDemoPlaceholder) {
+        const newVideo = {
+          id: 1,
+          name: 'Video 1',
+          waveName: cleanFileName || 'Uploaded Video 1',
+          startTime: 0,
+          duration: formattedDur,
+          realDuration: actualDur,
+          url: videoUrl,
+          bg: thumb || '',
+          isSessionClip: false
+        };
+        setClips([newVideo]);
+        handleSelectClip(newVideo);
+      } else {
+        const nextUploadedNum = uploadedCount + 1;
+        const nextId = clips.length + 1;
+        const newVideo = {
+          id: nextId,
+          name: `Video ${nextUploadedNum}`,
+          waveName: cleanFileName || `Uploaded Video ${nextUploadedNum}`,
+          startTime: 0,
+          duration: formattedDur,
+          realDuration: actualDur,
+          url: videoUrl,
+          bg: thumb || '',
+          isSessionClip: false
+        };
+        setClips(prev => [...prev, newVideo]);
+        handleSelectClip(newVideo);
+      }
     } catch (err) {
-      console.error('Add new clip error:', err);
+      console.error('Add new video error:', err);
     } finally {
       setIsUploadingClip(false);
       if (addClipInputRef.current) addClipInputRef.current.value = '';
     }
   };
 
-  // Next / Previous Clip Switchers
+  // Next / Previous Video Switchers
   const handleNextClip = () => {
     if (clips.length <= 1) return;
     const currentIndex = clips.findIndex(c => c.id === currentClip.id);
@@ -620,11 +624,20 @@ const VideoAnalysis = () => {
   };
 
   const handleDeleteClip = (clipId) => {
-    if (clips.length <= 1) return;
     const filtered = clips.filter(c => c.id !== clipId);
-    setClips(filtered);
-    if (currentClip.id === clipId) {
-      handleSelectClip(filtered[0]);
+    if (filtered.length === 0) {
+      setClips(DEFAULT_CLIPS);
+      handleSelectClip(DEFAULT_CLIPS[0]);
+    } else {
+      const reindexed = filtered.map((c, idx) => ({
+        ...c,
+        id: idx + 1,
+        name: `Video ${idx + 1}`
+      }));
+      setClips(reindexed);
+      if (currentClip.id === clipId) {
+        handleSelectClip(reindexed[0]);
+      }
     }
   };
 
@@ -757,6 +770,29 @@ const VideoAnalysis = () => {
     redraw(prevTime);
   };
 
+  const toggleMute = () => {
+    if (videoRef.current) {
+      const nextMuted = !isMuted;
+      videoRef.current.muted = nextMuted;
+      setIsMuted(nextMuted);
+    }
+  };
+
+  const handleVolumeChange = (e) => {
+    const newVol = parseFloat(e.target.value);
+    setVolume(newVol);
+    if (videoRef.current) {
+      videoRef.current.volume = newVol;
+      if (newVol > 0 && isMuted) {
+        videoRef.current.muted = false;
+        setIsMuted(false);
+      } else if (newVol === 0 && !isMuted) {
+        videoRef.current.muted = true;
+        setIsMuted(true);
+      }
+    }
+  };
+
   const handleTimeUpdate = () => {
     if (!videoRef.current) return;
     const t = videoRef.current.currentTime;
@@ -776,7 +812,12 @@ const VideoAnalysis = () => {
   const handleLoadedMetadata = () => {
     if (!videoRef.current) return;
     const dur = videoRef.current.duration;
-    setDuration(dur);
+    if (dur && !isNaN(dur) && isFinite(dur) && dur > 0) {
+      setDuration(dur);
+      const formatted = formatDurationString(dur);
+      setClips(prev => prev.map(c => c.id === currentClip.id ? { ...c, duration: formatted, realDuration: dur } : c));
+      setCurrentClip(prev => ({ ...prev, duration: formatted, realDuration: dur }));
+    }
 
     if (currentClip?.url && (!clips[0]?.bg || !clips[1]?.bg || !clips[2]?.bg)) {
       extractMultiClipThumbnails(currentClip.url).then(([thumb1, thumb2, thumb3]) => {
@@ -1023,7 +1064,7 @@ const VideoAnalysis = () => {
                   src={currentClip.url} 
                   autoPlay={false}
                   loop 
-                  muted 
+                  muted={isMuted} 
                   playsInline
                   preload="auto"
                   onPlay={() => {
@@ -1202,6 +1243,52 @@ const VideoAnalysis = () => {
                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19"></line></svg>
                     </button>
                     <span className="va-time-display">{formatTime(currentTime)} / {formatTime(duration)}</span>
+
+                    {/* Volume & Audio Controls */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto' }}>
+                      <button
+                        type="button"
+                        className="va-control-icon-btn"
+                        onClick={toggleMute}
+                        title={isMuted || volume === 0 ? "Unmute Sound" : "Mute Sound"}
+                      >
+                        {isMuted || volume === 0 ? (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F43F5E" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                            <line x1="23" y1="9" x2="17" y2="15"></line>
+                            <line x1="17" y1="9" x2="23" y2="15"></line>
+                          </svg>
+                        ) : volume < 0.5 ? (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                            <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                          </svg>
+                        ) : (
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                            <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                            <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+                          </svg>
+                        )}
+                      </button>
+                      <input
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.05"
+                        value={isMuted ? 0 : volume}
+                        onChange={handleVolumeChange}
+                        title={`Volume: ${Math.round((isMuted ? 0 : volume) * 100)}%`}
+                        style={{
+                          width: '64px',
+                          height: '4px',
+                          accentColor: '#2DD4BF',
+                          cursor: 'pointer',
+                          background: 'rgba(255,255,255,0.2)',
+                          borderRadius: '2px'
+                        }}
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1230,14 +1317,14 @@ const VideoAnalysis = () => {
               onChange={handleAddNewVideoClip}
             />
 
-            {/* Clips Section Header */}
+            {/* Videos Section Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px', marginBottom: '10px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span style={{ fontSize: '12px', fontWeight: 800, color: 'rgba(255,255,255,0.7)', letterSpacing: '0.8px', textTransform: 'uppercase' }}>
-                  🌊 Session Videos & Wave Clips ({clips.length})
+                  🎥 Session Videos ({clips.length})
                 </span>
                 <span style={{ fontSize: '11px', background: 'rgba(13, 148, 136, 0.25)', color: '#2DD4BF', border: '1px solid rgba(45, 212, 191, 0.4)', padding: '1px 8px', borderRadius: '12px', fontWeight: 700 }}>
-                  {clips.findIndex(c => c.id === currentClip.id) + 1} of {clips.length} Active
+                  Video {clips.findIndex(c => c.id === currentClip.id) + 1} of {clips.length} Active
                 </span>
               </div>
 
@@ -1262,7 +1349,7 @@ const VideoAnalysis = () => {
                       gap: '4px'
                     }}
                   >
-                    ◀ Prev
+                    ◀ Prev Video
                   </button>
                   <button
                     type="button"
@@ -1282,7 +1369,7 @@ const VideoAnalysis = () => {
                       gap: '4px'
                     }}
                   >
-                    Next ▶
+                    Next Video ▶
                   </button>
                 </div>
 
@@ -1308,101 +1395,139 @@ const VideoAnalysis = () => {
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <path d="M12 5v14M5 12h14"/>
                   </svg>
-                  {isUploadingClip ? 'Processing Video…' : '+ Add More Video'}
+                  {isUploadingClip ? 'Uploading Video…' : '+ Upload Video'}
                 </button>
               </div>
             </div>
 
-            {/* Clips Selector */}
+            {/* Videos Carousel */}
             <div className="va-clips-row">
               {clips.map((clip, index) => {
-                const fallbackImg = clip.id === 2 
-                  ? 'https://images.unsplash.com/photo-1505118380757-91f5f5632de0?auto=format&fit=crop&w=600&q=80'
-                  : clip.id === 3 
-                    ? 'https://images.unsplash.com/photo-1516815231560-8f41ec531527?auto=format&fit=crop&w=600&q=80'
-                    : 'https://images.unsplash.com/photo-1502680390469-be75c86b636f?auto=format&fit=crop&w=600&q=80';
+                const fallbackImg = 'https://images.unsplash.com/photo-1502680390469-be75c86b636f?auto=format&fit=crop&w=600&q=80';
                 const effectiveBg = clip.bg && clip.bg.trim() !== '' ? clip.bg : fallbackImg;
                 const isActive = currentClip.id === clip.id;
 
+                // Show divider before first uploaded (non-session) clip only
+                const prevClip = clips[index - 1];
+                const showDivider = index > 0 && clip.isSessionClip === false && prevClip?.isSessionClip !== false;
+
                 return (
-                  <div 
-                    key={clip.id} 
-                    className={`va-clip-item ${isActive ? 'va-clip-active' : ''}`}
-                    onClick={() => handleSelectClip(clip)}
-                    style={{
-                      backgroundImage: `linear-gradient(180deg, rgba(5, 11, 26, 0.25) 0%, rgba(5, 11, 26, 0.35) 45%, rgba(5, 11, 26, 0.95) 100%), url('${effectiveBg}')`
-                    }}
-                  >
-                    {/* Top Bar with Badge and Actions */}
-                    <div className="va-clip-top-row">
-                      <div className="va-clip-badge">
-                        <span className="va-clip-badge-dot" style={{ backgroundColor: isActive ? '#2DD4BF' : 'rgba(255,255,255,0.45)' }}></span>
-                        {clip.name || `Video ${index + 1}`}
+                  <React.Fragment key={clip.id || index}>
+                    {showDivider && (
+                      <div style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '6px',
+                        padding: '0 4px',
+                        flexShrink: 0,
+                        alignSelf: 'stretch'
+                      }}>
+                        <div style={{
+                          width: '1.5px',
+                          flex: 1,
+                          background: 'linear-gradient(to bottom, transparent, rgba(45,212,191,0.5), transparent)',
+                          borderRadius: '2px'
+                        }} />
+                        <span style={{
+                          fontSize: '8px',
+                          fontWeight: 800,
+                          color: '#2DD4BF',
+                          letterSpacing: '0.6px',
+                          textTransform: 'uppercase',
+                          writingMode: 'vertical-rl',
+                          textOrientation: 'mixed',
+                          opacity: 0.8,
+                          padding: '4px 0'
+                        }}>Uploaded</span>
+                        <div style={{
+                          width: '1.5px',
+                          flex: 1,
+                          background: 'linear-gradient(to bottom, transparent, rgba(45,212,191,0.5), transparent)',
+                          borderRadius: '2px'
+                        }} />
                       </div>
+                    )}
+                    <div 
+                      className={`va-clip-item ${isActive ? 'va-clip-active' : ''}`}
+                      onClick={() => handleSelectClip(clip)}
+                      style={{
+                        backgroundImage: `linear-gradient(180deg, rgba(5, 11, 26, 0.25) 0%, rgba(5, 11, 26, 0.35) 45%, rgba(5, 11, 26, 0.95) 100%), url('${effectiveBg}')`,
+                        ...(clip.isSessionClip === false ? { border: '1.5px solid rgba(45,212,191,0.35)' } : {})
+                      }}
+                    >
+                      {/* Top Bar with Badge and Actions */}
+                      <div className="va-clip-top-row">
+                        <div className="va-clip-badge">
+                          <span className="va-clip-badge-dot" style={{ backgroundColor: isActive ? '#2DD4BF' : 'rgba(255,255,255,0.45)' }}></span>
+                          {clip.name}
+                        </div>
 
-                      <div style={{ display: 'flex', gap: '4px' }}>
-                        {/* Quick Replace Video on Hover */}
-                        <button
-                          type="button"
-                          className="va-clip-replace-btn"
-                          title={`Upload/Change video specifically for ${clip.name}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setTargetClipIdForUpload(clip.id);
-                            targetFileInputRef.current?.click();
-                          }}
-                        >
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                            <polyline points="17 8 12 3 7 8"/>
-                            <line x1="12" y1="3" x2="12" y2="15"/>
-                          </svg>
-                        </button>
-
-                        {/* Delete/Remove this clip */}
-                        {clips.length > 1 && (
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          {/* Quick Replace Video on Hover */}
                           <button
                             type="button"
                             className="va-clip-replace-btn"
-                            title={`Remove this video clip`}
-                            style={{ color: '#F43F5E' }}
+                            title={`Upload and replace Video ${index + 1}`}
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleDeleteClip(clip.id);
+                              setTargetClipIdForUpload(clip.id);
+                              targetFileInputRef.current?.click();
                             }}
                           >
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                              <polyline points="17 8 12 3 7 8"/>
+                              <line x1="12" y1="3" x2="12" y2="15"/>
+                            </svg>
                           </button>
-                        )}
-                      </div>
-                    </div>
 
-                    {/* Center Hover Play Indicator */}
-                    <div className="va-clip-play-center">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                    </div>
-                    
-                    {/* Bottom Metadata */}
-                    <div className="va-clip-bottom-info">
-                      <div className="va-clip-wave-name" title={clip.waveName || clip.name}>{clip.waveName || clip.name}</div>
-                      <div className="va-clip-duration-tag">
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-                        <span>{clip.duration || (formatTime(clip.startTime) + ' ➔')}</span>
+                          {/* Delete/Remove this video */}
+                          {clips.length > 1 && (
+                            <button
+                              type="button"
+                              className="va-clip-replace-btn"
+                              title={`Remove Video ${index + 1}`}
+                              style={{ color: '#F43F5E' }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteClip(clip.id);
+                              }}
+                            >
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Center Hover Play Indicator */}
+                      <div className="va-clip-play-center">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                      </div>
+                      
+                      {/* Bottom Metadata */}
+                      <div className="va-clip-bottom-info">
+                        <div className="va-clip-wave-name" title={clip.waveName || `Video ${index + 1}`}>{clip.waveName || `Video ${index + 1}`}</div>
+                        <div className="va-clip-duration-tag">
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                          <span>{clip.duration || '00:00'}</span>
+                        </div>
                       </div>
                     </div>
-                  </div>
+                  </React.Fragment>
                 );
               })}
 
-              {/* Add New Clip Slot */}
+              {/* Add New Video Slot */}
               <div
                 className="va-clip-add-card"
                 onClick={() => addClipInputRef.current?.click()}
-                title="Upload and append another session video"
+                title="Upload another full session video"
               >
                 <div className="va-clip-add-icon">+</div>
-                <div className="va-clip-add-text">Add Wave Video</div>
-                <div className="va-clip-add-subtext">Upload footage</div>
+                <div className="va-clip-add-text">Upload Video</div>
+                <div className="va-clip-add-subtext">Add another full video</div>
               </div>
             </div>
           </div>

@@ -26,6 +26,91 @@ const StudentsManagement = () => {
   const [attendanceModal, setAttendanceModal] = useState(null); // student object to mark attendance
   const [attSaving, setAttSaving] = useState(false);
   const [attError, setAttError] = useState('');
+  const DEFAULT_SLOTS = [
+    { id: 1, time: "08:30 AM", duration: "90", maxStudents: 4, days: ["Mon", "Tue", "Wed", "Thu", "Fri"], active: true },
+    { id: 2, time: "10:30 AM", duration: "90", maxStudents: 4, days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"], active: true },
+    { id: 3, time: "11:30 AM", duration: "60", maxStudents: 6, days: ["Mon", "Tue", "Wed"], active: true },
+    { id: 4, time: "01:00 PM", duration: "120", maxStudents: 4, days: ["Tue", "Thu", "Sat", "Sun"], active: true },
+    { id: 5, time: "03:30 PM", duration: "90", maxStudents: 4, days: ["Fri", "Sat", "Sun"], active: false },
+    { id: 6, time: "04:00 PM", duration: "90", maxStudents: 4, days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], active: true },
+  ];
+
+  const SLOT_THEMES = [
+    { name: 'Teal', primary: '#0D9488', dark: '#0F766E', light: '#ECFDF5', border: '#059669' },
+    { name: 'Blue', primary: '#0284C7', dark: '#0369A1', light: '#EFF6FF', border: '#0284C7' },
+    { name: 'Purple', primary: '#7C3AED', dark: '#6D28D9', light: '#F5F3FF', border: '#7C3AED' },
+    { name: 'Amber', primary: '#D97706', dark: '#B45309', light: '#FFFBEB', border: '#D97706' },
+    { name: 'Rose', primary: '#E11D48', dark: '#BE123C', light: '#FFF1F2', border: '#E11D48' }
+  ];
+  const getSlotTheme = (idx) => SLOT_THEMES[Math.abs(idx) % SLOT_THEMES.length];
+
+  const [configuredSlots, setConfiguredSlots] = useState(() => {
+    try {
+      const raw = localStorage.getItem('session_slots');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    return DEFAULT_SLOTS;
+  });
+
+  useEffect(() => {
+    const handleSlotsSync = () => {
+      try {
+        const raw = localStorage.getItem('session_slots');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setConfiguredSlots(parsed);
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    };
+    window.addEventListener('storage', handleSlotsSync);
+    window.addEventListener('session_slots_updated', handleSlotsSync);
+    return () => {
+      window.removeEventListener('storage', handleSlotsSync);
+      window.removeEventListener('session_slots_updated', handleSlotsSync);
+    };
+  }, []);
+
+  const availableSlotsForDate = useMemo(() => {
+    const activeSlots = (configuredSlots || []).filter(s => s.active !== false);
+    if (!dateFilter || dateFilter === 'All') {
+      return activeSlots;
+    }
+    const parts = String(dateFilter).split('-');
+    if (parts.length === 3) {
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1;
+      const day = parseInt(parts[2], 10);
+      if (!isNaN(year) && !isNaN(month) && !isNaN(day)) {
+        const d = new Date(year, month, day);
+        const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        const selectedDayOfWeek = dayNames[d.getDay()];
+        return activeSlots.filter(s => Array.isArray(s.days) && s.days.includes(selectedDayOfWeek));
+      }
+    }
+    return activeSlots;
+  }, [configuredSlots, dateFilter]);
+
+  useEffect(() => {
+    if (sessionTimeFilter !== 'All') {
+      const exists = availableSlotsForDate.some(s => {
+        const t = s.time || s.startTime;
+        return t === sessionTimeFilter || sessionTimeFilter.startsWith(t) || t.startsWith(sessionTimeFilter);
+      });
+      if (!exists) {
+        setSessionTimeFilter('All');
+      }
+    }
+  }, [availableSlotsForDate, sessionTimeFilter]);
+
   const [saving, setSaving] = useState(false);
   const addDaysToDate = (startDateStr, days) => {
     if (!startDateStr) return '';
@@ -47,6 +132,100 @@ const StudentsManagement = () => {
 
   const defaultStartDate = new Date().toISOString().split('T')[0];
   const defaultEndDate = addDaysToDate(defaultStartDate, 3);
+
+  const getStudentGuestCount = (studentObj) => {
+    if (!studentObj) return 0;
+    if (studentObj.guests_details && Array.isArray(studentObj.guests_details) && studentObj.guests_details.length > 0) {
+      return studentObj.guests_details.length;
+    }
+    if (studentObj.guests_count && parseInt(studentObj.guests_count) > 1) {
+      return parseInt(studentObj.guests_count) - 1;
+    }
+    try {
+      const emailLower = (studentObj.email || '').toLowerCase().trim();
+      const nameLower = (studentObj.name || '').toLowerCase().trim();
+
+      const savedUser = JSON.parse(sessionStorage.getItem('user') || '{}');
+      if ((emailLower && (savedUser.email || '').toLowerCase().trim() === emailLower) ||
+          (nameLower && (savedUser.name || '').toLowerCase().trim() === nameLower)) {
+        if (savedUser.guests_details && savedUser.guests_details.length > 0) {
+          return savedUser.guests_details.length;
+        }
+        if (savedUser.guests_count && parseInt(savedUser.guests_count) > 1) {
+          return parseInt(savedUser.guests_count) - 1;
+        }
+      }
+
+      const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+      const req = reqs.find(r => 
+        (emailLower && (r.student_email || r.email || '').toLowerCase().trim() === emailLower) ||
+        (nameLower && (r.student_name || r.name || '').toLowerCase().trim() === nameLower)
+      );
+      if (req) {
+        if (req.guests_details && req.guests_details.length > 0) {
+          return req.guests_details.length;
+        }
+        if (req.guests_count && parseInt(req.guests_count) > 1) {
+          return parseInt(req.guests_count) - 1;
+        }
+      }
+
+      const mockStudents = JSON.parse(localStorage.getItem('mock_students_data') || '[]');
+      const mock = mockStudents.find(m => 
+        (emailLower && (m.email || '').toLowerCase().trim() === emailLower) ||
+        (nameLower && (m.name || '').toLowerCase().trim() === nameLower)
+      );
+      if (mock) {
+        if (mock.guests_details && mock.guests_details.length > 0) {
+          return mock.guests_details.length;
+        }
+        if (mock.guests_count && parseInt(mock.guests_count) > 1) {
+          return parseInt(mock.guests_count) - 1;
+        }
+      }
+    } catch (e) {}
+
+    return 0;
+  };
+
+  const getStudentGuestsDetails = (studentObj) => {
+    if (!studentObj) return [];
+    if (studentObj.guests_details && Array.isArray(studentObj.guests_details) && studentObj.guests_details.length > 0) {
+      return studentObj.guests_details;
+    }
+    try {
+      const emailLower = (studentObj.email || '').toLowerCase().trim();
+      const nameLower = (studentObj.name || '').toLowerCase().trim();
+
+      const savedUser = JSON.parse(sessionStorage.getItem('user') || '{}');
+      if ((emailLower && (savedUser.email || '').toLowerCase().trim() === emailLower) ||
+          (nameLower && (savedUser.name || '').toLowerCase().trim() === nameLower)) {
+        if (savedUser.guests_details && savedUser.guests_details.length > 0) {
+          return savedUser.guests_details;
+        }
+      }
+
+      const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+      const req = reqs.find(r => 
+        (emailLower && (r.student_email || r.email || '').toLowerCase().trim() === emailLower) ||
+        (nameLower && (r.student_name || r.name || '').toLowerCase().trim() === nameLower)
+      );
+      if (req && req.guests_details && req.guests_details.length > 0) {
+        return req.guests_details;
+      }
+
+      const mockStudents = JSON.parse(localStorage.getItem('mock_students_data') || '[]');
+      const mock = mockStudents.find(m => 
+        (emailLower && (m.email || '').toLowerCase().trim() === emailLower) ||
+        (nameLower && (m.name || '').toLowerCase().trim() === nameLower)
+      );
+      if (mock && mock.guests_details && mock.guests_details.length > 0) {
+        return mock.guests_details;
+      }
+    } catch (e) {}
+
+    return [];
+  };
 
   const [form, setForm] = useState({
     name: '', email: '', password: '', level: 'Beginner', instructor_id: '',
@@ -118,8 +297,9 @@ const StudentsManagement = () => {
     }
   });
 
-  const isStudent = currentUser?.role === 'athlete';
-  const isCoach = currentUser?.role === 'coach';
+  const userRole = (currentUser?.role || '').toLowerCase().trim();
+  const isStudent = userRole === 'athlete' || userRole === 'student';
+  const isCoach = userRole === 'coach' || userRole === 'instructor';
   const currentCoachName = currentUser?.name || '';
   const currentCoachId = currentUser?.instructor_id || currentUser?.id || null;
 
@@ -148,6 +328,9 @@ const StudentsManagement = () => {
 
   const schoolLower = (activeSchoolName || '').toLowerCase().trim();
   const isSuperAdmin = currentUser?.role === 'superadmin' || schoolLower === 'super admin';
+  const isAdminOrSchoolAdmin = isSuperAdmin || userRole === 'admin' || userRole === 'school' || userRole === 'school_admin' || userRole === 'schooladmin';
+  const canManagePendingRequests = isAdminOrSchoolAdmin && !isCoach;
+
   const effectiveSchool = (activeSchoolName && schoolLower !== 'school admin' && schoolLower !== 'super admin')
     ? activeSchoolName
     : 'Aquatic Indica Surf School';
@@ -370,7 +553,10 @@ const StudentsManagement = () => {
 
     const matchLevel = levelFilter === 'All' || s.level === levelFilter;
     const matchInstructor = instructorFilter === 'All' || s.instructor === instructorFilter;
-    const matchSession = sessionTimeFilter === 'All' || s.session_time === sessionTimeFilter;
+    const matchSession = sessionTimeFilter === 'All' ||
+      s.session_time === sessionTimeFilter ||
+      (s.session_time && s.session_time.startsWith(sessionTimeFilter)) ||
+      (s.session_time && sessionTimeFilter.startsWith(s.session_time));
     const matchStay = stayFilter === 'All' || (stayFilter === 'Lodge' ? s.staying_at_school === 'Yes' : s.staying_at_school === 'No');
     const matchDate = dateFilter === 'All' || s.start_date === dateFilter;
     return matchSearch && matchLevel && matchStat && matchInstructor && matchSession && matchStay && matchDate;
@@ -676,7 +862,9 @@ const StudentsManagement = () => {
         // Check school match
         const targetSchool = schoolName || req?.school_name || req?.school || 'Aquatic Indica Surf School';
         if (activeSchoolName && !isDefaultSchool) {
-          if (targetSchool && targetSchool.toLowerCase() !== activeSchoolName.toLowerCase()) {
+          const normTarget = (targetSchool || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          const normActive = (activeSchoolName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (normTarget && normActive && !normTarget.includes(normActive) && !normActive.includes(normTarget)) {
             return;
           }
         }
@@ -935,32 +1123,34 @@ const StudentsManagement = () => {
             <p className="sm-sub">Manage your student body and track their progression across badge levels.</p>
           </div>
           <div className="sm-actions" style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-            <button 
-              className="sm-btn-secondary"
-              onClick={() => {
-                setReqRefreshKey(k => k + 1);
-                fetchStudents();
-                setShowPendingModal(true);
-              }}
-              style={{
-                background: allPendingRequests.length > 0 ? '#FFFBEB' : '#FFFFFF',
-                color: allPendingRequests.length > 0 ? '#D97706' : '#0F172A',
-                border: allPendingRequests.length > 0 ? '1.5px solid #FCD34D' : '1px solid #CBD5E1',
-                fontWeight: 800,
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '8px',
-                position: 'relative'
-              }}
-              title="Review pending student registration requests"
-            >
-              <span>📩 Pending Requests</span>
-              {allPendingRequests.length > 0 && (
-                <span style={{ background: '#EF4444', color: '#FFF', borderRadius: '10px', padding: '2px 8px', fontSize: '11px', fontWeight: 800 }}>
-                  {allPendingRequests.length}
-                </span>
-              )}
-            </button>
+            {canManagePendingRequests && (
+              <button 
+                className="sm-btn-secondary"
+                onClick={() => {
+                  setReqRefreshKey(k => k + 1);
+                  fetchStudents();
+                  setShowPendingModal(true);
+                }}
+                style={{
+                  background: allPendingRequests.length > 0 ? '#FFFBEB' : '#FFFFFF',
+                  color: allPendingRequests.length > 0 ? '#D97706' : '#0F172A',
+                  border: allPendingRequests.length > 0 ? '1.5px solid #FCD34D' : '1px solid #CBD5E1',
+                  fontWeight: 800,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  position: 'relative'
+                }}
+                title="Review pending student registration requests"
+              >
+                <span>📩 Pending Requests</span>
+                {allPendingRequests.length > 0 && (
+                  <span style={{ background: '#EF4444', color: '#FFF', borderRadius: '10px', padding: '2px 8px', fontSize: '11px', fontWeight: 800 }}>
+                    {allPendingRequests.length}
+                  </span>
+                )}
+              </button>
+            )}
 
 
             <button className="sm-btn-secondary" onClick={downloadCSVSample}>Export CSV</button>
@@ -969,7 +1159,7 @@ const StudentsManagement = () => {
         </header>
 
         {/* Pending Requests Modal */}
-        {showPendingModal && (
+        {showPendingModal && canManagePendingRequests && (
           <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15,23,42,0.65)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '20px' }}>
             <div style={{ background: '#FFFFFF', borderRadius: '16px', maxWidth: '680px', width: '100%', maxHeight: '85vh', overflowY: 'auto', padding: '24px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px', borderBottom: '1px solid #E2E8F0', paddingBottom: '14px' }}>
@@ -1061,50 +1251,205 @@ const StudentsManagement = () => {
               className="sm-search-input"
             />
           </div>
-          <select
-            className="sm-select"
-            value={levelFilter}
-            onChange={e => {
-              const val = e.target.value;
-              setLevelFilter(val);
-              if (val === 'Beginner') setActiveStatFilter('BEGINNER');
-              else if (val === 'Intermediate') setActiveStatFilter('INTERMEDIATE');
-              else if (val === 'Advanced') setActiveStatFilter('ADVANCED');
-              else setActiveStatFilter('TOTAL');
-            }}
-          >
-            <option value="All">Level: All</option>
-            {levels.map(l => <option key={l}>{l}</option>)}
-          </select>
-          {!isCoach && (
-            <select className="sm-select" value={instructorFilter} onChange={e => setInstructorFilter(e.target.value)}>
-              <option value="All">Instructor: All</option>
-              {instructors.map(i => <option key={i.id}>{i.name}</option>)}
-            </select>
-          )}
-          <select className="sm-select" value={sessionTimeFilter} onChange={e => setSessionTimeFilter(e.target.value)}>
-            <option value="All">Session: All Slots</option>
-            <option value="08:30 AM">08:30 AM (90m)</option>
-            <option value="10:30 AM">10:30 AM (90m)</option>
-            <option value="11:30 AM">11:30 AM (60m)</option>
-            <option value="01:00 PM">01:00 PM (120m)</option>
-            <option value="03:30 PM">03:30 PM (90m)</option>
-          </select>
-          <select
-            className="sm-select"
-            value={dateFilter}
-            onChange={e => setDateFilter(e.target.value)}
-          >
-            <option value="All">📅 Date: All Dates</option>
-            {availableDates.map(d => (
-              <option key={d} value={d}>📅 {d}</option>
-            ))}
-          </select>
-          <select className="sm-select" value={stayFilter} onChange={e => setStayFilter(e.target.value)}>
-            <option value="All">Stay: All</option>
-            <option value="Lodge">On-site Lodge</option>
-            <option value="Offsite">Off-site Stay</option>
-          </select>
+          {/* 1. Calendar Date Picker */}
+          <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+            <input
+              type="date"
+              className="sm-select"
+              value={dateFilter === 'All' ? '' : dateFilter}
+              onChange={e => setDateFilter(e.target.value || 'All')}
+              style={{
+                cursor: 'pointer',
+                paddingRight: dateFilter !== 'All' ? '28px' : '10px',
+                fontWeight: dateFilter !== 'All' ? 700 : 500,
+                color: dateFilter !== 'All' ? '#0D9488' : '#334155',
+                borderColor: dateFilter !== 'All' ? '#0D9488' : '#CBD5E1',
+                background: dateFilter !== 'All' ? '#E6F9F5' : '#FFFFFF'
+              }}
+              title="Click to select date from calendar"
+            />
+            {dateFilter !== 'All' && (
+              <button
+                type="button"
+                onClick={() => setDateFilter('All')}
+                style={{
+                  position: 'absolute',
+                  right: '8px',
+                  background: 'none',
+                  border: 'none',
+                  color: '#0D9488',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: 700,
+                  lineHeight: 1
+                }}
+                title="Clear date filter (Show All Dates)"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Horizontal Slot Tabs Bar (Always Visible - Matching Sessions.jsx) */}
+        <div className="sm-slot-tabs-bar" style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px',
+          padding: '12px 16px',
+          background: '#FFFFFF',
+          borderRadius: '12px',
+          border: '1px solid #E2E8F0',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+          margin: '12px 0 16px 0',
+          overflowX: 'auto',
+          scrollbarWidth: 'thin'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap', fontWeight: 700, fontSize: '13px', color: '#0F172A', marginRight: '4px' }}>
+            <span style={{ fontSize: '15px' }}>⏰</span> Select Time Slot:
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'nowrap' }}>
+            {/* All Slots Tab */}
+            {(() => {
+              const isSelected = sessionTimeFilter === 'All';
+              const count = students.length;
+              return (
+                <button
+                  type="button"
+                  key="All"
+                  onClick={() => setSessionTimeFilter('All')}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '6px 14px',
+                    borderRadius: '24px',
+                    cursor: 'pointer',
+                    fontSize: '12.5px',
+                    fontWeight: 700,
+                    whiteSpace: 'nowrap',
+                    transition: 'all 0.2s ease',
+                    border: isSelected ? '2px solid #0D9488' : '1px solid #CBD5E1',
+                    background: isSelected ? '#ECFDF5' : '#FFFFFF',
+                    color: isSelected ? '#0D9488' : '#475569',
+                    boxShadow: isSelected ? '0 2px 8px rgba(13, 148, 136, 0.15)' : 'none'
+                  }}
+                >
+                  <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: '20px',
+                    height: '20px',
+                    borderRadius: '50%',
+                    background: isSelected ? '#0D9488' : '#94A3B8',
+                    color: '#FFFFFF',
+                    fontSize: '11px',
+                    fontWeight: 800
+                  }}>
+                    ★
+                  </span>
+                  <span>All Slots</span>
+                  <span style={{
+                    background: isSelected ? '#0D9488' : '#E2E8F0',
+                    color: isSelected ? '#FFFFFF' : '#475569',
+                    padding: '2px 8px',
+                    borderRadius: '10px',
+                    fontSize: '11px',
+                    fontWeight: 700
+                  }}>
+                    {count} Students
+                  </span>
+                  {isSelected && (
+                    <span style={{
+                      background: '#0D9488',
+                      color: '#FFFFFF',
+                      padding: '2px 8px',
+                      borderRadius: '10px',
+                      fontSize: '10.5px',
+                      fontWeight: 800
+                    }}>
+                      ✓ SELECTED TAB
+                    </span>
+                  )}
+                </button>
+              );
+            })()}
+
+            {/* Dynamic Slot Tabs */}
+            {availableSlotsForDate.map((slot, index) => {
+              const slotTime = slot.time || slot.startTime || '08:30 AM';
+              const isSelected = sessionTimeFilter === slotTime || (sessionTimeFilter !== 'All' && (slotTime.includes(sessionTimeFilter) || sessionTimeFilter.includes(slotTime)));
+              const theme = getSlotTheme(index);
+              const matchingCount = students.filter(s => {
+                if (!s.session_time) return false;
+                return s.session_time === slotTime || s.session_time.startsWith(slotTime) || slotTime.startsWith(s.session_time);
+              }).length;
+
+              return (
+                <button
+                  type="button"
+                  key={slot.id || slotTime}
+                  onClick={() => setSessionTimeFilter(slotTime)}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '6px 14px',
+                    borderRadius: '24px',
+                    cursor: 'pointer',
+                    fontSize: '12.5px',
+                    fontWeight: 700,
+                    whiteSpace: 'nowrap',
+                    transition: 'all 0.2s ease',
+                    border: isSelected ? `2px solid ${theme.primary}` : '1px solid #CBD5E1',
+                    background: isSelected ? theme.light : '#FFFFFF',
+                    color: isSelected ? theme.primary : '#475569',
+                    boxShadow: isSelected ? `0 2px 8px ${theme.primary}25` : 'none'
+                  }}
+                >
+                  <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: '20px',
+                    height: '20px',
+                    borderRadius: '50%',
+                    background: isSelected ? theme.primary : '#94A3B8',
+                    color: '#FFFFFF',
+                    fontSize: '11px',
+                    fontWeight: 800
+                  }}>
+                    {index + 1}
+                  </span>
+                  <span>{slotTime}</span>
+                  <span style={{
+                    background: isSelected ? theme.primary : '#E2E8F0',
+                    color: isSelected ? '#FFFFFF' : '#475569',
+                    padding: '2px 8px',
+                    borderRadius: '10px',
+                    fontSize: '11px',
+                    fontWeight: 700
+                  }}>
+                    {matchingCount} Students
+                  </span>
+                  {isSelected && (
+                    <span style={{
+                      background: theme.primary,
+                      color: '#FFFFFF',
+                      padding: '2px 8px',
+                      borderRadius: '10px',
+                      fontSize: '10.5px',
+                      fontWeight: 800
+                    }}>
+                      ✓ SELECTED TAB
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* Stats */}
@@ -1132,9 +1477,7 @@ const StudentsManagement = () => {
                 <tr>
                   <th>Student & WhatsApp</th>
                   <th>Course Progress</th>
-                  <th>Session & Stay</th>
-                  <th>Primary Instructor</th>
-                  <th>Attendance</th>
+                  <th>Session</th>
                   <th>Invite</th>
                   <th></th>
                 </tr>
@@ -1184,6 +1527,44 @@ const StudentsManagement = () => {
                           <div className="sm-student-email">
                             {s.whatsapp_number ? `📱 +91 ${s.whatsapp_number}` : s.email}
                           </div>
+                          {(() => {
+                            const gCount = getStudentGuestCount(s);
+                            const guestList = getStudentGuestsDetails(s);
+                            if (gCount > 0) {
+                              return (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', marginTop: '4px' }}>
+                                  <div style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    fontSize: '11px',
+                                    fontWeight: '700',
+                                    color: '#0284C7',
+                                    background: '#F0F9FF',
+                                    border: '1px solid #BAE6FD',
+                                    padding: '2px 8px',
+                                    borderRadius: '6px',
+                                    width: 'fit-content'
+                                  }}>
+                                    👥 {gCount} {gCount === 1 ? 'Guest' : 'Guests'}
+                                  </div>
+                                  
+                                  {guestList.length > 0 && (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '1px' }}>
+                                      {guestList.map((g, gIdx) => (
+                                        <div key={gIdx} style={{ fontSize: '11px', color: '#475569', display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                                          <span style={{ fontWeight: '700', color: '#0F172A' }}>• {g.name || `Guest #${gIdx + 1}`}</span>
+                                          {(g.whatsapp_number || g.phone) && <span style={{ color: '#64748B' }}>(📱 {g.whatsapp_number || g.phone})</span>}
+                                          {g.email && <span style={{ color: '#64748B' }}>({g.email})</span>}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            }
+                            return null;
+                          })()}
                         </div>
                       </div>
                     </td>
@@ -1210,23 +1591,7 @@ const StudentsManagement = () => {
                         <span style={{ fontSize: '12px', fontWeight: 600, color: '#0D9488' }}>
                           ⏰ {s.session_time || 'Morning 6:00 AM'}
                         </span>
-                        <span style={{ fontSize: '11px', color: s.staying_at_school === 'Yes' ? '#10B981' : '#64748B' }}>
-                          {s.staying_at_school === 'Yes' ? '🏨 On-site Lodge' : '🚗 Off-site Stay'}
-                        </span>
                       </div>
-                    </td>
-                    <td className="sm-instructor-text">{s.instructor || '—'}</td>
-                    <td>
-                      <button
-                        className="sm-invite-btn"
-                        style={{ background: 'rgba(16, 185, 129, 0.08)', color: '#10B981', borderColor: 'rgba(16, 185, 129, 0.25)' }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setAttendanceModal(s);
-                        }}
-                      >
-                        ✓ Mark Daily
-                      </button>
                     </td>
                     <td style={{ textAlign: 'right' }}>
                         {!s.has_password && (
@@ -1458,16 +1823,7 @@ const StudentsManagement = () => {
                     </div>
                   </div>
 
-                  <div className="sm-field">
-                    <label>Preferred Session Time</label>
-                    <select value={form.session_time} onChange={e => setForm({...form, session_time: e.target.value})}>
-                      <option value="08:30 AM">08:30 AM · Morning Slot 1 (90m)</option>
-                      <option value="10:30 AM">10:30 AM · Morning Slot 2 (90m)</option>
-                      <option value="11:30 AM">11:30 AM · Midday Slot (60m)</option>
-                      <option value="01:00 PM">01:00 PM · Afternoon Slot (120m)</option>
-                      <option value="03:30 PM">03:30 PM · Late Afternoon (90m)</option>
-                    </select>
-                  </div>
+
 
                   <div className="sm-grid-2">
                     <div className="sm-field">
@@ -1939,12 +2295,6 @@ const StudentsManagement = () => {
                       <div className="sm-ssc-label">PENDING SESSIONS</div>
                       <div className="sm-ssc-value">12</div>
                       <div className="sm-ssc-sub">Days Pending: 8</div>
-                    </div>
-
-                    <div className="sm-session-stat-card">
-                      <div className="sm-ssc-label">SESSIONS BOOKED</div>
-                      <div className="sm-ssc-value">48</div>
-                      <div className="sm-ssc-sub">Days Booked: 32</div>
                     </div>
 
                     <div className="sm-session-stat-card">

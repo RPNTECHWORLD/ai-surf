@@ -4,12 +4,40 @@ import Sidebar from '../components/Sidebar';
 
 const API = import.meta.env.VITE_API_URL || '';
 
+const formatExperience = (exp) => {
+  if (!exp && exp !== 0) return '—';
+  const str = String(exp).trim();
+  if (/^\d+$/.test(str)) return `${str} Years`;
+  return str;
+};
+
 const InstructorProfile = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const fileInputRef = useRef(null);
   const [instructor, setInstructor] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  const activeSchoolName = (() => {
+    try {
+      const savedSchool = sessionStorage.getItem('activeSchool');
+      if (savedSchool) {
+        const parsed = JSON.parse(savedSchool);
+        if (typeof parsed === 'string') return parsed;
+        if (parsed?.name && typeof parsed.name === 'string') return parsed.name;
+        if (parsed?.name && typeof parsed.name === 'object' && parsed.name.name) return String(parsed.name.name);
+      }
+      const savedUser = sessionStorage.getItem('user');
+      if (savedUser) {
+        const parsedUser = JSON.parse(savedUser);
+        if (typeof parsedUser?.school_name === 'string') return parsedUser.school_name;
+        if (typeof parsedUser?.school === 'string') return parsedUser.school;
+        if (parsedUser?.school && typeof parsedUser.school === 'object' && parsedUser.school.name) return String(parsedUser.school.name);
+        if (parsedUser?.school_name && typeof parsedUser.school_name === 'object' && parsedUser.school_name.name) return String(parsedUser.school_name.name);
+      }
+    } catch (e) {}
+    return '';
+  })();
 
   // Auth states
   const [currentUser, setCurrentUser] = useState(null);
@@ -170,7 +198,8 @@ const InstructorProfile = () => {
 
     const coachName = acc?.name || saved.name || (saved.role === 'coach' ? saved.name : 'Surf Coach');
     const coachEmail = acc?.email || saved.email || '';
-    const coachSchool = acc?.school || saved.school || 'Aquatic Indica Surf School';
+    const userSchoolStr = typeof saved.school === 'string' ? saved.school : (saved.school?.name || saved.school_name || '');
+    const coachSchool = acc?.school || userSchoolStr || activeSchoolName || 'Aquatic Indica Surf School';
 
     return {
       id: parseInt(coachId) || saved.instructor_id || saved.id || 1,
@@ -226,6 +255,12 @@ const InstructorProfile = () => {
         if (!data.specializations) data.specializations = [];
         if (!data.certifications) data.certifications = [];
         if (!data.reviews) data.reviews = [];
+
+        // Dynamic sync: if data.school is missing or generic default, match activeSchoolName
+        if (activeSchoolName && (!data.school || data.school === 'Aquatic Indica Surf School')) {
+          data.school = activeSchoolName;
+        }
+
         setInstructor(data);
         if (data.email) setCoachEmail(data.email);
         fetchDynamicData(data);
@@ -366,10 +401,17 @@ const InstructorProfile = () => {
   if (loading) return <div className="db-page"><Sidebar /><main className="db-main"><div className="db-loading"><div className="db-spinner" /></div></main></div>;
   if (!instructor) return <div className="db-page"><Sidebar /><main className="db-main">Instructor not found</main></div>;
 
-  const isOwnProfile = currentUser && (
-    (currentUser.role === 'coach' && currentUser.instructor_id === parseInt(id)) ||
-    (currentUser.role === 'admin')
+  const activeSchoolStr = sessionStorage.getItem('activeSchool') || '';
+  const isSuperAdmin = currentUser?.role === 'superadmin' || 
+                       currentUser?.role === 'super_admin' || 
+                       activeSchoolStr.toLowerCase().includes('super admin');
+
+  const isCoachThemselves = currentUser?.role === 'coach' && (
+    currentUser?.instructor_id === parseInt(id) ||
+    (currentUser?.email && instructor?.email && currentUser.email.toLowerCase().trim() === instructor.email.toLowerCase().trim())
   );
+
+  const canEditProfile = isSuperAdmin || isCoachThemselves;
 
   // Group sessions by month (last 8 months) for chart
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -436,44 +478,46 @@ const InstructorProfile = () => {
               <span className="ip-badge-active">ACTIVE</span>
             </div>
           </div>
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: '12px', alignItems: 'center' }}>
-            {(!instructor.has_password && !instructor.user_id && !instructor.password_plain) && (
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => {
-                  setCoachEmail(instructor.email || '');
-                  setShowPasswordModal(true);
-                }}
-                style={{
-                  background: 'linear-gradient(135deg, rgba(13, 148, 136, 0.25) 0%, rgba(2, 132, 199, 0.25) 100%)',
-                  color: '#2DD4BF',
-                  border: '1px solid rgba(45, 212, 191, 0.4)',
-                  padding: '10px 18px',
-                  borderRadius: '10px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  fontWeight: '700',
-                  fontSize: '13.5px',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s ease',
-                  boxShadow: '0 2px 8px rgba(13, 148, 136, 0.15)'
-                }}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
-                <span>🔑 Set Password / Login ID</span>
-              </button>
-            )}
+          {canEditProfile && (
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: '12px', alignItems: 'center' }}>
+              {(!instructor.has_password && !instructor.user_id && !instructor.password_plain) && (
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => {
+                    setCoachEmail(instructor.email || '');
+                    setShowPasswordModal(true);
+                  }}
+                  style={{
+                    background: 'linear-gradient(135deg, rgba(13, 148, 136, 0.25) 0%, rgba(2, 132, 199, 0.25) 100%)',
+                    color: '#2DD4BF',
+                    border: '1px solid rgba(45, 212, 191, 0.4)',
+                    padding: '10px 18px',
+                    borderRadius: '10px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    fontWeight: '700',
+                    fontSize: '13.5px',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    boxShadow: '0 2px 8px rgba(13, 148, 136, 0.15)'
+                  }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                  <span>🔑 Set Password / Login ID</span>
+                </button>
+              )}
 
-            <button className="btn-secondary edit-profile-btn" onClick={handleEditClick} style={{ background: 'rgba(255,255,255,0.1)', color: '#FFF', border: '1px solid rgba(255,255,255,0.2)', padding: '10px 18px', borderRadius: '10px', display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px' }}>
-                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-              </svg>
-              Edit Profile
-            </button>
-          </div>
+              <button className="btn-secondary edit-profile-btn" onClick={handleEditClick} style={{ background: 'rgba(255,255,255,0.1)', color: '#FFF', border: '1px solid rgba(255,255,255,0.2)', padding: '10px 18px', borderRadius: '10px', display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px' }}>
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                  <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                </svg>
+                Edit Profile
+              </button>
+            </div>
+          )}
         </section>
 
         <div className="ip-grid">
@@ -529,36 +573,40 @@ const InstructorProfile = () => {
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                           )}
                         </button>
+                        {canEditProfile && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCoachEmail(instructor.email || '');
+                              setShowPasswordModal(true);
+                            }}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', color: '#64748B', display: 'inline-flex', alignItems: 'center' }}
+                            title="Change Password"
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      canEditProfile && (
                         <button
                           type="button"
                           onClick={() => {
                             setCoachEmail(instructor.email || '');
                             setShowPasswordModal(true);
                           }}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', color: '#64748B', display: 'inline-flex', alignItems: 'center' }}
-                          title="Change Password"
+                          style={{ background: 'none', border: 'none', color: '#0D9488', fontSize: '12px', fontWeight: 700, cursor: 'pointer', padding: 0 }}
                         >
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                          + Set Password
                         </button>
-                      </>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setCoachEmail(instructor.email || '');
-                          setShowPasswordModal(true);
-                        }}
-                        style={{ background: 'none', border: 'none', color: '#0D9488', fontSize: '12px', fontWeight: 700, cursor: 'pointer', padding: 0 }}
-                      >
-                        + Set Password
-                      </button>
+                      )
                     )}
                   </div>
                 </div>
                 <div className="ip-detail-row">
                   <span className="ip-detail-label">Affiliation / School</span>
                   <span className="ip-detail-value" style={{ fontWeight: 600, color: '#0D9488' }}>
-                    {instructor.school || 'Individual / Freelance Coach'}
+                    {instructor?.school || activeSchoolName || 'Individual / Freelance Coach'}
                   </span>
                 </div>
                 <div className="ip-detail-row">
@@ -567,7 +615,7 @@ const InstructorProfile = () => {
                 </div>
                 <div className="ip-detail-row">
                   <span className="ip-detail-label">Experience</span>
-                  <span className="ip-detail-value">{instructor.experience}</span>
+                  <span className="ip-detail-value">{formatExperience(instructor.experience)}</span>
                 </div>
                 <div className="ip-detail-row">
                   <span className="ip-detail-label">Hourly Rate</span>
@@ -834,8 +882,8 @@ const InstructorProfile = () => {
 
                   <div className="sp-form-row">
                     <div className="sp-form-field">
-                      <label>Experience</label>
-                      <input type="text" value={editForm.experience} onChange={(e) => setEditForm({ ...editForm, experience: e.target.value })} placeholder="e.g. 8 Years" />
+                      <label>Experience (Years)</label>
+                      <input type="number" min="0" max="60" value={editForm.experience} onChange={(e) => setEditForm({ ...editForm, experience: e.target.value })} placeholder="e.g. 5" />
                     </div>
                     <div className="sp-form-field">
                       <label>Fitness Level</label>

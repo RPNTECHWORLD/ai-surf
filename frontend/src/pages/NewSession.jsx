@@ -96,7 +96,65 @@ const DEFAULT_CONFIGURED_SLOTS = [
   { id: 3, time: "11:30 AM", duration: "60", maxStudents: 6, days: ["Mon", "Tue", "Wed"], active: true },
   { id: 4, time: "01:00 PM", duration: "120", maxStudents: 4, days: ["Tue", "Thu", "Sat", "Sun"], active: true },
   { id: 5, time: "03:30 PM", duration: "90", maxStudents: 4, days: ["Fri", "Sat", "Sun"], active: false },
+  { id: 6, time: "04:00 PM", duration: "90", maxStudents: 4, days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], active: true },
 ];
+
+const SLOT_THEMES = [
+  {
+    name: 'Teal',
+    primary: '#0D9488',
+    dark: '#0F766E',
+    light: '#ECFDF5',
+    border: '#059669',
+    badgeBg: 'linear-gradient(135deg, #059669 0%, #047857 100%)',
+    pillActiveBg: '#0D9488',
+    text: '#064E3B'
+  },
+  {
+    name: 'Blue',
+    primary: '#0284C7',
+    dark: '#0369A1',
+    light: '#EFF6FF',
+    border: '#0284C7',
+    badgeBg: 'linear-gradient(135deg, #0284C7 0%, #0369A1 100%)',
+    pillActiveBg: '#0284C7',
+    text: '#0C4A6E'
+  },
+  {
+    name: 'Purple',
+    primary: '#7C3AED',
+    dark: '#6D28D9',
+    light: '#F5F3FF',
+    border: '#7C3AED',
+    badgeBg: 'linear-gradient(135deg, #7C3AED 0%, #6D28D9 100%)',
+    pillActiveBg: '#7C3AED',
+    text: '#4C1D95'
+  },
+  {
+    name: 'Amber',
+    primary: '#D97706',
+    dark: '#B45309',
+    light: '#FFFBEB',
+    border: '#D97706',
+    badgeBg: 'linear-gradient(135deg, #D97706 0%, #B45309 100%)',
+    pillActiveBg: '#D97706',
+    text: '#78350F'
+  },
+  {
+    name: 'Rose',
+    primary: '#E11D48',
+    dark: '#BE123C',
+    light: '#FFF1F2',
+    border: '#E11D48',
+    badgeBg: 'linear-gradient(135deg, #E11D48 0%, #BE123C 100%)',
+    pillActiveBg: '#E11D48',
+    text: '#881337'
+  }
+];
+
+function getSlotTheme(idx) {
+  return SLOT_THEMES[Math.abs(idx) % SLOT_THEMES.length];
+}
 
 function formatSlotRange(timeStr, duration) {
   if (!timeStr) return '';
@@ -224,6 +282,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
   const [currentCalendarDate, setCurrentCalendarDate] = useState(() => new Date());
   const [selectedDayNumber, setSelectedDayNumber] = useState(() => new Date().getDate());
   const [capacity, setCapacity] = useState(30);
+  const [slotCapacityMap, setSlotCapacityMap] = useState({});
 
   // Initialize from initialDate or searchParams
   useEffect(() => {
@@ -244,11 +303,37 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
 
   // Dynamic slots loaded directly from Session Configuration
   const [slots, setSlots] = useState(() => loadConfiguredSlots());
-  const [selectedSlotId, setSelectedSlotId] = useState(() => {
-    const initialSlots = loadConfiguredSlots();
-    const firstActive = initialSlots.find(s => s.active);
-    return firstActive ? firstActive.id : initialSlots[0]?.id || 1;
-  });
+  const [selectedSlotId, setSelectedSlotId] = useState(null);
+
+  // Auto-sync capacity when selected slot changes so each slot retains its own capacity limit
+  useEffect(() => {
+    if (selectedSlotId) {
+      if (slotCapacityMap[selectedSlotId] !== undefined) {
+        setCapacity(slotCapacityMap[selectedSlotId]);
+      } else {
+        const selSlot = slots.find(s => s.id === selectedSlotId);
+        if (selSlot && selSlot.maxStudents) {
+          const capNum = parseInt(selSlot.maxStudents, 10);
+          if (!isNaN(capNum) && capNum > 0) {
+            setCapacity(capNum);
+            setSlotCapacityMap(prev => ({ ...prev, [selectedSlotId]: capNum }));
+          }
+        }
+      }
+    }
+  }, [selectedSlotId, slots]);
+
+  const handleUpdateCapacity = (newVal) => {
+    setCapacity(newVal);
+    if (selectedSlotId && newVal !== '' && !isNaN(parseInt(newVal, 10))) {
+      const parsedNum = Math.max(1, parseInt(newVal, 10));
+      setSlotCapacityMap(prev => ({
+        ...prev,
+        [selectedSlotId]: parsedNum
+      }));
+    }
+  };
+
   const [spotName, setSpotName] = useState('');
   const [editingSlotModal, setEditingSlotModal] = useState(null);
 
@@ -260,12 +345,14 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
   const [selectedSlotStep2, setSelectedSlotStep2] = useState(1);
   const [studentSearchStep2, setStudentSearchStep2] = useState('');
 
-  // Selected students from database
-  const [selectedStudentIds, setSelectedStudentIds] = useState([]);
+  // ─── Step 2 State: Per-Slot Student Selection Mapping ───
+  // Map of slotId -> array of studentIds selected for that specific slot
+  const [slotStudentMap, setSlotStudentMap] = useState({});
 
   // ─── Step 3 State: Instructor Groups Matching (Real School Instructors) ───
   const [dbInstructors, setDbInstructors] = useState([]);
   const [studentTab, setStudentTab] = useState('All Active');
+  const [step3SlotFilter, setStep3SlotFilter] = useState('ALL');
   const [studentSearch, setStudentSearch] = useState('');
   const [step3CheckedStudentIds, setStep3CheckedStudentIds] = useState([]);
 
@@ -275,6 +362,60 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
   const [draggingType, setDraggingType] = useState(null);
   const [isPublishing, setIsPublishing] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [uiAlert, setUiAlert] = useState(null);
+  const [existingDbSessions, setExistingDbSessions] = useState([]);
+
+  // Formatted Date String
+  const formattedSessionDate = useMemo(() => {
+    const year = currentCalendarDate.getFullYear();
+    const monthName = currentCalendarDate.toLocaleString('default', { month: 'short' });
+    const dayName = new Date(year, currentCalendarDate.getMonth(), selectedDayNumber).toLocaleString('default', { weekday: 'long' });
+    return `${dayName}, ${monthName} ${selectedDayNumber}, ${year}`;
+  }, [currentCalendarDate, selectedDayNumber]);
+
+  // Match existing DB sessions on selected session date
+  const existingScheduledStudentNamesOnDate = useMemo(() => {
+    if (!existingDbSessions || existingDbSessions.length === 0) return new Set();
+    const setNames = new Set();
+    const currentYear = currentCalendarDate.getFullYear();
+    const currentMonth = currentCalendarDate.getMonth();
+    const selectedDateObj = new Date(currentYear, currentMonth, selectedDayNumber);
+    const selectedISO = selectedDateObj.toISOString().split('T')[0];
+
+    existingDbSessions.forEach(sess => {
+      const sessDateStr = (sess.date || '').toString();
+      let isMatch = false;
+
+      if (sessDateStr.toLowerCase().includes(formattedSessionDate.toLowerCase()) || formattedSessionDate.toLowerCase().includes(sessDateStr.toLowerCase())) {
+        isMatch = true;
+      } else {
+        try {
+          const dObj = new Date(sessDateStr);
+          if (!isNaN(dObj.getTime())) {
+            const dISO = dObj.toISOString().split('T')[0];
+            if (dISO === selectedISO) isMatch = true;
+          }
+        } catch (e) {}
+      }
+
+      if (isMatch) {
+        if (sess.student) setNames.add(sess.student.toLowerCase().trim());
+        if (sess.student_name) setNames.add(sess.student_name.toLowerCase().trim());
+        if (Array.isArray(sess.sessions)) {
+          sess.sessions.forEach(sub => {
+            if (sub.student) setNames.add(sub.student.toLowerCase().trim());
+            if (sub.student_name) setNames.add(sub.student_name.toLowerCase().trim());
+          });
+        }
+      }
+    });
+    return setNames;
+  }, [existingDbSessions, formattedSessionDate, currentCalendarDate, selectedDayNumber]);
+
+  const isStudentScheduledInDbOnDate = (student) => {
+    if (!student || !student.name) return false;
+    return existingScheduledStudentNamesOnDate.has(student.name.toLowerCase().trim());
+  };
 
   // Fetch real students & instructors from active school
   useEffect(() => {
@@ -289,6 +430,14 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
       } catch (e) {}
     }
     const schoolParam = schoolName ? `?school=${encodeURIComponent(schoolName)}` : '';
+
+    // Fetch existing sessions for checking date collisions
+    fetch(`${API}/api/sessions${schoolParam}`)
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data)) setExistingDbSessions(data);
+      })
+      .catch(() => {});
 
     fetch(`${API}/api/students${schoolParam}`)
       .then(r => r.json())
@@ -310,7 +459,6 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
             };
           });
           setDbStudents(mapped);
-          setSelectedStudentIds(mapped.map(s => s.id));
         }
       })
       .catch(() => {});
@@ -346,8 +494,10 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
       .catch(() => {});
   }, []);
 
-  // Real Students Pool (NO fake data)
-  const allPoolStudents = dbStudents;
+  // Real Students Pool (Excludes students already scheduled on selected date)
+  const allPoolStudents = useMemo(() => {
+    return dbStudents.filter(s => !isStudentScheduledInDbOnDate(s));
+  }, [dbStudents, isStudentScheduledInDbOnDate]);
 
   // Real Instructors (NO fake data)
   const allInstructors = dbInstructors;
@@ -365,18 +515,10 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
     };
   }, []);
 
-  // Selected Slot details with safe fallback
+  // Selected Slot details (null if user has not picked a slot yet)
   const selectedSlot = useMemo(() => {
-    return slots.find(s => s.id === selectedSlotId) || slots[0] || {
-      id: 1,
-      time: '08:30 AM - 10:00 AM',
-      startTime: '08:30 AM',
-      duration: 90,
-      maxStudents: 4,
-      days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
-      active: true,
-      title: 'Morning offshore wave ride',
-    };
+    if (!selectedSlotId) return null;
+    return slots.find(s => s.id === selectedSlotId) || null;
   }, [slots, selectedSlotId]);
 
   // Selected Day of Week (e.g. 'Sun', 'Mon', 'Sat')
@@ -386,13 +528,76 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
     return new Date(year, month, selectedDayNumber).toLocaleDateString('en-US', { weekday: 'short' });
   }, [currentCalendarDate, selectedDayNumber]);
 
-  // Formatted Date String
-  const formattedSessionDate = useMemo(() => {
-    const year = currentCalendarDate.getFullYear();
-    const monthName = currentCalendarDate.toLocaleString('default', { month: 'short' });
-    const dayName = new Date(year, currentCalendarDate.getMonth(), selectedDayNumber).toLocaleString('default', { weekday: 'long' });
-    return `${dayName}, ${monthName} ${selectedDayNumber}, ${year}`;
-  }, [currentCalendarDate, selectedDayNumber]);
+  // Active slots for the selected day of week & active setting
+  const activeSlotsForDay = useMemo(() => {
+    return slots.filter(s => {
+      const isActiveInSettings = s.active !== false;
+      const isDayMatch = !s.days || s.days.length === 0 || s.days.includes(selectedDayOfWeek);
+      return isActiveInSettings && isDayMatch;
+    });
+  }, [slots, selectedDayOfWeek]);
+
+  // Auto-reset selectedSlotId if the selected slot is off on the current selected day of week
+  useEffect(() => {
+    if (selectedSlotId && activeSlotsForDay.length > 0) {
+      const isCurrentActive = activeSlotsForDay.some(s => s.id === selectedSlotId);
+      if (!isCurrentActive) {
+        setSelectedSlotId(null);
+      }
+    }
+  }, [selectedDayOfWeek, activeSlotsForDay, selectedSlotId]);
+
+  // Helper: Find which slot a student is assigned to
+  const getStudentSlotAssignment = (studentId) => {
+    for (let idx = 0; idx < slots.length; idx++) {
+      const s = slots[idx];
+      const assignedIds = slotStudentMap[s.id] || [];
+      if (assignedIds.includes(studentId)) {
+        return { slot: s, slotIdx: idx, theme: getSlotTheme(idx) };
+      }
+    }
+    return null;
+  };
+
+  // Union of all selected student IDs across all slots
+  const allSelectedStudentIds = useMemo(() => {
+    const ids = new Set();
+    Object.values(slotStudentMap).forEach(list => {
+      if (Array.isArray(list)) list.forEach(id => ids.add(id));
+    });
+    return Array.from(ids);
+  }, [slotStudentMap]);
+
+  // Backward compatibility alias for selectedStudentIds
+  const selectedStudentIds = allSelectedStudentIds;
+
+  // Toggle student selection for currently active slot tab
+  const toggleSelectStudent = (studentId) => {
+    const activeSlotId = selectedSlotId || activeSlotsForDay[0]?.id || slots[0]?.id;
+    if (!activeSlotId) return;
+
+    setSlotStudentMap(prevMap => {
+      const currentSlotList = prevMap[activeSlotId] || [];
+      const isAlreadyInCurrentSlot = currentSlotList.includes(studentId);
+
+      const newMap = { ...prevMap };
+
+      // Remove student from ALL slots first (so student belongs to only 1 slot at a time)
+      Object.keys(newMap).forEach(sId => {
+        if (Array.isArray(newMap[sId])) {
+          newMap[sId] = newMap[sId].filter(id => id !== studentId);
+        }
+      });
+
+      if (!isAlreadyInCurrentSlot) {
+        newMap[activeSlotId] = [...(newMap[activeSlotId] || []), studentId];
+      }
+
+      return newMap;
+    });
+  };
+
+
 
   // Handle Save from Slot Modal (persists to localStorage so Session Configuration is synced)
   const handleSaveSlotModal = (modalData) => {
@@ -470,12 +675,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
     setCurrentCalendarDate(new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth() + 1, 1));
   };
 
-  // Toggle student selection in Step 2
-  const toggleSelectStudent = (id) => {
-    setSelectedStudentIds(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-    );
-  };
+
 
   // Select all for Day 1 or Day 2
   const selectAllPool = (dayKey) => {
@@ -500,49 +700,85 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
     return days;
   }, [allPoolStudents]);
 
-  // Step 2 Filtered students from database
+  // Step 2 Filtered & Sorted students from database (matching day students top, others below)
   const filteredStudents = useMemo(() => {
     return allPoolStudents
       .filter(s => levelFilter === 'all' || s.level.toLowerCase() === levelFilter.toLowerCase())
-      .filter(s => courseDayFilter === 'all' || String(s.whichDay) === String(courseDayFilter))
-      .filter(s => !studentSearchStep2 || s.name.toLowerCase().includes(studentSearchStep2.toLowerCase()));
+      .filter(s => !studentSearchStep2 || s.name.toLowerCase().includes(studentSearchStep2.toLowerCase()))
+      .slice()
+      .sort((a, b) => {
+        if (courseDayFilter !== 'all') {
+          const aMatch = String(a.whichDay) === String(courseDayFilter);
+          const bMatch = String(b.whichDay) === String(courseDayFilter);
+          if (aMatch && !bMatch) return -1;
+          if (!aMatch && bMatch) return 1;
+        }
+        const dayA = parseInt(a.whichDay, 10) || 1;
+        const dayB = parseInt(b.whichDay, 10) || 1;
+        if (dayA !== dayB) return dayA - dayB;
+        return a.name.localeCompare(b.name);
+      });
   }, [allPoolStudents, levelFilter, courseDayFilter, studentSearchStep2]);
 
-  // Transition from Step 2 to Step 3: No auto-grouping or auto-instructor assignment
+  // Transition from Step 2 to Step 3: Multi-slot aware group initialization
   const proceedToStep3 = () => {
-    // If no groups exist yet, create 1 clean initial empty Group Card for user to start dragging or creating
     if (trainingGroups.length === 0) {
-      setTrainingGroups([
-        {
-          id: `group-1`,
-          name: `Group A`,
-          day: `Day 1`,
-          level: 'General',
-          studentIds: [],
-          assignedInstructorId: null, // Left unassigned for user to drag & drop
-        }
-      ]);
-      setActiveDropGroupId('group-1');
+      const activeSlotsWithStudents = slots.filter(s => (slotStudentMap[s.id] || []).length > 0);
+      const initialSlot = activeSlotsWithStudents.length > 0 ? activeSlotsWithStudents[0] : (selectedSlot || slots[0]);
+
+      const targetIds = allSelectedStudentIds.length > 0 ? allSelectedStudentIds : selectedStudentIds;
+
+      if (targetIds && targetIds.length > 0) {
+        setTrainingGroups([
+          {
+            id: `group-1`,
+            name: `Group A`,
+            day: `Day 1`,
+            level: 'General',
+            slotId: initialSlot?.id || null,
+            studentIds: targetIds,
+            assignedInstructorId: null,
+          }
+        ]);
+        setActiveDropGroupId('group-1');
+      } else {
+        setTrainingGroups([]);
+        setActiveDropGroupId(null);
+      }
     }
     setCurrentStep(3);
   };
 
-  // Step 3: Students in Column 1
+  // Step 3: Students in Column 1 (All selected students across all slots)
   const importedStudents = useMemo(() => {
-    return allPoolStudents.filter(s => selectedStudentIds.includes(s.id));
-  }, [allPoolStudents, selectedStudentIds]);
+    const targetIds = allSelectedStudentIds.length > 0 ? allSelectedStudentIds : selectedStudentIds;
+    return allPoolStudents.filter(s => targetIds.includes(s.id));
+  }, [allPoolStudents, allSelectedStudentIds, selectedStudentIds]);
 
   const filteredColumn1Students = useMemo(() => {
     return importedStudents
       .filter(s => {
+        // Slot filtering in Step 3
+        if (step3SlotFilter !== 'ALL') {
+          const slotAssignedIds = slotStudentMap[step3SlotFilter] || [];
+          if (!slotAssignedIds.includes(s.id)) return false;
+        }
+
         if (studentTab === 'All Active') return true;
         const isAssigned = trainingGroups.some(g => g.studentIds.includes(s.id));
         if (studentTab === 'Unassigned') return !isAssigned;
         if (studentTab === 'Assigned') return isAssigned;
         return s.level?.toLowerCase() === studentTab.toLowerCase();
       })
-      .filter(s => !studentSearch || s.name.toLowerCase().includes(studentSearch.toLowerCase()));
-  }, [importedStudents, studentTab, studentSearch, trainingGroups]);
+      .filter(s => !studentSearch || s.name.toLowerCase().includes(studentSearch.toLowerCase()))
+      .slice()
+      .sort((a, b) => {
+        const dayA = parseInt(a.whichDay, 10) || 1;
+        const dayB = parseInt(b.whichDay, 10) || 1;
+        if (dayA !== dayB) return dayA - dayB;
+        return a.name.localeCompare(b.name);
+      });
+  }, [importedStudents, studentTab, step3SlotFilter, slotStudentMap, studentSearch, trainingGroups]);
 
   // Step 3: Toggle check in Column 1
   const toggleStep3StudentCheck = (id) => {
@@ -551,18 +787,28 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
     );
   };
 
-  // Create Group from checked students or create a fresh empty group card
+  // Create Group from checked students or create a fresh empty group card with assigned slot
   const handleCreateGroup = () => {
     const newGroupLetter = String.fromCharCode(65 + trainingGroups.length);
     const checkedStudents = importedStudents.filter(s => step3CheckedStudentIds.includes(s.id));
     const levelLabel = checkedStudents.length > 0 ? (checkedStudents[0]?.level || 'General') : 'General';
+    
+    // Determine default slot for the group
+    let defaultSlotId = step3SlotFilter !== 'ALL' ? step3SlotFilter : null;
+    if (!defaultSlotId && checkedStudents.length > 0) {
+      const assignment = getStudentSlotAssignment(checkedStudents[0].id);
+      if (assignment) defaultSlotId = assignment.slot.id;
+    }
+    if (!defaultSlotId) defaultSlotId = selectedSlot?.id || slots[0]?.id;
+
     const newGroup = {
       id: `group-${Date.now()}`,
       name: `Group ${newGroupLetter}`,
       day: `Day ${trainingGroups.length + 1}`,
       level: levelLabel,
+      slotId: defaultSlotId,
       studentIds: [...step3CheckedStudentIds],
-      assignedInstructorId: null, // Left unassigned for user to drag & drop or choose
+      assignedInstructorId: null,
     };
     setTrainingGroups(prev => [...prev, newGroup]);
     setActiveDropGroupId(newGroup.id);
@@ -591,16 +837,30 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
     );
   };
 
-  // Assign Instructor to Group
+  // Assign Instructor to Group (Single Coach Only)
   const assignInstructorToGroup = (groupId, instructorId) => {
     setTrainingGroups(prev =>
-      prev.map(g => g.id === groupId ? { ...g, assignedInstructorId: instructorId } : g)
+      prev.map(g => {
+        if (g.id !== groupId) return g;
+        return {
+          ...g,
+          assignedInstructorIds: [instructorId],
+          assignedInstructorId: instructorId
+        };
+      })
     );
   };
 
   const removeInstructorFromGroup = (groupId) => {
     setTrainingGroups(prev =>
-      prev.map(g => g.id === groupId ? { ...g, assignedInstructorId: null } : g)
+      prev.map(g => {
+        if (g.id !== groupId) return g;
+        return {
+          ...g,
+          assignedInstructorIds: [],
+          assignedInstructorId: null
+        };
+      })
     );
   };
 
@@ -653,29 +913,69 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
 
   // Finalize & Publish to Backend API
   const handleFinalizeAndPublish = async () => {
+    if (!trainingGroups || trainingGroups.length === 0) {
+      setUiAlert({
+        title: 'No Training Groups Created',
+        message: 'Please create at least one training group and assign students before publishing.',
+        type: 'warning',
+        icon: '📋'
+      });
+      return;
+    }
+
+    const validGroups = trainingGroups.filter(grp => grp.studentIds && grp.studentIds.length > 0);
+    if (validGroups.length === 0) {
+      setUiAlert({
+        title: 'No Students Assigned',
+        message: 'Please drag or assign students into your training group cards before publishing.',
+        type: 'warning',
+        icon: '👥'
+      });
+      return;
+    }
+
+    const unassignedCoachGroup = validGroups.find(grp => !grp.assignedInstructorId && (!grp.assignedInstructorIds || grp.assignedInstructorIds.length === 0));
+    if (unassignedCoachGroup) {
+      setUiAlert({
+        title: 'Coach Assignment Required',
+        message: `Please assign a coach to ${unassignedCoachGroup.name} before publishing. Only groups with an assigned coach can be scheduled.`,
+        type: 'warning',
+        icon: '🏄‍♂️'
+      });
+      return;
+    }
+
     setIsPublishing(true);
+    let publishedCount = 0;
     try {
-      // Loop over training groups and submit to /api/sessions/bulk
-      for (const grp of trainingGroups) {
+      for (const grp of validGroups) {
         const numericStudentIds = grp.studentIds
-          .map(sid => typeof sid === 'number' ? sid : parseInt(String(sid).replace(/\D/g, '')))
+          .map(sid => typeof sid === 'number' ? sid : parseInt(String(sid).replace(/\D/g, ''), 10))
           .filter(id => !isNaN(id) && id > 0);
 
-        const instructorNum = grp.assignedInstructorId
-          ? (typeof grp.assignedInstructorId === 'number' ? grp.assignedInstructorId : parseInt(String(grp.assignedInstructorId).replace(/\D/g, '')) || 1)
-          : 1;
+        if (numericStudentIds.length === 0) continue;
+
+        const assignedCoachId = grp.assignedInstructorId || (grp.assignedInstructorIds && grp.assignedInstructorIds[0]);
+        const numericCoachId = typeof assignedCoachId === 'number' ? assignedCoachId : parseInt(String(assignedCoachId).replace(/\D/g, ''), 10);
+        const assignedCoachObj = allInstructors.find(i => String(i.id) === String(assignedCoachId));
+        const coachName = assignedCoachObj?.name || 'Instructor';
+
+        const grpSlot = slots.find(s => s.id === grp.slotId) || selectedSlot;
+        const slotTimeStr = grpSlot ? (grpSlot.time || grpSlot.startTime) : '08:30 AM - 10:00 AM';
+        const slotDuration = grpSlot?.duration ? parseInt(grpSlot.duration, 10) : 90;
 
         const payload = {
           date: formattedSessionDate,
-          time: selectedSlot.time,
-          duration_mins: selectedSlot.duration ? parseInt(selectedSlot.duration, 10) : 90,
-          student_ids: numericStudentIds.length > 0 ? numericStudentIds : [1],
-          instructor_id: instructorNum,
+          time: slotTimeStr,
+          duration_mins: slotDuration,
+          student_ids: numericStudentIds,
+          instructor_id: primaryInstructorId,
+          instructor_ids: numericInstIds,
           location: spotName,
           condition: 'Moderate',
           type: grp.level || 'Intermediate',
           status: 'Upcoming',
-          notes: `${grp.name} - Automated schedule with ${grp.studentIds.length} athletes`,
+          notes: `${grp.name} (${slotTimeStr}) - Coaches: ${assignedInstNames || 'Staff'} - ${numericStudentIds.length} students`,
           group_name: grp.name || '',
         };
 
@@ -684,12 +984,28 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         }).catch(() => {});
+
+        publishedCount++;
       }
 
-      setShowSuccessModal(true);
+      if (publishedCount > 0) {
+        setShowSuccessModal(true);
+      } else {
+        setUiAlert({
+          title: 'Publishing Incomplete',
+          message: 'No valid groups with assigned students were found to publish.',
+          type: 'error',
+          icon: '⚠️'
+        });
+      }
     } catch (e) {
       console.error(e);
-      alert('Error saving session. Please try again.');
+      setUiAlert({
+        title: 'Save Failed',
+        message: 'Error saving session. Please check your connection and try again.',
+        type: 'error',
+        icon: '⚠️'
+      });
     } finally {
       setIsPublishing(false);
     }
@@ -815,228 +1131,281 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
         {/* STEP 1: SESSION SETUP                                           */}
         {/* ═════════════════════════════════════════════════════════════════ */}
         {currentStep === 1 && (
-          <div className="ns-step-content ns-step1-grid">
-            {/* Left Column: Date, Slot & Capacity */}
-            <div className="ns-step1-left">
-              {/* 1. Select Date */}
-              <section className="ns-card">
-                <h3 className="ns-card-heading">1. Select Date</h3>
-                <div className="ns-calendar-widget">
-                  <div className="ns-cal-header">
-                    <span className="ns-cal-month-title">
-                      {currentCalendarDate.toLocaleString('default', { month: 'long' })} {currentCalendarDate.getFullYear()}
-                    </span>
-                    <div className="ns-cal-arrows">
-                      <button className="ns-cal-arrow-btn" onClick={handlePrevMonth} title="Previous Month">&larr;</button>
-                      <button className="ns-cal-arrow-btn" onClick={handleNextMonth} title="Next Month">&rarr;</button>
+          <div className="ns-step-content ns-step1-wrap">
+            <div className="ns-step1-grid">
+              {/* Left Column: Date & Time Slot */}
+              <div className="ns-step1-left">
+                {/* 1. Select Date */}
+                <section className="ns-card">
+                  <h3 className="ns-card-heading">1. Select Date</h3>
+                  <div className="ns-calendar-widget">
+                    {(() => {
+                      const today = new Date();
+                      today.setHours(0, 0, 0, 0);
+                      const isPrevMonthDisabled = currentCalendarDate.getFullYear() < today.getFullYear() ||
+                        (currentCalendarDate.getFullYear() === today.getFullYear() && currentCalendarDate.getMonth() <= today.getMonth());
+
+                      return (
+                        <div className="ns-cal-header">
+                          <span className="ns-cal-month-title">
+                            {currentCalendarDate.toLocaleString('default', { month: 'long' })} {currentCalendarDate.getFullYear()}
+                          </span>
+                          <div className="ns-cal-arrows">
+                            <button
+                              type="button"
+                              className="ns-cal-arrow-btn"
+                              onClick={handlePrevMonth}
+                              disabled={isPrevMonthDisabled}
+                              style={{ opacity: isPrevMonthDisabled ? 0.35 : 1, cursor: isPrevMonthDisabled ? 'not-allowed' : 'pointer' }}
+                              title={isPrevMonthDisabled ? "Cannot navigate to past months" : "Previous Month"}
+                            >
+                              &larr;
+                            </button>
+                            <button type="button" className="ns-cal-arrow-btn" onClick={handleNextMonth} title="Next Month">&rarr;</button>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    <div className="ns-cal-weekdays">
+                      <span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span>
+                    </div>
+
+                    <div className="ns-cal-days-grid">
+                      {calendarDays.map((cd, idx) => {
+                        const today = new Date();
+                        today.setHours(0, 0, 0, 0);
+
+                        const year = currentCalendarDate.getFullYear();
+                        const month = currentCalendarDate.getMonth();
+                        const cellDate = new Date(year, month, cd.day);
+                        cellDate.setHours(0, 0, 0, 0);
+
+                        const isPast = cd.isCurrentMonth && cellDate < today;
+                        const isSelected = cd.isCurrentMonth && cd.day === selectedDayNumber;
+
+                        return (
+                          <div
+                            key={idx}
+                            className={`ns-cal-day-cell ${!cd.isCurrentMonth ? 'other-month' : ''} ${isSelected ? 'selected' : ''} ${isPast ? 'disabled-past' : ''}`}
+                            style={{
+                              opacity: isPast ? 0.3 : (cd.isCurrentMonth ? 1 : 0.4),
+                              cursor: (isPast || !cd.isCurrentMonth) ? 'not-allowed' : 'pointer',
+                              background: isPast ? '#F1F5F9' : undefined,
+                              color: isPast ? '#94A3B8' : undefined,
+                              pointerEvents: isPast ? 'none' : 'auto'
+                            }}
+                            title={isPast ? 'Past dates cannot be selected' : undefined}
+                            onClick={() => {
+                              if (cd.isCurrentMonth && !isPast) setSelectedDayNumber(cd.day);
+                            }}
+                          >
+                            <span className="ns-cal-day-num" style={isPast ? { textDecoration: 'line-through' } : {}}>{cd.day}</span>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
+                </section>
 
-                  <div className="ns-cal-weekdays">
-                    <span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span>
+                {/* 2. Choose Time Slot (Dynamically loaded from Session Configuration) */}
+                <section className="ns-card">
+                  <div className="ns-slots-header-row">
+                    <h3 className="ns-card-heading" style={{ margin: 0 }}>2. Choose Time Slot</h3>
+                    <button
+                      type="button"
+                      className="ns-config-link-btn"
+                      onClick={() => navigate('/sessions/configure?from=new_session')}
+                      title="Manage daily time slots, durations, and operational days in Session Configuration"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="12" cy="12" r="3" />
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                      </svg>
+                      Session Configuration
+                    </button>
                   </div>
 
-                  <div className="ns-cal-days-grid">
-                    {calendarDays.map((cd, idx) => {
-                      const isSelected = cd.isCurrentMonth && cd.day === selectedDayNumber;
+                  <div className="ns-slots-list">
+                    {slots.map(slot => {
+                      const isSelected = slot.id === selectedSlotId;
+                      const isDayMatch = slot.days && slot.days.includes(selectedDayOfWeek);
                       return (
                         <div
-                          key={idx}
-                          className={`ns-cal-day-cell ${!cd.isCurrentMonth ? 'other-month' : ''} ${isSelected ? 'selected' : ''}`}
-                          onClick={() => {
-                            if (cd.isCurrentMonth) setSelectedDayNumber(cd.day);
-                          }}
+                          key={slot.id}
+                          className={`ns-slot-card ${isSelected ? 'selected' : ''} ${!slot.active ? 'is-inactive' : ''}`}
+                          onClick={() => setSelectedSlotId(slot.id)}
                         >
-                          <span className="ns-cal-day-num">{cd.day}</span>
+                          <div className="ns-slot-left">
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                              <h4 className="ns-slot-time">{slot.time}</h4>
+                              {!slot.active ? (
+                                <span className="ns-slot-pill inactive">Inactive in Settings</span>
+                              ) : isDayMatch ? (
+                                <span className="ns-slot-pill active-day">✓ Active ({selectedDayOfWeek})</span>
+                              ) : (
+                                <span className="ns-slot-pill off-day">Off today ({selectedDayOfWeek})</span>
+                              )}
+                            </div>
+                            <p className="ns-slot-sub">{slot.title}</p>
+                          </div>
                         </div>
                       );
                     })}
+
+                    <div
+                      className="ns-add-slot-card"
+                      onClick={() => {
+                        setEditingSlotModal({
+                          mode: 'add',
+                          id: Date.now(),
+                          time: '04:00 PM',
+                          duration: 90,
+                          maxStudents: 4,
+                          days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+                          active: true,
+                        });
+                      }}
+                    >
+                      + Add Slot
+                    </div>
                   </div>
-                </div>
-              </section>
+                </section>
+              </div>
 
-              {/* 2. Choose Time Slot (Dynamically loaded from Session Configuration) */}
-              <section className="ns-card">
-                <div className="ns-slots-header-row">
-                  <h3 className="ns-card-heading" style={{ margin: 0 }}>2. Choose Time Slot</h3>
-                  <button
-                    type="button"
-                    className="ns-config-link-btn"
-                    onClick={() => navigate('/sessions/configure?from=new_session')}
-                    title="Manage daily time slots, durations, and operational days in Session Configuration"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <circle cx="12" cy="12" r="3" />
-                      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-                    </svg>
-                    Session Configuration
-                  </button>
-                </div>
-
-                <div className="ns-slots-list">
-                  {slots.map(slot => {
-                    const isSelected = slot.id === selectedSlotId;
-                    const isDayMatch = slot.days && slot.days.includes(selectedDayOfWeek);
-                    return (
-                      <div
-                        key={slot.id}
-                        className={`ns-slot-card ${isSelected ? 'selected' : ''} ${!slot.active ? 'is-inactive' : ''}`}
-                        onClick={() => setSelectedSlotId(slot.id)}
+              {/* Right Column: Capacity & Available Pool Widget */}
+              <div className="ns-step1-right">
+                {/* 3. Set Session Capacity */}
+                <section className="ns-card">
+                  <h3 className="ns-card-heading">3. Set Session Capacity</h3>
+                  <div className="ns-capacity-box">
+                    <div className="ns-cap-left">
+                      <span className="ns-cap-label">Target student roster limit</span>
+                      <h2 className="ns-cap-value">{capacity} Students</h2>
+                    </div>
+                    <div className="ns-cap-stepper">
+                      <button
+                        type="button"
+                        className="ns-stepper-btn"
+                        onClick={() => handleUpdateCapacity(Math.max(1, (parseInt(capacity, 10) || 5) - 5))}
+                        title="Decrease capacity by 5"
                       >
-                        <div className="ns-slot-left">
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                            <h4 className="ns-slot-time">{slot.time}</h4>
-                            {!slot.active ? (
-                              <span className="ns-slot-pill inactive">Inactive in Settings</span>
-                            ) : isDayMatch ? (
-                              <span className="ns-slot-pill active-day">✓ Active ({selectedDayOfWeek})</span>
-                            ) : (
-                              <span className="ns-slot-pill off-day">Off today ({selectedDayOfWeek})</span>
-                            )}
-                          </div>
-                          <p className="ns-slot-sub">{slot.title}</p>
-                        </div>
-                        <button
-                          type="button"
-                          className="ns-slot-edit-btn"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setEditingSlotModal({
-                              mode: 'edit',
-                              id: slot.id,
-                              time: slot.startTime || (slot.time ? slot.time.split(' - ')[0].trim() : '08:30 AM'),
-                              duration: slot.duration || 90,
-                              maxStudents: slot.maxStudents || 4,
-                              days: slot.days || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
-                              active: slot.active !== false,
-                            });
-                          }}
-                        >
-                          Edit
-                        </button>
-                      </div>
-                    );
-                  })}
+                        -
+                      </button>
+                      <input
+                        type="number"
+                        min="1"
+                        max="500"
+                        value={capacity}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === '') {
+                            setCapacity('');
+                          } else {
+                            const num = parseInt(val, 10);
+                            handleUpdateCapacity(isNaN(num) ? '' : Math.max(1, num));
+                          }
+                        }}
+                        onBlur={() => {
+                          if (!capacity || parseInt(capacity, 10) < 1) {
+                            handleUpdateCapacity(5);
+                          }
+                        }}
+                        className="ns-stepper-input"
+                        title="Type capacity limit directly"
+                      />
+                      <button
+                        type="button"
+                        className="ns-stepper-btn"
+                        onClick={() => handleUpdateCapacity((parseInt(capacity, 10) || 0) + 5)}
+                        title="Increase capacity by 5"
+                      >
+                        +
+                      </button>
+                    </div>
+                  </div>
+                </section>
 
-                  <div
-                    className="ns-add-slot-card"
-                    onClick={() => {
-                      setEditingSlotModal({
-                        mode: 'add',
-                        id: Date.now(),
-                        time: '04:00 PM',
-                        duration: 90,
-                        maxStudents: 4,
-                        days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
-                        active: true,
-                      });
-                    }}
-                  >
-                    + Add Slot
+                {/* Available Students Pool */}
+                <div className="ns-pool-card">
+                  <h3 className="ns-pool-heading">Available Students Pool</h3>
+                  <div className="ns-pool-stat-row">
+                    <span className="ns-pool-label">Total Registered Students:</span>
+                    <span className="ns-pool-val">{allPoolStudents.length}</span>
                   </div>
-                </div>
-              </section>
-
-              {/* 3. Set Session Capacity */}
-              <section className="ns-card">
-                <h3 className="ns-card-heading">3. Set Session Capacity</h3>
-                <div className="ns-capacity-box">
-                  <div className="ns-cap-left">
-                    <span className="ns-cap-label">Target student roster limit</span>
-                    <h2 className="ns-cap-value">{capacity} Students</h2>
+                  <div className="ns-pool-breakdown">
+                    <div className="ns-pool-item">
+                      <span className="ns-pool-bullet">&bull;</span>
+                      <span className="ns-pool-item-name">Beginner Students</span>
+                      <span className="ns-pool-item-num">
+                        {allPoolStudents.filter(s => s.level?.toLowerCase() === 'beginner').length}
+                      </span>
+                    </div>
+                    <div className="ns-pool-item">
+                      <span className="ns-pool-bullet">&bull;</span>
+                      <span className="ns-pool-item-name">Intermediate Students</span>
+                      <span className="ns-pool-item-num">
+                        {allPoolStudents.filter(s => s.level?.toLowerCase() === 'intermediate').length}
+                      </span>
+                    </div>
+                    <div className="ns-pool-item">
+                      <span className="ns-pool-bullet">&bull;</span>
+                      <span className="ns-pool-item-name">Advanced Students</span>
+                      <span className="ns-pool-item-num">
+                        {allPoolStudents.filter(s => s.level?.toLowerCase() === 'advanced').length}
+                      </span>
+                    </div>
                   </div>
-                  <div className="ns-cap-stepper">
-                    <button
-                      type="button"
-                      className="ns-stepper-btn"
-                      onClick={() => setCapacity(Math.max(1, (parseInt(capacity, 10) || 5) - 5))}
-                      title="Decrease capacity by 5"
-                    >
-                      -
-                    </button>
-                    <input
-                      type="number"
-                      min="1"
-                      max="500"
-                      value={capacity}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val === '') {
-                          setCapacity('');
-                        } else {
-                          const num = parseInt(val, 10);
-                          setCapacity(isNaN(num) ? '' : Math.max(1, num));
-                        }
-                      }}
-                      onBlur={() => {
-                        if (!capacity || parseInt(capacity, 10) < 1) {
-                          setCapacity(5);
-                        }
-                      }}
-                      className="ns-stepper-input"
-                      title="Type capacity limit directly"
-                    />
-                    <button
-                      type="button"
-                      className="ns-stepper-btn"
-                      onClick={() => setCapacity((parseInt(capacity, 10) || 0) + 5)}
-                      title="Increase capacity by 5"
-                    >
-                      +
-                    </button>
+                  <div className="ns-pool-footer">
+                    <span>Selected Roster Count:</span>
+                    <span className="ns-pool-space">{allSelectedStudentIds.length}/{capacity || 30} Athletes Selected</span>
                   </div>
-                </div>
-              </section>
-
-              {/* Step 1 Submit Button */}
-              <button
-                className="ns-primary-btn full-width"
-                onClick={() => setCurrentStep(2)}
-              >
-                Save configuration and Next: Import Students
-              </button>
-            </div>
-
-            {/* Right Column: Available Pool & Today's Tides Widget */}
-            <div className="ns-step1-right">
-              {/* Available Students Pool */}
-              <div className="ns-pool-card">
-                <h3 className="ns-pool-heading">Available Students Pool</h3>
-                <div className="ns-pool-stat-row">
-                  <span className="ns-pool-label">Total Registered Students:</span>
-                  <span className="ns-pool-val">{allPoolStudents.length}</span>
-                </div>
-                <div className="ns-pool-breakdown">
-                  <div className="ns-pool-item">
-                    <span className="ns-pool-bullet">&bull;</span>
-                    <span className="ns-pool-item-name">Beginner Athletes</span>
-                    <span className="ns-pool-item-num">
-                      {allPoolStudents.filter(s => s.level?.toLowerCase() === 'beginner').length}
-                    </span>
-                  </div>
-                  <div className="ns-pool-item">
-                    <span className="ns-pool-bullet">&bull;</span>
-                    <span className="ns-pool-item-name">Intermediate Athletes</span>
-                    <span className="ns-pool-item-num">
-                      {allPoolStudents.filter(s => s.level?.toLowerCase() === 'intermediate').length}
-                    </span>
-                  </div>
-                  <div className="ns-pool-item">
-                    <span className="ns-pool-bullet">&bull;</span>
-                    <span className="ns-pool-item-name">Advanced Athletes</span>
-                    <span className="ns-pool-item-num">
-                      {allPoolStudents.filter(s => s.level?.toLowerCase() === 'advanced').length}
-                    </span>
-                  </div>
-                </div>
-                <div className="ns-pool-footer">
-                  <span>Selected Roster Count:</span>
-                  <span className="ns-pool-space">{selectedStudentIds.length} Athletes Selected</span>
                 </div>
               </div>
             </div>
+
+          {/* Sticky Floating Bottom Action Bar for Step 1 */}
+          <div className="ns-sticky-bar" style={{ position: 'sticky', bottom: '0px', zIndex: 99, marginTop: '24px' }}>
+            <div className="ns-sb-left">
+              <span className="ns-sb-target-label" style={{ background: '#0D9488', color: '#FFF', padding: '3px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 800 }}>
+                SESSION SETUP
+              </span>
+              <span className="ns-sb-capacity" style={{ fontSize: '13px', fontWeight: 600, color: '#E2E8F0' }}>
+                📅 {formattedSessionDate} &bull; ⏰ {selectedSlot ? (selectedSlot.startTime || selectedSlot.time) : 'Select Time Slot'} &bull; 🎯 Capacity: {capacity} Students
+              </span>
+            </div>
+
+            <div className="ns-sb-right">
+              <button
+                type="button"
+                className="ns-primary-btn"
+                onClick={() => {
+                  const isSelectedActiveForToday = selectedSlotId && activeSlotsForDay.some(s => s.id === selectedSlotId);
+                  if (!isSelectedActiveForToday) {
+                    const firstActive = activeSlotsForDay[0] || slots.find(s => s.active !== false) || slots[0];
+                    if (firstActive) setSelectedSlotId(firstActive.id);
+                  }
+                  setCurrentStep(2);
+                }}
+                style={{
+                  background: '#00D2B4',
+                  color: '#0F172A',
+                  border: 'none',
+                  padding: '12px 24px',
+                  fontSize: '14px',
+                  fontWeight: 800,
+                  borderRadius: '10px',
+                  cursor: 'pointer',
+                  boxShadow: '0 4px 14px rgba(0, 210, 180, 0.4)',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                Save configuration and Next: Import Students &rarr;
+              </button>
+            </div>
           </div>
-        )}
+        </div>
+      )}
 
         {/* ═════════════════════════════════════════════════════════════════ */}
         {/* STEP 2: IMPORT STUDENTS IN SPECIFIC SLOTS                      */}
@@ -1047,7 +1416,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
             <div className="ns-selected-banner">
               <span className="ns-banner-icon">📅</span>
               <span className="ns-banner-text">
-                Selected Session: <strong>{formattedSessionDate}</strong> | Time Slot: <strong>{selectedSlot.time}</strong>
+                Selected Session: <strong>{formattedSessionDate}</strong> | Time Slot: <strong>{selectedSlot ? (selectedSlot.startTime || selectedSlot.time) : 'Not Selected'}</strong>
               </span>
             </div>
 
@@ -1059,8 +1428,11 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                   <span>⏰</span> Select Time Slot:
                 </span>
                 <div className="ns-slot-pills-wrap">
-                  {slots.filter(s => s.active !== false).map((s, idx) => {
+                  {activeSlotsForDay.map((s, idx) => {
                     const isSelected = selectedSlotId === s.id;
+                    const theme = getSlotTheme(idx);
+                    const count = (slotStudentMap[s.id] || []).length;
+
                     return (
                       <button
                         key={s.id}
@@ -1070,14 +1442,51 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                           setSelectedSlotId(s.id);
                           setSelectedSlotStep2(idx + 1);
                         }}
-                        title={`${s.time} (${s.title || ''})`}
+                        style={isSelected ? {
+                          background: theme.light,
+                          borderColor: theme.primary,
+                          borderWidth: '2px',
+                          color: theme.dark,
+                          boxShadow: `0 3px 10px ${theme.primary}30`
+                        } : {
+                          background: '#FFFFFF',
+                          borderColor: count > 0 ? theme.primary : '#CBD5E1',
+                          color: count > 0 ? theme.dark : '#475569'
+                        }}
+                        title={`${s.time} (${count} Athletes assigned)`}
                       >
-                        <span className="ns-slot-pill-num">{idx + 1}</span>
-                        <span className="ns-slot-pill-time">{s.startTime || s.time || `Slot ${idx + 1}`}</span>
-                        {isSelected && <span className="ns-slot-pill-active-badge">Active</span>}
+                        <span className="ns-slot-pill-num" style={{
+                          background: isSelected || count > 0 ? theme.primary : '#94A3B8',
+                          color: '#FFFFFF'
+                        }}>
+                          {idx + 1}
+                        </span>
+                        <span className="ns-slot-pill-time" style={{ fontWeight: isSelected ? 800 : 600 }}>
+                          {s.startTime || s.time || `Slot ${idx + 1}`}
+                        </span>
+                        <span style={{
+                          fontSize: '11px',
+                          fontWeight: 800,
+                          padding: '2px 8px',
+                          borderRadius: '12px',
+                          background: isSelected || count > 0 ? theme.primary : '#E2E8F0',
+                          color: isSelected || count > 0 ? '#FFFFFF' : '#64748B'
+                        }}>
+                          {count} Athletes
+                        </span>
+                        {isSelected && (
+                          <span className="ns-slot-pill-active-badge" style={{ background: theme.primary, color: '#FFFFFF' }}>
+                            ✓ Selected Tab
+                          </span>
+                        )}
                       </button>
                     );
                   })}
+                  {activeSlotsForDay.length === 0 && (
+                    <span style={{ fontSize: '13px', color: '#EF4444', fontWeight: 600 }}>
+                      ⚠️ No active time slots for {selectedDayOfWeek}
+                    </span>
+                  )}
                 </div>
               </div>
 
@@ -1166,18 +1575,31 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                   <span className="ns-ps-count">({filteredStudents.length} available)</span>
                 </div>
                 {(() => {
-                  const poolIds = filteredStudents.map(s => s.id);
-                  const isAllSelected = poolIds.length > 0 && poolIds.every(id => selectedStudentIds.includes(id));
+                  const activeSlotId = selectedSlotId || activeSlotsForDay[0]?.id || slots[0]?.id;
+                  const currentSlotList = slotStudentMap[activeSlotId] || [];
+                  const visibleIds = filteredStudents.map(s => s.id);
+                  const isAllSelected = visibleIds.length > 0 && visibleIds.every(id => currentSlotList.includes(id));
+
                   return (
                     <button
                       type="button"
                       className={`ns-select-all-btn ${isAllSelected ? 'deselect' : ''}`}
                       onClick={() => {
-                        if (isAllSelected) {
-                          setSelectedStudentIds(prev => prev.filter(id => !poolIds.includes(id)));
-                        } else {
-                          setSelectedStudentIds(prev => Array.from(new Set([...prev, ...poolIds])));
-                        }
+                        if (!activeSlotId) return;
+                        setSlotStudentMap(prevMap => {
+                          const newMap = { ...prevMap };
+                          if (isAllSelected) {
+                            newMap[activeSlotId] = (newMap[activeSlotId] || []).filter(id => !visibleIds.includes(id));
+                          } else {
+                            Object.keys(newMap).forEach(sId => {
+                              if (Array.isArray(newMap[sId])) {
+                                newMap[sId] = newMap[sId].filter(id => !visibleIds.includes(id));
+                              }
+                            });
+                            newMap[activeSlotId] = Array.from(new Set([...(newMap[activeSlotId] || []), ...visibleIds]));
+                          }
+                          return newMap;
+                        });
                       }}
                     >
                       {isAllSelected ? (
@@ -1203,24 +1625,176 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
               ) : (
                 <div className="ns-student-grid">
                   {filteredStudents.map(student => {
-                    const isChecked = selectedStudentIds.includes(student.id);
                     const badge = getBadgeStyle(student.level);
+                    const isSelectedFilterMatch = courseDayFilter !== 'all' && String(student.whichDay) === String(courseDayFilter);
+                    const assignment = getStudentSlotAssignment(student.id);
+                    const isChecked = !!assignment;
+                    const isScheduledInDb = isStudentScheduledInDbOnDate(student);
+
+                    const cardStyle = () => {
+                      if (isChecked && assignment) {
+                        const theme = assignment.theme;
+                        return {
+                          background: theme.light,
+                          border: `2px solid ${theme.border}`,
+                          borderLeft: `7px solid ${theme.primary}`,
+                          boxShadow: `0 4px 14px ${theme.primary}25`,
+                          transition: 'all 0.15s ease'
+                        };
+                      }
+                      if (isScheduledInDb) {
+                        return {
+                          background: '#FFFBEB',
+                          border: '1.5px solid #F59E0B',
+                          borderLeft: '5px solid #D97706',
+                          opacity: 0.95,
+                          transition: 'all 0.15s ease'
+                        };
+                      }
+                      if (isSelectedFilterMatch) {
+                        return {
+                          background: '#F0FDFA',
+                          border: '1.5px solid #0D9488',
+                          borderLeft: '4px solid #0D9488',
+                          opacity: 0.88,
+                          transition: 'all 0.15s ease'
+                        };
+                      }
+                      return {
+                        background: '#FFFFFF',
+                        border: '1px solid #E2E8F0',
+                        borderLeft: '4px solid #CBD5E1',
+                        opacity: 0.8,
+                        transition: 'all 0.15s ease'
+                      };
+                    };
+
                     return (
                       <div
                         key={student.id}
                         className={`ns-student-row ${isChecked ? 'selected' : ''}`}
                         onClick={() => toggleSelectStudent(student.id)}
+                        style={cardStyle()}
                       >
-                        <div className={`ns-checkbox-box ${isChecked ? 'checked' : ''}`}>
-                          {isChecked && (
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                        {/* Checkbox Icon */}
+                        <div
+                          style={{
+                            width: '22px',
+                            height: '22px',
+                            borderRadius: '50%',
+                            border: isChecked && assignment ? `2px solid ${assignment.theme.primary}` : isScheduledInDb ? '2px solid #D97706' : '2px solid #94A3B8',
+                            background: isChecked && assignment ? assignment.theme.primary : isScheduledInDb ? '#D97706' : '#FFFFFF',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexShrink: 0,
+                            transition: 'all 0.15s ease',
+                            boxShadow: isChecked && assignment ? `0 2px 6px ${assignment.theme.primary}35` : 'none'
+                          }}
+                        >
+                          {(isChecked || isScheduledInDb) && (
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
+                              <polyline points="20 6 9 17 4 12" />
+                            </svg>
                           )}
                         </div>
+
                         <UserAvatar src={student.avatar} name={student.name} size={32} className="ns-student-avatar" />
-                        <span className="ns-student-name">{student.name}</span>
-                        <span className="ns-day-progress-badge">
+
+                        <span className="ns-student-name" style={{
+                          fontWeight: (isChecked || isScheduledInDb) ? 800 : 600,
+                          color: isChecked && assignment ? assignment.theme.dark : isScheduledInDb ? '#92400E' : '#334155',
+                          fontSize: '14px'
+                        }}>
+                          {student.name}
+                        </span>
+
+                        {/* Selected Tag / Status Pill in Slot Theme Color */}
+                        {isChecked && assignment ? (
+                          <span style={{
+                            background: assignment.theme.primary,
+                            color: '#FFFFFF',
+                            padding: '4px 12px',
+                            borderRadius: '16px',
+                            fontSize: '11px',
+                            fontWeight: 800,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.4px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            boxShadow: `0 2px 6px ${assignment.theme.primary}35`,
+                            flexShrink: 0
+                          }}>
+                            ✓ {assignment.slot.startTime || assignment.slot.time} SLOT
+                          </span>
+                        ) : isScheduledInDb ? (
+                          <span style={{
+                            background: '#D97706',
+                            color: '#FFFFFF',
+                            padding: '4px 10px',
+                            borderRadius: '14px',
+                            fontSize: '11px',
+                            fontWeight: 800,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            boxShadow: '0 2px 6px rgba(217, 119, 6, 0.3)',
+                            flexShrink: 0
+                          }}>
+                            ✓ Already Scheduled on Date
+                          </span>
+                        ) : (
+                          <span style={{
+                            background: '#F1F5F9',
+                            color: '#94A3B8',
+                            padding: '3px 8px',
+                            borderRadius: '12px',
+                            fontSize: '10.5px',
+                            fontWeight: 600,
+                            border: '1px dashed #CBD5E1',
+                            flexShrink: 0
+                          }}>
+                            Not Selected
+                          </span>
+                        )}
+
+                        {isSelectedFilterMatch && (
+                          <span style={{
+                            background: 'linear-gradient(135deg, #059669 0%, #047857 100%)',
+                            color: '#FFFFFF',
+                            padding: '4px 10px',
+                            borderRadius: '20px',
+                            fontSize: '10.5px',
+                            fontWeight: 800,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.4px',
+                            flexShrink: 0,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}>
+                            ⚡ DAY {courseDayFilter} TARGET
+                          </span>
+                        )}
+
+                        <span
+                          className="ns-day-progress-badge"
+                          style={isChecked && assignment ? {
+                            background: assignment.theme.dark,
+                            color: '#FFFFFF',
+                            fontWeight: 800,
+                            padding: '4px 10px',
+                            borderRadius: '12px'
+                          } : {
+                            background: '#F1F5F9',
+                            color: '#64748B',
+                            fontWeight: 600
+                          }}
+                        >
                           📅 Day {student.whichDay} of {student.totalDays}
                         </span>
+
                         <span className="ns-student-group-label">{student.courseDuration || student.waitlistGroup || `${student.totalDays} Days Course`}</span>
                         <span
                           className="ns-level-badge"
@@ -1239,17 +1813,34 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
             <div className="ns-sticky-bar">
               <div className="ns-sb-left">
                 <span className="ns-sb-target-label">SELECTED ROSTER</span>
-                <span className="ns-sb-capacity">
-                  {selectedStudentIds.length} Students Selected (Any Group Size)
+                <span className="ns-sb-capacity" style={{ fontSize: '14px', fontWeight: 800, color: '#FFFFFF' }}>
+                  Total {allSelectedStudentIds.length}/{capacity || 30} Athletes Selected
                 </span>
               </div>
 
               <div className="ns-sb-center">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(255,255,255,0.08)', padding: '6px 14px', borderRadius: '20px', border: '1px solid rgba(255,255,255,0.12)' }}>
-                  <span style={{ fontSize: '12px', color: '#94A3B8' }}>Selected Slot:</span>
-                  <span style={{ fontSize: '13px', fontWeight: 700, color: '#10B981' }}>
-                    ⏰ {selectedSlot?.startTime || selectedSlot?.time || 'Slot'}
-                  </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  {slots.filter(s => (slotStudentMap[s.id] || []).length > 0).map((s) => {
+                    const slotIdx = slots.findIndex(x => x.id === s.id);
+                    const theme = getSlotTheme(slotIdx >= 0 ? slotIdx : 0);
+                    const count = slotStudentMap[s.id].length;
+                    return (
+                      <span key={s.id} style={{
+                        fontSize: '12px',
+                        fontWeight: 700,
+                        background: theme.primary,
+                        color: '#FFFFFF',
+                        padding: '4px 12px',
+                        borderRadius: '14px',
+                        boxShadow: `0 2px 6px ${theme.primary}40`,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '5px'
+                      }}>
+                        ⏰ {s.startTime || s.time}: <strong>{count} Athletes</strong>
+                      </span>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -1294,14 +1885,40 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
         {currentStep === 3 && (
           <div className="ns-step-content ns-step3-wrap">
             {/* Selected Session Info Banner */}
-            <div className="ns-selected-banner">
-              <span className="ns-banner-icon">🟦</span>
-              <span className="ns-banner-text">
-                Selected Session: <strong>{formattedSessionDate}</strong> | Time Slot: <strong>{selectedSlot.time}</strong>
-              </span>
+            <div className="ns-selected-banner" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span className="ns-banner-icon">📅</span>
+                <span className="ns-banner-text">
+                  Selected Session: <strong>{formattedSessionDate}</strong>
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '12px', fontWeight: 700, color: '#475569' }}>Active Slots:</span>
+                {slots.filter(s => (slotStudentMap[s.id] || []).length > 0).map((s) => {
+                  const slotIdx = slots.findIndex(x => x.id === s.id);
+                  const theme = getSlotTheme(slotIdx >= 0 ? slotIdx : 0);
+                  const count = (slotStudentMap[s.id] || []).length;
+                  return (
+                    <span key={s.id} style={{
+                      fontSize: '11.5px',
+                      fontWeight: 700,
+                      background: theme.primary,
+                      color: '#FFFFFF',
+                      padding: '3px 10px',
+                      borderRadius: '12px',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      boxShadow: `0 2px 5px ${theme.primary}30`
+                    }}>
+                      ⏰ {s.startTime || s.time}: <strong>{count} Athletes</strong>
+                    </span>
+                  );
+                })}
+              </div>
             </div>
 
-            {/* 4 Stat Summary Cards */}
+            {/* 3 Stat Summary Cards */}
             <div className="ns-step3-stats-grid">
               <div className="ns-stat-card">
                 <h2 className="ns-sc-value">{importedStudents.length}</h2>
@@ -1310,10 +1927,6 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
               <div className="ns-stat-card">
                 <h2 className="ns-sc-value">{allInstructors.length}</h2>
                 <span className="ns-sc-label">Active Instructors</span>
-              </div>
-              <div className="ns-stat-card">
-                <h2 className="ns-sc-value">{allInstructors.filter(i => i.status === 'On Leave').length}</h2>
-                <span className="ns-sc-label">Staff On Leave</span>
               </div>
               <div className="ns-stat-card">
                 <h2 className="ns-sc-value">{allInstructors.length > 0 && importedStudents.length > 0 ? `${Math.ceil(importedStudents.length / allInstructors.length)}:1` : '0:1'}</h2>
@@ -1332,6 +1945,56 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                 <div className="ns-col-head">
                   <h3 className="ns-col-title">Students List</h3>
                   <span className="ns-col-badge">{importedStudents.length} Total</span>
+                </div>
+
+                {/* Time Slot Filter Pills */}
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px', padding: '4px', background: '#F1F5F9', borderRadius: '10px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setStep3SlotFilter('ALL')}
+                    style={{
+                      fontSize: '11.5px',
+                      fontWeight: 700,
+                      padding: '4px 10px',
+                      borderRadius: '8px',
+                      border: 'none',
+                      cursor: 'pointer',
+                      background: step3SlotFilter === 'ALL' ? '#0F172A' : 'transparent',
+                      color: step3SlotFilter === 'ALL' ? '#FFFFFF' : '#475569',
+                      transition: 'all 0.15s ease'
+                    }}
+                  >
+                    All Slots ({importedStudents.length})
+                  </button>
+                  {slots.filter(s => (slotStudentMap[s.id] || []).length > 0).map((s) => {
+                    const slotIdx = slots.findIndex(x => x.id === s.id);
+                    const theme = getSlotTheme(slotIdx >= 0 ? slotIdx : 0);
+                    const count = (slotStudentMap[s.id] || []).length;
+                    const isSelected = step3SlotFilter === s.id;
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => setStep3SlotFilter(s.id)}
+                        style={{
+                          fontSize: '11.5px',
+                          fontWeight: 700,
+                          padding: '4px 10px',
+                          borderRadius: '8px',
+                          border: 'none',
+                          cursor: 'pointer',
+                          background: isSelected ? theme.primary : 'transparent',
+                          color: isSelected ? '#FFFFFF' : theme.primary,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          transition: 'all 0.15s ease'
+                        }}
+                      >
+                        ⏰ {s.startTime || s.time} ({count})
+                      </button>
+                    );
+                  })}
                 </div>
 
                 {/* Level & Group Filter Tabs */}
@@ -1374,6 +2037,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                       const isChecked = step3CheckedStudentIds.includes(student.id);
                       const badge = getBadgeStyle(student.level);
                       const assignedGroup = trainingGroups.find(g => g.studentIds.includes(student.id));
+                      const slotAssignment = getStudentSlotAssignment(student.id);
 
                       return (
                         <div
@@ -1414,6 +2078,27 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                           >
                             Day {student.whichDay}/{student.totalDays}
                           </span>
+
+                          {/* Time Slot Badge */}
+                          {slotAssignment && (
+                            <span
+                              style={{
+                                backgroundColor: `${slotAssignment.theme.primary}18`,
+                                color: slotAssignment.theme.primary,
+                                padding: '2px 8px',
+                                borderRadius: '10px',
+                                fontSize: '11px',
+                                fontWeight: 700,
+                                border: `1px solid ${slotAssignment.theme.primary}40`,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '3px'
+                              }}
+                              title={`Selected in ${slotAssignment.slot.startTime || slotAssignment.slot.time} slot`}
+                            >
+                              ⏰ {slotAssignment.slot.startTime || slotAssignment.slot.time}
+                            </span>
+                          )}
 
                           {/* Group Assignment Badge */}
                           {assignedGroup ? (
@@ -1502,11 +2187,18 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                     </div>
                   ) : (
                     trainingGroups.map(grp => {
-                      const assignedInstructor = allInstructors.find(i => String(i.id) === String(grp.assignedInstructorId));
+                      const assignedInstIds = grp.assignedInstructorIds || (grp.assignedInstructorId ? [grp.assignedInstructorId] : []);
+                      const assignedInstructors = assignedInstIds
+                        .map(id => allInstructors.find(i => String(i.id) === String(id)))
+                        .filter(Boolean);
                       const grpStudents = grp.studentIds
                         .map(id => allPoolStudents.find(s => s.id === id))
                         .filter(Boolean);
                       const isDragOver = dragOverGroupId === grp.id;
+
+                      const grpSlot = slots.find(s => s.id === grp.slotId) || slots[0];
+                      const grpSlotIdx = slots.findIndex(x => x.id === (grp.slotId || grpSlot?.id));
+                      const grpTheme = getSlotTheme(grpSlotIdx >= 0 ? grpSlotIdx : 0);
 
                       return (
                         <div
@@ -1523,9 +2215,40 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                           }}
                           onDrop={(e) => handleDropOnGroup(e, grp.id)}
                         >
-                          <div className="ns-gc-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <div className="ns-gc-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                               <span className="ns-gc-day">{grp.day}</span>
+                              
+                              {/* Slot Dropdown for Group */}
+                              <select
+                                value={grp.slotId || (slots[0]?.id)}
+                                onChange={(e) => {
+                                  const newSlotId = e.target.value;
+                                  setTrainingGroups(prev => prev.map(g => g.id === grp.id ? { ...g, slotId: newSlotId } : g));
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                                style={{
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  background: `${grpTheme.primary}18`,
+                                  color: grpTheme.primary,
+                                  border: `1px solid ${grpTheme.primary}50`,
+                                  borderRadius: '8px',
+                                  padding: '2px 6px',
+                                  cursor: 'pointer',
+                                  outline: 'none'
+                                }}
+                              >
+                                {slots.map((s, idx) => {
+                                  const count = (slotStudentMap[s.id] || []).length;
+                                  return (
+                                    <option key={s.id} value={s.id} style={{ color: '#0F172A', background: '#FFF' }}>
+                                      ⏰ {s.startTime || s.time} ({count} Athletes)
+                                    </option>
+                                  );
+                                })}
+                              </select>
+
                               <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 600 }}>{grp.level}</span>
                             </div>
                             <button
@@ -1565,81 +2288,137 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                               </div>
                             ) : (
                               <div className="ns-group-students-grid">
-                                {grpStudents.map((s) => (
-                                  <div
-                                    key={s.id}
-                                    className="ns-group-student-chip"
-                                    draggable={true}
-                                    onDragStart={(e) => {
-                                      e.dataTransfer.setData('application/json', JSON.stringify({
-                                        type: 'student',
-                                        studentIds: [s.id],
-                                        fromGroupId: grp.id
-                                      }));
-                                      e.dataTransfer.effectAllowed = 'copyMove';
-                                      setDraggingType('student');
-                                    }}
-                                    onDragEnd={() => {
-                                      setDraggingType(null);
-                                      setDragOverGroupId(null);
-                                    }}
-                                    title="Drag to another group or click × to remove"
-                                  >
-                                    <UserAvatar src={s.avatar} name={s.name} size={20} className="ns-chip-avatar" />
-                                    <span className="ns-chip-name">{s.name}</span>
-                                    <button
-                                      type="button"
-                                      className="ns-chip-remove"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        removeStudentFromGroup(grp.id, s.id);
+                                {grpStudents.map((s) => {
+                                  const sSlotAssign = getStudentSlotAssignment(s.id);
+
+                                  return (
+                                    <div
+                                      key={s.id}
+                                      className="ns-group-student-chip"
+                                      draggable={true}
+                                      onDragStart={(e) => {
+                                        e.dataTransfer.setData('application/json', JSON.stringify({
+                                          type: 'student',
+                                          studentIds: [s.id],
+                                          fromGroupId: grp.id
+                                        }));
+                                        e.dataTransfer.effectAllowed = 'copyMove';
+                                        setDraggingType('student');
                                       }}
+                                      onDragEnd={() => {
+                                        setDraggingType(null);
+                                        setDragOverGroupId(null);
+                                      }}
+                                      title="Drag to another group or click × to remove"
                                     >
-                                      &times;
-                                    </button>
-                                  </div>
-                                ))}
+                                      <UserAvatar src={s.avatar} name={s.name} size={20} className="ns-chip-avatar" />
+                                      <span className="ns-chip-name">{s.name}</span>
+
+                                      {sSlotAssign && (
+                                        <span style={{
+                                          fontSize: '9px',
+                                          fontWeight: 700,
+                                          color: sSlotAssign.theme.primary,
+                                          background: `${sSlotAssign.theme.primary}18`,
+                                          padding: '1px 5px',
+                                          borderRadius: '4px',
+                                          border: `1px solid ${sSlotAssign.theme.primary}30`
+                                        }}>
+                                          {sSlotAssign.slot.startTime || sSlotAssign.slot.time}
+                                        </span>
+                                      )}
+
+                                      <button
+                                        type="button"
+                                        className="ns-chip-remove"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          removeStudentFromGroup(grp.id, s.id);
+                                        }}
+                                      >
+                                        &times;
+                                      </button>
+                                    </div>
+                                  );
+                                })}
                               </div>
                             )}
                           </div>
 
-                          {/* Assigned Instructor Slot */}
-                          {assignedInstructor ? (
-                            <div
-                              className="ns-assigned-inst-box"
-                              onDragOver={(e) => {
-                                e.preventDefault();
-                                e.dataTransfer.dropEffect = 'copy';
-                              }}
-                              onDrop={(e) => handleDropOnGroup(e, grp.id)}
-                            >
-                              <UserAvatar src={assignedInstructor.avatar} name={assignedInstructor.name} size={26} className="ns-ai-avatar" />
-                              <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
-                                <span className="ns-ai-name">{assignedInstructor.name}</span>
-                                <span style={{ fontSize: '10.5px', color: '#0369A1' }}>Assigned Instructor</span>
-                              </div>
-                              <button
-                                className="ns-ai-remove"
+                          {/* Assigned Coach (Single Coach Only) */}
+                          <div className="ns-assigned-instructors-section" style={{ marginTop: '12px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                              <span style={{ fontSize: '11px', fontWeight: 700, color: '#475569' }}>
+                                Assigned Coach
+                              </span>
+                            </div>
+
+                            {assignedInstructors.length > 0 ? (
+                              (() => {
+                                const coach = assignedInstructors[0];
+                                return (
+                                  <div
+                                    key={coach.id}
+                                    className="ns-assigned-inst-box"
+                                    style={{
+                                      padding: '8px 12px',
+                                      background: '#F0FDF4',
+                                      border: '1.5px solid #86EFAC',
+                                      borderRadius: '10px',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '10px'
+                                    }}
+                                    onDragOver={(e) => {
+                                      e.preventDefault();
+                                      e.dataTransfer.dropEffect = 'copy';
+                                    }}
+                                    onDrop={(e) => handleDropOnGroup(e, grp.id)}
+                                  >
+                                    <UserAvatar src={coach.avatar} name={coach.name} size={28} className="ns-ai-avatar" />
+                                    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
+                                      <span className="ns-ai-name" style={{ fontSize: '12.5px', fontWeight: 700, color: '#0F172A' }}>{coach.name}</span>
+                                      <span style={{ fontSize: '10px', color: '#16A34A', fontWeight: 700 }}>
+                                        ✓ Group Coach ({coach.role || 'Instructor'})
+                                      </span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className="ns-ai-remove"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        removeInstructorFromGroup(grp.id);
+                                      }}
+                                      title="Remove assigned coach"
+                                      style={{ fontSize: '16px', color: '#94A3B8', cursor: 'pointer', background: 'none', border: 'none', padding: '2px 6px' }}
+                                    >
+                                      &times;
+                                    </button>
+                                  </div>
+                                );
+                              })()
+                            ) : (
+                              <div
+                                className="ns-dropzone-box"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  removeInstructorFromGroup(grp.id);
+                                  setActiveDropGroupId(grp.id);
                                 }}
-                                title="Unassign Instructor"
+                                style={{
+                                  border: '1.5px dashed #CBD5E1',
+                                  borderRadius: '8px',
+                                  padding: '10px',
+                                  textAlign: 'center',
+                                  background: '#F8FAFC',
+                                  cursor: 'pointer',
+                                  fontSize: '12px',
+                                  color: '#64748B'
+                                }}
                               >
-                                &times;
-                              </button>
-                            </div>
-                          ) : (
-                            <div
-                              className="ns-dropzone-box"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setActiveDropGroupId(grp.id);
-                              }}
-                            >
-                              <span>🖐️ <strong>Drag Instructor Here</strong> (or click instructor)</span>
-                            </div>
-                          )}
+                                <span>🏄‍♂️ <strong>Assign Coach</strong> (Drag or click instructor)</span>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       );
                     })
@@ -1665,7 +2444,10 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                     </div>
                   ) : (
                     allInstructors.map(inst => {
-                      const assignedCount = trainingGroups.filter(g => String(g.assignedInstructorId) === String(inst.id)).length;
+                      const assignedCount = trainingGroups.filter(g => {
+                        const ids = g.assignedInstructorIds || (g.assignedInstructorId ? [g.assignedInstructorId] : []);
+                        return ids.map(String).includes(String(inst.id));
+                      }).length;
                       const isAssigned = assignedCount > 0;
                       const isOnLeave = inst.status === 'On Leave';
 
@@ -1689,19 +2471,32 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                           }}
                           onClick={() => {
                             if (isOnLeave) {
-                              alert(`${inst.name} is currently On Leave.`);
+                              setUiAlert({
+                                title: 'Staff On Leave',
+                                message: `${inst.name} is currently marked as On Leave.`,
+                                type: 'info',
+                                icon: '🏖️'
+                              });
                               return;
                             }
                             if (activeDropGroupId) {
                               assignInstructorToGroup(activeDropGroupId, inst.id);
                             } else {
-                              const unassigned = trainingGroups.find(g => !g.assignedInstructorId);
-                              if (unassigned) {
-                                assignInstructorToGroup(unassigned.id, inst.id);
+                              const unassignedGroup = trainingGroups.find(g => {
+                                const ids = g.assignedInstructorIds || (g.assignedInstructorId ? [g.assignedInstructorId] : []);
+                                return ids.length === 0;
+                              });
+                              if (unassignedGroup) {
+                                assignInstructorToGroup(unassignedGroup.id, inst.id);
                               } else if (trainingGroups.length > 0) {
                                 assignInstructorToGroup(trainingGroups[0].id, inst.id);
                               } else {
-                                alert('Please create a Group Card in the center column first.');
+                                setUiAlert({
+                                  title: 'Create Group First',
+                                  message: 'Please create a Group Card in the center column first before assigning coaches.',
+                                  type: 'warning',
+                                  icon: '📋'
+                                });
                               }
                             }
                           }}
@@ -1724,38 +2519,61 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
               </div>
             </div>
 
-            {/* Finalize Action Bottom Bar */}
-            <div className="ns-bottom-action-bar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px' }}>
-              <button
-                type="button"
-                className="ns-sec-btn"
-                onClick={() => setCurrentStep(2)}
-                style={{
-                  padding: '12px 22px',
-                  fontSize: '13.5px',
-                  fontWeight: 600,
-                  borderRadius: '10px',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  background: '#FFFFFF',
-                  border: '1.5px solid #CBD5E1',
-                  color: '#334155',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease'
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.borderColor = '#94A3B8'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = '#FFFFFF'; e.currentTarget.style.borderColor = '#CBD5E1'; }}
-              >
-                ← Back to Import Students
-              </button>
-              <button
-                className="ns-primary-btn finalize-btn"
-                onClick={handleFinalizeAndPublish}
-                disabled={isPublishing}
-              >
-                {isPublishing ? 'Publishing Sessions...' : 'Finalize & Publish'}
-              </button>
+            {/* Finalize Action Bottom Bar (Sticky Bar format like Step 1 & Step 2) */}
+            <div className="ns-sticky-bar" style={{ position: 'sticky', bottom: '0px', zIndex: 99, marginTop: '24px' }}>
+              <div className="ns-sb-left">
+                <span className="ns-sb-target-label" style={{ background: '#10B981', color: '#FFF', padding: '3px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 800 }}>
+                  PUBLISH READY
+                </span>
+                <span className="ns-sb-capacity" style={{ fontSize: '14px', fontWeight: 800, color: '#FFFFFF' }}>
+                  Total {importedStudents.length} Athletes Ready to Publish
+                </span>
+              </div>
+
+              <div className="ns-sb-right" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <button
+                  type="button"
+                  className="ns-sb-back-btn"
+                  onClick={() => setCurrentStep(2)}
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.12)',
+                    color: '#FFFFFF',
+                    border: '1px solid rgba(255, 255, 255, 0.25)',
+                    borderRadius: '8px',
+                    padding: '10px 18px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    transition: 'all 0.15s ease'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)'}
+                  onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)'}
+                >
+                  ← Back to Import Students
+                </button>
+                <button
+                  className="ns-primary-btn finalize-btn"
+                  onClick={handleFinalizeAndPublish}
+                  disabled={isPublishing}
+                  style={{
+                    background: 'linear-gradient(135deg, #00D494 0%, #00B37E 100%)',
+                    color: '#FFFFFF',
+                    fontWeight: 800,
+                    fontSize: '14px',
+                    padding: '10px 22px',
+                    borderRadius: '8px',
+                    border: 'none',
+                    boxShadow: '0 4px 14px rgba(0, 212, 148, 0.4)',
+                    cursor: isPublishing ? 'not-allowed' : 'pointer',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  {isPublishing ? 'Publishing Sessions...' : '🚀 Finalize & Publish'}
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -1796,16 +2614,34 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                     <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#475569', marginBottom: '6px' }}>
                       Duration (Minutes)
                     </label>
-                    <select
-                      value={editingSlotModal.duration}
-                      onChange={(e) => setEditingSlotModal({ ...editingSlotModal, duration: e.target.value })}
-                      className="ns-modal-input"
-                    >
-                      <option value="60">60 min</option>
-                      <option value="90">90 min</option>
-                      <option value="120">120 min</option>
-                      <option value="180">180 min</option>
-                    </select>
+                    <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                      <input
+                        type="number"
+                        min="1"
+                        max="600"
+                        step="5"
+                        list="ns-duration-presets"
+                        value={editingSlotModal.duration}
+                        onChange={(e) => setEditingSlotModal({ ...editingSlotModal, duration: e.target.value })}
+                        className="ns-modal-input"
+                        style={{ paddingRight: '36px', fontWeight: 700 }}
+                        placeholder="90"
+                      />
+                      <span style={{ position: 'absolute', right: '10px', fontSize: '11px', fontWeight: 700, color: '#64748B', pointerEvents: 'none' }}>
+                        min
+                      </span>
+                      <datalist id="ns-duration-presets">
+                        <option value="30">30 min</option>
+                        <option value="45">45 min</option>
+                        <option value="60">60 min</option>
+                        <option value="75">75 min</option>
+                        <option value="90">90 min</option>
+                        <option value="105">105 min</option>
+                        <option value="120">120 min</option>
+                        <option value="150">150 min</option>
+                        <option value="180">180 min</option>
+                      </datalist>
+                    </div>
                   </div>
                   <div>
                     <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#475569', marginBottom: '6px' }}>
@@ -1885,6 +2721,89 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                   style={{ padding: '10px 20px' }}
                 >
                   Save Time Slot
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Custom In-App UI Alert Modal (Replaces native browser alert) */}
+        {uiAlert && (
+          <div
+            className="ns-modal-overlay"
+            style={{ zIndex: 1400, backgroundColor: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(4px)' }}
+            onClick={() => setUiAlert(null)}
+          >
+            <div
+              className="ns-modal-card"
+              style={{
+                maxWidth: '440px',
+                width: '90%',
+                padding: '32px 28px',
+                textAlign: 'center',
+                background: '#FFFFFF',
+                borderRadius: '20px',
+                boxShadow: '0 25px 60px rgba(15, 23, 42, 0.3)',
+                border: '1px solid #E2E8F0',
+                position: 'relative'
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{
+                width: '60px',
+                height: '60px',
+                borderRadius: '50%',
+                background: uiAlert.type === 'error' ? '#FEE2E2' : uiAlert.type === 'info' ? '#E0F2FE' : '#FEF3C7',
+                color: uiAlert.type === 'error' ? '#DC2626' : uiAlert.type === 'info' ? '#0284C7' : '#D97706',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '28px',
+                margin: '0 auto 16px auto',
+                border: `2px solid ${uiAlert.type === 'error' ? '#FECACA' : uiAlert.type === 'info' ? '#BAE6FD' : '#FDE68A'}`
+              }}>
+                {uiAlert.icon || (uiAlert.type === 'error' ? '⚠️' : '📋')}
+              </div>
+
+              <h3 style={{
+                fontFamily: "'Outfit', sans-serif",
+                fontSize: '20px',
+                fontWeight: 800,
+                color: '#0F172A',
+                margin: '0 0 10px 0'
+              }}>
+                {uiAlert.title || 'Attention Needed'}
+              </h3>
+
+              <p style={{
+                fontSize: '14px',
+                color: '#64748B',
+                lineHeight: 1.55,
+                margin: '0 0 24px 0'
+              }}>
+                {uiAlert.message}
+              </p>
+
+              <div style={{ display: 'flex', justifyContent: 'center' }}>
+                <button
+                  type="button"
+                  onClick={() => setUiAlert(null)}
+                  style={{
+                    background: '#0F172A',
+                    color: '#FFFFFF',
+                    border: 'none',
+                    borderRadius: '10px',
+                    padding: '11px 32px',
+                    fontSize: '14px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    boxShadow: '0 4px 14px rgba(15, 23, 42, 0.25)',
+                    transition: 'all 0.15s ease'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = '#1E293B'}
+                  onMouseLeave={(e) => e.currentTarget.style.background = '#0F172A'}
+                >
+                  Got It
                 </button>
               </div>
             </div>
@@ -2945,7 +3864,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
 
         .ns-step3-stats-grid {
           display: grid;
-          grid-template-columns: repeat(4, 1fr);
+          grid-template-columns: repeat(3, 1fr);
           gap: 16px;
         }
         .ns-stat-card {
@@ -3453,7 +4372,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                 <div className="ns-modal-icon">🎉</div>
                 <h2 className="ns-modal-title">Session Created &amp; Published!</h2>
                 <p className="ns-modal-desc">
-                  Your session for <strong>{formattedSessionDate} ({selectedSlot.time})</strong> with {trainingGroups.length} training groups has been successfully saved into the schedule.
+                  Your session for <strong>{formattedSessionDate} ({selectedSlot ? (selectedSlot.startTime || selectedSlot.time) : 'Selected Time Slot'})</strong> with {trainingGroups.filter(g => g.studentIds && g.studentIds.length > 0).length} training group(s) has been successfully saved into the schedule.
                 </p>
                 <div className="ns-modal-actions">
                   <button
@@ -3498,7 +4417,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
               <div className="ns-modal-icon">🎉</div>
               <h2 className="ns-modal-title">Session Created &amp; Published!</h2>
               <p className="ns-modal-desc">
-                Your session for <strong>{formattedSessionDate} ({selectedSlot.time})</strong> with {trainingGroups.length} training groups has been successfully saved into the schedule.
+                Your session for <strong>{formattedSessionDate} ({selectedSlot ? (selectedSlot.startTime || selectedSlot.time) : 'Selected Time Slot'})</strong> with {trainingGroups.filter(g => g.studentIds && g.studentIds.length > 0).length} training group(s) has been successfully saved into the schedule.
               </p>
               <div className="ns-modal-actions">
                 <button

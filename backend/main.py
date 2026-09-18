@@ -2844,6 +2844,43 @@ def create_instructor(data: InstructorCreate, db: OrmSession = Depends(get_db)):
     db.refresh(instructor)
     db.add(ActivityLog(text=f"New instructor {data.name} joined the team", type="group", school=instructor.school or data.school or "Aquatic Indica Surf School"))
     db.commit()
+
+    # Send Welcome Email via AquaticX SMTP
+    if email_clean:
+        try:
+            pass_info = f"<li><strong>Password:</strong> {data.password.strip()}</li>" if (data.password and len(data.password.strip()) >= 6) else ""
+            coach_html = f"""
+            <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 24px; background: #0F172A; color: #F8FAFC; border-radius: 16px; max-width: 540px; margin: auto;">
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <h1 style="color: #00F2FE; margin: 0; font-size: 24px;">🏄 Aquatic Indica Surf School</h1>
+                    <p style="color: #94A3B8; font-size: 13px; margin: 4px 0 0 0;">Coach Account Access & Portal Invitation</p>
+                </div>
+                <div style="background: rgba(255,255,255,0.05); padding: 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
+                    <h3 style="margin-top: 0; color: #F1F5F9;">Aloha {data.name}! 🏄‍♂️</h3>
+                    <p style="font-size: 14px; line-height: 1.6; color: #CBD5E1;">
+                        You have been registered as an Instructor / Coach at <strong>{instructor.school or 'Aquatic Indica Surf School'}</strong>.
+                    </p>
+                    <div style="background: rgba(13, 148, 136, 0.15); border: 1px solid rgba(13, 148, 136, 0.4); padding: 14px; border-radius: 10px; margin: 16px 0;">
+                        <p style="margin: 0 0 8px 0; font-weight: 700; color: #2DD4BF; font-size: 13px;">🔑 Your Coach Login Details:</p>
+                        <ul style="font-size: 13px; color: #F8FAFC; margin: 0; padding-left: 18px; line-height: 1.8;">
+                            <li><strong>Login Email ID:</strong> {email_clean}</li>
+                            {pass_info}
+                            <li><strong>School Affiliation:</strong> {instructor.school or 'Aquatic Indica Surf School'}</li>
+                        </ul>
+                    </div>
+                    <p style="font-size: 13px; color: #94A3B8;">
+                        You can log in anytime to manage your assigned students, view session schedules, and log athlete performance.
+                    </p>
+                </div>
+                <p style="font-size: 11px; color: #64748B; text-align: center; margin-top: 20px;">
+                    Sent via Aquatic Indica / AiSurf SMTP Server
+                </p>
+            </div>
+            """
+            send_smtp_email(email_clean, f"🏄 Welcome Coach {data.name} — Aquatic Indica Surf Academy Login Access", coach_html)
+        except Exception as e:
+            print(f"Failed to send instructor invitation email to {email_clean}: {e}")
+
     return instructor_to_dict(instructor)
 
 
@@ -2960,6 +2997,46 @@ def create_student(data: StudentCreate, db: OrmSession = Depends(get_db)):
     db.add(ActivityLog(text=f"{data.name} joined as a new student", type="group", school=student_school or "Aquatic Indica Surf School"))
     db.commit()
     db.refresh(student)
+
+    # Send Welcome Email via AquaticX SMTP
+    if data.email:
+        try:
+            student_email = data.email.strip().lower()
+            pass_info = f"<li><strong>Password:</strong> {data.password.strip()}</li>" if (data.password and len(data.password.strip()) >= 6) else ""
+            student_html = f"""
+            <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 24px; background: #0F172A; color: #F8FAFC; border-radius: 16px; max-width: 540px; margin: auto;">
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <h1 style="color: #00F2FE; margin: 0; font-size: 24px;">🏄 Aquatic Indica Surf School</h1>
+                    <p style="color: #94A3B8; font-size: 13px; margin: 4px 0 0 0;">Student Portal Invitation & Training Access</p>
+                </div>
+                <div style="background: rgba(255,255,255,0.05); padding: 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
+                    <h3 style="margin-top: 0; color: #F1F5F9;">Aloha {data.name}! 🏄‍♀️</h3>
+                    <p style="font-size: 14px; line-height: 1.6; color: #CBD5E1;">
+                        Welcome to <strong>{student_school}</strong>! Your student account and surf training schedule have been created.
+                    </p>
+                    <div style="background: rgba(14, 165, 233, 0.15); border: 1px solid rgba(14, 165, 233, 0.4); padding: 14px; border-radius: 10px; margin: 16px 0;">
+                        <p style="margin: 0 0 8px 0; font-weight: 700; color: #38BDF8; font-size: 13px;">📋 Your Student Credentials & Schedule:</p>
+                        <ul style="font-size: 13px; color: #F8FAFC; margin: 0; padding-left: 18px; line-height: 1.8;">
+                            <li><strong>Registered Email:</strong> {student_email}</li>
+                            {pass_info}
+                            <li><strong>Course:</strong> {data.course_duration or '3 Days Course'}</li>
+                            <li><strong>Session Slot:</strong> {data.session_time or 'Morning 6:00 AM'}</li>
+                            <li><strong>School:</strong> {student_school}</li>
+                        </ul>
+                    </div>
+                    <p style="font-size: 13px; color: #94A3B8;">
+                        You can log in anytime to view your session schedules, track wave performance, and access AI analysis directly from your Student Portal.
+                    </p>
+                </div>
+                <p style="font-size: 11px; color: #64748B; text-align: center; margin-top: 20px;">
+                    Sent via Aquatic Indica / AiSurf SMTP Server
+                </p>
+            </div>
+            """
+            send_smtp_email(student_email, f"🏄 Welcome {data.name} — Student Access to Aquatic Indica Surf School!", student_html)
+        except Exception as e:
+            print(f"Failed to send student welcome email to {data.email}: {e}")
+
     return student_to_dict(student)
 
 

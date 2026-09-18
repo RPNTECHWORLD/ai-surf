@@ -9,6 +9,7 @@ const defaultSlots = [
   { id: 3, time: "11:30 AM", duration: "60", maxStudents: 6, days: ["Mon", "Tue", "Wed"], active: true },
   { id: 4, time: "01:00 PM", duration: "120", maxStudents: 4, days: ["Tue", "Thu", "Sat", "Sun"], active: true },
   { id: 5, time: "03:30 PM", duration: "90", maxStudents: 4, days: ["Fri", "Sat", "Sun"], active: false },
+  { id: 6, time: "04:00 PM", duration: "90", maxStudents: 4, days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], active: true },
 ];
 const SessionConfigure = () => {
   const navigate = useNavigate();
@@ -93,9 +94,33 @@ const SessionConfigure = () => {
             {slots.map(slot => (
               <div key={slot.id} style={{ display: "grid", gridTemplateColumns: "130px 130px 120px 1fr 100px 48px", gap: "16px", alignItems: "center", padding: "16px 0", borderBottom: "1px solid #F1F5F9" }}>
                 <input type="text" value={slot.time} onChange={e => updateSlot(slot.id, "time", e.target.value)} style={{ ...inp, fontWeight: 700 }} />
-                <select value={slot.duration} onChange={e => updateSlot(slot.id, "duration", e.target.value)} style={{ ...inp, cursor: "pointer" }}>
-                  {["30", "45", "60", "90", "120"].map(d => <option key={d} value={d}>{d} min</option>)}
-                </select>
+                <div style={{ position: "relative", display: "flex", alignItems: "center", width: "100%" }}>
+                  <input
+                    type="number"
+                    min="1"
+                    max="600"
+                    step="5"
+                    list="sc-duration-presets"
+                    value={slot.duration}
+                    onChange={e => updateSlot(slot.id, "duration", e.target.value)}
+                    style={{ ...inp, paddingRight: "34px", fontWeight: 700 }}
+                    placeholder="90"
+                  />
+                  <span style={{ position: "absolute", right: "10px", fontSize: "11px", fontWeight: 700, color: "#64748B", pointerEvents: "none" }}>
+                    min
+                  </span>
+                  <datalist id="sc-duration-presets">
+                    <option value="30">30 min</option>
+                    <option value="45">45 min</option>
+                    <option value="60">60 min</option>
+                    <option value="75">75 min</option>
+                    <option value="90">90 min</option>
+                    <option value="105">105 min</option>
+                    <option value="120">120 min</option>
+                    <option value="150">150 min</option>
+                    <option value="180">180 min</option>
+                  </datalist>
+                </div>
                 <input type="number" min="1" max="20" value={slot.maxStudents} onChange={e => updateSlot(slot.id, "maxStudents", e.target.value)} style={{ ...inp, width: "70px", textAlign: "center" }} />
                 <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                   {DAYS.map(day => {
@@ -121,7 +146,7 @@ const SessionConfigure = () => {
               <p style={{ fontSize: "12.5px", color: "#64748B", margin: "0 0 20px 0", lineHeight: 1.5 }}>Global timing constraints and booking policies applied across all lessons</p>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "20px" }}>
                 {[
-                  { label: "Default Session Duration", key: "defaultDuration", type: "select", options: ["30", "45", "60", "90", "120"], suffix: "min" },
+                  { label: "Default Session Duration (min)", key: "defaultDuration", type: "number" },
                   { label: "Default Max Students per Session", key: "maxStudents", type: "number" },
                   { label: "Break Between Sessions (min)", key: "breakBetween", type: "number" },
                   { label: "Cancellation Window (hours)", key: "cancellationWindow", type: "number" },

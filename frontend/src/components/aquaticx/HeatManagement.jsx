@@ -538,12 +538,14 @@ const HeatManagement = ({ currentUser }) => {
             const adminInfo = JSON.parse(sessionStorage.getItem('adminInfo') || '{}');
             const adminId = adminInfo.adminId || 'admin';
 
+            const safeGet = (url, config) => axios.get(url, config).catch(() => ({ data: [] }));
+
             const [eventsRes, surfersRes, heatsRes, judgesRes, healthRes] = await Promise.all([
-                axios.get(`${API_BASE}/events`, { params: { admin_id: adminId } }),
-                axios.get(`${API_BASE}/surfers`),
-                axios.get(`${API_BASE}/heats`, { params: { admin_id: adminId } }),
-                axios.get(`${API_BASE}/judges`, { params: { admin_id: adminId } }),
-                axios.get(`${API_BASE}/health`)
+                safeGet(`${API_BASE}/events`, { params: { admin_id: adminId } }),
+                safeGet(`${API_BASE}/surfers`),
+                safeGet(`${API_BASE}/heats`, { params: { admin_id: adminId } }),
+                safeGet(`${API_BASE}/judges`, { params: { admin_id: adminId } }),
+                safeGet(`${API_BASE}/health`)
             ]);
 
             // Sync clock

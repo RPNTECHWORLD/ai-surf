@@ -114,7 +114,7 @@ window.fetch = async function (input, init) {
     if (path === '/api/dashboard/stats' && method === 'GET') {
       return jsonResponse({
         active_instructors: state.instructors.length,
-        active_students: state.students.length,
+        active_students: state.students.filter(s => s && s.approval_status !== 'pending' && s.approval_status !== 'rejected').length,
         sessions_this_month: state.sessions.length,
         upcoming_sessions: state.sessions.filter(s => s.status === 'Upcoming' || s.status === 'IN PROGRESS').length
       });
@@ -751,7 +751,7 @@ window.fetch = async function (input, init) {
       const upcoming = state.sessions.filter(s => s.status === 'Upcoming').length;
       return jsonResponse({
         active_instructors: state.instructors.length,
-        active_students: state.students.length,
+        active_students: state.students.filter(s => s && s.approval_status !== 'pending' && s.approval_status !== 'rejected').length,
         sessions_this_month: completedThisMonth,
         upcoming_sessions: upcoming
       });

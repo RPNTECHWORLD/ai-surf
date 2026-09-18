@@ -118,3 +118,60 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
  1. Fixed timezone shift bug in Event, Competitor, and Heat Management pages by using timezone-safe local date component parsing.
  2. Attached student mapping metadata (student_ids and student_names) to dynamic virtual session events to support booked athlete loading inside heat creation.
  3. Added frontend auto-persistence for virtual session events, which automatically inserts them into the database events table upon heat creation to satisfy the backend INNER JOIN constraints without touching the aquaticxsports backend repository.
+
+### changes on 18-09-26
+1. Removed "Primary Instructor" column from the Students Management table in `StudentsManagement.jsx`.
+2. Implemented strict role-based privacy for student accounts in Session Details & Media Hub modals - hid "Edit Session", "Delete", and "Save Changes" controls and locked status/notes to read-only.
+3. Standardized UI terminology by replacing all "Athlete / Athletes" labels with "Student / Students" across top navigation badges, session tables, group modals, and session builder pools.
+4. Resolved top bar header logic in `Sidebar.jsx` to dynamically display the active Surf School name (`Aquatic Indica Surf School`) instead of coach name overrides for users inside a school.
+5. Restricted `Pending Requests` button and registration approval modal visibility in `StudentsManagement.jsx` so it is hidden for Surf School Coaches and reserved for School Administrators.
+6. Synchronized `Active Students` count in Dashboard stats API (`mockFetch.js`) by filtering out pending and rejected registrations so it matches the active roster in Students Management.
+7. Derived pending sessions in `StudentProfile.jsx` from student `course_duration` (e.g. 3 Days / 7 Days Course), populating the Pending Sessions count badge and listing all scheduled course days with date and time slot.
+8. Added dedicated `Accompanying Guests` widget on `StudentProfile.jsx` to render accompanying guests count, group size, and individual guest profile cards (name, age, skill level).
+9. Removed `Skill Tracker` radar chart and `Badge History` widgets from `StudentProfile.jsx` layout.
+10. Removed `Mock Heats & Tactical History` card section from `StudentProfile.jsx` layout.
+11. Moved `Accompanying Guests` widget to the top of the left column in `StudentProfile.jsx` above Session History.
+12. Refactored StudentProfile layout grid so left and right columns share equal flexible width (`flex: 1`), preventing text wrapping on Accompanying Guests header and balancing all dashboard cards.
+13. Simplified Edit Profile Modal in `StudentProfile.jsx` to exclusively present Signup & Guest registration fields (Name, WhatsApp, Guests, DOB, Course Duration, Slot, Start Date, Guest Profiles) and removed unused stats/logs fields.
+14. Removed `Session Time Slot` dropdown selection from student edit modal in `StudentProfile.jsx` so students do not pick session time slots.
+15. Created dedicated `Accompanying Guests` management modal (`showGuestModal`) in `StudentProfile.jsx` triggered by `+ Add Guests` button, allowing adding, updating, and removing guest profiles independently without opening `Edit Student Profile`.
+16. Added accompanying guest count badge (`👥 X Guest(s)`) under student name & phone number in `StudentsManagement.jsx` table roster.
+17. Rendered individual accompanying guest profile details (Guest Name, WhatsApp phone, Email address) directly under the guest badge in `StudentsManagement.jsx` table rows.
+18. Added graceful error fallback handling (`safeGet`) to `HeatManagement.jsx` to catch EC2 backend HTTP 500 responses without throwing unhandled exceptions in browser console.
+19. Updated session metric card label from `SESSIONS BOOKED` to `PENDING SESSIONS` and subtext from `Days Booked:` to `Pending Days:` in `Sessions.jsx` and `StudentsManagement.jsx`.
+20. Removed duplicate middle metric card widget from `Sessions.jsx` and `StudentsManagement.jsx`.
+21. Updated `NewSession.jsx` roster selector to leave student selection empty (0 selected) by default for manual selection, and filtered out students already scheduled on the selected session date.
+22. Normalized session status labels in `Sessions.jsx` from `UPCOMING` to `PENDING` (`formatSessionStatus`), updating status pills and syncing the `PENDING SESSIONS` top metric card count.
+23. Removed `ATTENDANCE` header column and `✓ Mark Daily` buttons from `StudentsManagement.jsx` table roster.
+24. Dynamic Session Slot Filter: Updated `StudentsManagement.jsx` session time filter dropdown to dynamically display active configured slots from Session Configuration (`localStorage.getItem('session_slots')`), filtered by the selected date's day of the week (`dateFilter`), with real-time sync listeners.
+25. Removed Table Row Edit Buttons: Completely removed the pencil edit icon buttons (`ses-icon-btn`) from session table rows in `Sessions.jsx`.
+26. Removed Preferred Session Time Field: Removed `Preferred Session Time` dropdown input field from `Add Students` modal in `StudentsManagement.jsx`.
+27. Automatic Session Grouping: Refactored `Sessions.jsx` session grouping logic (`buildSessionGrouping`) so that multiple sessions sharing the exact same Date, Time, and Instructor are automatically consolidated into a single parent Group Session row (e.g. `08:30 AM Group (3 Students)`).
+28. Synchronized School Name: Fixed school name mismatch between top header navigation and profile card in `InstructorProfile.jsx` by resolving `activeSchoolName` dynamically from active session user context (`erictestschool`).
+29. Per-Slot Independent Session Capacity: Refactored `NewSession.jsx` capacity state management (`slotCapacityMap`) so that each session time slot (e.g. `08:30 AM`, `10:30 AM`) maintains its own independent target student capacity limit when switching between slots.
+30. Horizontal Slot Pill Tabs Bar: Replaced top dropdown slot select in `Sessions.jsx` with an always-visible horizontal slot pill tab bar featuring `⏰ Select Time Slot:`, circular slot number badges, session counts, and active `✓ SELECTED TAB` indicators.
+31. Student Video Upload & Auto-Save: Enabled video upload and auto-saving (`autoSaveHubVideo`) inside Session Details & Media Hub modal for student accounts in `Sessions.jsx`, ensuring uploaded wave clips are immediately persisted to backend session records.
+32. Past Date Selection Disabled: Updated `NewSession.jsx` calendar widget to disable past dates (`cellDate < today`). Past days are visualised with reduced opacity (`0.3`), strike-through line, and `pointerEvents: 'none'` to block selection, while previous month navigation arrow (`←`) is disabled when viewing the current month.
+33. Publish Validation & Group Initialization Fix: Added validation to `NewSession.jsx` (`handleFinalizeAndPublish` & `proceedToStep3`) so that publishing requires at least 1 valid group with assigned students. Prevents auto-publishing fake empty groups or falling back to dummy student ID `1`.
+34. Editable Custom Session Duration: Replaced static dropdown in `SessionConfigure.jsx` and `NewSession.jsx` slot edit modal with a hybrid number input and `<datalist>` dropdown. Users can now either select standard presets (`30`, `45`, `60`, `90`, `120`, `180 min`) or manually type any custom duration value in minutes (e.g. `75`, `105`, `150`).
+35. Removed Slot Card Edit Buttons: Completely removed the `Edit` buttons from daily time slot cards in `NewSession.jsx` (Choose Time Slot section).
+36. Removed "Staff On Leave" Metric Card: Removed the "Staff On Leave" summary card from Step 3 (Assign Instructors) in `NewSession.jsx` and rebalanced the summary grid to 3 cards.
+37. Custom In-App UI Alert Modal: Replaced browser native popups (`alert(...)`) in `NewSession.jsx` with a styled in-app UI alert modal featuring status icons, structured headings, clean backdrop blur, and dark rounded action buttons.
+38. Horizontal Slot Tabs Bar in Students Management: Replaced the `Session: All Slots` dropdown filter in `StudentsManagement.jsx` with the exact same always-visible horizontal slot pill tabs bar from `Sessions.jsx` (with `⏰ Select Time Slot:`, numbered circular badges, student counts, and active `✓ SELECTED TAB` highlights).
+39. Single Coach Per Group Enforcement: Updated `NewSession.jsx` to enforce exactly 1 dedicated coach per group card (single coach assignment). Removed multi-coach appending, and added strict validation ensuring every training group has an assigned coach before publishing.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

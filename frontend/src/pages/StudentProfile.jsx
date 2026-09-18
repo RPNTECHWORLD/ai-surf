@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 
@@ -33,10 +33,102 @@ const StudentProfile = () => {
   // Auth state
   const [currentUser, setCurrentUser] = useState(null);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showGuestModal, setShowGuestModal] = useState(false);
+  const [guestFormList, setGuestFormList] = useState([]);
+  const [savingGuests, setSavingGuests] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const avatarFileInputRef = useRef(null);
   const modalPhotoInputRef = useRef(null);
+
+  const handleOpenGuestModal = () => {
+    const existing = student?.guests_details && student.guests_details.length > 0
+      ? student.guests_details
+      : [];
+    if (existing.length === 0) {
+      setGuestFormList([{ name: '', whatsapp_number: '', email: '', dob: '', age: '', level: 'Beginner' }]);
+    } else {
+      setGuestFormList(JSON.parse(JSON.stringify(existing)));
+    }
+    setShowGuestModal(true);
+  };
+
+  const handleAddGuestRow = () => {
+    setGuestFormList(prev => [
+      ...prev,
+      { name: '', whatsapp_number: '', email: '', dob: '', age: '', level: 'Beginner' }
+    ]);
+  };
+
+  const handleRemoveGuestRow = (index) => {
+    setGuestFormList(prev => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleGuestChange = (index, field, value) => {
+    setGuestFormList(prev => {
+      const updated = [...prev];
+      let computedAge = updated[index]?.age || '';
+      if (field === 'dob') {
+        computedAge = calculateAge(value);
+      }
+      updated[index] = {
+        ...updated[index],
+        [field]: value,
+        ...(field === 'dob' ? { age: computedAge } : {})
+      };
+      return updated;
+    });
+  };
+
+  const handleSaveGuests = async (e) => {
+    if (e) e.preventDefault();
+    setSavingGuests(true);
+    try {
+      const token = sessionStorage.getItem('token');
+      const updatedCount = Math.max(1, guestFormList.length);
+      const res = await fetch(`${API}/api/students/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          guests_count: updatedCount,
+          guests_details: guestFormList
+        })
+      });
+
+      if (res.ok || res.status === 200 || !API) {
+        setStudent(prev => ({
+          ...prev,
+          guests_count: updatedCount,
+          guests_details: guestFormList
+        }));
+        try {
+          const savedUser = JSON.parse(sessionStorage.getItem('user') || '{}');
+          if (savedUser && (savedUser.student_id === parseInt(id) || savedUser.id === parseInt(id))) {
+            savedUser.guests_count = updatedCount;
+            savedUser.guests_details = guestFormList;
+            sessionStorage.setItem('user', JSON.stringify(savedUser));
+          }
+        } catch (err) {}
+        setShowGuestModal(false);
+        fetchStudent();
+      } else {
+        alert('Failed to update guests.');
+      }
+    } catch (err) {
+      console.error('Error saving guests:', err);
+      setStudent(prev => ({
+        ...prev,
+        guests_count: Math.max(1, guestFormList.length),
+        guests_details: guestFormList
+      }));
+      setShowGuestModal(false);
+    } finally {
+      setSavingGuests(false);
+    }
+  };
   const [editForm, setEditForm] = useState({
     name: '',
     bio: '',
@@ -606,7 +698,42 @@ const StudentProfile = () => {
         ? `Tomorrow, ${student.session_time.replace(/morning\s*/i, '').replace(/evening\s*/i, '')}`
         : `Tomorrow, ${student.session_time}`)
     : 'Tomorrow, 08:30 AM';
-  const nextSessionSub = `${student.location || 'Waikiki Beach'} • ${student.course_duration || 'Intro to Barrels'}`;
+  const nextSessionSub = `${student.location || 'Waikiki Beach'} • ${student.course_duration || '3 Days Course'}`;
+
+  const getDerivedSessions = (st) => {
+    if (st?.sessions && st.sessions.length > 0) {
+      return st.sessions;
+    }
+
+    const durationStr = st?.course_duration || '3 Days Course';
+    const match = durationStr.match(/(\d+)/);
+    const totalDays = match ? parseInt(match[1]) : 3;
+
+    const startDateStr = st?.start_date || new Date().toISOString().split('T')[0];
+    const startDateObj = new Date(startDateStr);
+    const isInvalidDate = isNaN(startDateObj.getTime());
+    const baseDate = isInvalidDate ? new Date() : startDateObj;
+
+    const generated = [];
+    for (let i = 0; i < totalDays; i++) {
+      const d = new Date(baseDate);
+      d.setDate(d.getDate() + i);
+      const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      
+      generated.push({
+        id: `derived_sess_${i+1}`,
+        title: `Day ${i + 1} of ${totalDays} (${durationStr})`,
+        date: dateStr,
+        time: st?.session_time || '08:30 AM',
+        location: st?.school || 'Waikiki Beach',
+        instructor: st?.instructor || 'Assigned Surf Coach',
+        status: 'Upcoming'
+      });
+    }
+    return generated;
+  };
+
+  const effectiveSessions = (student?.sessions && student.sessions.length > 0) ? student.sessions : getDerivedSessions(student);
 
   return (
     <div className="sp-page">
@@ -799,6 +926,82 @@ const StudentProfile = () => {
         <div className="sp-content">
           {/* Left Column */}
           <div className="sp-col-left">
+            {/* Accompanying Guests Card */}
+            <div className="sp-card">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <h2 className="sp-card-title" style={{ whiteSpace: 'nowrap' }}>Accompanying Guests</h2>
+                  <span style={{
+                    background: '#0284C7',
+                    color: '#FFFFFF',
+                    fontSize: '11px',
+                    fontWeight: 800,
+                    padding: '2px 8px',
+                    minWidth: '22px',
+                    height: '22px',
+                    borderRadius: '11px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}>
+                    {student.guests_count || (student.guests_details?.length) || 1}
+                  </span>
+                </div>
+                {isOwnProfile && (
+                  <button
+                    type="button"
+                    onClick={handleOpenGuestModal}
+                    style={{
+                      background: '#F0F9FF',
+                      border: '1px solid #BAE6FD',
+                      color: '#0284C7',
+                      fontSize: '12.5px',
+                      fontWeight: 700,
+                      padding: '6px 14px',
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    + Add Guests
+                  </button>
+                )}
+              </div>
+
+              {(student.guests_details && student.guests_details.length > 0) ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {student.guests_details.map((g, gIdx) => (
+                    <div key={gIdx} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', background: '#F8FAFC', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
+                      <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: 'linear-gradient(135deg, #0EA5E9, #2563EB)', color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '15px' }}>
+                        {g.name ? g.name.charAt(0).toUpperCase() : `G${gIdx + 1}`}
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: '14px', fontWeight: 800, color: '#0F172A' }}>
+                          {g.name || `Guest #${gIdx + 1}`}
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#64748B', display: 'flex', gap: '8px', marginTop: '2px' }}>
+                          <span>{g.level || 'Beginner'}</span>
+                          {g.age && <span>• Age {g.age}</span>}
+                          {g.gender && <span>• {g.gender}</span>}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ padding: '20px 12px', textAlign: 'center', color: '#64748B', fontSize: '13px', background: '#F8FAFC', borderRadius: '12px', border: '1px dashed #CBD5E1' }}>
+                  <div style={{ fontSize: '24px', marginBottom: '4px' }}>👥</div>
+                  <div style={{ fontWeight: 700, color: '#334155' }}>
+                    {student.guests_count && student.guests_count > 1 ? `${student.guests_count} Guests Registered` : '1 Guest Registered (Primary Surfer)'}
+                  </div>
+                  <div style={{ fontSize: '11.5px', color: '#64748B', marginTop: '2px' }}>
+                    Accompanying group members & friends booked for this surf training.
+                  </div>
+                </div>
+              )}
+            </div>
+
             {/* Session History Card */}
             <div className="sp-card">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
@@ -824,7 +1027,7 @@ const StudentProfile = () => {
                 Recents
               </div>
 
-              {((student.sessions || []).filter(s => s.status === 'Completed')).length === 0 ? (
+              {(effectiveSessions.filter(s => s.status === 'Completed')).length === 0 ? (
                 <div style={{ padding: '24px 12px', textAlign: 'center', color: '#94A3B8', fontSize: '13px', background: '#F8FAFC', borderRadius: '12px', border: '1px dashed #E2E8F0' }}>
                   <div style={{ fontSize: '24px', marginBottom: '6px' }}>🏄</div>
                   <div style={{ fontWeight: 600, color: '#64748B' }}>No completed sessions yet</div>
@@ -832,7 +1035,7 @@ const StudentProfile = () => {
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-                  {(student.sessions || []).filter(s => s.status === 'Completed').slice(0, 5).map((session, sIdx) => (
+                  {effectiveSessions.filter(s => s.status === 'Completed').slice(0, 5).map((session, sIdx) => (
                     <div key={session.id || sIdx} style={{ display: 'flex', alignItems: 'flex-start', gap: '14px' }}>
                       <div style={{
                         width: '10px',
@@ -847,7 +1050,7 @@ const StudentProfile = () => {
                           {session.date}
                         </span>
                         <strong style={{ fontSize: '14px', fontWeight: 800, color: '#0F172A' }}>
-                          {session.location || session.title || 'Surf Training Session'}
+                          {session.title || session.location || 'Surf Training Session'}
                         </strong>
                         <span style={{ fontSize: '13px', color: '#64748B' }}>
                           {session.instructor || student.instructor || 'Surf Coach'}
@@ -868,18 +1071,19 @@ const StudentProfile = () => {
                   color: '#FFFFFF',
                   fontSize: '11px',
                   fontWeight: 800,
-                  width: '20px',
+                  padding: '2px 8px',
+                  minWidth: '20px',
                   height: '20px',
-                  borderRadius: '50%',
+                  borderRadius: '10px',
                   display: 'inline-flex',
                   alignItems: 'center',
                   justifyContent: 'center'
                 }}>
-                  {((student.sessions || []).filter(s => s.status === 'Upcoming' || s.status === 'Scheduled')).length}
+                  {(effectiveSessions.filter(s => s.status === 'Upcoming' || s.status === 'Scheduled')).length}
                 </span>
               </div>
 
-              {((student.sessions || []).filter(s => s.status === 'Upcoming' || s.status === 'Scheduled')).length === 0 ? (
+              {(effectiveSessions.filter(s => s.status === 'Upcoming' || s.status === 'Scheduled')).length === 0 ? (
                 <div style={{ padding: '24px 12px', textAlign: 'center', color: '#94A3B8', fontSize: '13px', background: '#F8FAFC', borderRadius: '12px', border: '1px dashed #E2E8F0' }}>
                   <div style={{ fontSize: '24px', marginBottom: '6px' }}>📅</div>
                   <div style={{ fontWeight: 600, color: '#64748B' }}>No pending sessions</div>
@@ -887,7 +1091,7 @@ const StudentProfile = () => {
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  {(student.sessions || []).filter(s => s.status === 'Upcoming' || s.status === 'Scheduled').map((session, pIdx, arr) => (
+                  {effectiveSessions.filter(s => s.status === 'Upcoming' || s.status === 'Scheduled').map((session, pIdx, arr) => (
                     <div
                       key={session.id || pIdx}
                       style={{
@@ -911,7 +1115,7 @@ const StudentProfile = () => {
                           {session.date}
                         </span>
                         <strong style={{ fontSize: '14px', fontWeight: 800, color: '#0F172A' }}>
-                          {session.location || session.title || 'Scheduled Session'}
+                          {session.title || session.location || 'Scheduled Session'}
                         </strong>
                         <span style={{ fontSize: '13px', color: '#64748B' }}>
                           {session.instructor || student.instructor || 'Coach'} • {session.time || student.session_time || 'Morning Slot'}
@@ -926,71 +1130,6 @@ const StudentProfile = () => {
 
           {/* Right Column */}
           <div className="sp-col-right">
-            {/* Top Row: Skill Tracker & Badge History */}
-            <div className="sp-row-top">
-              {/* Skill Tracker */}
-              <div className="sp-card sp-skill-card">
-                <h2 className="sp-card-title">Skill Tracker</h2>
-                <div className="sp-radar-container">
-                  <div className="sp-radar-mock">
-                    <div className="sp-radar-poly sp-poly-lg" />
-                    <div className="sp-radar-poly sp-poly-md" />
-                    <div className="sp-radar-poly sp-poly-sm" />
-                    <div className="sp-radar-fill" />
-                    <span className="sp-radar-label label-top">BALANCE</span>
-                    <span className="sp-radar-label label-bottom">PADDLING</span>
-                    <span className="sp-radar-label label-left">POP-UP</span>
-                    <span className="sp-radar-label label-right">STAMINA</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Badge History */}
-              <div className="sp-card sp-badge-card">
-                <h2 className="sp-card-title">Badge History</h2>
-                <div className="sp-badge-list">
-                  {(() => {
-                    const earned = [];
-                    const lvl = (student.level || 'Beginner').toLowerCase();
-                    earned.push({
-                      id: 1,
-                      name: 'White Badge',
-                      date: student.start_date ? `Earned ${student.start_date}` : 'Earned on Join',
-                      color: '#E2E8F0',
-                      textColor: '#0F172A'
-                    });
-                    if (lvl.includes('intermediate') || lvl.includes('advanced') || lvl.includes('master')) {
-                      earned.push({
-                        id: 2,
-                        name: 'Yellow Badge',
-                        date: 'Earned Intermediate',
-                        color: '#F59E0B',
-                        textColor: '#0F172A'
-                      });
-                    }
-                    if (lvl.includes('advanced') || lvl.includes('master')) {
-                      earned.push({
-                        id: 3,
-                        name: 'Blue Badge',
-                        date: 'Earned Advanced',
-                        color: '#3B82F6',
-                        textColor: '#0F172A'
-                      });
-                    }
-                    return earned;
-                  })().map(badge => (
-                    <div key={badge.id} className="sp-badge-item">
-                      <div className="sp-badge-icon" style={{ backgroundColor: badge.color }} />
-                      <div className="sp-badge-info">
-                        <div className="sp-badge-name" style={{ color: badge.textColor }}>{badge.name}</div>
-                        <div className="sp-badge-date">{badge.date}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
             {/* Video Analysis */}
             <div className="sp-card">
               <h2 className="sp-card-title">Video Analysis</h2>
@@ -1034,128 +1173,6 @@ const StudentProfile = () => {
         </div>
 
 
-            {/* Mock Heats History */}
-            <div className="sp-card" style={{ marginTop: '32px' }}>
-              <h2 className="sp-card-title">🏆 Mock Heats & Tactical History</h2>
-              <p style={{ fontSize: '13px', color: '#64748B', margin: '4px 0 16px 0' }}>Log of simulated heats, scores, strategy compliance, and AI tactical insights.</p>
-              
-              <div className="sp-mock-heats-list" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                {mockHeats.length === 0 ? (
-                  <p style={{ fontSize: '13px', color: '#94A3B8', margin: 0, padding: '20px 0', textAlign: 'center' }}>No mock heats simulated yet. Initiate one in the Competitions Hub!</p>
-                ) : (
-                  mockHeats.map((heat) => {
-                    const isExpanded = expandedHeatId === heat.id;
-                    
-                    return (
-                      <div 
-                        key={heat.id} 
-                        className="sp-heat-history-item"
-                        style={{
-                          border: '1px solid #E2E8F0',
-                          borderRadius: '16px',
-                          background: isExpanded ? '#F8FAFC' : '#FFF',
-                          transition: 'all 0.3s ease',
-                          overflow: 'hidden'
-                        }}
-                      >
-                        {/* Expandable Header */}
-                        <div 
-                          onClick={() => toggleHeatExpand(heat.id)}
-                          style={{
-                            padding: '20px',
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                            cursor: 'pointer',
-                            userSelect: 'none'
-                          }}
-                        >
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            <span style={{ fontSize: '12px', color: '#64748B', fontWeight: 700 }}>{heat.date} • {heat.duration_mins} mins</span>
-                            <span style={{ fontSize: '14px', color: '#0F172A', fontWeight: 700 }}>Focus: {heat.strategy_focus || 'Open strategy'}</span>
-                          </div>
-                          
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                            <div style={{ textAlign: 'right' }}>
-                              <span style={{ fontSize: '11px', color: '#94A3B8', fontWeight: 700, display: 'block' }}>TOTAL SCORE</span>
-                              <strong style={{ fontSize: '18px', color: '#0D9488', fontFamily: 'Outfit, sans-serif' }}>{heat.heat_total.toFixed(2)}</strong>
-                            </div>
-                            <span style={{ fontSize: '20px', color: '#94A3B8', transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▼</span>
-                          </div>
-                        </div>
-                        
-                        {/* Expanded Content */}
-                        {isExpanded && (
-                          <div style={{ padding: '0 20px 20px 20px', borderTop: '1px solid #E2E8F0', display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '4px' }}>
-                            {/* Waves List */}
-                            <div style={{ marginTop: '12px' }}>
-                              <h4 style={{ fontSize: '13px', color: '#475569', margin: '0 0 10px 0' }}>🌊 Wave Score Progression</h4>
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                {heat.waves.length === 0 ? (
-                                  <p style={{ fontSize: '12px', color: '#94A3B8', margin: 0 }}>No wave rides recorded during this heat.</p>
-                                ) : (
-                                  heat.waves.map((w, idx) => (
-                                    <div 
-                                      key={idx} 
-                                      style={{
-                                        display: 'flex',
-                                        justifyContent: 'space-between',
-                                        alignItems: 'center',
-                                        background: '#FFF',
-                                        border: '1.5px solid #E2E8F0',
-                                        padding: '10px 14px',
-                                        borderRadius: '10px'
-                                      }}
-                                    >
-                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                                        <span style={{ fontSize: '12px', color: '#0F172A', fontWeight: 700 }}>Wave {w.wave_number}</span>
-                                        {w.notes && <span style={{ fontSize: '12px', color: '#64748B' }}>"{w.notes}"</span>}
-                                      </div>
-                                      <span style={{ fontSize: '14px', color: '#0D9488', fontWeight: 800 }}>{w.score.toFixed(1)}</span>
-                                    </div>
-                                  ))
-                                )}
-                              </div>
-                            </div>
-
-                            {/* Coach reflections */}
-                            {heat.strategy_execution && (
-                              <div style={{ background: '#FFF', border: '1.5px solid #E2E8F0', padding: '16px', borderRadius: '12px' }}>
-                                <h4 style={{ fontSize: '13px', color: '#475569', margin: '0 0 6px 0' }}>📋 Strategy Execution (Coach Review)</h4>
-                                <p style={{ fontSize: '12px', color: '#334155', margin: 0, lineHeight: 1.5 }}>{heat.strategy_execution}</p>
-                              </div>
-                            )}
-
-                            {/* AI Analysis section */}
-                            {heat.tactical_strengths?.length > 0 && (
-                              <div style={{ background: 'rgba(124, 58, 237, 0.04)', border: '1px solid rgba(124, 58, 237, 0.15)', padding: '18px', borderRadius: '14px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                                <span style={{ fontSize: '11px', color: '#7C3AED', fontWeight: 800, letterSpacing: '0.5px' }}>🤖 AI TACTICAL DIAGNOSTICS</span>
-                                
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                                  <div>
-                                    <h5 style={{ fontSize: '12px', color: '#0D9488', margin: '0 0 6px 0' }}>Strengths</h5>
-                                    <ul style={{ paddingLeft: '16px', margin: 0, fontSize: '12px', color: '#475569', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                      {heat.tactical_strengths.map((str, sIdx) => <li key={sIdx}>{str}</li>)}
-                                    </ul>
-                                  </div>
-                                  <div>
-                                    <h5 style={{ fontSize: '12px', color: '#EF4444', margin: '0 0 6px 0' }}>Weaknesses</h5>
-                                    <ul style={{ paddingLeft: '16px', margin: 0, fontSize: '12px', color: '#475569', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                      {heat.tactical_weaknesses.map((weak, wIdx) => <li key={wIdx}>{weak}</li>)}
-                                    </ul>
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-
         {/* EDIT PROFILE MODAL */}
         {showEditModal && (
           <div className="sp-modal-overlay">
@@ -1172,32 +1189,46 @@ const StudentProfile = () => {
                       {editForm.image && !editForm.image.includes('1500648767791') ? (
                         <img src={editForm.image} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                       ) : (
-                        (editForm.name || 'S').slice(0, 2).toUpperCase()
+                        <span>{editForm.name ? editForm.name.charAt(0).toUpperCase() : 'S'}</span>
                       )}
                     </div>
-                    <div>
-                      <input
-                        type="file"
-                        ref={modalPhotoInputRef}
-                        accept="image/*"
-                        style={{ display: 'none' }}
-                        onChange={handlePhotoUpload}
-                      />
-                      <button
-                        type="button"
+                    <div style={{ flex: 1 }}>
+                      <button 
+                        type="button" 
                         onClick={() => modalPhotoInputRef.current?.click()}
-                        style={{ background: '#0F172A', color: '#FFF', border: 'none', padding: '8px 14px', borderRadius: '8px', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}
+                        style={{ background: '#0D9488', color: '#FFF', border: 'none', padding: '8px 14px', borderRadius: '8px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}
                       >
-                        {uploadingPhoto ? 'Uploading...' : '📷 Upload Photo'}
+                        📷 Change Profile Photo
                       </button>
+                      <input 
+                        type="file" 
+                        ref={modalPhotoInputRef} 
+                        accept="image/*" 
+                        style={{ display: 'none' }} 
+                        onChange={handlePhotoUpload} 
+                      />
                     </div>
                   </div>
 
+                  {/* Full Name */}
                   <div className="sp-form-field">
                     <label>Full Name</label>
                     <input type="text" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required />
                   </div>
                   
+                  {/* Phone & Group Size */}
+                  <div className="sp-form-row">
+                    <div className="sp-form-field">
+                      <label>WhatsApp Number</label>
+                      <input type="text" value={editForm.whatsapp_number} onChange={(e) => setEditForm({ ...editForm, whatsapp_number: e.target.value })} placeholder="9876543210" />
+                    </div>
+                    <div className="sp-form-field">
+                      <label>Group Size / Guests</label>
+                      <input type="number" min="1" max="13" value={editForm.guests_count} onChange={(e) => setEditForm({ ...editForm, guests_count: e.target.value })} />
+                    </div>
+                  </div>
+
+                  {/* DOB & Start Date */}
                   <div className="sp-form-row">
                     <div className="sp-form-field">
                       <label style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -1220,182 +1251,146 @@ const StudentProfile = () => {
                       />
                     </div>
                     <div className="sp-form-field">
-                      <label>Surf Stance</label>
-                      <select value={editForm.stance} onChange={(e) => setEditForm({ ...editForm, stance: e.target.value })}>
-                        <option value="regular">Regular</option>
-                        <option value="goofy">Goofy</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="sp-form-field">
-                    <label>Competition Division</label>
-                    <select value={editForm.division} onChange={(e) => setEditForm({ ...editForm, division: e.target.value })}>
-                      <option value="Juniors">Juniors</option>
-                      <option value="Men's Open">Men's Open</option>
-                      <option value="Women's Open">Women's Open</option>
-                      <option value="Men's Amateur">Men's Amateur</option>
-                      <option value="Women's Amateur">Women's Amateur</option>
-                    </select>
-                  </div>
-
-                  <div className="sp-form-field">
-                    <label>Bio</label>
-                    <textarea rows="3" value={editForm.bio} onChange={(e) => setEditForm({ ...editForm, bio: e.target.value })} placeholder="Describe your surfing style, goals, etc."></textarea>
-                  </div>
-
-                  <div className="sp-form-row">
-                    <div className="sp-form-field">
-                      <label>Waves Ridden</label>
-                      <input type="number" value={editForm.waves_ridden} onChange={(e) => setEditForm({ ...editForm, waves_ridden: e.target.value })} />
-                    </div>
-                    <div className="sp-form-field">
-                      <label>Max Speed</label>
-                      <input type="text" value={editForm.max_speed} onChange={(e) => setEditForm({ ...editForm, max_speed: e.target.value })} />
-                    </div>
-                    <div className="sp-form-field">
-                      <label>Avg Session (mins)</label>
-                      <input type="number" value={editForm.avg_session_mins} onChange={(e) => setEditForm({ ...editForm, avg_session_mins: e.target.value })} />
-                    </div>
-                  </div>
-
-                  <div className="sp-form-row">
-                    <div className="sp-form-field">
-                      <label>WhatsApp Number</label>
-                      <input type="text" value={editForm.whatsapp_number} onChange={(e) => setEditForm({ ...editForm, whatsapp_number: e.target.value })} placeholder="9876543210" />
-                    </div>
-                    <div className="sp-form-field">
-                      <label>Group Size / Guests</label>
-                      <input type="number" min="1" max="13" value={editForm.guests_count} onChange={(e) => setEditForm({ ...editForm, guests_count: e.target.value })} />
-                    </div>
-                  </div>
-
-                  <div className="sp-form-row">
-                    <div className="sp-form-field">
-                      <label>Course Duration</label>
-                      <select value={editForm.course_duration} onChange={(e) => setEditForm({ ...editForm, course_duration: e.target.value })}>
-                        <option value="3 Days Course">3 Days Course</option>
-                        <option value="5 Days Course">5 Days Course</option>
-                        <option value="7 Days Course">7 Days Course</option>
-                        <option value="10 Days Course">10 Days Course</option>
-                        <option value="1 Day Crash Course">1 Day Crash Course</option>
-                      </select>
-                    </div>
-                    <div className="sp-form-field">
-                      <label>Session Time Slot</label>
-                      <select value={editForm.session_time} onChange={(e) => setEditForm({ ...editForm, session_time: e.target.value })}>
-                        <option value="08:30 AM">08:30 AM · Morning Slot 1 (90m)</option>
-                        <option value="10:30 AM">10:30 AM · Morning Slot 2 (90m)</option>
-                        <option value="11:30 AM">11:30 AM · Midday Slot (60m)</option>
-                        <option value="01:00 PM">01:00 PM · Afternoon Slot (120m)</option>
-                        <option value="03:30 PM">03:30 PM · Late Afternoon (90m)</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="sp-form-row">
-                    <div className="sp-form-field">
                       <label>Start Date</label>
                       <input type="date" value={editForm.start_date} onChange={(e) => setEditForm({ ...editForm, start_date: e.target.value })} />
                     </div>
-                    <div className="sp-form-field">
-                      <label>Staying at School?</label>
-                      <select value={editForm.staying_at_school} onChange={(e) => setEditForm({ ...editForm, staying_at_school: e.target.value })}>
-                        <option value="Yes">Yes (On-site)</option>
-                        <option value="No">No (Off-site)</option>
-                      </select>
-                    </div>
                   </div>
 
-                  {/* Edit Accompanying Guests */}
-                  {(parseInt(editForm.guests_count || 0) > 0 || (editForm.guests_details && editForm.guests_details.length > 0)) && (
-                    <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '10px', padding: '14px', margin: '8px 0' }}>
-                      <span style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#0F172A', marginBottom: '10px' }}>
-                        Accompanying Guests Profiles ({Math.max(parseInt(editForm.guests_count || 0), editForm.guests_details?.length || 0)})
-                      </span>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                        {Array.from({ length: Math.max(parseInt(editForm.guests_count || 0), editForm.guests_details?.length || 0) }).map((_, gIdx) => {
-                          const g = (editForm.guests_details && editForm.guests_details[gIdx]) || {};
-                          return (
-                            <div key={gIdx} style={{ background: '#FFF', border: '1px solid #E2E8F0', borderRadius: '8px', padding: '10px' }}>
-                              <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', display: 'block', marginBottom: '6px' }}>Guest #{gIdx + 1} Profile</span>
-                              <div className="sp-guest-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '6px' }}>
-                                <input 
-                                  type="text" 
-                                  placeholder="Guest Name" 
-                                  value={g.name || ''} 
-                                  onChange={(e) => {
-                                    const updated = [...(editForm.guests_details || [])];
-                                    if (!updated[gIdx]) updated[gIdx] = { name: '', whatsapp_number: '', email: '', age: '', stance: 'regular', level: 'Beginner' };
-                                    updated[gIdx].name = e.target.value;
-                                    setEditForm({ ...editForm, guests_details: updated });
-                                  }} 
-                                />
-                                <input 
-                                  type="tel" 
-                                  placeholder="WhatsApp / Phone" 
-                                  value={g.whatsapp_number || ''} 
-                                  onChange={(e) => {
-                                    const updated = [...(editForm.guests_details || [])];
-                                    if (!updated[gIdx]) updated[gIdx] = { name: '', whatsapp_number: '', email: '', age: '', stance: 'regular', level: 'Beginner' };
-                                    updated[gIdx].whatsapp_number = e.target.value;
-                                    setEditForm({ ...editForm, guests_details: updated });
-                                  }} 
-                                />
-                                <input 
-                                  type="email" 
-                                  placeholder="Email Address" 
-                                  value={g.email || ''} 
-                                  onChange={(e) => {
-                                    const updated = [...(editForm.guests_details || [])];
-                                    if (!updated[gIdx]) updated[gIdx] = { name: '', whatsapp_number: '', email: '', age: '', stance: 'regular', level: 'Beginner' };
-                                    updated[gIdx].email = e.target.value;
-                                    setEditForm({ ...editForm, guests_details: updated });
-                                  }} 
-                                />
-                                <input 
-                                  type="date" 
-                                  title="Guest Date of Birth (DOB)"
-                                  value={g.dob || ''} 
-                                  max={new Date().toISOString().split('T')[0]}
-                                  onChange={(e) => {
-                                    const updated = [...(editForm.guests_details || [])];
-                                    const dobVal = e.target.value;
-                                    const computedAge = calculateAge(dobVal);
-                                    if (!updated[gIdx]) updated[gIdx] = { name: '', whatsapp_number: '', email: '', dob: '', age: '', stance: 'regular', level: 'Beginner' };
-                                    updated[gIdx] = { ...updated[gIdx], dob: dobVal, age: computedAge };
-                                    setEditForm({ ...editForm, guests_details: updated });
-                                  }} 
-                                />
-                                <select 
-                                  value={g.stance || 'regular'} 
-                                  onChange={(e) => {
-                                    const updated = [...(editForm.guests_details || [])];
-                                    if (!updated[gIdx]) updated[gIdx] = { name: '', whatsapp_number: '', email: '', age: '', stance: 'regular', level: 'Beginner' };
-                                    updated[gIdx].stance = e.target.value;
-                                    setEditForm({ ...editForm, guests_details: updated });
-                                  }}
-                                >
-                                  <option value="regular">Regular</option>
-                                  <option value="goofy">Goofy</option>
-                                </select>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
+                  {/* Course Duration */}
                   <div className="sp-form-field">
-                    <label>Performance Logs (one log per line)</label>
-                    <textarea rows="3" value={editForm.performance_logs} onChange={(e) => setEditForm({ ...editForm, performance_logs: e.target.value })} placeholder="Pipeline clean swell - pop-up speed fast."></textarea>
+                    <label>Course Duration</label>
+                    <select value={editForm.course_duration} onChange={(e) => setEditForm({ ...editForm, course_duration: e.target.value })}>
+                      <option value="3 Days Course">3 Days Course</option>
+                      <option value="5 Days Course">5 Days Course</option>
+                      <option value="7 Days Course">7 Days Course</option>
+                      <option value="10 Days Course">10 Days Course</option>
+                      <option value="1 Day Crash Course">1 Day Crash Course</option>
+                    </select>
                   </div>
                 </div>
                 <div className="sp-modal-footer">
                   <button type="button" className="btn-secondary" onClick={() => setShowEditModal(false)}>Cancel</button>
                   <button type="submit" className="btn-primary" disabled={saving}>
                     {saving ? 'Saving...' : 'Save Changes'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* DEDICATED GUEST MANAGEMENT MODAL */}
+        {showGuestModal && (
+          <div className="sp-modal-overlay" onClick={() => setShowGuestModal(false)}>
+            <div className="sp-modal glass" onClick={e => e.stopPropagation()} style={{ maxWidth: '580px' }}>
+              <div className="sp-modal-header" style={{ borderBottom: '1px solid #E2E8F0', padding: '18px 24px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ fontSize: '22px' }}>👥</span>
+                  <h3 style={{ margin: 0, fontSize: '19px', fontWeight: 800, color: '#0F172A', fontFamily: 'Outfit, sans-serif' }}>
+                    Accompanying Guests
+                  </h3>
+                </div>
+                <button className="sp-modal-close" onClick={() => setShowGuestModal(false)}>&times;</button>
+              </div>
+
+              <form onSubmit={handleSaveGuests}>
+                <div className="sp-modal-body" style={{ padding: '20px 24px', maxHeight: '65vh', overflowY: 'auto' }}>
+                  <p style={{ margin: '0 0 16px 0', fontSize: '13px', color: '#64748B', lineHeight: 1.4 }}>
+                    Add and edit information for family members, friends, or companions joining this surf training course.
+                  </p>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                    {guestFormList.map((g, gIdx) => (
+                      <div key={gIdx} style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '12px', padding: '14px', position: 'relative' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                          <span style={{ fontSize: '12px', fontWeight: 800, color: '#0284C7', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                            Guest #{gIdx + 1} Profile
+                          </span>
+                          {guestFormList.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveGuestRow(gIdx)}
+                              style={{ background: '#FEE2E2', border: 'none', color: '#EF4444', padding: '4px 10px', borderRadius: '6px', fontSize: '11.5px', fontWeight: 700, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                            >
+                              🗑️ Remove
+                            </button>
+                          )}
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px' }}>
+                          <div className="sp-form-field">
+                            <label style={{ fontSize: '11.5px', fontWeight: 700, color: '#475569' }}>Full Name</label>
+                            <input
+                              type="text"
+                              placeholder="Guest Name"
+                              value={g.name || ''}
+                              onChange={(e) => handleGuestChange(gIdx, 'name', e.target.value)}
+                              required
+                            />
+                          </div>
+                          <div className="sp-form-field">
+                            <label style={{ fontSize: '11.5px', fontWeight: 700, color: '#475569' }}>WhatsApp / Phone</label>
+                            <input
+                              type="tel"
+                              placeholder="Phone number"
+                              value={g.whatsapp_number || ''}
+                              onChange={(e) => handleGuestChange(gIdx, 'whatsapp_number', e.target.value)}
+                            />
+                          </div>
+                          <div className="sp-form-field">
+                            <label style={{ fontSize: '11.5px', fontWeight: 700, color: '#475569' }}>Email Address</label>
+                            <input
+                              type="email"
+                              placeholder="Email address"
+                              value={g.email || ''}
+                              onChange={(e) => handleGuestChange(gIdx, 'email', e.target.value)}
+                            />
+                          </div>
+                          <div className="sp-form-field">
+                            <label style={{ fontSize: '11.5px', fontWeight: 700, color: '#475569', display: 'flex', justifyContent: 'space-between' }}>
+                              <span>Date of Birth</span>
+                              {g.dob && g.age && <span style={{ color: '#0284C7' }}>Age: {g.age}</span>}
+                            </label>
+                            <input
+                              type="date"
+                              value={g.dob || ''}
+                              max={new Date().toISOString().split('T')[0]}
+                              onChange={(e) => handleGuestChange(gIdx, 'dob', e.target.value)}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleAddGuestRow}
+                    style={{
+                      width: '100%',
+                      padding: '12px',
+                      borderRadius: '10px',
+                      border: '1.5px dashed #0284C7',
+                      background: '#F0F9FF',
+                      color: '#0284C7',
+                      fontWeight: 800,
+                      fontSize: '13px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '6px',
+                      marginTop: '14px'
+                    }}
+                  >
+                    ➕ Add Another Guest
+                  </button>
+                </div>
+
+                <div className="sp-modal-footer">
+                  <button type="button" className="btn-secondary" onClick={() => setShowGuestModal(false)}>Cancel</button>
+                  <button type="submit" className="btn-primary" disabled={savingGuests}>
+                    {savingGuests ? 'Saving...' : 'Save Guests'}
                   </button>
                 </div>
               </form>
@@ -1603,9 +1598,9 @@ const StudentProfile = () => {
         }
 
         /* Two Column Layout */
-        .sp-content { display: flex; gap: 24px; align-items: stretch; }
-        .sp-col-left { display: flex; flex-direction: column; gap: 24px; width: 350px; flex-shrink: 0; }
-        .sp-col-right { display: flex; flex-direction: column; gap: 24px; flex: 1; }
+        .sp-content { display: flex; gap: 24px; align-items: flex-start; }
+        .sp-col-left { display: flex; flex-direction: column; gap: 24px; flex: 1; min-width: 0; }
+        .sp-col-right { display: flex; flex-direction: column; gap: 24px; flex: 1; min-width: 0; }
 
         /* Cards */
         .sp-card { background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 16px; padding: 24px; display: flex; flex-direction: column; gap: 16px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.02); }

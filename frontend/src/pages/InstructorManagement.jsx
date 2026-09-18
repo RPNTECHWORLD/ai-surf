@@ -15,6 +15,13 @@ const getCoverImage = (name) => {
   return 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=400&q=80';
 };
 
+const formatExperience = (exp) => {
+  if (!exp && exp !== 0) return '2 Years';
+  const str = String(exp).trim();
+  if (/^\d+$/.test(str)) return `${str} Years`;
+  return str;
+};
+
 const InstructorManagement = () => {
   const navigate = useNavigate();
   const [instructors, setInstructors] = useState([]);
@@ -32,6 +39,7 @@ const InstructorManagement = () => {
   const [inviteModalData, setInviteModalData] = useState(null);
   const [inviteLinkCopied, setInviteLinkCopied] = useState(false);
   const [headerInviteCopied, setHeaderInviteCopied] = useState(false);
+  const [customLangInput, setCustomLangInput] = useState('');
 
   // Coach Password Management State
   const [passwordModalCoach, setPasswordModalCoach] = useState(null);
@@ -266,13 +274,14 @@ const InstructorManagement = () => {
           experience: form.experience,
           certifications: certs,
           image: safeImage,
-          school: form.school || 'Individual / Freelance Coach',
+          school: (!isSuperAdmin && currentSchool) ? currentSchool : (form.school || 'Individual / Freelance Coach'),
+          languages: Array.isArray(form.languages) ? form.languages.join(', ') : (form.languages || ''),
         }),
       });
       if (res.ok) {
         setShowAddModal(false);
         setPhotoPreview('');
-        setForm({ name: '', email: '', password: '', dob: '', age: 28, gender: 'Male', fitness_level: 'Elite', experience: '', certifications: '', languages: '', biography: '', image: '', school: getActiveSchoolName() });
+        setForm({ name: '', email: '', password: '', dob: '', age: 28, gender: 'Male', fitness_level: 'Elite', experience: '', certifications: '', languages: [], biography: '', image: '', school: getActiveSchoolName() });
         fetchInstructors();
       }
     } catch (err) {}
@@ -455,70 +464,7 @@ const InstructorManagement = () => {
 
                         <div className="im-card-divider" />
 
-                        {/* Coach Login Credentials Snippet */}
-                        <div style={{
-                          margin: '6px 0 10px 0',
-                          padding: '7px 12px',
-                          background: '#F8FAFC',
-                          border: '1px solid #E2E8F0',
-                          borderRadius: '10px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          fontSize: '12px'
-                        }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
-                            <span style={{ color: '#64748B', fontWeight: 600, fontSize: '11.5px' }}>Password:</span>
-                            <span style={{
-                              fontWeight: 700,
-                              fontFamily: showPassCardMap[instructor.id] && instructor.password_plain ? 'monospace' : 'inherit',
-                              color: instructor.password_plain ? '#0F766E' : (instructor.has_password ? '#334155' : '#94A3B8'),
-                              fontSize: '12px'
-                            }}>
-                              {instructor.password_plain
-                                ? (showPassCardMap[instructor.id] ? instructor.password_plain : '••••••••')
-                                : (instructor.has_password ? '••••••••' : 'Not set')}
-                            </span>
-                          </div>
-                          {instructor.password_plain ? (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setShowPassCardMap(prev => ({ ...prev, [instructor.id]: !prev[instructor.id] }));
-                                }}
-                                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', color: '#64748B', display: 'flex', alignItems: 'center' }}
-                                title={showPassCardMap[instructor.id] ? 'Hide Password' : 'Show Password'}
-                              >
-                                {showPassCardMap[instructor.id] ? (
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>
-                                ) : (
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
-                                )}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (navigator.clipboard) {
-                                    navigator.clipboard.writeText(instructor.password_plain);
-                                    setCopiedCoachPassId(instructor.id);
-                                    setTimeout(() => setCopiedCoachPassId(null), 2000);
-                                  }
-                                }}
-                                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', color: copiedCoachPassId === instructor.id ? '#10B981' : '#64748B', display: 'flex', alignItems: 'center' }}
-                                title="Copy Password"
-                              >
-                                {copiedCoachPassId === instructor.id ? (
-                                  <span style={{ fontSize: '10px', color: '#10B981', fontWeight: 800 }}>Copied!</span>
-                                ) : (
-                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                                )}
-                              </button>
-                            </div>
-                          ) : null}
-                        </div>
+
 
                         <div className="im-card-stats">
                           <div className="im-card-stat">
@@ -533,7 +479,7 @@ const InstructorManagement = () => {
                           </div>
                           <div className="im-card-stat">
                             <span className="stat-label">Experience</span>
-                            <span className="stat-value">{instructor.experience || '2 Years'}</span>
+                            <span className="stat-value">{formatExperience(instructor.experience)}</span>
                           </div>
                         </div>
 
@@ -541,37 +487,7 @@ const InstructorManagement = () => {
                           <button className="im-card-view-profile" onClick={() => navigate(`/instructors/${instructor.id}`)}>
                             View Profile
                           </button>
-                          <button
-                            type="button"
-                            className="im-card-key-btn"
-                            title="Set or update coach login password"
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '5px',
-                              background: instructor.has_password ? 'rgba(13, 148, 136, 0.1)' : 'rgba(245, 158, 11, 0.12)',
-                              color: instructor.has_password ? '#0D9488' : '#D97706',
-                              border: `1px solid ${instructor.has_password ? 'rgba(13, 148, 136, 0.3)' : 'rgba(245, 158, 11, 0.35)'}`,
-                              padding: '8px 11px',
-                              borderRadius: '10px',
-                              fontSize: '12px',
-                              fontWeight: '700',
-                              cursor: 'pointer',
-                              fontFamily: "'Outfit', sans-serif",
-                              transition: 'all 0.2s ease',
-                              flexShrink: 0
-                            }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setPasswordModalCoach(instructor);
-                              setCoachEmailInput(instructor.email || '');
-                              setCoachNewPass('');
-                              setCoachPassError('');
-                              setCoachPassSuccess('');
-                            }}
-                          >
-                            <span>🔑 {instructor.has_password ? 'Password' : 'Set Pwd'}</span>
-                          </button>
+
                           <button
                             type="button"
                             className="im-card-invite-btn"
@@ -791,22 +707,32 @@ const InstructorManagement = () => {
                     </select>
                   </div>
                   <div className="form-group">
-                    <label>Experience</label>
-                    <input type="text" placeholder="e.g. 5 Years" value={form.experience} onChange={e => setForm({...form, experience: e.target.value})} required />
+                    <label>Experience (Years)</label>
+                    <input type="number" min="0" max="60" placeholder="e.g. 5" value={form.experience} onChange={e => setForm({...form, experience: e.target.value})} required />
                   </div>
                 </div>
 
                 <div className="form-group">
                   <label>Affiliation / Surf School</label>
-                  <select
-                    value={form.school || 'Individual / Freelance Coach'}
-                    onChange={e => setForm({ ...form, school: e.target.value })}
-                  >
-                    <option value="Individual / Freelance Coach">👤 Individual / Freelance Coach (Independent)</option>
-                    {schoolsList.filter(s => s !== 'Individual / Freelance Coach').map(s => (
-                      <option key={s} value={s}>🏫 {s}</option>
-                    ))}
-                  </select>
+                  {!isSuperAdmin && currentSchool ? (
+                    <select
+                      value={currentSchool}
+                      disabled
+                      style={{ background: '#F8FAFC', color: '#0F172A', fontWeight: 700, cursor: 'not-allowed', opacity: 0.9 }}
+                    >
+                      <option value={currentSchool}>🏫 {currentSchool}</option>
+                    </select>
+                  ) : (
+                    <select
+                      value={form.school || 'Individual / Freelance Coach'}
+                      onChange={e => setForm({ ...form, school: e.target.value })}
+                    >
+                      <option value="Individual / Freelance Coach">👤 Individual / Freelance Coach (Independent)</option>
+                      {schoolsList.filter(s => s !== 'Individual / Freelance Coach').map(s => (
+                        <option key={s} value={s}>🏫 {s}</option>
+                      ))}
+                    </select>
+                  )}
                 </div>
 
                 <div className="form-group">
@@ -815,8 +741,107 @@ const InstructorManagement = () => {
                 </div>
 
                 <div className="form-group">
-                  <label>Languages</label>
-                  <input type="text" placeholder="English, Portuguese, Spanish" value={form.languages || ''} onChange={e => setForm({...form, languages: e.target.value})} />
+                  <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <span>Languages Spoken</span>
+                    <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 500 }}>Select tags or type below</span>
+                  </label>
+
+                  {/* Selected Language Chips */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px', minHeight: '34px', padding: '6px 8px', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '10px', alignItems: 'center' }}>
+                    {(Array.isArray(form.languages) ? form.languages : (form.languages ? String(form.languages).split(',').map(l => l.trim()).filter(Boolean) : [])).map((lang, idx) => (
+                      <span key={idx} style={{ background: '#0D9488', color: '#FFF', fontSize: '12px', fontWeight: 700, padding: '3px 10px', borderRadius: '14px', display: 'inline-flex', alignItems: 'center', gap: '6px', boxShadow: '0 1px 3px rgba(13, 148, 136, 0.2)' }}>
+                        {lang}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const currentLangs = Array.isArray(form.languages) ? form.languages : (form.languages ? String(form.languages).split(',').map(l => l.trim()).filter(Boolean) : []);
+                            const updated = currentLangs.filter((_, i) => i !== idx);
+                            setForm({ ...form, languages: updated });
+                          }}
+                          style={{ background: 'none', border: 'none', color: '#FFF', cursor: 'pointer', padding: 0, fontSize: '12px', fontWeight: 800, lineHeight: 1 }}
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    ))}
+                    {(!form.languages || (Array.isArray(form.languages) && form.languages.length === 0)) && (
+                      <span style={{ fontSize: '12px', color: '#94A3B8', fontStyle: 'italic', padding: '2px 4px' }}>No languages selected yet</span>
+                    )}
+                  </div>
+
+                  {/* Quick Select Preset Buttons */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginBottom: '8px' }}>
+                    {['English', 'Tamil', 'Hindi', 'Spanish', 'French', 'German', 'Portuguese', 'Japanese', 'Malayalam', 'Telugu'].map(preset => {
+                      const currentLangs = Array.isArray(form.languages) ? form.languages : (form.languages ? String(form.languages).split(',').map(l => l.trim()).filter(Boolean) : []);
+                      const isSelected = currentLangs.some(l => l.toLowerCase() === preset.toLowerCase());
+                      return (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => {
+                            let updated;
+                            if (isSelected) {
+                              updated = currentLangs.filter(l => l.toLowerCase() !== preset.toLowerCase());
+                            } else {
+                              updated = [...currentLangs, preset];
+                            }
+                            setForm({ ...form, languages: updated });
+                          }}
+                          style={{
+                            background: isSelected ? 'rgba(13, 148, 136, 0.15)' : '#F1F5F9',
+                            color: isSelected ? '#0D9488' : '#475569',
+                            border: `1px solid ${isSelected ? '#0D9488' : '#CBD5E1'}`,
+                            fontSize: '11.5px',
+                            fontWeight: 700,
+                            padding: '4px 9px',
+                            borderRadius: '8px',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          {isSelected ? `✓ ${preset}` : `+ ${preset}`}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Custom Language Type & Add Input */}
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <input
+                      type="text"
+                      placeholder="Type another language (e.g. Italian)..."
+                      value={customLangInput}
+                      onChange={e => setCustomLangInput(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          if (customLangInput.trim()) {
+                            const currentLangs = Array.isArray(form.languages) ? form.languages : (form.languages ? String(form.languages).split(',').map(l => l.trim()).filter(Boolean) : []);
+                            if (!currentLangs.some(l => l.toLowerCase() === customLangInput.trim().toLowerCase())) {
+                              setForm({ ...form, languages: [...currentLangs, customLangInput.trim()] });
+                            }
+                            setCustomLangInput('');
+                          }
+                        }
+                      }}
+                      style={{ flex: 1, fontSize: '13px' }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (customLangInput.trim()) {
+                          const currentLangs = Array.isArray(form.languages) ? form.languages : (form.languages ? String(form.languages).split(',').map(l => l.trim()).filter(Boolean) : []);
+                          if (!currentLangs.some(l => l.toLowerCase() === customLangInput.trim().toLowerCase())) {
+                            setForm({ ...form, languages: [...currentLangs, customLangInput.trim()] });
+                          }
+                          setCustomLangInput('');
+                        }
+                      }}
+                      style={{ background: '#0D9488', color: '#FFF', border: 'none', borderRadius: '8px', padding: '0 14px', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}
+                    >
+                      + Add
+                    </button>
+                  </div>
                 </div>
 
                 <div className="form-group">
