@@ -173,6 +173,8 @@ const StudentProfile = () => {
   const [isSavingPass, setIsSavingPass] = useState(false);
   const [passError, setPassError] = useState('');
   const [passSuccess, setPassSuccess] = useState('');
+  const [showPassVisible, setShowPassVisible] = useState(false);
+  const [showConfirmVisible, setShowConfirmVisible] = useState(false);
 
   const handleUpdatePassword = async (e) => {
     e.preventDefault();
@@ -335,7 +337,7 @@ const StudentProfile = () => {
       name: savedUser.name || req?.student_name || req?.name || 'Registered Surfer',
       email: savedUser.email || req?.student_email || req?.email || '',
       level: 'Beginner',
-      instructor: savedUser.instructor || req?.instructor || 'Assigned Surf Coach',
+      instructor: savedUser.instructor || req?.instructor || '',
       image: savedUser.image || '',
       bio: 'Registered athlete & surf trainee.',
       age: 24,
@@ -346,12 +348,12 @@ const StudentProfile = () => {
       surf_stats: { waves_ridden: 0, max_speed: '0 mph', avg_session_mins: 0 },
       performance_logs: [],
       whatsapp_number: savedUser.whatsapp_number || req?.whatsapp_number || '',
-      guests_count: 1,
+      guests_count: (savedUser.guests_details && savedUser.guests_details.length) || (req?.guests_details && req.guests_details.length) || (typeof savedUser.guests_count === 'number' ? savedUser.guests_count : (req?.guests_count || 0)),
       course_duration: savedUser.course_duration || req?.course_duration || '3 Days Course',
       session_time: savedUser.session_time || req?.session_time || 'Morning 6:00 AM',
       staying_at_school: savedUser.staying_at_school || req?.staying_at_school || 'Yes',
       reminder_preference: 'WhatsApp Text',
-      guests_details: [],
+      guests_details: savedUser.guests_details || req?.guests_details || [],
       badges: [
         { id: 1, name: 'White Badge (Student Registered)', date: 'Earned Today', color: '#00F2FE', textColor: '#0F172A' }
       ]
@@ -445,13 +447,31 @@ const StudentProfile = () => {
         } catch (e) {}
       }
 
+      let parsedGuests = [];
+      try {
+        if (Array.isArray(data.guests_details)) {
+          parsedGuests = data.guests_details;
+        } else if (typeof data.guests_details === 'string') {
+          parsedGuests = JSON.parse(data.guests_details);
+        }
+      } catch (e) {}
+      if ((!parsedGuests || parsedGuests.length === 0) && savedUser) {
+        try {
+          if (Array.isArray(savedUser.guests_details)) parsedGuests = savedUser.guests_details;
+          else if (typeof savedUser.guests_details === 'string') parsedGuests = JSON.parse(savedUser.guests_details);
+        } catch (e) {}
+      }
+      if (!Array.isArray(parsedGuests)) parsedGuests = [];
+
       const cleanStudent = {
         ...data,
+        guests_details: parsedGuests,
+        guests_count: parsedGuests.length,
         surf_stats: data.surf_stats && Object.keys(data.surf_stats).length > 0
           ? data.surf_stats
           : { waves_ridden: 0, max_speed: '0 mph', avg_session_mins: 0 },
         performance_logs: data.performance_logs || [],
-        instructor: data.instructor || 'Assigned Surf Coach',
+        instructor: data.instructor || '',
         bio: data.bio || 'Registered athlete & surf trainee.',
         division: data.division || (data.gender === 'Female' ? "Women's Open" : "Men's Open"),
         approval_status: isApproved ? 'approved' : (data.approval_status || 'pending'),
@@ -578,7 +598,7 @@ const StudentProfile = () => {
       avg_session_mins: student.surf_stats?.avg_session_mins || 0,
       performance_logs: (student.performance_logs || []).join('\n'),
       whatsapp_number: student.whatsapp_number || '',
-      guests_count: student.guests_count || 1,
+      guests_count: (student.guests_details && student.guests_details.length) || student.guests_count || 0,
       course_duration: student.course_duration || '3 Days Course',
       start_date: student.start_date || '',
       end_date: student.end_date || '',
@@ -616,7 +636,7 @@ const StudentProfile = () => {
           },
           performance_logs: editForm.performance_logs.split('\n').filter(l => l.trim() !== ''),
           whatsapp_number: editForm.whatsapp_number,
-          guests_count: parseInt(editForm.guests_count) || 1,
+          guests_count: (editForm.guests_details && editForm.guests_details.length) || parseInt(editForm.guests_count) || 0,
           course_duration: editForm.course_duration,
           start_date: editForm.start_date,
           end_date: editForm.end_date,
@@ -693,47 +713,16 @@ const StudentProfile = () => {
   const badgeDisplayName = currentBadge.name ? currentBadge.name.replace(' (Student Registered)', '') : 'Yellow Badge';
   const badgeDotColor = currentBadge.color || '#F59E0B';
 
-  const nextSessionTime = student.session_time
-    ? (student.session_time.toLowerCase().includes('morning') || student.session_time.toLowerCase().includes('evening')
-        ? `Tomorrow, ${student.session_time.replace(/morning\s*/i, '').replace(/evening\s*/i, '')}`
-        : `Tomorrow, ${student.session_time}`)
-    : 'Tomorrow, 08:30 AM';
-  const nextSessionSub = `${student.location || 'Waikiki Beach'} • ${student.course_duration || '3 Days Course'}`;
+  const effectiveSessions = (student?.sessions && Array.isArray(student.sessions)) ? student.sessions : [];
+  const upcomingSessions = effectiveSessions.filter(s => s.status === 'Upcoming' || s.status === 'Scheduled');
+  const nextSession = upcomingSessions.length > 0 ? upcomingSessions[0] : null;
 
-  const getDerivedSessions = (st) => {
-    if (st?.sessions && st.sessions.length > 0) {
-      return st.sessions;
-    }
-
-    const durationStr = st?.course_duration || '3 Days Course';
-    const match = durationStr.match(/(\d+)/);
-    const totalDays = match ? parseInt(match[1]) : 3;
-
-    const startDateStr = st?.start_date || new Date().toISOString().split('T')[0];
-    const startDateObj = new Date(startDateStr);
-    const isInvalidDate = isNaN(startDateObj.getTime());
-    const baseDate = isInvalidDate ? new Date() : startDateObj;
-
-    const generated = [];
-    for (let i = 0; i < totalDays; i++) {
-      const d = new Date(baseDate);
-      d.setDate(d.getDate() + i);
-      const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-      
-      generated.push({
-        id: `derived_sess_${i+1}`,
-        title: `Day ${i + 1} of ${totalDays} (${durationStr})`,
-        date: dateStr,
-        time: st?.session_time || '08:30 AM',
-        location: st?.school || 'Waikiki Beach',
-        instructor: st?.instructor || 'Assigned Surf Coach',
-        status: 'Upcoming'
-      });
-    }
-    return generated;
-  };
-
-  const effectiveSessions = (student?.sessions && student.sessions.length > 0) ? student.sessions : getDerivedSessions(student);
+  const nextSessionTime = nextSession
+    ? `${nextSession.date ? nextSession.date + ', ' : ''}${nextSession.time || '08:30 AM'}`
+    : null;
+  const nextSessionSub = nextSession
+    ? `${nextSession.location || student.school || 'Surf Spot'}${nextSession.group_name ? ` • ${nextSession.group_name}` : (nextSession.title ? ` • ${nextSession.title}` : '')}`
+    : null;
 
   return (
     <div className="sp-page">
@@ -841,7 +830,7 @@ const StudentProfile = () => {
                   {badgeDisplayName}
                 </span>
                 <span className="sp-instructor-text">
-                  Instructor: {student.instructor || 'Marcus Silva'}
+                  Instructor: {(student.instructor && student.instructor !== 'Assigned Surf Coach') ? student.instructor : (nextSession?.instructor || 'Not Assigned Yet')}
                 </span>
               </div>
             </div>
@@ -849,11 +838,19 @@ const StudentProfile = () => {
 
           <div className="sp-hero-right">
             {/* NEXT SESSION Banner Box */}
-            <div className="sp-next-session-box">
-              <span className="sp-ns-box-label">NEXT SESSION</span>
-              <div className="sp-ns-box-time">{nextSessionTime}</div>
-              <div className="sp-ns-box-sub">{nextSessionSub}</div>
-            </div>
+            {nextSession ? (
+              <div className="sp-next-session-box">
+                <span className="sp-ns-box-label">NEXT SESSION</span>
+                <div className="sp-ns-box-time">{nextSessionTime}</div>
+                <div className="sp-ns-box-sub">{nextSessionSub}</div>
+              </div>
+            ) : (
+              <div className="sp-next-session-box" style={{ background: '#F8FAFC', border: '1.5px dashed #CBD5E1', boxShadow: 'none' }}>
+                <span className="sp-ns-box-label" style={{ color: '#64748B' }}>NEXT SESSION</span>
+                <div className="sp-ns-box-time" style={{ color: '#64748B', fontSize: '15px', fontWeight: 700 }}>Not Assigned Yet</div>
+                <div className="sp-ns-box-sub" style={{ color: '#94A3B8' }}>No scheduled session yet</div>
+              </div>
+            )}
           </div>
         </section>
 
@@ -927,80 +924,87 @@ const StudentProfile = () => {
           {/* Left Column */}
           <div className="sp-col-left">
             {/* Accompanying Guests Card */}
-            <div className="sp-card">
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <h2 className="sp-card-title" style={{ whiteSpace: 'nowrap' }}>Accompanying Guests</h2>
-                  <span style={{
-                    background: '#0284C7',
-                    color: '#FFFFFF',
-                    fontSize: '11px',
-                    fontWeight: 800,
-                    padding: '2px 8px',
-                    minWidth: '22px',
-                    height: '22px',
-                    borderRadius: '11px',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}>
-                    {student.guests_count || (student.guests_details?.length) || 1}
-                  </span>
-                </div>
-                {isOwnProfile && (
-                  <button
-                    type="button"
-                    onClick={handleOpenGuestModal}
-                    style={{
-                      background: '#F0F9FF',
-                      border: '1px solid #BAE6FD',
-                      color: '#0284C7',
-                      fontSize: '12.5px',
-                      fontWeight: 700,
-                      padding: '6px 14px',
-                      borderRadius: '8px',
-                      cursor: 'pointer',
-                      whiteSpace: 'nowrap',
-                      transition: 'all 0.2s ease'
-                    }}
-                  >
-                    + Add Guests
-                  </button>
-                )}
-              </div>
+            {(() => {
+              let guestsList = [];
+              if (Array.isArray(student.guests_details)) {
+                guestsList = student.guests_details;
+              } else if (typeof student.guests_details === 'string') {
+                try {
+                  guestsList = JSON.parse(student.guests_details);
+                } catch (e) {
+                  guestsList = [];
+                }
+              }
+              if (!Array.isArray(guestsList)) guestsList = [];
+              const guestsCount = guestsList.length;
 
-              {(student.guests_details && student.guests_details.length > 0) ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  {student.guests_details.map((g, gIdx) => (
-                    <div key={gIdx} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', background: '#F8FAFC', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
-                      <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: 'linear-gradient(135deg, #0EA5E9, #2563EB)', color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '15px' }}>
-                        {g.name ? g.name.charAt(0).toUpperCase() : `G${gIdx + 1}`}
+              return (
+                <div className="sp-card">
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <h2 className="sp-card-title" style={{ whiteSpace: 'nowrap' }}>Accompanying Guests</h2>
+                      <span style={{
+                        background: guestsCount > 0 ? '#0284C7' : '#94A3B8',
+                        color: '#FFFFFF',
+                        fontSize: '11px',
+                        fontWeight: 800,
+                        padding: '2px 8px',
+                        minWidth: '22px',
+                        height: '22px',
+                        borderRadius: '11px',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}>
+                        {guestsCount}
+                      </span>
+                    </div>
+                    {/* After sign up, guests cannot be added - no + Add Guests button */}
+                  </div>
+
+                  {guestsCount > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      {guestsList.map((g, gIdx) => (
+                        <div key={gIdx} style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px', background: '#F8FAFC', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
+                          <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'linear-gradient(135deg, #0EA5E9, #2563EB)', color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '15px', flexShrink: 0 }}>
+                            {g.name ? g.name.charAt(0).toUpperCase() : `G${gIdx + 1}`}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: '14.5px', fontWeight: 800, color: '#0F172A' }}>
+                                {g.name || `Guest #${gIdx + 1}`}
+                              </span>
+                              {g.level && (
+                                <span style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '10px', background: '#E0F2FE', color: '#0369A1' }}>
+                                  {g.level}
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#64748B', display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '4px' }}>
+                              {g.age && <span>🎂 Age: {g.age} yrs</span>}
+                              {g.gender && <span>• {g.gender}</span>}
+                              {g.stance && <span>• Stance: {g.stance}</span>}
+                              {g.whatsapp_number && <span>📱 {g.whatsapp_number}</span>}
+                              {g.email && <span>✉️ {g.email}</span>}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ padding: '28px 16px', textAlign: 'center', color: '#64748B', fontSize: '13px', background: '#F8FAFC', borderRadius: '12px', border: '1px dashed #CBD5E1' }}>
+                      <div style={{ fontSize: '28px', marginBottom: '6px' }}>👥</div>
+                      <div style={{ fontWeight: 700, color: '#334155', fontSize: '14px' }}>
+                        No Accompanying Guests
                       </div>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: '14px', fontWeight: 800, color: '#0F172A' }}>
-                          {g.name || `Guest #${gIdx + 1}`}
-                        </div>
-                        <div style={{ fontSize: '12px', color: '#64748B', display: 'flex', gap: '8px', marginTop: '2px' }}>
-                          <span>{g.level || 'Beginner'}</span>
-                          {g.age && <span>• Age {g.age}</span>}
-                          {g.gender && <span>• {g.gender}</span>}
-                        </div>
+                      <div style={{ fontSize: '12px', color: '#94A3B8', marginTop: '4px' }}>
+                        No guests were registered during sign up.
                       </div>
                     </div>
-                  ))}
+                  )}
                 </div>
-              ) : (
-                <div style={{ padding: '20px 12px', textAlign: 'center', color: '#64748B', fontSize: '13px', background: '#F8FAFC', borderRadius: '12px', border: '1px dashed #CBD5E1' }}>
-                  <div style={{ fontSize: '24px', marginBottom: '4px' }}>👥</div>
-                  <div style={{ fontWeight: 700, color: '#334155' }}>
-                    {student.guests_count && student.guests_count > 1 ? `${student.guests_count} Guests Registered` : '1 Guest Registered (Primary Surfer)'}
-                  </div>
-                  <div style={{ fontSize: '11.5px', color: '#64748B', marginTop: '2px' }}>
-                    Accompanying group members & friends booked for this surf training.
-                  </div>
-                </div>
-              )}
-            </div>
+              );
+            })()}
 
             {/* Session History Card */}
             <div className="sp-card">
@@ -1079,19 +1083,19 @@ const StudentProfile = () => {
                   alignItems: 'center',
                   justifyContent: 'center'
                 }}>
-                  {(effectiveSessions.filter(s => s.status === 'Upcoming' || s.status === 'Scheduled')).length}
+                  {upcomingSessions.length}
                 </span>
               </div>
 
-              {(effectiveSessions.filter(s => s.status === 'Upcoming' || s.status === 'Scheduled')).length === 0 ? (
+              {upcomingSessions.length === 0 ? (
                 <div style={{ padding: '24px 12px', textAlign: 'center', color: '#94A3B8', fontSize: '13px', background: '#F8FAFC', borderRadius: '12px', border: '1px dashed #E2E8F0' }}>
                   <div style={{ fontSize: '24px', marginBottom: '6px' }}>📅</div>
                   <div style={{ fontWeight: 600, color: '#64748B' }}>No pending sessions</div>
-                  <div style={{ fontSize: '11.5px', marginTop: '2px' }}>Upcoming scheduled sessions will appear here.</div>
+                  <div style={{ fontSize: '11.5px', marginTop: '2px' }}>Upcoming scheduled sessions will appear here once assigned by the school.</div>
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  {effectiveSessions.filter(s => s.status === 'Upcoming' || s.status === 'Scheduled').map((session, pIdx, arr) => (
+                  {upcomingSessions.map((session, pIdx, arr) => (
                     <div
                       key={session.id || pIdx}
                       style={{
@@ -1115,10 +1119,10 @@ const StudentProfile = () => {
                           {session.date}
                         </span>
                         <strong style={{ fontSize: '14px', fontWeight: 800, color: '#0F172A' }}>
-                          {session.title || session.location || 'Scheduled Session'}
+                          {session.title || session.group_name || session.location || 'Scheduled Session'}
                         </strong>
                         <span style={{ fontSize: '13px', color: '#64748B' }}>
-                          {session.instructor || student.instructor || 'Coach'} • {session.time || student.session_time || 'Morning Slot'}
+                          {session.instructor || 'Coach'} • {session.time || 'Morning Slot'}
                         </span>
                       </div>
                     </div>
@@ -1223,8 +1227,14 @@ const StudentProfile = () => {
                       <input type="text" value={editForm.whatsapp_number} onChange={(e) => setEditForm({ ...editForm, whatsapp_number: e.target.value })} placeholder="9876543210" />
                     </div>
                     <div className="sp-form-field">
-                      <label>Group Size / Guests</label>
-                      <input type="number" min="1" max="13" value={editForm.guests_count} onChange={(e) => setEditForm({ ...editForm, guests_count: e.target.value })} />
+                      <label>Accompanying Guests</label>
+                      <input 
+                        type="text" 
+                        value={editForm.guests_details && editForm.guests_details.length > 0 ? `${editForm.guests_details.length} Guests Registered` : 'No Guests'} 
+                        disabled 
+                        style={{ background: '#F1F5F9', color: '#64748B', cursor: 'not-allowed', fontWeight: 600 }} 
+                        title="Accompanying guests can only be registered during sign up"
+                      />
                     </div>
                   </div>
 
@@ -1439,26 +1449,70 @@ const StudentProfile = () => {
               <form onSubmit={handleUpdatePassword}>
                 <div style={{ marginBottom: '16px' }}>
                   <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#475569', marginBottom: '6px' }}>New Password</label>
-                  <input
-                    type="password"
-                    placeholder="At least 6 characters"
-                    value={newPass}
-                    onChange={e => setNewPass(e.target.value)}
-                    required
-                    style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: '1px solid #CBD5E1', fontSize: '14px', boxSizing: 'border-box' }}
-                  />
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type={showPassVisible ? 'text' : 'password'}
+                      placeholder="At least 6 characters"
+                      value={newPass}
+                      onChange={e => setNewPass(e.target.value)}
+                      required
+                      style={{ width: '100%', padding: '12px 44px 12px 14px', borderRadius: '10px', border: '1px solid #CBD5E1', fontSize: '14px', boxSizing: 'border-box' }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassVisible(v => !v)}
+                      style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: '0', lineHeight: 1, display: 'flex', alignItems: 'center' }}
+                      tabIndex={-1}
+                      title={showPassVisible ? 'Hide password' : 'Show password'}
+                    >
+                      {showPassVisible ? (
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+                          <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+                          <line x1="1" y1="1" x2="23" y2="23"/>
+                        </svg>
+                      ) : (
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                          <circle cx="12" cy="12" r="3"/>
+                        </svg>
+                      )}
+                    </button>
+                  </div>
                 </div>
 
                 <div style={{ marginBottom: '22px' }}>
                   <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#475569', marginBottom: '6px' }}>Confirm Password</label>
-                  <input
-                    type="password"
-                    placeholder="Repeat new password"
-                    value={confirmPass}
-                    onChange={e => setConfirmPass(e.target.value)}
-                    required
-                    style={{ width: '100%', padding: '12px 14px', borderRadius: '10px', border: '1px solid #CBD5E1', fontSize: '14px', boxSizing: 'border-box' }}
-                  />
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type={showConfirmVisible ? 'text' : 'password'}
+                      placeholder="Repeat new password"
+                      value={confirmPass}
+                      onChange={e => setConfirmPass(e.target.value)}
+                      required
+                      style={{ width: '100%', padding: '12px 44px 12px 14px', borderRadius: '10px', border: '1px solid #CBD5E1', fontSize: '14px', boxSizing: 'border-box' }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirmVisible(v => !v)}
+                      style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#94A3B8', padding: '0', lineHeight: 1, display: 'flex', alignItems: 'center' }}
+                      tabIndex={-1}
+                      title={showConfirmVisible ? 'Hide password' : 'Show password'}
+                    >
+                      {showConfirmVisible ? (
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+                          <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+                          <line x1="1" y1="1" x2="23" y2="23"/>
+                        </svg>
+                      ) : (
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                          <circle cx="12" cy="12" r="3"/>
+                        </svg>
+                      )}
+                    </button>
+                  </div>
                 </div>
 
                 <div style={{ display: 'flex', gap: '10px' }}>

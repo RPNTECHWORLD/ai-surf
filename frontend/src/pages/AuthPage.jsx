@@ -76,6 +76,11 @@ const AuthPage = () => {
   const [newPassword, setNewPassword] = useState('');
   const [confirmNewPassword, setConfirmNewPassword] = useState('');
 
+  // Explicit separate states for login vs signup passwords to strictly prevent browser auto-fill bleeding
+  const [loginPassword, setLoginPassword] = useState('');
+  const [signupPassword, setSignupPassword] = useState('');
+  const [signupConfirmPassword, setSignupConfirmPassword] = useState('');
+
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -102,6 +107,15 @@ const AuthPage = () => {
     'Aquatic Indica Surf School'
   ]);
 
+  // Ensure signup passwords are blank whenever switching to registration
+  useEffect(() => {
+    if (!isLogin) {
+      setSignupPassword('');
+      setSignupConfirmPassword('');
+      setFormData(prev => ({ ...prev, password: '', confirmPassword: '' }));
+    }
+  }, [isLogin]);
+
   useEffect(() => {
     if (resendCooldown <= 0) return;
     const timer = setTimeout(() => setResendCooldown(c => c - 1), 1000);
@@ -112,6 +126,8 @@ const AuthPage = () => {
   useEffect(() => {
     const urlSchool = searchParams.get('school');
     if (urlSchool) {
+      setSignupPassword('');
+      setSignupConfirmPassword('');
       setFormData(prev => ({ ...prev, school: urlSchool, password: '', confirmPassword: '' }));
       setSchoolsList(prev => Array.from(new Set([urlSchool, ...prev])));
       setRole('athlete');
@@ -365,14 +381,15 @@ const AuthPage = () => {
   const handleLoginSubmit = async (e) => {
     e && e.preventDefault();
     setErrorMsg(''); setSuccessMsg('');
-    if (!formData.email.trim() || !formData.password) {
+    const pwd = loginPassword || formData.password;
+    if (!formData.email.trim() || !pwd) {
       setErrorMsg('Please enter email and password.'); return;
     }
     setLoading(true);
     try {
       const payload = {
         email: formData.email.toLowerCase().trim(),
-        password: formData.password
+        password: pwd
       };
       if (loginRole && loginRole !== 'auto') {
         payload.role = loginRole;
@@ -442,13 +459,15 @@ const AuthPage = () => {
   const completeRegistration = async (e) => {
     e && e.preventDefault();
     setErrorMsg(''); setSuccessMsg('');
-    if (!formData.name.trim() || !formData.password || !formData.confirmPassword) {
-      setErrorMsg('Please fill in all credentials.'); return;
+    const pwd = signupPassword;
+    const confirmPwd = signupConfirmPassword;
+    if (!formData.name.trim() || !pwd || !confirmPwd) {
+      setErrorMsg('Please enter and confirm your password.'); return;
     }
-    if (formData.password !== formData.confirmPassword) {
+    if (pwd !== confirmPwd) {
       setErrorMsg('Passwords do not match.'); return;
     }
-    if (formData.password.length < 6) {
+    if (pwd.length < 6) {
       setErrorMsg('Password must be at least 6 characters.'); return;
     }
     setLoading(true);
@@ -458,7 +477,7 @@ const AuthPage = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email: formData.email.toLowerCase().trim(),
-          password: formData.password,
+          password: pwd,
           role,
           name: formData.name.trim(),
           dob: formData.dob,
@@ -690,11 +709,14 @@ const AuthPage = () => {
   const switchToLogin = () => {
     setIsLogin(true); setErrorMsg(''); setSuccessMsg('');
     setOtpSent(false); setOtpVerified(false); setOtpCode('');
+    setSignupPassword(''); setSignupConfirmPassword('');
   };
 
   const switchToRegister = () => {
     setIsLogin(false); setErrorMsg(''); setSuccessMsg('');
     setForgotStep(0);
+    setSignupPassword(''); setSignupConfirmPassword('');
+    setFormData(prev => ({ ...prev, password: '', confirmPassword: '' }));
   };
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -907,10 +929,14 @@ const AuthPage = () => {
                     <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                       <input
                         type={showLoginPassword ? 'text' : 'password'}
-                        name="password"
+                        name="login_password"
                         placeholder="••••••••"
-                        value={formData.password}
-                        onChange={handleChange}
+                        autoComplete="current-password"
+                        value={loginPassword}
+                        onChange={e => {
+                          setLoginPassword(e.target.value);
+                          setFormData(prev => ({ ...prev, password: e.target.value }));
+                        }}
                         required
                         style={{ paddingRight: '40px', width: '100%' }}
                       />
@@ -1083,11 +1109,14 @@ const AuthPage = () => {
                         <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                           <input
                             type={showPassword ? 'text' : 'password'}
-                            name="password"
+                            name="user_signup_password"
                             placeholder="Enter password"
                             autoComplete="new-password"
-                            value={formData.password || ''}
-                            onChange={handleChange}
+                            value={signupPassword}
+                            onChange={e => {
+                              setSignupPassword(e.target.value);
+                              setFormData(prev => ({ ...prev, password: e.target.value }));
+                            }}
                             required
                             style={{ paddingRight: '40px', width: '100%' }}
                           />
@@ -1128,11 +1157,14 @@ const AuthPage = () => {
                         <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                           <input
                             type={showConfirmPassword ? 'text' : 'password'}
-                            name="confirmPassword"
+                            name="user_signup_confirm_password"
                             placeholder="Re-enter password"
                             autoComplete="new-password"
-                            value={formData.confirmPassword || ''}
-                            onChange={handleChange}
+                            value={signupConfirmPassword}
+                            onChange={e => {
+                              setSignupConfirmPassword(e.target.value);
+                              setFormData(prev => ({ ...prev, confirmPassword: e.target.value }));
+                            }}
                             required
                             style={{ paddingRight: '40px', width: '100%' }}
                           />

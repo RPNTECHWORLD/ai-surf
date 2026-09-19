@@ -2,6 +2,85 @@ import React, { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 
+export const normalizeTimeString = (timeStr) => {
+  if (!timeStr) return '';
+  const clean = String(timeStr).trim();
+  const startPart = clean.includes(' - ') ? clean.split(' - ')[0].trim() : clean;
+  const match = startPart.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?$/i);
+  if (!match) return startPart.toLowerCase();
+
+  let [_, hStr, mStr, meridiem] = match;
+  let hours = parseInt(hStr, 10);
+  let minutes = parseInt(mStr, 10);
+
+  if (isNaN(hours) || isNaN(minutes)) return startPart.toLowerCase();
+
+  if (meridiem) {
+    const med = meridiem.toUpperCase();
+    if (med === 'PM' && hours < 12) hours += 12;
+    if (med === 'AM' && hours === 12) hours = 0;
+  }
+
+  const h24 = String(hours).padStart(2, '0');
+  const m24 = String(minutes).padStart(2, '0');
+  return `${h24}:${m24}`;
+};
+
+export const time24To12 = (time24Str) => {
+  if (!time24Str) return '';
+  const clean = String(time24Str).trim();
+  const match = clean.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return clean;
+  let hours = parseInt(match[1], 10);
+  const minutes = match[2];
+  const meridiem = hours >= 12 ? 'PM' : 'AM';
+  const h12 = hours % 12 === 0 ? 12 : hours % 12;
+  return `${String(h12).padStart(2, '0')}:${minutes} ${meridiem}`;
+};
+
+export const time12To24 = (time12Str) => {
+  if (!time12Str) return '08:30';
+  const norm = normalizeTimeString(time12Str);
+  if (norm && /^\d{2}:\d{2}$/.test(norm)) {
+    return norm;
+  }
+  return '08:30';
+};
+
+export const getNextAvailableSlotTime = (currentSlots) => {
+  const existingNormalized = new Set(
+    (currentSlots || []).map(s => normalizeTimeString(s.time)).filter(Boolean)
+  );
+
+  const candidateTimes = [
+    "07:00 AM", "07:30 AM", "08:00 AM", "08:30 AM", "09:00 AM", "09:30 AM",
+    "10:00 AM", "10:30 AM", "11:00 AM", "11:30 AM", "12:00 PM", "12:30 PM",
+    "01:00 PM", "01:30 PM", "02:00 PM", "02:30 PM", "03:00 PM", "03:30 PM",
+    "04:00 PM", "04:30 PM", "05:00 PM", "05:30 PM", "06:00 PM", "06:30 PM",
+    "07:00 PM"
+  ];
+
+  for (const time of candidateTimes) {
+    if (!existingNormalized.has(normalizeTimeString(time))) {
+      return time;
+    }
+  }
+
+  let totalMin = 8 * 60;
+  while (totalMin < 22 * 60) {
+    const h24 = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    const med = h24 >= 12 ? "PM" : "AM";
+    const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
+    const timeStr = `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${med}`;
+    if (!existingNormalized.has(normalizeTimeString(timeStr))) {
+      return timeStr;
+    }
+    totalMin += 15;
+  }
+  return "06:00 PM";
+};
+
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const defaultSlots = [
   { id: 1, time: "08:30 AM", duration: "90", maxStudents: 4, days: ["Mon", "Tue", "Wed", "Thu", "Fri"], active: true },
@@ -140,66 +219,47 @@ const SessionConfigure = () => {
             ))}
           </div>
 
-          <div className="sc-bottom-grid">
-            <div className="sc-panel" style={{ width: "100%" }}>
-              <h2 style={{ fontFamily: "'Outfit', sans-serif", fontSize: "18px", fontWeight: 800, color: "#0F172A", margin: "0 0 6px 0" }}>Default Session Settings</h2>
-              <p style={{ fontSize: "12.5px", color: "#64748B", margin: "0 0 20px 0", lineHeight: 1.5 }}>Global timing constraints and booking policies applied across all lessons</p>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "20px" }}>
-                {[
-                  { label: "Default Session Duration (min)", key: "defaultDuration", type: "number" },
-                  { label: "Default Max Students per Session", key: "maxStudents", type: "number" },
-                  { label: "Break Between Sessions (min)", key: "breakBetween", type: "number" },
-                  { label: "Cancellation Window (hours)", key: "cancellationWindow", type: "number" },
-                ].map(({ label, key, type, options, suffix }) => (
-                  <div key={key}>
-                    <label style={{ fontSize: "13px", fontWeight: 600, color: "#475569", display: "block", marginBottom: "6px" }}>{label}</label>
-                    {type === "select" ? (
-                      <select value={settings[key]} onChange={e => setSettings(s => ({ ...s, [key]: e.target.value }))} style={{ ...inp, cursor: "pointer" }}>
-                        {options.map(o => <option key={o} value={o}>{o} {suffix}</option>)}
-                      </select>
-                    ) : (
-                      <input type="number" value={settings[key]} onChange={e => setSettings(s => ({ ...s, [key]: e.target.value }))} style={inp} />
-                    )}
-                  </div>
-                ))}
-              </div>
+          {/* Sticky Floating Bottom Action Bar matching Photo 1 */}
+          <div className="sc-sticky-bar">
+            <div className="sc-sb-left">
+              <span className="sc-sb-badge">
+                SESSION SETUP
+              </span>
+              <span className="sc-sb-info">
+                ⏰ {slots.filter(s => s.active !== false).length} Active Slot{slots.filter(s => s.active !== false).length === 1 ? '' : 's'} &bull; 🎯 Total Capacity: {slots.filter(s => s.active !== false).reduce((sum, s) => sum + (parseInt(s.maxStudents, 10) || 4), 0)} Students
+              </span>
             </div>
-          </div>
 
-          {/* Bottom Action Footer Row (Placed at the bottom for easy access) */}
-          <div className="sc-footer-actions">
-            <button
-              type="button"
-              onClick={() => {
-                if (fromSource === 'new_session' || fromSource === 'schedule') {
-                  navigate("/sessions?action=new_session");
-                } else {
-                  navigate("/sessions");
-                }
-              }}
-              className="sc-btn-back sc-btn-back-bottom"
-            >
-              {fromSource === 'new_session' ? '← Back to Schedule Session' : 'Back to Sessions'}
-            </button>
-            <button
-              type="button"
-              onClick={handleSaveConfiguration}
-              disabled={saving}
-              className="sc-btn-save sc-btn-save-bottom"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-                <polyline points="17 21 17 13 7 13 7 21" />
-                <polyline points="7 3 7 8 15 8" />
-              </svg>
-              {saving ? "Saving..." : "Save Configuration"}
-            </button>
+            <div className="sc-sb-right">
+              <button
+                type="button"
+                onClick={() => {
+                  if (fromSource === 'new_session' || fromSource === 'schedule') {
+                    navigate("/sessions?action=new_session");
+                  } else {
+                    navigate("/sessions");
+                  }
+                }}
+                className="sc-sb-btn-back"
+              >
+                {fromSource === 'new_session' ? '← Back to Schedule Session' : 'Back to Sessions'}
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveConfiguration}
+                disabled={saving}
+                className="sc-sb-btn-save"
+              >
+                <span>{saving ? "Saving..." : "Save Configuration"}</span>
+                <span style={{ fontSize: '15px', fontWeight: 900 }}>&rarr;</span>
+              </button>
+            </div>
           </div>
         </div>
       </main>
 
       <style>{`
-        .sc-page-container {
+        .sc-page-wrapper, .sc-page-container {
           display: flex;
           min-height: 100vh;
           width: 100%;
@@ -234,27 +294,114 @@ const SessionConfigure = () => {
         .sc-panel { background: #FFFFFF; border-radius: 16px; border: 1px solid #E2E8F0; padding: 24px 28px; box-shadow: 0 2px 10px rgba(0, 0, 0, 0.03); box-sizing: border-box; }
         .sc-btn-add-slot { display: flex; align-items: center; gap: 6px; background: #E6F9F5; color: #0D9488; border: 1.5px solid #0D9488; border-radius: 10px; padding: 8px 16px; font-size: 13px; font-weight: 700; cursor: pointer; font-family: 'Outfit', sans-serif; transition: all 0.2s; }
         .sc-btn-add-slot:hover { background: #CCFBF1; }
-        .sc-footer-actions {
+
+        /* Floating Sticky Action Bar (Photo 1 Style) */
+        .sc-sticky-bar {
+          position: sticky;
+          bottom: 16px;
+          left: 0;
+          right: 0;
+          width: 100%;
+          box-sizing: border-box;
+          background-color: #0A0F1D;
+          color: #FFFFFF;
+          padding: 14px 28px;
           display: flex;
-          justify-content: flex-end;
+          align-items: center;
+          justify-content: space-between;
+          z-index: 99;
+          box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.08);
+          border-radius: 14px;
+          margin-top: 24px;
+          transition: all 0.2s ease;
+        }
+        .sc-sb-left {
+          display: flex;
+          align-items: center;
+          gap: 14px;
+          flex-wrap: wrap;
+        }
+        .sc-sb-badge {
+          background: #0D9488;
+          color: #FFFFFF;
+          padding: 3px 8px;
+          border-radius: 4px;
+          font-size: 10px;
+          font-weight: 800;
+          letter-spacing: 0.5px;
+          text-transform: uppercase;
+        }
+        .sc-sb-info {
+          font-size: 13px;
+          font-weight: 600;
+          color: #E2E8F0;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-family: 'Outfit', sans-serif;
+        }
+        .sc-sb-right {
+          display: flex;
           align-items: center;
           gap: 12px;
-          padding: 8px 0 16px 0;
-          margin-top: 0px;
         }
-        .sc-btn-back-bottom {
-          padding: 10px 18px;
+        .sc-sb-btn-back {
+          background: rgba(255, 255, 255, 0.08);
+          color: #F1F5F9;
+          border: 1px solid rgba(255, 255, 255, 0.16);
+          padding: 11px 20px;
           font-size: 13px;
+          font-weight: 700;
+          border-radius: 10px;
+          cursor: pointer;
+          font-family: 'Outfit', sans-serif;
+          transition: all 0.15s ease;
+          display: flex;
+          align-items: center;
+          gap: 6px;
         }
-        .sc-btn-save-bottom {
-          padding: 10px 20px;
-          font-size: 13px;
-          box-shadow: 0 2px 8px rgba(244, 63, 94, 0.2);
+        .sc-sb-btn-back:hover {
+          background: rgba(255, 255, 255, 0.16);
+          color: #FFFFFF;
         }
-        @media (max-width: 1000px) {
+        .sc-sb-btn-save {
+          background: #00D2B4;
+          color: #0F172A;
+          border: none;
+          padding: 12px 24px;
+          font-size: 14px;
+          font-weight: 800;
+          border-radius: 10px;
+          cursor: pointer;
+          font-family: 'Outfit', sans-serif;
+          box-shadow: 0 4px 14px rgba(0, 210, 180, 0.4);
+          transition: all 0.15s ease;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .sc-sb-btn-save:hover:not(:disabled) {
+          background: #00BAA0;
+          transform: translateY(-1px);
+          box-shadow: 0 6px 18px rgba(0, 210, 180, 0.5);
+        }
+        .sc-sb-btn-save:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+        @media (max-width: 900px) {
           .sc-bottom-grid { grid-template-columns: 1fr; }
           .sc-main-content { padding: 90px 20px 60px 20px; }
-          .sc-footer-actions { justify-content: flex-end; gap: 10px; }
+          .sc-sticky-bar {
+            flex-direction: column;
+            align-items: stretch;
+            gap: 14px;
+            padding: 16px 20px;
+            bottom: 10px;
+          }
+          .sc-sb-right {
+            justify-content: flex-end;
+          }
         }
       `}</style>
     </div>

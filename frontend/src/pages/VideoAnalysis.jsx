@@ -1143,9 +1143,18 @@ const VideoAnalysis = () => {
                 {/* Pen size selector */}
                 {tool === 'pen' && (
                   <div className="va-size-picker">
-                    <button className={`va-size-btn ${lineWidth === 2 ? 'active' : ''}`} onClick={() => setLineWidth(2)} title="Thin">1x</button>
-                    <button className={`va-size-btn ${lineWidth === 4 ? 'active' : ''}`} onClick={() => setLineWidth(4)} title="Medium">2x</button>
-                    <button className={`va-size-btn ${lineWidth === 8 ? 'active' : ''}`} onClick={() => setLineWidth(8)} title="Thick">4x</button>
+                    <button className={`va-size-btn ${lineWidth === 2 ? 'active' : ''}`} onClick={() => setLineWidth(2)} title="Thin (2px)">
+                      <span style={{ display: 'inline-block', width: '3px', height: '3px', borderRadius: '50%', background: 'currentColor', flexShrink: 0 }}></span>
+                      <span>2px</span>
+                    </button>
+                    <button className={`va-size-btn ${lineWidth === 4 ? 'active' : ''}`} onClick={() => setLineWidth(4)} title="Medium (4px)">
+                      <span style={{ display: 'inline-block', width: '5px', height: '5px', borderRadius: '50%', background: 'currentColor', flexShrink: 0 }}></span>
+                      <span>4px</span>
+                    </button>
+                    <button className={`va-size-btn ${lineWidth === 8 ? 'active' : ''}`} onClick={() => setLineWidth(8)} title="Thick (8px)">
+                      <span style={{ display: 'inline-block', width: '7px', height: '7px', borderRadius: '50%', background: 'currentColor', flexShrink: 0 }}></span>
+                      <span>8px</span>
+                    </button>
                   </div>
                 )}
 
@@ -2063,12 +2072,15 @@ const VideoAnalysis = () => {
           padding-right: 10px;
         }
         .va-size-btn {
-          padding: 2px 6px;
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          padding: 3px 7px;
           background: transparent;
           border: 1px solid rgba(255,255,255,0.2);
-          border-radius: 4px;
+          border-radius: 5px;
           color: rgba(255,255,255,0.7);
-          font-size: 10px;
+          font-size: 10.5px;
           font-weight: 700;
           cursor: pointer;
           transition: all 0.2s;

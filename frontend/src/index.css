@@ -463,7 +463,7 @@ h2 {
 }
 
 /* Page Containers Grid */
-.db-page, .im-page, .an-page, .va-page, .ip-page, .sp-page, .ns-page, .cr-page {
+.im-page, .an-page, .va-page, .ip-page, .sp-page, .ns-page, .cr-page {
   display: flex !important;
   flex-direction: row !important;
   height: 100vh !important;
@@ -471,7 +471,16 @@ h2 {
   overflow: hidden !important;
   box-sizing: border-box !important;
 }
-/* Students, Sessions & Session Configure page — allow full vertical scroll */
+/* Dashboard, Students, Sessions & Session Configure page — allow full vertical scroll */
+.db-page {
+  display: flex !important;
+  flex-direction: column !important;
+  min-height: 100vh !important;
+  height: auto !important;
+  width: 100% !important;
+  overflow-y: auto !important;
+  box-sizing: border-box !important;
+}
 .sm-page, .ses-page, .sc-page-container {
   display: flex !important;
   flex-direction: row !important;
@@ -544,9 +553,10 @@ h2 {
   flex: 1 !important;
   margin-left: 0 !important;
   margin-top: 72px !important;
-  height: calc(100vh - 72px) !important;
-  overflow-y: auto !important;
-  padding: 32px 40px !important;
+  min-height: calc(100vh - 72px) !important;
+  height: auto !important;
+  overflow-y: visible !important;
+  padding: 32px 40px 80px 40px !important;
   background: #F8F6F2 !important;
   box-sizing: border-box !important;
   display: flex !important;

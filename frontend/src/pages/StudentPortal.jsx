@@ -171,6 +171,8 @@ export default function StudentPortal() {
                 <div style={styles.inputWrap}>
                   <input
                     type={showPass ? 'text' : 'password'}
+                    name="student_portal_new_password"
+                    autoComplete="new-password"
                     value={pass}
                     onChange={e => setPass(e.target.value)}
                     placeholder="At least 6 characters"
@@ -187,6 +189,8 @@ export default function StudentPortal() {
                 <label style={styles.label}>Confirm Password</label>
                 <input
                   type={showPass ? 'text' : 'password'}
+                  name="student_portal_confirm_password"
+                  autoComplete="new-password"
                   value={confirm}
                   onChange={e => setConfirm(e.target.value)}
                   placeholder="Repeat your password"

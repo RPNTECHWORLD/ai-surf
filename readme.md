@@ -111,7 +111,7 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
  ###changes on 28-08-26
  1. Added `PUT /api/sessions/{session_id}` endpoint in backend to fix "Failed to save session" on session edit.
  2. Fixed session video saving and upload logic to support all video formats (.mp4, .mov, .webm, AWS S3 URLs).
- 3. Removed dummy placeholder images from New/Edit Session page and added interactive media previews with remove (×) buttons.
+ 3. Removed dummy placeholder images from New/Edit Session page and added interactive media previews with remove (Ã—) buttons.
  4. Deployed updated backend to AWS EC2 (`aisurf-backend-server`) and verified live session editing and video storage.
 
  ###changes on 31-08-26
@@ -135,43 +135,50 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
 13. Simplified Edit Profile Modal in `StudentProfile.jsx` to exclusively present Signup & Guest registration fields (Name, WhatsApp, Guests, DOB, Course Duration, Slot, Start Date, Guest Profiles) and removed unused stats/logs fields.
 14. Removed `Session Time Slot` dropdown selection from student edit modal in `StudentProfile.jsx` so students do not pick session time slots.
 15. Created dedicated `Accompanying Guests` management modal (`showGuestModal`) in `StudentProfile.jsx` triggered by `+ Add Guests` button, allowing adding, updating, and removing guest profiles independently without opening `Edit Student Profile`.
-16. Added accompanying guest count badge (`👥 X Guest(s)`) under student name & phone number in `StudentsManagement.jsx` table roster.
+16. Added accompanying guest count badge (`ðŸ‘¥ X Guest(s)`) under student name & phone number in `StudentsManagement.jsx` table roster.
 17. Rendered individual accompanying guest profile details (Guest Name, WhatsApp phone, Email address) directly under the guest badge in `StudentsManagement.jsx` table rows.
 18. Added graceful error fallback handling (`safeGet`) to `HeatManagement.jsx` to catch EC2 backend HTTP 500 responses without throwing unhandled exceptions in browser console.
 19. Updated session metric card label from `SESSIONS BOOKED` to `PENDING SESSIONS` and subtext from `Days Booked:` to `Pending Days:` in `Sessions.jsx` and `StudentsManagement.jsx`.
 20. Removed duplicate middle metric card widget from `Sessions.jsx` and `StudentsManagement.jsx`.
 21. Updated `NewSession.jsx` roster selector to leave student selection empty (0 selected) by default for manual selection, and filtered out students already scheduled on the selected session date.
 22. Normalized session status labels in `Sessions.jsx` from `UPCOMING` to `PENDING` (`formatSessionStatus`), updating status pills and syncing the `PENDING SESSIONS` top metric card count.
-23. Removed `ATTENDANCE` header column and `✓ Mark Daily` buttons from `StudentsManagement.jsx` table roster.
+23. Removed `ATTENDANCE` header column and `âœ“ Mark Daily` buttons from `StudentsManagement.jsx` table roster.
 24. Dynamic Session Slot Filter: Updated `StudentsManagement.jsx` session time filter dropdown to dynamically display active configured slots from Session Configuration (`localStorage.getItem('session_slots')`), filtered by the selected date's day of the week (`dateFilter`), with real-time sync listeners.
 25. Removed Table Row Edit Buttons: Completely removed the pencil edit icon buttons (`ses-icon-btn`) from session table rows in `Sessions.jsx`.
 26. Removed Preferred Session Time Field: Removed `Preferred Session Time` dropdown input field from `Add Students` modal in `StudentsManagement.jsx`.
 27. Automatic Session Grouping: Refactored `Sessions.jsx` session grouping logic (`buildSessionGrouping`) so that multiple sessions sharing the exact same Date, Time, and Instructor are automatically consolidated into a single parent Group Session row (e.g. `08:30 AM Group (3 Students)`).
 28. Synchronized School Name: Fixed school name mismatch between top header navigation and profile card in `InstructorProfile.jsx` by resolving `activeSchoolName` dynamically from active session user context (`erictestschool`).
 29. Per-Slot Independent Session Capacity: Refactored `NewSession.jsx` capacity state management (`slotCapacityMap`) so that each session time slot (e.g. `08:30 AM`, `10:30 AM`) maintains its own independent target student capacity limit when switching between slots.
-30. Horizontal Slot Pill Tabs Bar: Replaced top dropdown slot select in `Sessions.jsx` with an always-visible horizontal slot pill tab bar featuring `⏰ Select Time Slot:`, circular slot number badges, session counts, and active `✓ SELECTED TAB` indicators.
+30. Horizontal Slot Pill Tabs Bar: Replaced top dropdown slot select in `Sessions.jsx` with an always-visible horizontal slot pill tab bar featuring `â° Select Time Slot:`, circular slot number badges, session counts, and active `âœ“ SELECTED TAB` indicators.
 31. Student Video Upload & Auto-Save: Enabled video upload and auto-saving (`autoSaveHubVideo`) inside Session Details & Media Hub modal for student accounts in `Sessions.jsx`, ensuring uploaded wave clips are immediately persisted to backend session records.
-32. Past Date Selection Disabled: Updated `NewSession.jsx` calendar widget to disable past dates (`cellDate < today`). Past days are visualised with reduced opacity (`0.3`), strike-through line, and `pointerEvents: 'none'` to block selection, while previous month navigation arrow (`←`) is disabled when viewing the current month.
+32. Past Date Selection Disabled: Updated `NewSession.jsx` calendar widget to disable past dates (`cellDate < today`). Past days are visualised with reduced opacity (`0.3`), strike-through line, and `pointerEvents: 'none'` to block selection, while previous month navigation arrow (`â†`) is disabled when viewing the current month.
 33. Publish Validation & Group Initialization Fix: Added validation to `NewSession.jsx` (`handleFinalizeAndPublish` & `proceedToStep3`) so that publishing requires at least 1 valid group with assigned students. Prevents auto-publishing fake empty groups or falling back to dummy student ID `1`.
 34. Editable Custom Session Duration: Replaced static dropdown in `SessionConfigure.jsx` and `NewSession.jsx` slot edit modal with a hybrid number input and `<datalist>` dropdown. Users can now either select standard presets (`30`, `45`, `60`, `90`, `120`, `180 min`) or manually type any custom duration value in minutes (e.g. `75`, `105`, `150`).
 35. Removed Slot Card Edit Buttons: Completely removed the `Edit` buttons from daily time slot cards in `NewSession.jsx` (Choose Time Slot section).
 36. Removed "Staff On Leave" Metric Card: Removed the "Staff On Leave" summary card from Step 3 (Assign Instructors) in `NewSession.jsx` and rebalanced the summary grid to 3 cards.
 37. Custom In-App UI Alert Modal: Replaced browser native popups (`alert(...)`) in `NewSession.jsx` with a styled in-app UI alert modal featuring status icons, structured headings, clean backdrop blur, and dark rounded action buttons.
-38. Horizontal Slot Tabs Bar in Students Management: Replaced the `Session: All Slots` dropdown filter in `StudentsManagement.jsx` with the exact same always-visible horizontal slot pill tabs bar from `Sessions.jsx` (with `⏰ Select Time Slot:`, numbered circular badges, student counts, and active `✓ SELECTED TAB` highlights).
+38. Horizontal Slot Tabs Bar in Students Management: Replaced the `Session: All Slots` dropdown filter in `StudentsManagement.jsx` with the exact same always-visible horizontal slot pill tabs bar from `Sessions.jsx` (with `â° Select Time Slot:`, numbered circular badges, student counts, and active `âœ“ SELECTED TAB` highlights).
 39. Single Coach Per Group Enforcement: Updated `NewSession.jsx` to enforce exactly 1 dedicated coach per group card (single coach assignment). Removed multi-coach appending, and added strict validation ensuring every training group has an assigned coach before publishing.
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+### changes on 19-09-26
+1. Added show/hide eye icon toggle (SVG) to New Password and Confirm Password fields in Set Password modal (StudentProfile.jsx).
+2. Removed Quick Actions panel (Assign to Session, Send Welcome Email, Notify Instructor) from student add summary modal (StudentsManagement.jsx).
+3. Removed Add Student - Review Summary - Assign Session step indicator bar from student add summary modal.
+4. Removed Preferred Session row from student summary details table.
+5. Fixed slot time mismatch on student chips inside group cards - chips now show the group card slot time, not each student original selected slot (NewSession.jsx).
+6. Added portal invite link CTA button to all welcome email templates in backend:
+   - Student sign-up: magic link to /student-portal?token=...
+   - Admin creates student: auto-generates invite token, embedded direct portal link in email
+   - Instructor created: direct /coach-portal login button (teal gradient)
+7. Backend app base URL resolved from APP_URL or FRONTEND_URL env variable for production compatibility.
+8. Verified SMTP delivery - test email successfully delivered to Gmail inbox.
+9. In-App Custom Confirmation Modals & Toasts: Replaced browser native `window.confirm(...)` dialogs with custom styled in-app confirmation modals and toast notifications across `SuperAdminDashboard.jsx`, `StudentsManagement.jsx`, and `InstructorManagement.jsx`.
+10. Sign-up Password Autofill Prevention: Prevented browser password managers from automatically prefilling passwords on the public sign-up registration form (`AuthPage.jsx`).
+11. Permanent Student Portal Magic Links & Base URL Alignment:
+    - Configured production `APP_URL=https://aisurf-one.vercel.app` in backend environment and updated `get_app_base_url` to ensure all generated links point to the live Vercel domain.
+    - Updated backend database persistence logic so that `invite_token` is never erased/nulled upon password creation, ensuring student portal magic invite links remain permanently valid.
+12. Student View Single Row Representation in Sessions: Updated `Sessions.jsx` for student accounts (`isStudent`) so sessions are rendered directly as clean individual table rows with a `[Group A]` badge, removing unnecessary expandable accordion parent rows.
+13. Removed "All Slots" Pill: Removed the "All Slots" pill from Step 3 time slot selector in `NewSession.jsx` and defaulted selection to the first active slot for the chosen session day.
+14. Floating Sticky Action Bar in Session Configuration: Replaced bottom inline buttons in `SessionConfigure.jsx` with a floating sticky dark pill action bar (`.sc-sticky-bar`) matching the Photo 1 design in `NewSession.jsx` (displaying `SESSION SETUP` emerald badge, active slots & default capacity summary, back button, and a glowing `#00D2B4` Save Configuration button).
+15. Removed Details Button from Sessions Table: Removed the `🔍 Details` button from session rows in `Sessions.jsx`, leaving only `+ Video`, `Analysis`, and `Delete` action buttons.
+16. Removed "Default Session Settings" Card: Removed the redundant "Default Session Settings" card (duration, max students, break between sessions, and cancellation window) from `SessionConfigure.jsx`, keeping the configuration interface clean and focused on daily time slots.
