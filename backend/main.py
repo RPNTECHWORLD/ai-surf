@@ -172,7 +172,7 @@ class Student(Base):
 
     # Aquatic Indica Surf School Registration Fields
     whatsapp_number = Column(String, nullable=True)
-    guests_count = Column(Integer, default=1)
+    guests_count = Column(Integer, default=0)
     course_duration = Column(String, default="3 Days Course")
     start_date = Column(String, nullable=True)
     end_date = Column(String, nullable=True)
@@ -714,6 +714,33 @@ from email.mime.multipart import MIMEMultipart
 SMTP_EMAIL = os.getenv("SMTP_EMAIL", "clientrequirements.rpn@gmail.com")
 SMTP_APP_PASSWORD = os.getenv("SMTP_APP_PASSWORD", "urmpuumqjellqrlq")
 
+def get_app_base_url(request: Request = None) -> str:
+    """
+    Returns the frontend URL for email links and invitations.
+    Prefers live production Vercel app URL (https://aisurf-one.vercel.app)
+    or the request's origin header if coming from the live web app.
+    """
+    if request:
+        try:
+            origin = request.headers.get("origin")
+            if origin and "localhost" not in origin and "127.0.0.1" not in origin:
+                return origin.rstrip("/")
+            referer = request.headers.get("referer")
+            if referer:
+                from urllib.parse import urlparse
+                p = urlparse(referer)
+                if p.scheme and p.netloc and "localhost" not in p.netloc and "127.0.0.1" not in p.netloc:
+                    return f"{p.scheme}://{p.netloc}".rstrip("/")
+        except Exception:
+            pass
+
+    env_url = os.getenv("APP_URL") or os.getenv("FRONTEND_URL")
+    if env_url:
+        return env_url.rstrip("/")
+
+    return "https://aisurf-one.vercel.app"
+
+
 def send_smtp_email(to_email: str, subject: str, html_body: str) -> bool:
     if not to_email:
         return False
@@ -964,6 +991,51 @@ with SessionLocal() as _db:
             _db.rollback()
             print(f"Failed to synchronize PostgreSQL sequences: {e}")
 
+        # Auto-patch: Ensure missing columns exist in PostgreSQL RDS tables
+        for _col_sql in [
+            "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS image_url VARCHAR DEFAULT '';",
+            "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS video_url VARCHAR DEFAULT '';",
+            "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS group_name VARCHAR DEFAULT '';",
+            "ALTER TABLE students ADD COLUMN IF NOT EXISTS invite_token VARCHAR;",
+            "ALTER TABLE students ADD COLUMN IF NOT EXISTS whatsapp_number VARCHAR;",
+            "ALTER TABLE students ADD COLUMN IF NOT EXISTS guests_count INTEGER DEFAULT 0;",
+            "ALTER TABLE students ADD COLUMN IF NOT EXISTS course_duration VARCHAR DEFAULT '3 Days Course';",
+            "ALTER TABLE students ADD COLUMN IF NOT EXISTS start_date VARCHAR;",
+            "ALTER TABLE students ADD COLUMN IF NOT EXISTS end_date VARCHAR;",
+            "ALTER TABLE students ADD COLUMN IF NOT EXISTS session_time VARCHAR DEFAULT '08:30 AM';",
+            "ALTER TABLE students ADD COLUMN IF NOT EXISTS staying_at_school VARCHAR DEFAULT 'Yes';",
+            "ALTER TABLE students ADD COLUMN IF NOT EXISTS reminder_preference VARCHAR DEFAULT 'WhatsApp Text';",
+            "ALTER TABLE students ADD COLUMN IF NOT EXISTS reminder_sent BOOLEAN DEFAULT FALSE;",
+            "ALTER TABLE students ADD COLUMN IF NOT EXISTS guests_details TEXT;",
+            "ALTER TABLE students ADD COLUMN IF NOT EXISTS school VARCHAR DEFAULT 'Aquatic Indica Surf School';",
+            "ALTER TABLE students ADD COLUMN IF NOT EXISTS approval_status VARCHAR DEFAULT 'approved';",
+            "ALTER TABLE students ADD COLUMN IF NOT EXISTS dob VARCHAR DEFAULT '';",
+            "ALTER TABLE students ADD COLUMN IF NOT EXISTS division VARCHAR;",
+            "ALTER TABLE students ADD COLUMN IF NOT EXISTS stance VARCHAR;",
+            "ALTER TABLE students ADD COLUMN IF NOT EXISTS surf_stats TEXT;",
+            "ALTER TABLE students ADD COLUMN IF NOT EXISTS performance_logs TEXT;",
+            "ALTER TABLE instructors ADD COLUMN IF NOT EXISTS bio TEXT;",
+            "ALTER TABLE instructors ADD COLUMN IF NOT EXISTS specializations TEXT;",
+            "ALTER TABLE instructors ADD COLUMN IF NOT EXISTS rates VARCHAR;",
+            "ALTER TABLE instructors ADD COLUMN IF NOT EXISTS location VARCHAR;",
+            "ALTER TABLE instructors ADD COLUMN IF NOT EXISTS reviews TEXT;",
+            "ALTER TABLE instructors ADD COLUMN IF NOT EXISTS languages TEXT DEFAULT '[\"English\"]';",
+            "ALTER TABLE instructors ADD COLUMN IF NOT EXISTS intro_video VARCHAR DEFAULT '';",
+            "ALTER TABLE instructors ADD COLUMN IF NOT EXISTS price FLOAT DEFAULT 100.00;",
+            "ALTER TABLE instructors ADD COLUMN IF NOT EXISTS school VARCHAR DEFAULT 'Individual / Freelance Coach';",
+            "ALTER TABLE instructors ADD COLUMN IF NOT EXISTS dob VARCHAR;",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS approval_status VARCHAR DEFAULT 'approved';",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS created_by_school BOOLEAN DEFAULT FALSE;",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider VARCHAR DEFAULT 'email';",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS social_id VARCHAR;",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_plain VARCHAR;"
+        ]:
+            try:
+                _db.execute(text(_col_sql))
+            except Exception:
+                pass
+        _db.commit()
+
     # Auto-patch: Update legacy links to the user's local uploaded MP4 video file
     youtube_to_mp4 = {
         "https://www.youtube.com/watch?v=demo1": "http://localhost:8000/uploads/c041fea3-b7ed-40d0-ad1e-2c1e14ee6e4d.mp4",
@@ -989,7 +1061,7 @@ app = FastAPI(title="AI Surf API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"^https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1000,14 +1072,23 @@ async def global_exception_handler(request: Request, exc: Exception):
     import traceback
     traceback.print_exc()
     err_str = str(exc)
+    origin = request.headers.get("origin") or "*"
+    cors_headers = {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Methods": "*",
+        "Access-Control-Allow-Headers": "*",
+    }
     if "OperationalError" in type(exc).__name__ or "SSL connection" in err_str or "connection to server" in err_str:
         return JSONResponse(
             status_code=503,
-            content={"detail": "Database connection is temporarily reconnecting. Please retry in a few seconds."}
+            content={"detail": "Database connection is temporarily reconnecting. Please retry in a few seconds."},
+            headers=cors_headers
         )
     return JSONResponse(
         status_code=500,
-        content={"detail": f"Server error: {err_str[:120]}"}
+        content={"detail": f"Server error: {err_str[:120]}"},
+        headers=cors_headers
     )
 
 # Static Uploads directory
@@ -1517,7 +1598,7 @@ def student_to_dict(s: Student):
         "user_id": s.user_id,
         # Aquatic Indica Fields
         "whatsapp_number": s.whatsapp_number or "",
-        "guests_count": s.guests_count or 1,
+        "guests_count": s.guests_count if s.guests_count is not None else 0,
         "course_duration": s.course_duration or "3 Days Course",
         "start_date": s.start_date or "",
         "end_date": s.end_date or "",
@@ -1533,6 +1614,7 @@ def student_to_dict(s: Student):
         "has_password": bool(s.user_rel and s.user_rel.password_hash),
         "school": s.school or "Aquatic Indica Surf School",
         "approval_status": s.approval_status or "approved",
+        "invite_token": s.invite_token,
     }
 
 
@@ -1631,7 +1713,7 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
 # ─── Auth Routes ─────────────────────────────────────────────────────────────
 
 @app.post("/api/auth/signup")
-def auth_signup(data: UserSignup, db: OrmSession = Depends(get_db)):
+def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get_db)):
     role = data.role.lower().strip()
     if role not in ["athlete", "coach", "admin"]:
         raise HTTPException(status_code=400, detail="Invalid role specified")
@@ -1682,7 +1764,7 @@ def auth_signup(data: UserSignup, db: OrmSession = Depends(get_db)):
             existing_student.dob = data.dob or existing_student.dob or ""
             existing_student.age = computed_age or existing_student.age
             existing_student.stance = data.stance or existing_student.stance or "regular"
-            existing_student.invite_token = None  # Consume/invalidate token
+            # Keep invite_token permanent so portal link in email remains permanently valid
             existing_student.last_active = "Today"
             existing_student.approval_status = "approved"
             db.add(ActivityLog(text=f"{existing_student.name} activated their student account", type="group", school=existing_student.school or "Aquatic Indica Surf School"))
@@ -1767,11 +1849,34 @@ def auth_signup(data: UserSignup, db: OrmSession = Depends(get_db)):
 
     # Send Welcome Email via AquaticX SMTP
     try:
+        import secrets as _secrets
+        app_base_url = get_app_base_url(request)
+        # Determine portal link based on role
+        portal_link = f"{app_base_url}/auth"
+        portal_btn_label = "🏄 Open Your Portal →"
+        if role == "athlete":
+            linked_student_for_email = db.query(Student).filter(Student.user_id == user.id).first()
+            if linked_student_for_email:
+                if not linked_student_for_email.invite_token:
+                    linked_student_for_email.invite_token = _secrets.token_urlsafe(32)
+                    db.commit()
+                portal_link = f"{app_base_url}/student-portal?token={linked_student_for_email.invite_token}"
+                portal_btn_label = "🏄 Open Your Student Portal & Set Password →"
+            else:
+                portal_link = f"{app_base_url}/student-portal"
+                portal_btn_label = "🏄 Open Your Student Portal →"
+        elif role == "coach":
+            portal_link = f"{app_base_url}/coach-portal"
+            portal_btn_label = "🏄 Open Your Coach Portal →"
+        elif role == "admin":
+            portal_link = f"{app_base_url}/dashboard"
+            portal_btn_label = "🏄 Open Your Dashboard →"
+
         welcome_html = f"""
         <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 24px; background: #0F172A; color: #F8FAFC; border-radius: 16px; max-width: 540px; margin: auto;">
             <div style="text-align: center; margin-bottom: 20px;">
                 <h1 style="color: #00F2FE; margin: 0; font-size: 24px;">🏄 Aquatic Indica Surf School</h1>
-                <p style="color: #94A3B8; font-size: 13px; margin: 4px 0 0 0;">AiSurf Athletic & Operations Platform</p>
+                <p style="color: #94A3B8; font-size: 13px; margin: 4px 0 0 0;">AiSurf Athletic &amp; Operations Platform</p>
             </div>
             <div style="background: rgba(255,255,255,0.05); padding: 18px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
                 <h3 style="margin-top: 0; color: #F1F5F9;">Aloha {data.name}! 🤙</h3>
@@ -1785,7 +1890,15 @@ def auth_signup(data: UserSignup, db: OrmSession = Depends(get_db)):
                     <li><strong>Group Size:</strong> {data.guests_count or 1} Surfer(s)</li>
                 </ul>
             </div>
-            <p style="font-size: 11px; color: #64748B; text-align: center; margin-top: 20px;">
+            <div style="text-align: center; margin: 24px 0 16px 0;">
+                <a href="{portal_link}" style="background: linear-gradient(135deg, #00F2FE 0%, #4FACFE 100%); color: #0F172A; text-decoration: none; font-weight: 800; font-size: 15px; padding: 14px 30px; border-radius: 12px; display: inline-block; box-shadow: 0 4px 18px rgba(0,242,254,0.45);">
+                    {portal_btn_label}
+                </a>
+            </div>
+            <p style="font-size: 11px; color: #64748B; text-align: center; word-break: break-all; margin: 0 0 8px 0;">
+                Direct link: <a href="{portal_link}" style="color: #00F2FE;">{portal_link}</a>
+            </p>
+            <p style="font-size: 11px; color: #64748B; text-align: center; margin-top: 16px;">
                 Sent via Aquatic-X Cloud SMTP • Client Requirements Hub
             </p>
         </div>
@@ -2799,7 +2912,7 @@ def get_instructor(instructor_id: int, db: OrmSession = Depends(get_db)):
 
 
 @app.post("/api/instructors")
-def create_instructor(data: InstructorCreate, db: OrmSession = Depends(get_db)):
+def create_instructor(data: InstructorCreate, request: Request, db: OrmSession = Depends(get_db)):
     user_id = None
     email_clean = (data.email or "").strip().lower()
     
@@ -2848,12 +2961,14 @@ def create_instructor(data: InstructorCreate, db: OrmSession = Depends(get_db)):
     # Send Welcome Email via AquaticX SMTP
     if email_clean:
         try:
+            app_base_url = get_app_base_url(request)
+            coach_portal_link = f"{app_base_url}/coach-portal"
             pass_info = f"<li><strong>Password:</strong> {data.password.strip()}</li>" if (data.password and len(data.password.strip()) >= 6) else ""
             coach_html = f"""
             <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 24px; background: #0F172A; color: #F8FAFC; border-radius: 16px; max-width: 540px; margin: auto;">
                 <div style="text-align: center; margin-bottom: 20px;">
                     <h1 style="color: #00F2FE; margin: 0; font-size: 24px;">🏄 Aquatic Indica Surf School</h1>
-                    <p style="color: #94A3B8; font-size: 13px; margin: 4px 0 0 0;">Coach Account Access & Portal Invitation</p>
+                    <p style="color: #94A3B8; font-size: 13px; margin: 4px 0 0 0;">Coach Account Access &amp; Portal Invitation</p>
                 </div>
                 <div style="background: rgba(255,255,255,0.05); padding: 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
                     <h3 style="margin-top: 0; color: #F1F5F9;">Aloha {data.name}! 🏄‍♂️</h3>
@@ -2872,7 +2987,15 @@ def create_instructor(data: InstructorCreate, db: OrmSession = Depends(get_db)):
                         You can log in anytime to manage your assigned students, view session schedules, and log athlete performance.
                     </p>
                 </div>
-                <p style="font-size: 11px; color: #64748B; text-align: center; margin-top: 20px;">
+                <div style="text-align: center; margin: 24px 0 16px 0;">
+                    <a href="{coach_portal_link}" style="background: linear-gradient(135deg, #2DD4BF 0%, #0D9488 100%); color: #0F172A; text-decoration: none; font-weight: 800; font-size: 15px; padding: 14px 30px; border-radius: 12px; display: inline-block; box-shadow: 0 4px 18px rgba(13,148,136,0.45);">
+                        🏄 Open Your Coach Portal →
+                    </a>
+                </div>
+                <p style="font-size: 11px; color: #64748B; text-align: center; word-break: break-all; margin: 0 0 8px 0;">
+                    Direct link: <a href="{coach_portal_link}" style="color: #2DD4BF;">{coach_portal_link}</a>
+                </p>
+                <p style="font-size: 11px; color: #64748B; text-align: center; margin-top: 16px;">
                     Sent via Aquatic Indica / AiSurf SMTP Server
                 </p>
             </div>
@@ -2927,7 +3050,7 @@ def get_student(student_id: int, db: OrmSession = Depends(get_db)):
 
 
 @app.post("/api/students")
-def create_student(data: StudentCreate, db: OrmSession = Depends(get_db)):
+def create_student(data: StudentCreate, request: Request, db: OrmSession = Depends(get_db)):
     # Auto-calculate end_date if start_date is provided
     end_date = data.end_date
     if data.start_date and not end_date:
@@ -2946,10 +3069,10 @@ def create_student(data: StudentCreate, db: OrmSession = Depends(get_db)):
     # If admin sets an initial password, create the User account directly
     user_id = None
     if data.password and data.email:
-        existing_user = db.query(User).filter(User.email == data.email.lower().trim()).first()
+        existing_user = db.query(User).filter(User.email == data.email.lower().strip()).first()
         if not existing_user:
             new_user = User(
-                email=data.email.lower().trim(),
+                email=data.email.lower().strip(),
                 password_hash=hash_password(data.password),
                 password_plain=data.password,
                 role="athlete",
@@ -3001,13 +3124,20 @@ def create_student(data: StudentCreate, db: OrmSession = Depends(get_db)):
     # Send Welcome Email via AquaticX SMTP
     if data.email:
         try:
+            import secrets as _secrets
+            app_base_url = get_app_base_url(request)
             student_email = data.email.strip().lower()
+            # Ensure invite token exists for portal magic link
+            if not student.invite_token:
+                student.invite_token = _secrets.token_urlsafe(32)
+                db.commit()
+            student_portal_link = f"{app_base_url}/student-portal?token={student.invite_token}"
             pass_info = f"<li><strong>Password:</strong> {data.password.strip()}</li>" if (data.password and len(data.password.strip()) >= 6) else ""
             student_html = f"""
             <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 24px; background: #0F172A; color: #F8FAFC; border-radius: 16px; max-width: 540px; margin: auto;">
                 <div style="text-align: center; margin-bottom: 20px;">
                     <h1 style="color: #00F2FE; margin: 0; font-size: 24px;">🏄 Aquatic Indica Surf School</h1>
-                    <p style="color: #94A3B8; font-size: 13px; margin: 4px 0 0 0;">Student Portal Invitation & Training Access</p>
+                    <p style="color: #94A3B8; font-size: 13px; margin: 4px 0 0 0;">Student Portal Invitation &amp; Training Access</p>
                 </div>
                 <div style="background: rgba(255,255,255,0.05); padding: 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
                     <h3 style="margin-top: 0; color: #F1F5F9;">Aloha {data.name}! 🏄‍♀️</h3>
@@ -3028,7 +3158,15 @@ def create_student(data: StudentCreate, db: OrmSession = Depends(get_db)):
                         You can log in anytime to view your session schedules, track wave performance, and access AI analysis directly from your Student Portal.
                     </p>
                 </div>
-                <p style="font-size: 11px; color: #64748B; text-align: center; margin-top: 20px;">
+                <div style="text-align: center; margin: 24px 0 16px 0;">
+                    <a href="{student_portal_link}" style="background: linear-gradient(135deg, #00F2FE 0%, #4FACFE 100%); color: #0F172A; text-decoration: none; font-weight: 800; font-size: 15px; padding: 14px 30px; border-radius: 12px; display: inline-block; box-shadow: 0 4px 18px rgba(0,242,254,0.45);">
+                        🏄 Open Your Student Portal &amp; Set Password →
+                    </a>
+                </div>
+                <p style="font-size: 11px; color: #64748B; text-align: center; word-break: break-all; margin: 0 0 8px 0;">
+                    Direct link: <a href="{student_portal_link}" style="color: #00F2FE;">{student_portal_link}</a>
+                </p>
+                <p style="font-size: 11px; color: #64748B; text-align: center; margin-top: 16px;">
                     Sent via Aquatic Indica / AiSurf SMTP Server
                 </p>
             </div>
@@ -3250,6 +3388,9 @@ def generate_invite(student_id: int, db: OrmSession = Depends(get_db)):
     student = db.query(Student).filter(Student.id == student_id).first()
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
+    # If student already has an active invite token (e.g. from welcome email), reuse it!
+    if student.invite_token:
+        return {"token": student.invite_token, "student_id": student.id, "name": student.name, "email": student.email}
     # Generate a secure 32-byte URL-safe token
     token = _secrets.token_urlsafe(32)
     student.invite_token = token
@@ -3321,7 +3462,6 @@ def set_invite_password(token: str, data: dict, db: OrmSession = Depends(get_db)
         student.user_id = existing_user.id
         existing_user.password_hash = hash_password(password)
         existing_user.password_plain = password
-        student.invite_token = None
         db.commit()
         return {"success": True, "message": "Password set successfully. You can now log in."}
 
@@ -3337,7 +3477,6 @@ def set_invite_password(token: str, data: dict, db: OrmSession = Depends(get_db)
     db.add(user)
     db.flush()
     student.user_id = user.id
-    student.invite_token = None
     student.approval_status = "approved"
     db.add(ActivityLog(text=f"{student.name} set their password and activated their account", type="group", school=student.school or "Aquatic Indica Surf School"))
     db.commit()
@@ -3363,7 +3502,6 @@ def set_student_password(student_id: int, data: dict, db: OrmSession = Depends(g
         if user:
             user.password_hash = hash_password(password)
             user.password_plain = password
-            student.invite_token = None
             db.commit()
             return {"success": True, "message": "Password updated successfully"}
     
@@ -3372,7 +3510,6 @@ def set_student_password(student_id: int, data: dict, db: OrmSession = Depends(g
         student.user_id = existing_user.id
         existing_user.password_hash = hash_password(password)
         existing_user.password_plain = password
-        student.invite_token = None
         db.commit()
         return {"success": True, "message": "Password updated successfully"}
     
@@ -3388,7 +3525,6 @@ def set_student_password(student_id: int, data: dict, db: OrmSession = Depends(g
     db.add(user)
     db.flush()
     student.user_id = user.id
-    student.invite_token = None
     student.approval_status = "approved"
     db.commit()
     return {"success": True, "message": "Password set! You can now log in anytime."}

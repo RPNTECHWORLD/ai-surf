@@ -53,6 +53,33 @@ const InstructorManagement = () => {
   const [showFormPass, setShowFormPass] = useState(false);
   const [showModalPass, setShowModalPass] = useState(false);
 
+  // In-App Confirmation Dialog State (Replaces native browser window.confirm)
+  const [confirmDialog, setConfirmDialog] = useState({
+    isOpen: false,
+    title: 'Confirm Action',
+    message: '',
+    confirmText: 'Delete',
+    cancelText: 'Cancel',
+    isDanger: true,
+    onConfirm: null
+  });
+
+  const showConfirm = (title, message, onConfirm, confirmText = 'Delete', isDanger = true) => {
+    setConfirmDialog({
+      isOpen: true,
+      title,
+      message,
+      confirmText,
+      cancelText: 'Cancel',
+      isDanger,
+      onConfirm
+    });
+  };
+
+  const closeConfirm = () => {
+    setConfirmDialog(prev => ({ ...prev, isOpen: false, onConfirm: null }));
+  };
+
   const getActiveSchoolName = () => {
     try {
       const activeSchool = sessionStorage.getItem('activeSchool');
@@ -326,30 +353,31 @@ const InstructorManagement = () => {
     setSaving(false);
   };
 
-  const handleDelete = async (e, instructor) => {
+  const handleDelete = (e, instructor) => {
     e && e.stopPropagation();
-    if (!window.confirm(`Are you sure you want to delete "${instructor.name}"? This action cannot be undone.`)) {
-      return;
-    }
-    setDeletingId(instructor.id);
-    try {
-      const res = await fetch(`${API}/api/instructors/${instructor.id}`, {
-        method: 'DELETE'
-      });
-      if (res.ok) {
-        if (selected && selected.id === instructor.id) {
-          setSelected(null);
-          setShowAddModal(false);
+    showConfirm(
+      'Delete Instructor',
+      `Are you sure you want to delete "${instructor.name}"? This action cannot be undone.`,
+      async () => {
+        closeConfirm();
+        setDeletingId(instructor.id);
+        try {
+          const res = await fetch(`${API}/api/instructors/${instructor.id}`, {
+            method: 'DELETE'
+          });
+          if (res.ok) {
+            if (selected && selected.id === instructor.id) {
+              setSelected(null);
+              setShowAddModal(false);
+            }
+            fetchInstructors();
+          }
+        } catch (err) {
+        } finally {
+          setDeletingId(null);
         }
-        fetchInstructors();
-      } else {
-        alert('Failed to delete instructor.');
       }
-    } catch (err) {
-      alert('Error deleting instructor.');
-    } finally {
-      setDeletingId(null);
-    }
+    );
   };
 
   const hasInstructors = instructors.length > 0;
@@ -1126,6 +1154,111 @@ const InstructorManagement = () => {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* In-App Confirmation Modal */}
+        {confirmDialog.isOpen && (
+          <div
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(15, 23, 42, 0.6)',
+              backdropFilter: 'blur(4px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 99999,
+              animation: 'imFadeIn 0.2s ease-out'
+            }}
+            onClick={closeConfirm}
+          >
+            <div
+              style={{
+                backgroundColor: '#FFFFFF',
+                borderRadius: '16px',
+                padding: '28px',
+                maxWidth: '440px',
+                width: '90%',
+                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+                border: '1px solid #E2E8F0',
+                position: 'relative'
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px', marginBottom: '20px' }}>
+                <div
+                  style={{
+                    width: '44px',
+                    height: '44px',
+                    borderRadius: '12px',
+                    backgroundColor: confirmDialog.isDanger ? '#FEE2E2' : '#E0E7FF',
+                    color: confirmDialog.isDanger ? '#EF4444' : '#6366F1',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0
+                  }}
+                >
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                  </svg>
+                </div>
+
+                <div style={{ flex: 1 }}>
+                  <h3 style={{ margin: '0 0 8px 0', fontSize: '17px', fontWeight: 800, color: '#0F172A', fontFamily: 'Outfit, sans-serif' }}>
+                    {confirmDialog.title}
+                  </h3>
+                  <p style={{ margin: 0, fontSize: '13.5px', lineHeight: '1.5', color: '#64748B' }}>
+                    {confirmDialog.message}
+                  </p>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                <button
+                  type="button"
+                  onClick={closeConfirm}
+                  style={{
+                    padding: '10px 18px',
+                    borderRadius: '10px',
+                    border: '1.5px solid #E2E8F0',
+                    backgroundColor: '#F8FAFC',
+                    color: '#475569',
+                    fontSize: '13px',
+                    fontWeight: 700,
+                    cursor: 'pointer'
+                  }}
+                >
+                  {confirmDialog.cancelText || 'Cancel'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (confirmDialog.onConfirm) confirmDialog.onConfirm();
+                  }}
+                  style={{
+                    padding: '10px 20px',
+                    borderRadius: '10px',
+                    border: 'none',
+                    backgroundColor: confirmDialog.isDanger ? '#EF4444' : '#0D9488',
+                    color: '#FFFFFF',
+                    fontSize: '13px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    boxShadow: confirmDialog.isDanger ? '0 4px 14px rgba(239, 68, 68, 0.4)' : '0 4px 14px rgba(13, 148, 136, 0.4)'
+                  }}
+                >
+                  {confirmDialog.confirmText || 'Confirm'}
+                </button>
+              </div>
             </div>
           </div>
         )}

@@ -130,6 +130,39 @@ const SuperAdminDashboard = () => {
   const [newKey, setNewKey] = useState({ app_name: '', webhook_url: '' });
   const [showKeyModal, setShowKeyModal] = useState(false);
 
+  // In-App Confirmation Dialog State (Replaces native browser window.confirm)
+  const [confirmDialog, setConfirmDialog] = useState({
+    isOpen: false,
+    title: 'Confirm Action',
+    message: '',
+    confirmText: 'Delete',
+    cancelText: 'Cancel',
+    isDanger: true,
+    onConfirm: null
+  });
+
+  const showConfirm = (title, message, onConfirm, confirmText = 'Delete', isDanger = true) => {
+    setConfirmDialog({
+      isOpen: true,
+      title,
+      message,
+      confirmText,
+      cancelText: 'Cancel',
+      isDanger,
+      onConfirm
+    });
+  };
+
+  const closeConfirm = () => {
+    setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+  };
+
+  useEffect(() => {
+    if (!successMsg) return;
+    const timer = setTimeout(() => setSuccessMsg(''), 4000);
+    return () => clearTimeout(timer);
+  }, [successMsg]);
+
   const loadData = async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
@@ -290,15 +323,21 @@ const SuperAdminDashboard = () => {
     }
   };
 
-  const handleDeleteStudent = async (id, name, email) => {
-    if (!window.confirm(`Are you sure you want to delete student "${name}"?`)) return;
-    markStudentAsDeleted(id, email);
-    try {
-      await fetch(`${API}/api/superadmin/users/${id}`, { method: 'DELETE' });
-      await fetch(`${API}/api/students/${id}`, { method: 'DELETE' });
-    } catch (err) {}
-    setStudentsList(prev => prev.filter(s => s.id !== id && s.id != id));
-    setSuccessMsg(`Student "${name}" deleted.`);
+  const handleDeleteStudent = (id, name, email) => {
+    showConfirm(
+      'Delete Student',
+      `Are you sure you want to delete student "${name}"?`,
+      async () => {
+        closeConfirm();
+        markStudentAsDeleted(id, email);
+        try {
+          await fetch(`${API}/api/superadmin/users/${id}`, { method: 'DELETE' });
+          await fetch(`${API}/api/students/${id}`, { method: 'DELETE' });
+        } catch (err) {}
+        setStudentsList(prev => prev.filter(s => s.id !== id && s.id != id));
+        setSuccessMsg(`Student "${name}" deleted.`);
+      }
+    );
   };
 
   const toggleSelectStudent = (id) => {
@@ -315,24 +354,29 @@ const SuperAdminDashboard = () => {
     }
   };
 
-  const handleBulkDeleteStudents = async () => {
+  const handleBulkDeleteStudents = () => {
     if (selectedStudentIds.length === 0) return;
-    if (!window.confirm(`Are you sure you want to delete ${selectedStudentIds.length} selected student(s)?`)) return;
-
-    const idsToDelete = [...selectedStudentIds];
-    for (const id of idsToDelete) {
-      const student = studentsList.find(s => s.id === id || s.id == id);
-      if (student) {
-        markStudentAsDeleted(student.id, student.email);
-        try {
-          await fetch(`${API}/api/superadmin/users/${id}`, { method: 'DELETE' });
-          await fetch(`${API}/api/students/${id}`, { method: 'DELETE' });
-        } catch (e) {}
+    showConfirm(
+      'Delete Selected Students',
+      `Are you sure you want to delete ${selectedStudentIds.length} selected student(s)?`,
+      async () => {
+        closeConfirm();
+        const idsToDelete = [...selectedStudentIds];
+        for (const id of idsToDelete) {
+          const student = studentsList.find(s => s.id === id || s.id == id);
+          if (student) {
+            markStudentAsDeleted(student.id, student.email);
+            try {
+              await fetch(`${API}/api/superadmin/users/${id}`, { method: 'DELETE' });
+              await fetch(`${API}/api/students/${id}`, { method: 'DELETE' });
+            } catch (e) {}
+          }
+        }
+        setStudentsList(prev => prev.filter(s => !idsToDelete.includes(s.id)));
+        setSelectedStudentIds([]);
+        setSuccessMsg(`${idsToDelete.length} student(s) deleted successfully.`);
       }
-    }
-    setStudentsList(prev => prev.filter(s => !idsToDelete.includes(s.id)));
-    setSelectedStudentIds([]);
-    setSuccessMsg(`${idsToDelete.length} student(s) deleted successfully.`);
+    );
   };
 
   const handleBulkAssignInstructor = async (instructorIdVal) => {
@@ -398,23 +442,28 @@ const SuperAdminDashboard = () => {
     }
   };
 
-  const handleBulkDeleteSchools = async () => {
+  const handleBulkDeleteSchools = () => {
     if (selectedSchoolIds.length === 0) return;
-    if (!window.confirm(`Are you sure you want to delete ${selectedSchoolIds.length} selected surf school(s)?`)) return;
-
-    const idsToDelete = [...selectedSchoolIds];
-    for (const id of idsToDelete) {
-      const sch = schoolsList.find(s => s.id === id || s.id == id);
-      if (sch) {
-        markSchoolAsDeleted(sch.id, sch.name, sch.email);
-        try {
-          await fetch(`${API}/api/superadmin/schools/${id}`, { method: 'DELETE' });
-        } catch (e) {}
+    showConfirm(
+      'Delete Selected Surf Schools',
+      `Are you sure you want to delete ${selectedSchoolIds.length} selected surf school(s)?`,
+      async () => {
+        closeConfirm();
+        const idsToDelete = [...selectedSchoolIds];
+        for (const id of idsToDelete) {
+          const sch = schoolsList.find(s => s.id === id || s.id == id);
+          if (sch) {
+            markSchoolAsDeleted(sch.id, sch.name, sch.email);
+            try {
+              await fetch(`${API}/api/superadmin/schools/${id}`, { method: 'DELETE' });
+            } catch (e) {}
+          }
+        }
+        setSchoolsList(prev => prev.filter(s => !idsToDelete.includes(s.id)));
+        setSelectedSchoolIds([]);
+        setSuccessMsg(`${idsToDelete.length} surf school(s) deleted successfully.`);
       }
-    }
-    setSchoolsList(prev => prev.filter(s => !idsToDelete.includes(s.id)));
-    setSelectedSchoolIds([]);
-    setSuccessMsg(`${idsToDelete.length} surf school(s) deleted successfully.`);
+    );
   };
   
   const handleAssignInstructor = async (studentId, instructorIdVal) => {
@@ -457,50 +506,68 @@ const SuperAdminDashboard = () => {
     }
   };
 
-  const handleDeleteCoach = async (id, name) => {
-    if (!window.confirm(`Are you sure you want to delete coach "${name}"?`)) return;
-    try {
-      await fetch(`${API}/api/superadmin/users/${id}`, { method: 'DELETE' });
-      await fetch(`${API}/api/instructors/${id}`, { method: 'DELETE' });
-      setSuccessMsg(`Coach "${name}" deleted.`);
-      setCoaches(prev => prev.filter(c => c.id !== id && c.user_id !== id));
-      setInstructorsList(prev => prev.filter(i => i.id !== id && i.user_id !== id));
-    } catch (err) {
-      setCoaches(prev => prev.filter(c => c.id !== id && c.user_id !== id));
-      setInstructorsList(prev => prev.filter(i => i.id !== id && i.user_id !== id));
-      setSuccessMsg(`Coach "${name}" deleted.`);
-    }
+  const handleDeleteCoach = (id, name) => {
+    showConfirm(
+      'Delete Coach',
+      `Are you sure you want to delete coach "${name}"?`,
+      async () => {
+        closeConfirm();
+        try {
+          await fetch(`${API}/api/superadmin/users/${id}`, { method: 'DELETE' });
+          await fetch(`${API}/api/instructors/${id}`, { method: 'DELETE' });
+          setSuccessMsg(`Coach "${name}" deleted.`);
+          setCoaches(prev => prev.filter(c => c.id !== id && c.user_id !== id));
+          setInstructorsList(prev => prev.filter(i => i.id !== id && i.user_id !== id));
+        } catch (err) {
+          setCoaches(prev => prev.filter(c => c.id !== id && c.user_id !== id));
+          setInstructorsList(prev => prev.filter(i => i.id !== id && i.user_id !== id));
+          setSuccessMsg(`Coach "${name}" deleted.`);
+        }
+      }
+    );
   };
 
-  const handleDeleteSchool = async (id, name) => {
-    if (!window.confirm(`Are you sure you want to delete surf school "${name}"?`)) return;
-    const sch = schoolsList.find(s => s.id === id || s.id == id);
-    markSchoolAsDeleted(id, name, sch?.email);
-    try {
-      const res = await fetch(`${API}/api/schools/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        setSuccessMsg(`Surf school "${name}" deleted.`);
-        setSchoolsList(prev => prev.filter(sc => sc.id !== id));
-      } else {
-        setSchoolsList(prev => prev.filter(sc => sc.id !== id));
-        setSuccessMsg(`Surf school "${name}" deleted.`);
+  const handleDeleteSchool = (id, name) => {
+    showConfirm(
+      'Delete Surf School',
+      `Are you sure you want to delete surf school "${name}"?`,
+      async () => {
+        closeConfirm();
+        const sch = schoolsList.find(s => s.id === id || s.id == id);
+        markSchoolAsDeleted(id, name, sch?.email);
+        try {
+          const res = await fetch(`${API}/api/schools/${id}`, { method: 'DELETE' });
+          if (res.ok) {
+            setSuccessMsg(`Surf school "${name}" deleted.`);
+            setSchoolsList(prev => prev.filter(sc => sc.id !== id));
+          } else {
+            setSchoolsList(prev => prev.filter(sc => sc.id !== id));
+            setSuccessMsg(`Surf school "${name}" deleted.`);
+          }
+        } catch (err) {
+          setSchoolsList(prev => prev.filter(sc => sc.id !== id));
+          setSuccessMsg(`Surf school "${name}" deleted.`);
+        }
       }
-    } catch (err) {
-      setSchoolsList(prev => prev.filter(sc => sc.id !== id));
-      setSuccessMsg(`Surf school "${name}" deleted.`);
-    }
+    );
   };
 
   // Marketplace Actions
-  const handleDeleteMarketplace = async (id) => {
-    if (!window.confirm("Are you sure you want to delete this listing?")) return;
-    try {
-      const res = await fetch(`${API}/api/superadmin/marketplace/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        alert('Listing deleted successfully!');
-        loadData(true);
+  const handleDeleteMarketplace = (id) => {
+    showConfirm(
+      'Delete Listing',
+      'Are you sure you want to delete this listing?',
+      async () => {
+        closeConfirm();
+        try {
+          const res = await fetch(`${API}/api/superadmin/marketplace/${id}`, { method: 'DELETE' });
+          if (res.ok) {
+            setSuccessMsg('Listing deleted successfully!');
+            loadData(true);
+          }
+        } catch (e) {}
       }
-    } catch (e) {}
+    );
   };
 
   const handleCreateMarketplace = async (e) => {
@@ -539,14 +606,21 @@ const SuperAdminDashboard = () => {
     } catch (e) {}
   };
 
-  const handleDeleteReport = async (id) => {
-    if (!window.confirm("Are you sure you want to delete this report?")) return;
-    try {
-      const res = await fetch(`${API}/api/superadmin/reports/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        loadData(true);
+  const handleDeleteReport = (id) => {
+    showConfirm(
+      'Delete Report',
+      'Are you sure you want to delete this report?',
+      async () => {
+        closeConfirm();
+        try {
+          const res = await fetch(`${API}/api/superadmin/reports/${id}`, { method: 'DELETE' });
+          if (res.ok) {
+            setSuccessMsg('Report deleted successfully.');
+            loadData(true);
+          }
+        } catch (e) {}
       }
-    } catch (e) {}
+    );
   };
 
   // Integration Keys Actions
@@ -562,7 +636,7 @@ const SuperAdminDashboard = () => {
         })
       });
       if (res.ok) {
-        alert('Integration application registered successfully!');
+        setSuccessMsg('Integration application registered successfully!');
         setNewKey({ app_name: '', webhook_url: '' });
         setShowKeyModal(false);
         loadData(true);
@@ -579,14 +653,21 @@ const SuperAdminDashboard = () => {
     } catch (e) {}
   };
 
-  const handleDeleteKey = async (id) => {
-    if (!window.confirm("Are you sure you want to delete this integration client?")) return;
-    try {
-      const res = await fetch(`${API}/api/superadmin/keys/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        loadData(true);
+  const handleDeleteKey = (id) => {
+    showConfirm(
+      'Delete Integration Client',
+      'Are you sure you want to delete this integration client?',
+      async () => {
+        closeConfirm();
+        try {
+          const res = await fetch(`${API}/api/superadmin/keys/${id}`, { method: 'DELETE' });
+          if (res.ok) {
+            setSuccessMsg('Integration client deleted successfully.');
+            loadData(true);
+          }
+        } catch (e) {}
       }
-    } catch (e) {}
+    );
   };
 
   const statsCards = [
@@ -664,6 +745,7 @@ const SuperAdminDashboard = () => {
       {/* Main Container */}
       <main className="sa-container">
         {error && <div className="sa-error-banner">{error}</div>}
+        {successMsg && <div className="sa-success-banner">{successMsg}</div>}
 
         {loading ? (
           <div className="sa-loader">
@@ -1568,6 +1650,121 @@ const SuperAdminDashboard = () => {
         )}
       </main>
 
+      {/* Software-Native Confirmation Dialog (Replaces Browser window.confirm) */}
+      {confirmDialog.isOpen && (
+        <div 
+          className="sa-confirm-overlay"
+          onClick={closeConfirm}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.75)',
+            backdropFilter: 'blur(5px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 99999,
+            padding: '16px'
+          }}
+        >
+          <div 
+            className="sa-confirm-box"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              backgroundColor: '#FFFFFF',
+              borderRadius: '18px',
+              padding: '28px',
+              maxWidth: '450px',
+              width: '100%',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.06)'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px' }}>
+              <div style={{
+                width: '46px',
+                height: '46px',
+                borderRadius: '12px',
+                backgroundColor: confirmDialog.isDanger ? '#FEE2E2' : '#EFF6FF',
+                color: confirmDialog.isDanger ? '#EF4444' : '#2563EB',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0
+              }}>
+                {confirmDialog.isDanger ? (
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 6h18"/>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                    <line x1="10" y1="11" x2="10" y2="17"/>
+                    <line x1="14" y1="11" x2="14" y2="17"/>
+                  </svg>
+                ) : (
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" y1="8" x2="12" y2="12"/>
+                    <line x1="12" y1="16" x2="12.01" y2="16"/>
+                  </svg>
+                )}
+              </div>
+
+              <div style={{ flex: 1 }}>
+                <h3 style={{ margin: '0 0 8px 0', fontSize: '17px', fontWeight: 800, color: '#0F172A', letterSpacing: '-0.3px', fontFamily: 'Outfit, sans-serif' }}>
+                  {confirmDialog.title}
+                </h3>
+                <p style={{ margin: 0, fontSize: '13.5px', lineHeight: '1.5', color: '#64748B' }}>
+                  {confirmDialog.message}
+                </p>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '24px' }}>
+              <button
+                type="button"
+                onClick={closeConfirm}
+                style={{
+                  padding: '10px 18px',
+                  borderRadius: '10px',
+                  border: '1.5px solid #E2E8F0',
+                  backgroundColor: '#F8FAFC',
+                  color: '#475569',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+                onMouseOver={(e) => { e.currentTarget.style.backgroundColor = '#F1F5F9'; }}
+                onMouseOut={(e) => { e.currentTarget.style.backgroundColor = '#F8FAFC'; }}
+              >
+                {confirmDialog.cancelText || 'Cancel'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirmDialog.onConfirm) confirmDialog.onConfirm();
+                }}
+                style={{
+                  padding: '10px 20px',
+                  borderRadius: '10px',
+                  border: 'none',
+                  backgroundColor: confirmDialog.isDanger ? '#EF4444' : '#6366F1',
+                  color: '#FFFFFF',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  boxShadow: confirmDialog.isDanger ? '0 4px 14px rgba(239, 68, 68, 0.4)' : '0 4px 14px rgba(99, 102, 241, 0.4)',
+                  transition: 'all 0.15s ease'
+                }}
+                onMouseOver={(e) => { e.currentTarget.style.backgroundColor = confirmDialog.isDanger ? '#DC2626' : '#4F46E5'; }}
+                onMouseOut={(e) => { e.currentTarget.style.backgroundColor = confirmDialog.isDanger ? '#EF4444' : '#6366F1'; }}
+              >
+                {confirmDialog.confirmText || 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <style>{`
         .sa-wrapper {
           min-height: 100vh;
@@ -1978,6 +2175,29 @@ const SuperAdminDashboard = () => {
           font-size: 14px;
           font-weight: 600;
           margin-bottom: 24px;
+        }
+
+        .sa-success-banner {
+          background: #DCFCE7;
+          border: 1px solid #86EFAC;
+          color: #15803D;
+          padding: 16px 20px;
+          border-radius: 12px;
+          font-size: 14px;
+          font-weight: 600;
+          margin-bottom: 24px;
+          animation: saFadeIn 0.2s ease-out;
+        }
+
+        .sa-confirm-overlay {
+          animation: saFadeIn 0.15s ease-out;
+        }
+        .sa-confirm-box {
+          animation: saPopIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        @keyframes saPopIn {
+          from { opacity: 0; transform: scale(0.95); }
+          to { opacity: 1; transform: scale(1); }
         }
 
         /* Stats Grid */

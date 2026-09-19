@@ -612,14 +612,16 @@ const StudentsManagement = () => {
 
         fetchStudents();
         const baseUrl = window.location.origin;
-        let inviteToken = `inv_${Date.now()}`;
-        try {
-          const invRes = await fetch(`${API}/api/students/${newStudent.id}/generate-invite`, { method: 'POST' });
-          if (invRes.ok) {
-            const invData = await invRes.json();
-            if (invData.token) inviteToken = invData.token;
-          }
-        } catch (err) {}
+        let inviteToken = newStudent.invite_token || `inv_${Date.now()}`;
+        if (!newStudent.invite_token) {
+          try {
+            const invRes = await fetch(`${API}/api/students/${newStudent.id}/generate-invite`, { method: 'POST' });
+            if (invRes.ok) {
+              const invData = await invRes.json();
+              if (invData.token) inviteToken = invData.token;
+            }
+          } catch (err) {}
+        }
 
         const studentInviteLink = `${baseUrl}/student-portal?token=${inviteToken}`;
         const summaryData = {
@@ -671,6 +673,43 @@ const StudentsManagement = () => {
   // Quick Action Toggles for Review Summary
   const [sendWelcomeEmail, setSendWelcomeEmail] = useState(true);
   const [notifyInstructor, setNotifyInstructor] = useState(true);
+
+  // Dynamic session stats for the Review Summary modal
+  const summaryStudentSessions = React.useMemo(() => {
+    if (!addedStudentSummary) return [];
+    const sid = addedStudentSummary.id;
+    const sName = (addedStudentSummary.name || '').toLowerCase().trim();
+
+    return allSessions.filter(s => {
+      if (sid && s.student_id === sid) return true;
+      if (sName && s.student && s.student.toLowerCase().trim() === sName) return true;
+      return false;
+    });
+  }, [allSessions, addedStudentSummary]);
+
+  const summaryPendingSessions = React.useMemo(() => {
+    return summaryStudentSessions.filter(s => {
+      const st = (s.status || '').toLowerCase().trim();
+      return st === 'upcoming' || st === 'in progress' || st === 'pending' || st === 'scheduled';
+    });
+  }, [summaryStudentSessions]);
+
+  const summaryCompletedSessions = React.useMemo(() => {
+    return summaryStudentSessions.filter(s => {
+      const st = (s.status || '').toLowerCase().trim();
+      return st === 'completed';
+    });
+  }, [summaryStudentSessions]);
+
+  const summaryPendingCount = summaryPendingSessions.length;
+  const summaryPendingDays = React.useMemo(() => {
+    return new Set(summaryPendingSessions.map(s => s.date).filter(Boolean)).size;
+  }, [summaryPendingSessions]);
+
+  const summaryCompletedCount = summaryCompletedSessions.length;
+  const summaryCompletedDays = React.useMemo(() => {
+    return new Set(summaryCompletedSessions.map(s => s.date).filter(Boolean)).size;
+  }, [summaryCompletedSessions]);
 
   const handleAddRow = () => {
     setBulkRows(prev => [...prev, { name: '', email: '', phone: '', age: '', level: 'Beginner', start_date: '', end_date: '', instructor_id: '' }]);
@@ -808,28 +847,61 @@ const StudentsManagement = () => {
   const [toastMsg, setToastMsg] = useState('');
   const showToast = (msg) => { setToastMsg(msg); setTimeout(() => setToastMsg(''), 4000); };
 
-  const handleDeleteStudent = async (studentId, studentName, studentEmail) => {
-    if (!window.confirm(`Are you sure you want to remove student "${studentName || 'this student'}"?`)) return;
-    try {
-      if (studentId) {
-        await fetch(`${API}/api/students/${studentId}`, { method: 'DELETE' }).catch(() => {});
-      }
-      if (studentEmail) {
-        const emailLower = studentEmail.toLowerCase().trim();
-        const deletedEmails = JSON.parse(localStorage.getItem('deleted_student_emails') || '[]');
-        if (!deletedEmails.includes(emailLower)) {
-          deletedEmails.push(emailLower);
-          localStorage.setItem('deleted_student_emails', JSON.stringify(deletedEmails));
+  // In-App Confirmation Dialog State (Replaces native browser window.confirm)
+  const [confirmDialog, setConfirmDialog] = useState({
+    isOpen: false,
+    title: 'Confirm Action',
+    message: '',
+    confirmText: 'Remove',
+    cancelText: 'Cancel',
+    isDanger: true,
+    onConfirm: null
+  });
+
+  const showConfirm = (title, message, onConfirm, confirmText = 'Remove', isDanger = true) => {
+    setConfirmDialog({
+      isOpen: true,
+      title,
+      message,
+      confirmText,
+      cancelText: 'Cancel',
+      isDanger,
+      onConfirm
+    });
+  };
+
+  const closeConfirm = () => {
+    setConfirmDialog(prev => ({ ...prev, isOpen: false }));
+  };
+
+  const handleDeleteStudent = (studentId, studentName, studentEmail) => {
+    showConfirm(
+      'Remove Student',
+      `Are you sure you want to remove student "${studentName || 'this student'}"?`,
+      async () => {
+        closeConfirm();
+        try {
+          if (studentId) {
+            await fetch(`${API}/api/students/${studentId}`, { method: 'DELETE' }).catch(() => {});
+          }
+          if (studentEmail) {
+            const emailLower = studentEmail.toLowerCase().trim();
+            const deletedEmails = JSON.parse(localStorage.getItem('deleted_student_emails') || '[]');
+            if (!deletedEmails.includes(emailLower)) {
+              deletedEmails.push(emailLower);
+              localStorage.setItem('deleted_student_emails', JSON.stringify(deletedEmails));
+            }
+            const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+            const filteredReqs = savedReqs.filter(r => (r.student_email || r.email || '').toLowerCase().trim() !== emailLower);
+            localStorage.setItem('school_join_requests', JSON.stringify(filteredReqs));
+          }
+          setStudents(prev => prev.filter(s => s.id !== studentId && (s.email || '').toLowerCase().trim() !== (studentEmail || '').toLowerCase().trim()));
+          showToast(`Student "${studentName}" removed.`);
+        } catch (err) {
+          console.error('Failed to delete student:', err);
         }
-        const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-        const filteredReqs = savedReqs.filter(r => (r.student_email || r.email || '').toLowerCase().trim() !== emailLower);
-        localStorage.setItem('school_join_requests', JSON.stringify(filteredReqs));
       }
-      setStudents(prev => prev.filter(s => s.id !== studentId && (s.email || '').toLowerCase().trim() !== (studentEmail || '').toLowerCase().trim()));
-      showToast(`Student "${studentName}" removed.`);
-    } catch (err) {
-      console.error('Failed to delete student:', err);
-    }
+    );
   };
 
   // Set of emails that are already active/approved in the roster
@@ -1071,44 +1143,48 @@ const StudentsManagement = () => {
   };
 
   const handleRejectStudentRequest = (reqId, studentEmail) => {
-    if (!window.confirm(`Decline registration request for ${studentEmail || 'student'}?`)) return;
-    const emailLower = (studentEmail || '').toLowerCase().trim();
-    setStudents(prev => prev.filter(s => s.id !== reqId && (s.email && s.email.toLowerCase().trim() !== emailLower)));
-    
-    const allReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-    let found2 = false;
-    const updatedReqs2 = allReqs.map(r => {
-      if (r.id === reqId || ((r.student_email || r.email) && (r.student_email || r.email).toLowerCase().trim() === emailLower)) {
-        found2 = true;
-        return { ...r, status: 'rejected' };
+    showConfirm(
+      'Decline Request',
+      `Decline registration request for ${studentEmail || 'student'}?`,
+      () => {
+        closeConfirm();
+        const emailLower = (studentEmail || '').toLowerCase().trim();
+        setStudents(prev => prev.filter(s => s.id !== reqId && (s.email && s.email.toLowerCase().trim() !== emailLower)));
+        
+        const allReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+        let found2 = false;
+        const updatedReqs2 = allReqs.map(r => {
+          if (r.id === reqId || ((r.student_email || r.email) && (r.student_email || r.email).toLowerCase().trim() === emailLower)) {
+            found2 = true;
+            return { ...r, status: 'rejected' };
+          }
+          return r;
+        });
+        if (!found2 && emailLower) {
+          updatedReqs2.push({ id: reqId || `req_${Date.now()}`, student_id: reqId, student_email: emailLower, status: 'rejected' });
+        }
+        localStorage.setItem('school_join_requests', JSON.stringify(updatedReqs2));
+
+        try {
+          const savedAccounts = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
+          const updatedAccounts = savedAccounts.map(a => 
+            a.email && a.email.toLowerCase().trim() === emailLower ? { ...a, approval_status: 'rejected' } : a
+          );
+          localStorage.setItem('savedAccounts', JSON.stringify(updatedAccounts));
+        } catch (e) {}
+
+        try {
+          const mockStudents = JSON.parse(localStorage.getItem('mock_students_data') || '[]');
+          const updatedMock = mockStudents.map(a => 
+            a.email && a.email.toLowerCase().trim() === emailLower ? { ...a, approval_status: 'rejected' } : a
+          );
+          localStorage.setItem('mock_students_data', JSON.stringify(updatedMock));
+        } catch (e) {}
+
+        setReqRefreshKey(k => k + 1);
+        showToast(`❌ Declined request for ${studentEmail || 'student'}.`);
       }
-      return r;
-    });
-    if (!found2 && emailLower) {
-      updatedReqs2.push({ id: reqId || `req_${Date.now()}`, student_id: reqId, student_email: emailLower, status: 'rejected' });
-    }
-    localStorage.setItem('school_join_requests', JSON.stringify(updatedReqs2));
-
-    // Mark in savedAccounts too
-    try {
-      const savedAccounts = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
-      const updatedAccounts = savedAccounts.map(a => 
-        a.email && a.email.toLowerCase().trim() === emailLower ? { ...a, approval_status: 'rejected' } : a
-      );
-      localStorage.setItem('savedAccounts', JSON.stringify(updatedAccounts));
-    } catch (e) {}
-
-    // Mark in mock_students_data
-    try {
-      const mockStudents = JSON.parse(localStorage.getItem('mock_students_data') || '[]');
-      const updatedMock = mockStudents.map(a => 
-        a.email && a.email.toLowerCase().trim() === emailLower ? { ...a, approval_status: 'rejected' } : a
-      );
-      localStorage.setItem('mock_students_data', JSON.stringify(updatedMock));
-    } catch (e) {}
-
-    setReqRefreshKey(k => k + 1);
-    showToast(`❌ Declined request for ${studentEmail || 'student'}.`);
+    );
   };
 
   return (
@@ -1291,166 +1367,7 @@ const StudentsManagement = () => {
           </div>
         </div>
 
-        {/* Horizontal Slot Tabs Bar (Always Visible - Matching Sessions.jsx) */}
-        <div className="sm-slot-tabs-bar" style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '12px',
-          padding: '12px 16px',
-          background: '#FFFFFF',
-          borderRadius: '12px',
-          border: '1px solid #E2E8F0',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-          margin: '12px 0 16px 0',
-          overflowX: 'auto',
-          scrollbarWidth: 'thin'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap', fontWeight: 700, fontSize: '13px', color: '#0F172A', marginRight: '4px' }}>
-            <span style={{ fontSize: '15px' }}>⏰</span> Select Time Slot:
-          </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'nowrap' }}>
-            {/* All Slots Tab */}
-            {(() => {
-              const isSelected = sessionTimeFilter === 'All';
-              const count = students.length;
-              return (
-                <button
-                  type="button"
-                  key="All"
-                  onClick={() => setSessionTimeFilter('All')}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    padding: '6px 14px',
-                    borderRadius: '24px',
-                    cursor: 'pointer',
-                    fontSize: '12.5px',
-                    fontWeight: 700,
-                    whiteSpace: 'nowrap',
-                    transition: 'all 0.2s ease',
-                    border: isSelected ? '2px solid #0D9488' : '1px solid #CBD5E1',
-                    background: isSelected ? '#ECFDF5' : '#FFFFFF',
-                    color: isSelected ? '#0D9488' : '#475569',
-                    boxShadow: isSelected ? '0 2px 8px rgba(13, 148, 136, 0.15)' : 'none'
-                  }}
-                >
-                  <span style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    width: '20px',
-                    height: '20px',
-                    borderRadius: '50%',
-                    background: isSelected ? '#0D9488' : '#94A3B8',
-                    color: '#FFFFFF',
-                    fontSize: '11px',
-                    fontWeight: 800
-                  }}>
-                    ★
-                  </span>
-                  <span>All Slots</span>
-                  <span style={{
-                    background: isSelected ? '#0D9488' : '#E2E8F0',
-                    color: isSelected ? '#FFFFFF' : '#475569',
-                    padding: '2px 8px',
-                    borderRadius: '10px',
-                    fontSize: '11px',
-                    fontWeight: 700
-                  }}>
-                    {count} Students
-                  </span>
-                  {isSelected && (
-                    <span style={{
-                      background: '#0D9488',
-                      color: '#FFFFFF',
-                      padding: '2px 8px',
-                      borderRadius: '10px',
-                      fontSize: '10.5px',
-                      fontWeight: 800
-                    }}>
-                      ✓ SELECTED TAB
-                    </span>
-                  )}
-                </button>
-              );
-            })()}
-
-            {/* Dynamic Slot Tabs */}
-            {availableSlotsForDate.map((slot, index) => {
-              const slotTime = slot.time || slot.startTime || '08:30 AM';
-              const isSelected = sessionTimeFilter === slotTime || (sessionTimeFilter !== 'All' && (slotTime.includes(sessionTimeFilter) || sessionTimeFilter.includes(slotTime)));
-              const theme = getSlotTheme(index);
-              const matchingCount = students.filter(s => {
-                if (!s.session_time) return false;
-                return s.session_time === slotTime || s.session_time.startsWith(slotTime) || slotTime.startsWith(s.session_time);
-              }).length;
-
-              return (
-                <button
-                  type="button"
-                  key={slot.id || slotTime}
-                  onClick={() => setSessionTimeFilter(slotTime)}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    padding: '6px 14px',
-                    borderRadius: '24px',
-                    cursor: 'pointer',
-                    fontSize: '12.5px',
-                    fontWeight: 700,
-                    whiteSpace: 'nowrap',
-                    transition: 'all 0.2s ease',
-                    border: isSelected ? `2px solid ${theme.primary}` : '1px solid #CBD5E1',
-                    background: isSelected ? theme.light : '#FFFFFF',
-                    color: isSelected ? theme.primary : '#475569',
-                    boxShadow: isSelected ? `0 2px 8px ${theme.primary}25` : 'none'
-                  }}
-                >
-                  <span style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    width: '20px',
-                    height: '20px',
-                    borderRadius: '50%',
-                    background: isSelected ? theme.primary : '#94A3B8',
-                    color: '#FFFFFF',
-                    fontSize: '11px',
-                    fontWeight: 800
-                  }}>
-                    {index + 1}
-                  </span>
-                  <span>{slotTime}</span>
-                  <span style={{
-                    background: isSelected ? theme.primary : '#E2E8F0',
-                    color: isSelected ? '#FFFFFF' : '#475569',
-                    padding: '2px 8px',
-                    borderRadius: '10px',
-                    fontSize: '11px',
-                    fontWeight: 700
-                  }}>
-                    {matchingCount} Students
-                  </span>
-                  {isSelected && (
-                    <span style={{
-                      background: theme.primary,
-                      color: '#FFFFFF',
-                      padding: '2px 8px',
-                      borderRadius: '10px',
-                      fontSize: '10.5px',
-                      fontWeight: 800
-                    }}>
-                      ✓ SELECTED TAB
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
 
         {/* Stats */}
         <div className="sm-stats-grid">
@@ -1774,30 +1691,6 @@ const StudentsManagement = () => {
                       <input type="text" placeholder="(555) 321-7654" value={form.whatsapp_number} onChange={e => setForm({...form, whatsapp_number: e.target.value})} />
                     </div>
                     <div className="sm-field">
-                      <label>Course Duration</label>
-                      <select
-                        value={
-                          ['3 Days Course', '5 Days Course', '7 Days Course', '10 Days Course'].includes(form.course_duration)
-                            ? form.course_duration
-                            : 'custom'
-                        }
-                        onChange={e => handleCourseDurationChange(e.target.value)}
-                      >
-                        <option value="3 Days Course">3 Days Course</option>
-                        <option value="5 Days Course">5 Days Course</option>
-                        <option value="7 Days Course">7 Days Course</option>
-                        <option value="10 Days Course">10 Days Course</option>
-                        <option value="custom">
-                          {['3 Days Course', '5 Days Course', '7 Days Course', '10 Days Course'].includes(form.course_duration)
-                            ? 'Custom (> 10 Days)'
-                            : `Custom (${form.course_duration})`}
-                        </option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="sm-grid-2">
-                    <div className="sm-field">
                       <label>Surf Level *</label>
                       <select value={form.level} onChange={e => setForm({...form, level: e.target.value})}>
                         <option value="Beginner">Beginner</option>
@@ -1806,21 +1699,28 @@ const StudentsManagement = () => {
                         <option value="Master">Master</option>
                       </select>
                     </div>
-                    <div className="sm-field">
-                      <label>Assign Instructor</label>
-                      <select value={form.instructor_id} onChange={e => setForm({...form, instructor_id: e.target.value})}>
-                        <option value="">Auto-Assign (Or Select Coach)</option>
-                        {instructors
-                          .filter(i => {
-                            if (!isCoach) {
-                              const iSchool = (i.school || '').toLowerCase().trim();
-                              if (iSchool === 'individual / freelance coach') return false;
-                            }
-                            return true;
-                          })
-                          .map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
-                      </select>
-                    </div>
+                  </div>
+
+                  <div className="sm-field">
+                    <label>Course Duration</label>
+                    <select
+                      value={
+                        ['3 Days Course', '5 Days Course', '7 Days Course', '10 Days Course'].includes(form.course_duration)
+                          ? form.course_duration
+                          : 'custom'
+                      }
+                      onChange={e => handleCourseDurationChange(e.target.value)}
+                    >
+                      <option value="3 Days Course">3 Days Course</option>
+                      <option value="5 Days Course">5 Days Course</option>
+                      <option value="7 Days Course">7 Days Course</option>
+                      <option value="10 Days Course">10 Days Course</option>
+                      <option value="custom">
+                        {['3 Days Course', '5 Days Course', '7 Days Course', '10 Days Course'].includes(form.course_duration)
+                          ? 'Custom (> 10 Days)'
+                          : `Custom (${form.course_duration})`}
+                      </option>
+                    </select>
                   </div>
 
 
@@ -2204,7 +2104,7 @@ const StudentsManagement = () => {
 
                 <div className="sm-summary-grid">
                   {/* Left Column: Student Details Card */}
-                  <div className="sm-summary-card">
+                  <div className="sm-summary-card" style={{ gridColumn: '1 / -1' }}>
                     <div className="sm-summary-avatar-row">
                       <div className="sm-summary-avatar">
                         {(addedStudentSummary.name || 'S').split(' ').map(n=>n[0]).join('').toUpperCase()}
@@ -2217,17 +2117,16 @@ const StudentsManagement = () => {
 
                     <table className="sm-summary-details-table">
                       <tbody>
-                        <tr><td>Email Address</td><td>{addedStudentSummary.email}</td></tr>
-                        <tr><td>Phone Number</td><td>{addedStudentSummary.whatsapp_number || '(555) 321-7654'}</td></tr>
-                        <tr><td>Age</td><td>{addedStudentSummary.age || 19}</td></tr>
+                        <tr><td>Email Address</td><td>{addedStudentSummary.email || '—'}</td></tr>
+                        <tr><td>Phone Number</td><td>{addedStudentSummary.whatsapp_number || '—'}</td></tr>
+                        <tr><td>Age</td><td>{addedStudentSummary.age || '—'}</td></tr>
                         <tr>
                           <td>Surf Level</td>
-                          <td><span className="sm-summary-teal-badge">{addedStudentSummary.level || 'Intermediate'} TEAL LEVEL</span></td>
+                          <td><span className="sm-summary-teal-badge">{(addedStudentSummary.level || 'Beginner').toUpperCase()} TEAL LEVEL</span></td>
                         </tr>
-                        <tr><td>Assigned Instructor</td><td>{addedStudentSummary.instructor || 'Bethany Hamilton'}</td></tr>
-                        <tr><td>Preferred Session</td><td>{addedStudentSummary.session_time || '08:30 AM · Morning Patrol'}</td></tr>
-                        <tr><td>Booking Start Date</td><td>{addedStudentSummary.start_date || 'Aug 25, 2026'}</td></tr>
-                        <tr><td>Booking End Date</td><td>{addedStudentSummary.end_date || 'Dec 20, 2026'}</td></tr>
+                        <tr><td>Assigned Instructor</td><td>{addedStudentSummary.instructor || 'Auto-Assigned Coach'}</td></tr>
+                        <tr><td>Booking Start Date</td><td>{addedStudentSummary.start_date || '—'}</td></tr>
+                        <tr><td>Booking End Date</td><td>{addedStudentSummary.end_date || '—'}</td></tr>
                         <tr><td>Medical Considerations</td><td>None reported</td></tr>
                         <tr>
                           <td>Status</td>
@@ -2245,74 +2144,8 @@ const StudentsManagement = () => {
                       </button>
                     </div>
                   </div>
-
-                  {/* Right Column: Quick Actions & Session Stats */}
-                  <div className="sm-summary-right-col">
-                    {/* Quick Actions Card */}
-                    <div className="sm-summary-panel">
-                      <h4 className="sm-form-section-title" style={{ marginTop: 0 }}>Quick Actions</h4>
-                      
-                      <div className="sm-qa-action-item" onClick={() => navigate('/sessions')}>
-                        <div className="sm-qa-icon">📅</div>
-                        <div className="sm-qa-text">
-                          <div className="sm-qa-title">Assign to Session</div>
-                          <div className="sm-qa-sub">Schedule {(addedStudentSummary.name || 'Student').split(' ')[0]}'s first coaching session</div>
-                        </div>
-                        <span className="sm-qa-arrow">→</span>
-                      </div>
-
-                      <div className="sm-qa-toggle-item">
-                        <div className="sm-qa-icon">✉️</div>
-                        <div className="sm-qa-text">
-                          <div className="sm-qa-title">Send Welcome Email</div>
-                          <div className="sm-qa-sub">Send onboarding credentials</div>
-                        </div>
-                        <input
-                          type="checkbox"
-                          className="sm-toggle-input"
-                          checked={sendWelcomeEmail}
-                          onChange={e => setSendWelcomeEmail(e.target.checked)}
-                        />
-                      </div>
-
-                      <div className="sm-qa-toggle-item">
-                        <div className="sm-qa-icon">🔔</div>
-                        <div className="sm-qa-text">
-                          <div className="sm-qa-title">Notify Instructor</div>
-                          <div className="sm-qa-sub">Alert coach about new assignment</div>
-                        </div>
-                        <input
-                          type="checkbox"
-                          className="sm-toggle-input"
-                          checked={notifyInstructor}
-                          onChange={e => setNotifyInstructor(e.target.checked)}
-                        />
-                      </div>
-                    </div>
-
-                    {/* Session Stats Widgets */}
-                    <div className="sm-session-stat-card">
-                      <div className="sm-ssc-label">PENDING SESSIONS</div>
-                      <div className="sm-ssc-value">12</div>
-                      <div className="sm-ssc-sub">Days Pending: 8</div>
-                    </div>
-
-                    <div className="sm-session-stat-card">
-                      <div className="sm-ssc-label">SESSIONS COMPLETED</div>
-                      <div className="sm-ssc-value">36</div>
-                      <div className="sm-ssc-sub">Days Completed: 24</div>
-                    </div>
-                  </div>
                 </div>
 
-                {/* Bottom Step Indicator Bar */}
-                <div className="sm-summary-step-bar">
-                  <div className="sm-step-item done"><span className="sm-step-circle">✓</span> Add Student</div>
-                  <div className="sm-step-line" />
-                  <div className="sm-step-item active"><span className="sm-step-circle">2</span> Review Summary</div>
-                  <div className="sm-step-line" />
-                  <div className="sm-step-item"><span className="sm-step-circle">3</span> Assign Session</div>
-                </div>
               </div>
             )}
           </div>
@@ -2556,6 +2389,142 @@ const StudentsManagement = () => {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Software-Native Confirmation Dialog (Replaces Browser window.confirm) */}
+      {confirmDialog.isOpen && (
+        <div 
+          onClick={closeConfirm}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.75)',
+            backdropFilter: 'blur(5px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 99999,
+            padding: '16px'
+          }}
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              backgroundColor: '#FFFFFF',
+              borderRadius: '18px',
+              padding: '28px',
+              maxWidth: '450px',
+              width: '100%',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(0, 0, 0, 0.06)'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px' }}>
+              <div style={{
+                width: '46px',
+                height: '46px',
+                borderRadius: '12px',
+                backgroundColor: confirmDialog.isDanger ? '#FEE2E2' : '#EFF6FF',
+                color: confirmDialog.isDanger ? '#EF4444' : '#0D9488',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0
+              }}>
+                {confirmDialog.isDanger ? (
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 6h18"/>
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                    <line x1="10" y1="11" x2="10" y2="17"/>
+                    <line x1="14" y1="11" x2="14" y2="17"/>
+                  </svg>
+                ) : (
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" y1="8" x2="12" y2="12"/>
+                    <line x1="12" y1="16" x2="12.01" y2="16"/>
+                  </svg>
+                )}
+              </div>
+
+              <div style={{ flex: 1 }}>
+                <h3 style={{ margin: '0 0 8px 0', fontSize: '17px', fontWeight: 800, color: '#0F172A', letterSpacing: '-0.3px', fontFamily: 'Outfit, sans-serif' }}>
+                  {confirmDialog.title}
+                </h3>
+                <p style={{ margin: 0, fontSize: '13.5px', lineHeight: '1.5', color: '#64748B' }}>
+                  {confirmDialog.message}
+                </p>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '24px' }}>
+              <button
+                type="button"
+                onClick={closeConfirm}
+                style={{
+                  padding: '10px 18px',
+                  borderRadius: '10px',
+                  border: '1.5px solid #E2E8F0',
+                  backgroundColor: '#F8FAFC',
+                  color: '#475569',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+                onMouseOver={(e) => { e.currentTarget.style.backgroundColor = '#F1F5F9'; }}
+                onMouseOut={(e) => { e.currentTarget.style.backgroundColor = '#F8FAFC'; }}
+              >
+                {confirmDialog.cancelText || 'Cancel'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirmDialog.onConfirm) confirmDialog.onConfirm();
+                }}
+                style={{
+                  padding: '10px 20px',
+                  borderRadius: '10px',
+                  border: 'none',
+                  backgroundColor: confirmDialog.isDanger ? '#EF4444' : '#0D9488',
+                  color: '#FFFFFF',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  boxShadow: confirmDialog.isDanger ? '0 4px 14px rgba(239, 68, 68, 0.4)' : '0 4px 14px rgba(13, 148, 136, 0.4)',
+                  transition: 'all 0.15s ease'
+                }}
+                onMouseOver={(e) => { e.currentTarget.style.backgroundColor = confirmDialog.isDanger ? '#DC2626' : '#0F766E'; }}
+                onMouseOut={(e) => { e.currentTarget.style.backgroundColor = confirmDialog.isDanger ? '#EF4444' : '#0D9488'; }}
+              >
+                {confirmDialog.confirmText || 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* In-App Toast Notification */}
+      {toastMsg && (
+        <div style={{
+          position: 'fixed',
+          bottom: '24px',
+          right: '24px',
+          backgroundColor: '#0F172A',
+          color: '#FFFFFF',
+          padding: '12px 20px',
+          borderRadius: '12px',
+          fontSize: '13.5px',
+          fontWeight: 600,
+          boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.3)',
+          zIndex: 100000,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px'
+        }}>
+          <span>🏄</span>
+          <span>{toastMsg}</span>
         </div>
       )}
 
