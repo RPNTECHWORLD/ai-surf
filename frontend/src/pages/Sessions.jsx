@@ -1035,6 +1035,37 @@ const Sessions = () => {
   const completedCount = getGroupSessionCount(completedSessionsList);
   const completedDays = new Set(completedSessionsList.map(s => s.date).filter(Boolean)).size;
 
+  // Student Metrics in Sessions
+  const allUniqueStudentKeys = useMemo(() => {
+    const set = new Set();
+    roleScopedSessions.forEach(s => {
+      const key = s.student_id ? String(s.student_id) : (s.student || '').trim().toLowerCase();
+      if (key) set.add(key);
+    });
+    return set;
+  }, [roleScopedSessions]);
+  const totalStudentsCount = allUniqueStudentKeys.size;
+
+  const pendingStudentKeys = useMemo(() => {
+    const set = new Set();
+    pendingSessionsList.forEach(s => {
+      const key = s.student_id ? String(s.student_id) : (s.student || '').trim().toLowerCase();
+      if (key) set.add(key);
+    });
+    return set;
+  }, [pendingSessionsList]);
+  const pendingStudentsCount = pendingStudentKeys.size;
+
+  const completedStudentKeys = useMemo(() => {
+    const set = new Set();
+    completedSessionsList.forEach(s => {
+      const key = s.student_id ? String(s.student_id) : (s.student || '').trim().toLowerCase();
+      if (key) set.add(key);
+    });
+    return set;
+  }, [completedSessionsList]);
+  const completedStudentsCount = completedStudentKeys.size;
+
   // Calendar calculations
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
@@ -1106,14 +1137,14 @@ const Sessions = () => {
       <main className="ses-main">
         {/* Header */}
         <header className="ses-header">
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div className="ses-header-info">
+            <div className="ses-title-wrap" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <h1 className="ses-title">Surf Sessions</h1>
               <span className="ses-live-pill">
                 <span className="ses-pulsing-dot"></span> LIVE SCHEDULE
               </span>
             </div>
-            <p style={{ margin: '4px 0 0', color: '#64748B', fontSize: '14px' }}>
+            <p className="ses-subtitle" style={{ margin: '4px 0 0', color: '#64748B', fontSize: '14px' }}>
               Aquatic Indica Ground Operations & Coaching Management Platform
             </p>
           </div>
@@ -1191,7 +1222,7 @@ const Sessions = () => {
             </div>
 
             {/* Date Filter */}
-            <div className="ses-select-wrap" style={{ minWidth: '155px' }}>
+            <div className="ses-select-wrap ses-date-filter-wrap">
               <label className="ses-select-label">Date</label>
               <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                 <input
@@ -1268,25 +1299,13 @@ const Sessions = () => {
 
           {/* Horizontal Slot Tabs Bar (Hidden for Students) */}
           {!isStudent && (
-            <div className="ses-slot-tabs-bar" style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '12px',
-            padding: '12px 16px',
-            background: '#FFFFFF',
-            borderRadius: '12px',
-            border: '1px solid #E2E8F0',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-            margin: '12px 0 16px 0',
-            overflowX: 'auto',
-            scrollbarWidth: 'thin'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap', fontWeight: 700, fontSize: '13px', color: '#0F172A', marginRight: '4px' }}>
-              <span style={{ fontSize: '15px' }}>⏰</span> Select Time Slot:
-            </div>
+            <div className="ses-slot-tabs-bar">
+              <div className="ses-slot-tabs-label">
+                <span style={{ fontSize: '15px' }}>⏰</span> Select Time Slot:
+              </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'nowrap' }}>
-              {/* All Slots Tab */}
+              <div className="ses-slot-tabs-scroll">
+                {/* All Slots Tab */}
               {(() => {
                 const isSelected = slotFilter === 'All';
                 const count = getGroupSessionCount(roleScopedSessions);
@@ -1494,6 +1513,12 @@ const Sessions = () => {
             <div className="ses-smc-value">{loading ? '…' : completedCount}</div>
             <div className="ses-smc-sub">Days Completed: {loading ? '…' : completedDays}</div>
           </div>
+
+          <div className="ses-status-metric-card students-card">
+            <div className="ses-smc-label">NUMBER OF STUDENTS</div>
+            <div className="ses-smc-value">{loading ? '…' : totalStudentsCount}</div>
+            <div className="ses-smc-sub">Active: {loading ? '…' : pendingStudentsCount} &bull; Completed: {loading ? '…' : completedStudentsCount}</div>
+          </div>
         </div>
 
         {/* Full-Width Sessions Table */}
@@ -1503,8 +1528,42 @@ const Sessions = () => {
               <div className="ses-spinner" />
               <span style={{ color: '#64748B', fontSize: '14px', fontWeight: 500 }}>Loading sessions from AWS Cloud...</span>
             </div>
+          ) : filteredSessions.length === 0 ? (
+            <div className="ses-empty-state-card">
+              <div style={{ fontSize: '38px', marginBottom: '10px' }}>🏄‍♂️</div>
+              <div style={{ fontSize: '16px', fontWeight: 700, color: '#0F172A', marginBottom: '6px' }}>
+                No sessions match your filter criteria
+              </div>
+              <p style={{ margin: '0 auto 16px', fontSize: '13.5px', color: '#64748B', maxWidth: '380px', lineHeight: '1.5' }}>
+                {isStudent
+                  ? 'No sessions found for your account.'
+                  : !canManageSessions
+                  ? 'No sessions currently scheduled. Sessions can only be scheduled by school administrators.'
+                  : 'Try clearing filters or schedule a new session for this time slot.'}
+              </p>
+              {hasActiveFilters ? (
+                <button className="ses-btn-secondary" style={{ margin: '0 auto' }} onClick={resetFilters}>
+                  Clear Filters
+                </button>
+              ) : canManageSessions ? (
+                <button
+                  className="ses-btn-primary"
+                  style={{ margin: '0 auto' }}
+                  onClick={() => {
+                    setScheduleModalInitialDate(null);
+                    setShowScheduleModal(true);
+                  }}
+                >
+                  + Schedule First Session
+                </button>
+              ) : null}
+            </div>
           ) : (
-            <table className="ses-table">
+            <>
+              <div className="ses-mobile-scroll-indicator">
+                <span>👉 Swipe horizontally on the table to view students & actions</span>
+              </div>
+              <table className="ses-table">
               <thead>
                 <tr>
                   {canManageSessions && (
@@ -2183,41 +2242,9 @@ const Sessions = () => {
                     </tr>
                   );
                 })}
-                {filteredSessions.length === 0 && !loading && (
-                  <tr>
-                    <td colSpan={canManageSessions ? 7 : 6} style={{ textAlign: 'center', padding: '60px 20px', color: '#94A3B8' }}>
-                      <div style={{ fontSize: '32px', marginBottom: '8px' }}>🏄‍♂️</div>
-                      <div style={{ fontSize: '16px', fontWeight: 600, color: '#0F172A', marginBottom: '4px' }}>
-                        No sessions match your filter criteria
-                      </div>
-                      <p style={{ margin: '0 0 16px', fontSize: '13px' }}>
-                        {isStudent
-                          ? 'No sessions found for your account.'
-                          : !canManageSessions
-                          ? 'No sessions currently scheduled. Sessions can only be scheduled by school administrators.'
-                          : 'Try clearing filters or schedule a new session for this time slot.'}
-                      </p>
-                      {hasActiveFilters ? (
-                        <button className="ses-btn-secondary" style={{ margin: '0 auto' }} onClick={resetFilters}>
-                          Clear Filters
-                        </button>
-                      ) : canManageSessions ? (
-                        <button
-                          className="ses-btn-primary"
-                          style={{ margin: '0 auto' }}
-                          onClick={() => {
-                            setScheduleModalInitialDate(null);
-                            setShowScheduleModal(true);
-                          }}
-                        >
-                          + Schedule First Session
-                        </button>
-                      ) : null}
-                    </td>
-                  </tr>
-                )}
               </tbody>
             </table>
+            </>
           )}
         </div>
 
@@ -4033,7 +4060,7 @@ const Sessions = () => {
         .ses-metrics-row {
           display: grid;
           grid-template-columns: repeat(3, 1fr);
-          gap: 20px;
+          gap: 16px;
         }
         
         .ses-status-metric-card {
@@ -4049,6 +4076,9 @@ const Sessions = () => {
         }
         .ses-status-metric-card.completed-card {
           background: #F0FDF4; border: 1.5px solid #BBF7D0;
+        }
+        .ses-status-metric-card.students-card {
+          background: #FAF5FF; border: 1.5px solid #E9D5FF;
         }
         .ses-status-metric-card:hover {
           transform: translateY(-2px);
@@ -4216,6 +4246,193 @@ const Sessions = () => {
         @keyframes sesFadeIn {
           from { opacity: 0; }
           to { opacity: 1; }
+        }
+
+        /* Mobile Scroll Indicator */
+        .ses-mobile-scroll-indicator {
+          display: none;
+          background: #F0FDFA;
+          border-bottom: 1px solid #CCFBF1;
+          padding: 8px 14px;
+          font-size: 12px;
+          font-weight: 600;
+          color: #0F766E;
+          text-align: center;
+        }
+
+        /* Empty State Card */
+        .ses-empty-state-card {
+          text-align: center;
+          padding: 48px 20px;
+          width: 100%;
+          box-sizing: border-box;
+          background: #FFFFFF;
+        }
+
+        .ses-slot-tabs-bar {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 12px 16px;
+          background: #FFFFFF;
+          border-radius: 12px;
+          border: 1px solid #E2E8F0;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+          margin: 12px 0 16px 0;
+          overflow-x: auto;
+          scrollbar-width: thin;
+        }
+        .ses-slot-tabs-label {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          white-space: nowrap;
+          font-weight: 700;
+          font-size: 13px;
+          color: #0F172A;
+          margin-right: 4px;
+          flex-shrink: 0;
+        }
+        .ses-slot-tabs-scroll {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: nowrap;
+          overflow-x: auto;
+          -webkit-overflow-scrolling: touch;
+          scrollbar-width: thin;
+        }
+
+        /* Responsive Media Queries */
+        @media (max-width: 900px) {
+          .ses-page {
+            flex-direction: column !important;
+            width: 100% !important;
+            overflow-x: hidden !important;
+          }
+          .ses-main {
+            margin-top: 64px !important;
+            padding: 16px 12px 100px 12px !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
+            gap: 16px !important;
+            overflow-x: hidden !important;
+          }
+          .ses-header {
+            flex-direction: column !important;
+            align-items: stretch !important;
+            gap: 14px !important;
+          }
+          .ses-title-wrap {
+            flex-wrap: wrap !important;
+            gap: 8px !important;
+          }
+          .ses-title {
+            font-size: 24px !important;
+          }
+          .ses-subtitle {
+            font-size: 12.5px !important;
+          }
+          .ses-actions {
+            flex-direction: column !important;
+            width: 100% !important;
+            gap: 8px !important;
+          }
+          .ses-btn-secondary,
+          .ses-btn-primary {
+            width: 100% !important;
+            justify-content: center !important;
+            padding: 10px 14px !important;
+            box-sizing: border-box !important;
+          }
+          .ses-filters-container {
+            padding: 14px 12px !important;
+            gap: 12px !important;
+          }
+          .ses-filters-top {
+            flex-direction: column !important;
+            align-items: stretch !important;
+            gap: 10px !important;
+          }
+          .ses-search-box {
+            width: 100% !important;
+            min-width: 0 !important;
+            box-sizing: border-box !important;
+          }
+          .ses-select-wrap {
+            width: 100% !important;
+            min-width: 0 !important;
+          }
+          .ses-select {
+            width: 100% !important;
+            box-sizing: border-box !important;
+          }
+          .ses-slot-tabs-bar {
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            gap: 8px !important;
+            padding: 10px 12px !important;
+            overflow-x: hidden !important;
+          }
+          .ses-slot-tabs-scroll {
+            width: 100% !important;
+            padding-bottom: 4px !important;
+          }
+          .ses-metrics-row {
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)) !important;
+            gap: 10px !important;
+          }
+          .ses-status-metric-card {
+            padding: 12px 14px !important;
+          }
+          .ses-smc-label {
+            font-size: 10px !important;
+          }
+          .ses-smc-value {
+            font-size: 26px !important;
+          }
+          .ses-smc-sub {
+            font-size: 11.5px !important;
+          }
+          .ses-mobile-scroll-indicator {
+            display: block !important;
+          }
+          .ses-bulk-bar {
+            flex-direction: column !important;
+            align-items: stretch !important;
+            gap: 10px !important;
+            padding: 12px 14px !important;
+          }
+          .ses-modal-box {
+            width: 95% !important;
+            max-height: 92vh !important;
+            border-radius: 14px !important;
+          }
+          .ses-modal-overlay {
+            padding: 12px !important;
+          }
+          .ses-modal-header {
+            padding: 14px 16px !important;
+            flex-wrap: wrap !important;
+            gap: 10px !important;
+          }
+          .ses-modal-content-scroll {
+            padding: 16px 14px !important;
+          }
+          .ses-cal-days-grid {
+            gap: 4px !important;
+          }
+          .ses-cal-day-cell {
+            min-height: 60px !important;
+            padding: 4px !important;
+          }
+          .ses-cal-day-num {
+            font-size: 11.5px !important;
+          }
+          .ses-cal-drawer-cards {
+            grid-template-columns: 1fr !important;
+          }
         }
       `}</style>
     </div>

@@ -144,9 +144,11 @@ const Sidebar = () => {
       <header className="db-top-header">
         <div className="db-header-left">
           <div className="db-logo" onClick={() => navigate('/dashboard')}>
-            <span className="db-logo-name">
-              Wave<span style={{ fontWeight: 400 }}>Coach</span>
-            </span>
+            <img
+              src="/athnexlive-logo.png"
+              alt="athnexlive"
+              style={{ height: '50px', width: 'auto', objectFit: 'contain', filter: 'brightness(0) invert(1)' }}
+            />
           </div>
         </div>
 
@@ -201,6 +203,14 @@ const Sidebar = () => {
       {/* Mobile Menu Dropdown Navigation */}
       {mobileMenuOpen && (
         <div className="db-mobile-menu">
+          <div style={{ padding: '10px 14px', borderBottom: '1px solid #F1F5F9', marginBottom: '6px' }}>
+            <div style={{ fontSize: '13.5px', fontWeight: 800, color: '#0F172A' }}>
+              {typeof school?.name === 'string' ? school.name : (school?.name?.name || 'Aquatic Indica Surf School')}
+            </div>
+            <div style={{ fontSize: '11.5px', color: '#64748B', fontWeight: 600, textTransform: 'capitalize', marginTop: '2px' }}>
+              {user?.name || 'User'} • {user ? (user.role === 'admin' ? 'School Admin' : (user.role === 'athlete' ? 'Student' : (user.role === 'coach' ? 'Coach' : user.role))) : 'Student'}
+            </div>
+          </div>
           {navItems.map((item) => {
             const isActive = location.pathname === item.path || (item.path !== '/dashboard' && location.pathname.startsWith(item.path));
             return (

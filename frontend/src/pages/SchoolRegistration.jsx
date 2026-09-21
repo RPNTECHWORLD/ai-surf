@@ -64,8 +64,11 @@ const SchoolRegistration = () => {
       {/* Left panel */}
       <div className="reg-left">
         <div className="reg-brand" onClick={() => navigate('/')} style={{ cursor: 'pointer' }}>
-          <span className="reg-brand-dot" />
-          <span className="reg-brand-name">AiSurf</span>
+          <img
+            src="/athnexlive-logo.png"
+            alt="athnexlive"
+            style={{ height: '36px', width: 'auto', objectFit: 'contain' }}
+          />
         </div>
         <div className="reg-left-content">
           <h2 className="reg-left-title">

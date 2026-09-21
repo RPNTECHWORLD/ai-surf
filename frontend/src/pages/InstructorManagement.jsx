@@ -109,6 +109,19 @@ const InstructorManagement = () => {
     school: getActiveSchoolName()
   });
 
+  const currentUser = (() => {
+    try {
+      const saved = sessionStorage.getItem('user') || localStorage.getItem('user');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) {
+      return null;
+    }
+  })();
+  const userRole = (currentUser?.role || '').toLowerCase().trim();
+  const isCoach = userRole === 'coach' || userRole === 'instructor';
+  const isAdminOrSchoolAdmin = currentUser?.role === 'superadmin' || userRole === 'admin' || userRole === 'school' || userRole === 'school_admin' || userRole === 'schooladmin';
+  const canDeleteInstructor = isAdminOrSchoolAdmin && !isCoach;
+
   const handleCopyGeneralCoachInvite = () => {
     const baseUrl = window.location.origin;
     const schoolName = schoolsList[0] || 'Aquatic Indica Surf School';
@@ -553,22 +566,24 @@ const InstructorManagement = () => {
                               </>
                             )}
                           </button>
-                          <button
-                            type="button"
-                            className="im-card-delete"
-                            title="Delete Instructor"
-                            disabled={deletingId === instructor.id}
-                            onClick={(e) => handleDelete(e, instructor)}
-                          >
-                            {deletingId === instructor.id ? (
-                              <span style={{ fontSize: '10px', fontWeight: 700 }}>...</span>
-                            ) : (
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                <polyline points="3 6 5 6 21 6" />
-                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                              </svg>
-                            )}
-                          </button>
+                          {canDeleteInstructor && (
+                            <button
+                              type="button"
+                              className="im-card-delete"
+                              title="Delete Instructor"
+                              disabled={deletingId === instructor.id}
+                              onClick={(e) => handleDelete(e, instructor)}
+                            >
+                              {deletingId === instructor.id ? (
+                                <span style={{ fontSize: '10px', fontWeight: 700 }}>...</span>
+                              ) : (
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <polyline points="3 6 5 6 21 6" />
+                                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                                </svg>
+                              )}
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -1098,7 +1113,7 @@ const InstructorManagement = () => {
                       style={{ padding: '10px 14px', borderRadius: '10px', border: '1.5px solid #CBD5E1', fontSize: '13.5px' }}
                     />
                     <small style={{ color: '#64748B', fontSize: '11.5px' }}>
-                      Coach will use this email address to log in to WaveCoach.
+                      Coach will use this email address to log in to athnexlive.
                     </small>
                   </div>
 
@@ -1776,6 +1791,54 @@ const InstructorManagement = () => {
             width: 100%;
             position: static;
             max-height: none;
+          }
+        }
+
+        @media (max-width: 768px) {
+          .im-main {
+            margin-top: 64px !important;
+            padding: 14px 12px 90px 12px !important;
+            gap: 12px !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
+          }
+          .im-header {
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            gap: 10px !important;
+          }
+          .im-title {
+            font-size: 20px !important;
+          }
+          .im-subtitle {
+            font-size: 12px !important;
+            margin-top: 2px !important;
+          }
+          .im-btn-add-primary {
+            width: 100% !important;
+            height: 38px !important;
+            padding: 6px 14px !important;
+            font-size: 12.5px !important;
+            justify-content: center !important;
+            border-radius: 8px !important;
+          }
+          .im-search-bar {
+            height: 38px !important;
+            padding: 0 12px !important;
+            border-radius: 8px !important;
+          }
+          .im-grid {
+            grid-template-columns: 1fr !important;
+            gap: 12px !important;
+          }
+          .im-right-column {
+            padding: 16px 14px !important;
+            border-radius: 12px !important;
+          }
+          .form-row {
+            flex-direction: column !important;
+            gap: 10px !important;
           }
         }
       `}</style>

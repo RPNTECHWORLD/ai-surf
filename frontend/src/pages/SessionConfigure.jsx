@@ -134,14 +134,12 @@ const SessionConfigure = () => {
       <main className="sc-main-content">
         {/* Header Bar */}
         <div className="sc-header-bar">
-          <div>
-            <h1 className="sc-title">
-              Session Configuration
-            </h1>
-            <p className="sc-subtitle">
-              Set up your school's available session time slots and manage scheduling preferences.
-            </p>
-          </div>
+          <h1 className="sc-title">
+            Session Configuration
+          </h1>
+          <p className="sc-subtitle">
+            Set up your school's available session time slots and manage scheduling preferences.
+          </p>
         </div>
 
         <div className="sc-vertical-layout">
@@ -164,59 +162,90 @@ const SessionConfigure = () => {
               </button>
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "130px 130px 120px 1fr 100px 48px", gap: "16px", paddingBottom: "12px", borderBottom: "1.5px solid #E2E8F0", marginBottom: "8px" }}>
-              {["TIME", "DURATION", "MAX STUDENTS", "AVAILABLE DAYS", "STATUS", "DELETE"].map(h => (
-                <span key={h} style={{ fontSize: "11px", fontWeight: 700, color: "#0D9488", textTransform: "uppercase", letterSpacing: "0.5px" }}>{h}</span>
-              ))}
-            </div>
+            <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", width: "100%", paddingBottom: "8px" }}>
+              <div style={{ minWidth: "640px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "140px 130px 120px 1fr 100px 48px", gap: "16px", paddingBottom: "12px", borderBottom: "1.5px solid #E2E8F0", marginBottom: "8px" }}>
+                  {["TIME", "DURATION", "MAX STUDENTS", "AVAILABLE DAYS", "STATUS", "DELETE"].map(h => (
+                    <span key={h} style={{ fontSize: "11px", fontWeight: 700, color: "#0D9488", textTransform: "uppercase", letterSpacing: "0.5px" }}>{h}</span>
+                  ))}
+                </div>
 
-            {slots.map(slot => (
-              <div key={slot.id} style={{ display: "grid", gridTemplateColumns: "130px 130px 120px 1fr 100px 48px", gap: "16px", alignItems: "center", padding: "16px 0", borderBottom: "1px solid #F1F5F9" }}>
-                <input type="text" value={slot.time} onChange={e => updateSlot(slot.id, "time", e.target.value)} style={{ ...inp, fontWeight: 700 }} />
-                <div style={{ position: "relative", display: "flex", alignItems: "center", width: "100%" }}>
-                  <input
-                    type="number"
-                    min="1"
-                    max="600"
-                    step="5"
-                    list="sc-duration-presets"
-                    value={slot.duration}
-                    onChange={e => updateSlot(slot.id, "duration", e.target.value)}
-                    style={{ ...inp, paddingRight: "34px", fontWeight: 700 }}
-                    placeholder="90"
-                  />
-                  <span style={{ position: "absolute", right: "10px", fontSize: "11px", fontWeight: 700, color: "#64748B", pointerEvents: "none" }}>
-                    min
-                  </span>
-                  <datalist id="sc-duration-presets">
-                    <option value="30">30 min</option>
-                    <option value="45">45 min</option>
-                    <option value="60">60 min</option>
-                    <option value="75">75 min</option>
-                    <option value="90">90 min</option>
-                    <option value="105">105 min</option>
-                    <option value="120">120 min</option>
-                    <option value="150">150 min</option>
-                    <option value="180">180 min</option>
-                  </datalist>
-                </div>
-                <input type="number" min="1" max="20" value={slot.maxStudents} onChange={e => updateSlot(slot.id, "maxStudents", e.target.value)} style={{ ...inp, width: "70px", textAlign: "center" }} />
-                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                  {DAYS.map(day => {
-                    const active = slot.days.includes(day);
-                    return (
-                      <button key={day} onClick={() => toggleDay(slot.id, day)} style={{ width: "40px", height: "30px", borderRadius: "6px", border: "none", background: active ? "#0D9488" : "#F1F5F9", color: active ? "#FFFFFF" : "#94A3B8", fontSize: "12px", fontWeight: 700, cursor: "pointer", transition: "all 0.15s" }}>{day}</button>
-                    );
-                  })}
-                </div>
-                <button onClick={() => updateSlot(slot.id, "active", !slot.active)} style={{ padding: "6px 14px", borderRadius: "20px", border: "none", background: slot.active ? "rgba(13, 148, 136, 0.12)" : "rgba(148, 163, 184, 0.15)", color: slot.active ? "#0D9488" : "#94A3B8", fontSize: "12px", fontWeight: 700, cursor: "pointer" }}>
-                  {slot.active ? "Active" : "Inactive"}
-                </button>
-                <button onClick={() => deleteSlot(slot.id)} style={{ width: "36px", height: "36px", borderRadius: "8px", border: "1px solid #FECACA", background: "#FEF2F2", color: "#EF4444", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
-                </button>
+                {slots.map(slot => (
+                  <div key={slot.id} style={{ display: "grid", gridTemplateColumns: "140px 130px 120px 1fr 100px 48px", gap: "16px", alignItems: "center", padding: "16px 0", borderBottom: "1px solid #F1F5F9" }}>
+                    <div style={{ position: "relative", display: "flex", alignItems: "center", width: "100%" }}>
+                      <input
+                        type="time"
+                        value={time12To24(slot.time)}
+                        onChange={e => {
+                          if (e.target.value) {
+                            updateSlot(slot.id, "time", time24To12(e.target.value));
+                          }
+                        }}
+                        onClick={e => {
+                          try {
+                            if (typeof e.target.showPicker === 'function') {
+                              e.target.showPicker();
+                            }
+                          } catch (err) {}
+                        }}
+                        style={{
+                          ...inp,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          padding: "8px 10px",
+                          fontSize: "14px",
+                          color: "#0F172A",
+                          backgroundColor: "#FFFFFF"
+                        }}
+                        title="Click to open clock picker"
+                      />
+                    </div>
+                    <div style={{ position: "relative", display: "flex", alignItems: "center", width: "100%" }}>
+                      <input
+                        type="number"
+                        min="1"
+                        max="600"
+                        step="5"
+                        list="sc-duration-presets"
+                        value={slot.duration}
+                        onChange={e => updateSlot(slot.id, "duration", e.target.value)}
+                        style={{ ...inp, paddingRight: "34px", fontWeight: 700 }}
+                        placeholder="90"
+                      />
+                      <span style={{ position: "absolute", right: "10px", fontSize: "11px", fontWeight: 700, color: "#64748B", pointerEvents: "none" }}>
+                        min
+                      </span>
+                      <datalist id="sc-duration-presets">
+                        <option value="30">30 min</option>
+                        <option value="45">45 min</option>
+                        <option value="60">60 min</option>
+                        <option value="75">75 min</option>
+                        <option value="90">90 min</option>
+                        <option value="105">105 min</option>
+                        <option value="120">120 min</option>
+                        <option value="150">150 min</option>
+                        <option value="180">180 min</option>
+                      </datalist>
+                    </div>
+                    <input type="number" min="1" max="20" value={slot.maxStudents} onChange={e => updateSlot(slot.id, "maxStudents", e.target.value)} style={{ ...inp, width: "70px", textAlign: "center" }} />
+                    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                      {DAYS.map(day => {
+                        const active = slot.days.includes(day);
+                        return (
+                          <button key={day} onClick={() => toggleDay(slot.id, day)} style={{ width: "40px", height: "30px", borderRadius: "6px", border: "none", background: active ? "#0D9488" : "#F1F5F9", color: active ? "#FFFFFF" : "#94A3B8", fontSize: "12px", fontWeight: 700, cursor: "pointer", transition: "all 0.15s" }}>{day}</button>
+                        );
+                      })}
+                    </div>
+                    <button onClick={() => updateSlot(slot.id, "active", !slot.active)} style={{ padding: "6px 14px", borderRadius: "20px", border: "none", background: slot.active ? "rgba(13, 148, 136, 0.12)" : "rgba(148, 163, 184, 0.15)", color: slot.active ? "#0D9488" : "#94A3B8", fontSize: "12px", fontWeight: 700, cursor: "pointer" }}>
+                      {slot.active ? "Active" : "Inactive"}
+                    </button>
+                    <button onClick={() => deleteSlot(slot.id)} style={{ width: "36px", height: "36px", borderRadius: "8px", border: "1px solid #FECACA", background: "#FEF2F2", color: "#EF4444", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
+                    </button>
+                  </div>
+                ))}
               </div>
-            ))}
+            </div>
           </div>
 
           {/* Sticky Floating Bottom Action Bar matching Photo 1 */}
@@ -276,14 +305,29 @@ const SessionConfigure = () => {
           box-sizing: border-box;
           width: 100%;
         }
-        .sc-header-row {
+        .sc-header-bar, .sc-header-row {
           display: flex;
-          justify-content: space-between;
-          align-items: center;
+          flex-direction: column;
+          align-items: flex-start;
+          text-align: left !important;
           width: 100%;
         }
-        .sc-title { font-family: 'Outfit', sans-serif; font-size: 32px; font-weight: 800; color: #0F172A; margin: 0; }
-        .sc-subtitle { font-size: 14.5px; color: #64748B; margin: 4px 0 0 0; }
+        .sc-title {
+          font-family: 'Outfit', sans-serif;
+          font-size: 32px;
+          font-weight: 800;
+          color: #0F172A;
+          margin: 0;
+          text-align: left !important;
+          line-height: 1.2;
+        }
+        .sc-subtitle {
+          font-size: 14.5px;
+          color: #64748B;
+          margin: 6px 0 0 0;
+          text-align: left !important;
+          line-height: 1.4;
+        }
         .sc-btn-back { display: flex; align-items: center; gap: 6px; background: #FFFFFF; color: #0F172A; border: 1.5px solid #CBD5E1; border-radius: 10px; padding: 10px 18px; font-size: 13px; font-weight: 700; cursor: pointer; font-family: 'Outfit', sans-serif; box-shadow: 0 1px 3px rgba(0,0,0,0.04); transition: all 0.2s; }
         .sc-btn-back:hover { background: #F1F5F9; }
         .sc-btn-save { display: flex; align-items: center; gap: 8px; background: #F43F5E; color: #FFFFFF; border: none; border-radius: 10px; padding: 11px 24px; font-size: 13px; font-weight: 700; cursor: pointer; font-family: 'Outfit', sans-serif; transition: all 0.2s; }
@@ -391,7 +435,10 @@ const SessionConfigure = () => {
         }
         @media (max-width: 900px) {
           .sc-bottom-grid { grid-template-columns: 1fr; }
-          .sc-main-content { padding: 90px 20px 60px 20px; }
+          .sc-main-content { padding: 76px 16px 60px 16px !important; gap: 20px !important; }
+          .sc-title { font-size: 22px !important; text-align: left !important; }
+          .sc-subtitle { font-size: 13px !important; text-align: left !important; }
+          .sc-card-slots { padding: 18px 16px !important; border-radius: 14px !important; }
           .sc-sticky-bar {
             flex-direction: column;
             align-items: stretch;

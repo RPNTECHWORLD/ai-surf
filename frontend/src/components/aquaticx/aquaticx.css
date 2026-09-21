@@ -914,15 +914,61 @@ select option {
 }
 
 @media (max-width: 768px) {
-  .hm-filter-row {
-    flex-wrap: nowrap !important;
-    gap: 10px !important;
+  .hm-main-container {
+    gap: 16px !important;
   }
-
+  .hm-header-top {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 12px !important;
+  }
+  .hm-header-top h2 {
+    font-size: 22px !important;
+  }
+  .hm-header-top p {
+    font-size: 13px !important;
+    margin-top: 2px !important;
+  }
+  .hm-header-actions {
+    width: 100% !important;
+    display: flex !important;
+    justify-content: space-between !important;
+    gap: 8px !important;
+  }
+  .hm-filter-row {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 10px !important;
+    width: 100% !important;
+    margin-bottom: 16px !important;
+    box-sizing: border-box !important;
+  }
   .hm-filter-item {
-    flex: 1;
-    width: auto;
-    min-width: 0;
+    width: 100% !important;
+    min-width: 0 !important;
+    flex: unset !important;
+  }
+  .hm-filter-item:first-child {
+    grid-column: 1 / -1 !important;
+  }
+  .hm-filter-item label,
+  .hm-filter-item .form-label {
+    font-size: 11px !important;
+    font-weight: 700 !important;
+  }
+  .hm-filter-item select,
+  .hm-filter-item .form-control {
+    width: 100% !important;
+    font-size: 13px !important;
+    padding: 8px 10px !important;
+    border-radius: 8px !important;
+    box-sizing: border-box !important;
+  }
+  .hm-table-container,
+  .hm-table-wrap {
+    width: 100% !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
   }
 }
 

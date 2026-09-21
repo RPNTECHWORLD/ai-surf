@@ -745,10 +745,10 @@ const Competitions = () => {
         )}
 
         {/* Top Header & Tab Switcher */}
-        <header className="cmp-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <h1 className="cmp-title" style={{ color: '#0F172A', fontSize: '32px', fontWeight: 800, margin: 0, textAlign: 'left' }}>Competitions Hub</h1>
-            <p style={{ color: '#475569', fontSize: '14px', margin: '4px 0 0 0' }}>Track live WSL heats or run mock heat scoring simulations for athletes.</p>
+        <header className="cmp-header">
+          <div className="cmp-header-text">
+            <h1 className="cmp-title">Competitions Hub</h1>
+            <p className="cmp-subtitle">Track live WSL heats or run mock heat scoring simulations for athletes.</p>
           </div>
           <div className="cmp-tab-switcher">
             <button className={`cmp-tab-btn ${activeTab === 'live' ? 'active' : ''}`} onClick={() => setActiveTab('live')}>
@@ -886,8 +886,8 @@ const Competitions = () => {
         {activeTab === 'aquaticx' && (
           <div className="admin-layout" style={{ width: '100%', maxWidth: '100%', margin: '0', background: 'transparent', padding: '0', boxSizing: 'border-box' }}>
             {/* AquaticX Software Floating Sub-Navigation Bar */}
-            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '24px' }}>
-              <div style={{ display: 'flex', gap: '4px', background: '#FFFFFF', padding: '6px', borderRadius: '40px', boxShadow: '0 4px 20px rgba(0,0,0,0.06)', border: '1px solid #E2E8F0' }}>
+            <div className="cmp-subtabs-wrapper">
+              <div className="cmp-subtabs-pill">
                 {[
                   { id: 'events', label: '📅 Events' },
                   ...((currentUser?.role !== 'athlete' && currentUser?.role !== 'student') ? [{ id: 'competitors', label: '👥 Competitors' }] : []),
@@ -900,17 +900,7 @@ const Competitions = () => {
                     key={tab.id}
                     type="button"
                     onClick={() => setAquaticSubTab(tab.id)}
-                    style={{
-                      background: aquaticSubTab === tab.id ? '#F1F5F9' : 'transparent',
-                      color: aquaticSubTab === tab.id ? '#0F172A' : '#64748B',
-                      fontWeight: aquaticSubTab === tab.id ? 800 : 600,
-                      fontSize: '13px',
-                      padding: '8px 20px',
-                      borderRadius: '30px',
-                      border: 'none',
-                      cursor: 'pointer',
-                      transition: 'all 0.15s ease'
-                    }}
+                    className={`cmp-subtab-btn ${aquaticSubTab === tab.id ? 'active' : ''}`}
                   >
                     {tab.label}
                   </button>
@@ -1256,16 +1246,29 @@ const Competitions = () => {
         .cmp-main { flex: 1; padding: 28px 40px 80px 40px; display: flex; flex-direction: column; gap: 32px; overflow-y: auto; width: 100%; box-sizing: border-box; }
 
         /* Header */
+        .cmp-header { display: flex; justify-content: space-between; align-items: center; gap: 20px; width: 100%; }
+        .cmp-header-text { display: flex; flex-direction: column; }
         .cmp-title { font-family: 'Outfit', sans-serif; font-size: 32px; font-weight: 700; color: #050B1A; margin: 0; line-height: 1.2; }
+        .cmp-subtitle { color: #475569; font-size: 14px; margin: 4px 0 0 0; }
 
         /* Tab Switcher */
-        .cmp-tab-switcher { display: flex; gap: 12px; background: #FFF; border: 1.5px solid #E2E8F0; padding: 6px; border-radius: 30px; }
+        .cmp-tab-switcher { display: flex; gap: 12px; background: #FFF; border: 1.5px solid #E2E8F0; padding: 6px; border-radius: 30px; flex-shrink: 0; }
         .cmp-tab-btn {
           border: none; background: transparent; padding: 8px 24px; border-radius: 20px; font-family: 'Outfit', sans-serif;
           font-size: 13px; font-weight: 700; color: #64748B; cursor: pointer; transition: all 0.2s ease;
         }
         .cmp-tab-btn.active {
           background: #0D9488; color: #FFFFFF; box-shadow: 0 4px 12px rgba(13, 148, 136, 0.2);
+        }
+
+        /* Subtabs */
+        .cmp-subtabs-wrapper { display: flex; justify-content: center; margin-bottom: 24px; width: 100%; }
+        .cmp-subtabs-pill { display: flex; gap: 4px; background: #FFFFFF; padding: 6px; border-radius: 40px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); border: 1px solid #E2E8F0; }
+        .cmp-subtab-btn {
+          background: transparent; color: #64748B; font-weight: 600; font-size: 13px; padding: 8px 20px; border-radius: 30px; border: none; cursor: pointer; transition: all 0.15s ease;
+        }
+        .cmp-subtab-btn.active {
+          background: #F1F5F9; color: #0F172A; font-weight: 800;
         }
 
         /* Layout */
@@ -1530,6 +1533,133 @@ const Competitions = () => {
         .coaching-advice-card p { font-size: 13px; color: #334155; margin: 0; line-height: 1.6; font-weight: 500; }
 
         .report-actions { display: flex; justify-content: center; }
+
+        @media (max-width: 768px) {
+          .cmp-page { padding-top: 60px !important; width: 100% !important; max-width: 100% !important; overflow-x: hidden !important; }
+          .cmp-main { padding: 14px 12px 80px 12px !important; gap: 16px !important; width: 100% !important; max-width: 100% !important; overflow-x: hidden !important; }
+          
+          .cmp-header {
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            gap: 12px !important;
+            width: 100% !important;
+          }
+          .cmp-header-text {
+            width: 100% !important;
+          }
+          .cmp-title {
+            font-size: 22px !important;
+            font-weight: 800 !important;
+          }
+          .cmp-subtitle {
+            font-size: 12px !important;
+            margin-top: 2px !important;
+          }
+          .cmp-tab-switcher {
+            width: 100% !important;
+            max-width: 100% !important;
+            overflow-x: auto !important;
+            -webkit-overflow-scrolling: touch;
+            display: flex !important;
+            padding: 3px !important;
+            border-radius: 12px !important;
+            gap: 4px !important;
+            box-sizing: border-box !important;
+            scrollbar-width: none;
+          }
+          .cmp-tab-switcher::-webkit-scrollbar {
+            display: none;
+          }
+          .cmp-tab-btn {
+            font-size: 11px !important;
+            padding: 6px 10px !important;
+            white-space: nowrap !important;
+            flex: 1 !important;
+            text-align: center !important;
+            border-radius: 8px !important;
+          }
+          
+          .cmp-subtabs-wrapper {
+            justify-content: flex-start !important;
+            overflow-x: auto !important;
+            -webkit-overflow-scrolling: touch;
+            margin-bottom: 14px !important;
+            width: 100% !important;
+            padding-bottom: 4px !important;
+            scrollbar-width: none;
+          }
+          .cmp-subtabs-wrapper::-webkit-scrollbar {
+            display: none;
+          }
+          .cmp-subtabs-pill {
+            border-radius: 12px !important;
+            padding: 4px !important;
+            width: max-content !important;
+            gap: 4px !important;
+          }
+          .cmp-subtab-btn {
+            font-size: 11px !important;
+            padding: 6px 12px !important;
+            border-radius: 8px !important;
+            white-space: nowrap !important;
+          }
+          
+          .cmp-layout {
+            flex-direction: column !important;
+            gap: 16px !important;
+            width: 100% !important;
+          }
+          .cmp-col-left, .cmp-col-right {
+            width: 100% !important;
+            max-width: 100% !important;
+            min-width: 0 !important;
+          }
+          .cmp-live-card {
+            padding: 20px !important;
+            border-radius: 16px !important;
+            gap: 16px !important;
+          }
+          .cmp-live-header-row {
+            flex-direction: column !important;
+            gap: 12px !important;
+          }
+          .cmp-live-main-title {
+            font-size: 22px !important;
+          }
+          .cmp-live-countdown {
+            align-items: flex-start !important;
+          }
+          .cmp-countdown-time {
+            font-size: 28px !important;
+          }
+          .mock-setup-card {
+            padding: 20px !important;
+            border-radius: 16px !important;
+          }
+          .live-arena-grid {
+            grid-template-columns: 1fr !important;
+            gap: 16px !important;
+          }
+          .full-width {
+            grid-column: span 1 !important;
+          }
+          .mock-ai-report {
+            padding: 20px !important;
+            border-radius: 16px !important;
+          }
+          .report-findings-grid {
+            grid-template-columns: 1fr !important;
+            gap: 14px !important;
+          }
+          .report-summary-vitals {
+            flex-direction: column !important;
+            gap: 10px !important;
+          }
+          .form-row {
+            flex-direction: column !important;
+            gap: 12px !important;
+          }
+        }
       `}</style>
     </div>
   );

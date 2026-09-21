@@ -9,8 +9,11 @@ const Hero = () => {
       {/* Header Navigation */}
       <header className="hero-header">
         <div className="hero-brand" onClick={() => navigate('/')}>
-          <span className="hero-brand-dot" />
-          <span className="hero-brand-text">AiSurf</span>
+          <img
+            src="/athnexlive-logo.png"
+            alt="athnexlive"
+            style={{ height: '72px', width: 'auto', objectFit: 'contain' }}
+          />
         </div>
         <button className="btn-secondary hero-signin-btn" onClick={() => navigate('/auth')}>
           Sign In

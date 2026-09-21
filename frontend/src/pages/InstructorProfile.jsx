@@ -160,27 +160,69 @@ const InstructorProfile = () => {
     const coachId = id || currentCoach?.id;
     const coachName = currentCoach?.name || '';
 
-    // Fetch assigned students
-    fetch(`${API}/api/students`)
-      .then(r => r.json())
-      .then(data => {
-        if (Array.isArray(data)) {
-          const filtered = data.filter(s => matchesCoach(s, coachId, coachName));
-          setAssignedStudents(filtered);
-        }
-      })
-      .catch(err => console.error("Error fetching students:", err));
+    // If coachObj has assigned_students directly from backend API
+    if (Array.isArray(coachObj?.assigned_students) && coachObj.assigned_students.length > 0) {
+      setAssignedStudents(coachObj.assigned_students);
+    }
 
-    // Fetch sessions
-    fetch(`${API}/api/sessions`)
-      .then(r => r.json())
-      .then(data => {
-        if (Array.isArray(data)) {
-          const filtered = data.filter(s => matchesCoach(s, coachId, coachName));
-          setInstructorSessions(filtered);
+    Promise.all([
+      fetch(`${API}/api/students`).then(r => r.json()).catch(() => []),
+      fetch(`${API}/api/sessions`).then(r => r.json()).catch(() => [])
+    ]).then(([studentsData, sessionsData]) => {
+      const allStudents = Array.isArray(studentsData) ? studentsData : [];
+      const allSessions = Array.isArray(sessionsData) ? sessionsData : [];
+
+      // 1. Sessions for this coach
+      const coachSessions = allSessions.filter(s => matchesCoach(s, coachId, coachName));
+      setInstructorSessions(coachSessions);
+
+      // 2. Identify students associated with this coach
+      // A student belongs to this coach if:
+      // a) Directly assigned: s.instructor_id matches coachId or s.instructor matches coachName
+      // b) Assigned via any session: session belongs to this coach and links to student_id or student name
+      const sessionStudentIds = new Set(coachSessions.map(sess => String(sess.student_id)).filter(Boolean));
+      const sessionStudentNames = new Set(coachSessions.map(sess => (sess.student || '').toLowerCase().trim()).filter(Boolean));
+
+      const matchedStudents = [];
+      const seenStudentIds = new Set();
+      const seenStudentNames = new Set();
+
+      // Check allStudents
+      allStudents.forEach(s => {
+        const sIdStr = s.id ? String(s.id) : '';
+        const sNameLower = (s.name || '').toLowerCase().trim();
+
+        const isDirect = matchesCoach(s, coachId, coachName);
+        const isInSession = (sIdStr && sessionStudentIds.has(sIdStr)) || (sNameLower && sessionStudentNames.has(sNameLower));
+
+        if (isDirect || isInSession) {
+          matchedStudents.push(s);
+          if (sIdStr) seenStudentIds.add(sIdStr);
+          if (sNameLower) seenStudentNames.add(sNameLower);
         }
-      })
-      .catch(err => console.error("Error fetching sessions:", err));
+      });
+
+      // Also ensure any student appearing in coachSessions is included even if not in allStudents
+      coachSessions.forEach(sess => {
+        const sessName = sess.student || '';
+        const sessIdStr = sess.student_id ? String(sess.student_id) : '';
+        const sessNameLower = sessName.toLowerCase().trim();
+
+        if (sessName && !seenStudentNames.has(sessNameLower) && (!sessIdStr || !seenStudentIds.has(sessIdStr))) {
+          matchedStudents.push({
+            id: sess.student_id || `sess_${sess.id}`,
+            name: sessName,
+            level: sess.type || 'Beginner',
+            last_active: sess.date || 'Today',
+            image: sess.image_url || ''
+          });
+          if (sessIdStr) seenStudentIds.add(sessIdStr);
+          seenStudentNames.add(sessNameLower);
+        }
+      });
+
+      setAssignedStudents(matchedStudents);
+    }).catch(err => console.error("Error fetching coach dynamic data:", err));
   };
 
   const getFallbackInstructor = (coachId, userObj) => {
@@ -465,7 +507,35 @@ const InstructorProfile = () => {
       <main className="ip-main">
         {/* Hero */}
         <section className="ip-hero">
-          <img src={instructor.image} alt={instructor.name} className="ip-hero-avatar" />
+          {instructor.image && typeof instructor.image === 'string' && instructor.image.trim() !== '' ? (
+            <img 
+              src={instructor.image} 
+              alt={instructor.name} 
+              className="ip-hero-avatar"
+              onError={e => {
+                e.currentTarget.style.display = 'none';
+                const fb = e.currentTarget.parentElement.querySelector('.ip-avatar-fallback');
+                if (fb) fb.style.display = 'flex';
+              }}
+            />
+          ) : null}
+          <div 
+            className="ip-avatar-fallback ip-hero-avatar" 
+            style={{ 
+              display: (instructor.image && typeof instructor.image === 'string' && instructor.image.trim() !== '') ? 'none' : 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              background: 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)', 
+              color: '#FFFFFF', 
+              fontFamily: 'Outfit, sans-serif', 
+              fontSize: '36px', 
+              fontWeight: 800,
+              flexShrink: 0,
+              boxShadow: '0 4px 16px rgba(13, 148, 136, 0.3)'
+            }}
+          >
+            {(instructor.name || 'C')[0].toUpperCase()}
+          </div>
           <div className="ip-hero-info">
             <h1 className="ip-hero-name">{instructor.name}</h1>
             <p className="ip-hero-sub">Age {instructor.age || '—'} • {instructor.location || 'Not Specified'}</p>
@@ -475,7 +545,7 @@ const InstructorProfile = () => {
             </div>
           </div>
           {canEditProfile && (
-            <div style={{ marginLeft: 'auto', display: 'flex', gap: '12px', alignItems: 'center' }}>
+            <div className="ip-hero-actions" style={{ marginLeft: 'auto', display: 'flex', gap: '12px', alignItems: 'center' }}>
               {(!instructor.has_password && !instructor.user_id && !instructor.password_plain) && (
                 <button
                   type="button"
@@ -616,7 +686,7 @@ const InstructorProfile = () => {
                       onClick={() => navigate(`/students/${s.id}`)}
                     >
                       <div className="ip-student-info">
-                        {s.image && !s.image.includes('unsplash.com') && !s.image.includes('1500648767791') ? (
+                        {s.image && typeof s.image === 'string' && s.image.trim() !== '' && !s.image.includes('unsplash.com') && !s.image.includes('1500648767791') ? (
                           <img 
                             src={s.image} 
                             alt={s.name} 
@@ -631,7 +701,7 @@ const InstructorProfile = () => {
                         <div
                           className="ip-student-fallback"
                           style={{
-                            display: (s.image && !s.image.includes('unsplash.com') && !s.image.includes('1500648767791')) ? 'none' : 'flex',
+                            display: (s.image && typeof s.image === 'string' && s.image.trim() !== '' && !s.image.includes('unsplash.com') && !s.image.includes('1500648767791')) ? 'none' : 'flex',
                             width: '36px',
                             height: '36px',
                             borderRadius: '50%',
@@ -727,7 +797,7 @@ const InstructorProfile = () => {
                       onChange={handlePhotoUpload}
                     />
                     {(() => {
-                      const displayImg = photoPreview || (editForm.image && !editForm.image.startsWith('blob:') ? editForm.image : '');
+                      const displayImg = photoPreview || (editForm.image && typeof editForm.image === 'string' && editForm.image.trim() !== '' && !editForm.image.startsWith('blob:') ? editForm.image : null);
                       return (
                         <div
                           onClick={() => fileInputRef.current?.click()}
@@ -999,15 +1069,15 @@ const InstructorProfile = () => {
       </main>
 
       <style>{`
-        .ip-page { display: flex; min-height: 100vh; background: #F8FAFC; font-family: 'Instrument Sans', sans-serif; }
-        .ip-main { flex: 1; padding: 40px 80px; overflow-y: auto; display: flex; flex-direction: column; gap: 32px; position: relative; }
+        .ip-page { display: flex; min-height: 100vh; background: #F8FAFC; font-family: 'Instrument Sans', sans-serif; width: 100%; max-width: 100%; overflow-x: hidden; box-sizing: border-box; }
+        .ip-main { flex: 1; padding: 40px 80px; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 32px; position: relative; width: 100%; max-width: 100%; box-sizing: border-box; }
         
         /* Hero */
         .ip-hero {
           display: flex; align-items: center; gap: 24px; padding: 32px;
-          background: #050B1A; border-radius: 24px;
+          background: #050B1A; border-radius: 24px; width: 100%; max-width: 100%; box-sizing: border-box;
         }
-        .ip-hero-avatar { width: 120px; height: 120px; border-radius: 60px; object-fit: cover; }
+        .ip-hero-avatar { width: 120px; height: 120px; border-radius: 60px; object-fit: cover; flex-shrink: 0; }
         .ip-hero-info { display: flex; flex-direction: column; gap: 12px; }
         .ip-hero-name { font-family: 'Outfit', sans-serif; font-size: 36px; font-weight: 800; color: #FFF; margin: 0; line-height: 1; }
         .ip-hero-sub { font-size: 18px; color: rgba(255,255,255,0.6); margin: 0; }
@@ -1022,28 +1092,28 @@ const InstructorProfile = () => {
         }
 
         /* Grid */
-        .ip-grid { display: flex; gap: 32px; }
-        .ip-col-left { display: flex; flex-direction: column; gap: 32px; width: 400px; flex-shrink: 0; }
-        .ip-col-right { display: flex; flex-direction: column; gap: 32px; flex: 1; }
+        .ip-grid { display: flex; gap: 32px; width: 100%; max-width: 100%; box-sizing: border-box; }
+        .ip-col-left { display: flex; flex-direction: column; gap: 32px; width: 400px; max-width: 100%; flex-shrink: 0; box-sizing: border-box; }
+        .ip-col-right { display: flex; flex-direction: column; gap: 32px; flex: 1; min-width: 0; max-width: 100%; box-sizing: border-box; }
 
         /* Card common */
         .ip-card {
           background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 16px; padding: 24px;
-          display: flex; flex-direction: column; gap: 20px;
+          display: flex; flex-direction: column; gap: 20px; width: 100%; max-width: 100%; box-sizing: border-box; min-width: 0; overflow-x: hidden;
         }
         .ip-card-title { font-family: 'Outfit', sans-serif; font-size: 20px; font-weight: 700; color: #0F172A; margin: 0; }
 
         /* Left Column Details */
-        .ip-details-list { display: flex; flex-direction: column; gap: 16px; }
-        .ip-detail-row { display: flex; justify-content: space-between; }
+        .ip-details-list { display: flex; flex-direction: column; gap: 16px; width: 100%; }
+        .ip-detail-row { display: flex; justify-content: space-between; width: 100%; }
         .ip-detail-label { font-size: 13px; color: #64748B; font-weight: 500; }
         .ip-detail-value { font-size: 13px; font-weight: 700; color: #0F172A; }
         .ip-divider { height: 1px; background: #E2E8F0; width: 100%; margin: 8px 0; }
-        .ip-bio { display: flex; flex-direction: column; gap: 8px; }
+        .ip-bio { display: flex; flex-direction: column; gap: 8px; width: 100%; }
         .ip-bio-label { font-size: 12px; font-weight: 700; color: #94A3B8; text-transform: uppercase; letter-spacing: 0.5px; }
         .ip-bio-text { font-size: 14px; color: #334155; line-height: 1.5; margin: 0; }
         
-        .ip-cert-list { display: flex; flex-direction: column; gap: 12px; list-style: none; padding: 0; margin: 0; }
+        .ip-cert-list { display: flex; flex-direction: column; gap: 12px; list-style: none; padding: 0; margin: 0; width: 100%; }
         .ip-cert-item { display: flex; align-items: center; gap: 12px; font-size: 13px; font-weight: 500; color: #0F172A; }
         .ip-cert-icon {
           width: 24px; height: 24px; background: rgba(13, 148, 136, 0.12); border-radius: 12px;
@@ -1051,11 +1121,11 @@ const InstructorProfile = () => {
         }
 
         /* Right Column */
-        .ip-stats-row { display: flex; gap: 16px; }
-        .ip-stat-card { flex: 1; gap: 16px; justify-content: space-between; }
+        .ip-stats-row { display: flex; gap: 16px; width: 100%; max-width: 100%; box-sizing: border-box; }
+        .ip-stat-card { flex: 1; gap: 16px; justify-content: space-between; min-width: 0; }
         .ip-stat-label { font-size: 12px; font-weight: 700; color: #94A3B8; text-transform: uppercase; }
-        .ip-chart { display: flex; align-items: flex-end; gap: 8px; height: 60px; }
-        .ip-bar { width: 39px; background: #0D9488; border-radius: 2px; }
+        .ip-chart { display: flex; align-items: flex-end; gap: 6px; height: 60px; width: 100%; max-width: 100%; overflow-x: auto; box-sizing: border-box; }
+        .ip-bar { flex: 1; min-width: 8px; max-width: 39px; background: #0D9488; border-radius: 2px; }
         .ip-stat-big { display: flex; flex-direction: column; }
         .ip-stat-number { font-family: 'Outfit', sans-serif; font-size: 40px; font-weight: 700; color: #0D9488; line-height: 1.2; }
         .ip-stat-trend { font-size: 12px; color: #0D9488; }
@@ -1122,6 +1192,335 @@ const InstructorProfile = () => {
         .sp-modal-footer {
           padding: 16px 24px; border-top: 1px solid #E2E8F0;
           display: flex; justify-content: flex-end; gap: 12px;
+        }
+
+        @media (max-width: 900px) {
+          .ip-page {
+            width: 100% !important;
+            max-width: 100% !important;
+            flex-direction: column !important;
+            overflow-x: hidden !important;
+            box-sizing: border-box !important;
+          }
+          .ip-main {
+            padding: 20px 14px 90px 14px !important;
+            gap: 16px !important;
+            margin-left: 0 !important;
+            margin-top: 64px !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            overflow-x: hidden !important;
+            box-sizing: border-box !important;
+          }
+          .ip-grid {
+            flex-direction: column !important;
+            gap: 16px !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
+          }
+          .ip-col-left {
+            width: 100% !important;
+            min-width: 0 !important;
+            max-width: 100% !important;
+            gap: 16px !important;
+            box-sizing: border-box !important;
+          }
+          .ip-col-right {
+            width: 100% !important;
+            min-width: 0 !important;
+            max-width: 100% !important;
+            gap: 16px !important;
+            box-sizing: border-box !important;
+          }
+          .ip-hero {
+            padding: 20px 16px !important;
+            border-radius: 18px !important;
+            gap: 14px !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
+          }
+          .ip-stats-row {
+            flex-wrap: wrap !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
+          }
+        }
+
+        @media (max-width: 768px) {
+          .ip-page {
+            width: 100% !important;
+            max-width: 100% !important;
+            flex-direction: column !important;
+            overflow-x: hidden !important;
+            box-sizing: border-box !important;
+          }
+          .ip-main {
+            padding: 10px 10px 70px 10px !important;
+            margin-top: 64px !important;
+            gap: 10px !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            overflow-x: hidden !important;
+            box-sizing: border-box !important;
+          }
+          .ip-grid {
+            flex-direction: column !important;
+            gap: 10px !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
+          }
+          .ip-col-left, .ip-col-right {
+            width: 100% !important;
+            min-width: 0 !important;
+            max-width: 100% !important;
+            gap: 10px !important;
+            box-sizing: border-box !important;
+          }
+          /* Compact Hero */
+          .ip-hero {
+            flex-direction: row !important;
+            flex-wrap: wrap !important;
+            align-items: center !important;
+            text-align: left !important;
+            padding: 12px 14px !important;
+            border-radius: 14px !important;
+            gap: 10px 12px !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
+          }
+          .ip-hero-avatar {
+            width: 48px !important;
+            height: 48px !important;
+            border-radius: 24px !important;
+            font-size: 18px !important;
+            flex-shrink: 0 !important;
+          }
+          .ip-hero-info {
+            align-items: flex-start !important;
+            text-align: left !important;
+            gap: 2px !important;
+            flex: 1 !important;
+            min-width: 0 !important;
+          }
+          .ip-hero-name {
+            font-size: 17px !important;
+            font-weight: 800 !important;
+            line-height: 1.2 !important;
+            margin: 0 !important;
+          }
+          .ip-hero-sub {
+            font-size: 11.5px !important;
+            color: rgba(255, 255, 255, 0.65) !important;
+            margin: 0 !important;
+          }
+          .ip-hero-badges {
+            justify-content: flex-start !important;
+            flex-wrap: wrap !important;
+            gap: 4px !important;
+            margin-top: 2px !important;
+          }
+          .ip-badge-primary, .ip-badge-active {
+            font-size: 9.5px !important;
+            padding: 2px 5px !important;
+            border-radius: 3px !important;
+          }
+          .ip-hero-actions {
+            margin-left: 0 !important;
+            margin-right: 0 !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            flex-direction: row !important;
+            gap: 8px !important;
+            box-sizing: border-box !important;
+            margin-top: 2px !important;
+          }
+          .ip-hero-actions button {
+            flex: 1 !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            height: 32px !important;
+            padding: 4px 10px !important;
+            font-size: 11.5px !important;
+            border-radius: 8px !important;
+            justify-content: center !important;
+            box-sizing: border-box !important;
+          }
+
+          /* Compact Cards */
+          .ip-card {
+            padding: 12px 12px !important;
+            border-radius: 12px !important;
+            gap: 10px !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
+            overflow-x: hidden !important;
+          }
+          .ip-card-title {
+            font-size: 14.5px !important;
+            font-weight: 700 !important;
+            margin: 0 !important;
+          }
+
+          /* Compact 2-column Personal Details Grid */
+          .ip-details-list {
+            display: grid !important;
+            grid-template-columns: 1fr 1fr !important;
+            gap: 6px !important;
+            width: 100% !important;
+          }
+          .ip-detail-row {
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            gap: 2px !important;
+            padding: 6px 8px !important;
+            background: #F8FAFC !important;
+            border: 1px solid #E2E8F0 !important;
+            border-radius: 8px !important;
+            box-sizing: border-box !important;
+            min-width: 0 !important;
+          }
+          .ip-detail-row:nth-child(1),
+          .ip-detail-row:nth-child(2),
+          .ip-detail-row:nth-child(7) {
+            grid-column: span 2 !important;
+          }
+          .ip-detail-label {
+            font-size: 9px !important;
+            color: #64748B !important;
+            font-weight: 700 !important;
+            text-transform: uppercase !important;
+            letter-spacing: 0.3px !important;
+            line-height: 1.1 !important;
+          }
+          .ip-detail-value {
+            font-size: 11.5px !important;
+            font-weight: 700 !important;
+            color: #0F172A !important;
+            word-break: break-word !important;
+            max-width: 100% !important;
+            text-align: left !important;
+            line-height: 1.25 !important;
+          }
+          .ip-divider {
+            margin: 4px 0 !important;
+          }
+          .ip-bio {
+            gap: 3px !important;
+          }
+          .ip-bio-label {
+            font-size: 9.5px !important;
+          }
+          .ip-bio-text {
+            font-size: 11.5px !important;
+            line-height: 1.35 !important;
+          }
+
+          /* Compact Certifications */
+          .ip-cert-list {
+            gap: 5px !important;
+          }
+          .ip-cert-item {
+            font-size: 11.5px !important;
+            gap: 6px !important;
+            padding: 2px 0 !important;
+          }
+          .ip-cert-icon {
+            width: 18px !important;
+            height: 18px !important;
+          }
+
+          /* Compact Stats & Chart */
+          .ip-stats-row {
+            flex-direction: column !important;
+            gap: 10px !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
+          }
+          .ip-stat-label {
+            font-size: 9.5px !important;
+          }
+          .ip-chart {
+            width: 100% !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
+            gap: 3px !important;
+            height: 36px !important;
+          }
+          .ip-bar {
+            min-width: 0 !important;
+            flex: 1 !important;
+          }
+          .ip-stat-number {
+            font-size: 24px !important;
+          }
+          .ip-stat-trend {
+            font-size: 10.5px !important;
+          }
+
+          /* Students & Activity */
+          .ip-student-row {
+            flex-direction: row !important;
+            justify-content: space-between !important;
+            align-items: center !important;
+            padding: 6px 0 !important;
+            gap: 8px !important;
+            width: 100% !important;
+            box-sizing: border-box !important;
+          }
+          .ip-student-info {
+            gap: 8px !important;
+          }
+          .ip-student-avatar {
+            width: 30px !important;
+            height: 30px !important;
+            border-radius: 15px !important;
+          }
+          .ip-student-name {
+            font-size: 12px !important;
+          }
+          .ip-student-time {
+            font-size: 10.5px !important;
+          }
+          .ip-level-badge {
+            font-size: 9.5px !important;
+            padding: 2px 6px !important;
+          }
+          .ip-activity-row {
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            gap: 4px !important;
+            padding: 8px 10px !important;
+            width: 100% !important;
+            box-sizing: border-box !important;
+          }
+          .ip-activity-title {
+            font-size: 11.5px !important;
+          }
+          .ip-activity-sub {
+            font-size: 10.5px !important;
+          }
+
+          .sp-modal {
+            width: calc(100% - 24px) !important;
+            margin: 12px !important;
+            max-height: 90vh !important;
+            border-radius: 14px !important;
+          }
+          .sp-modal-body {
+            padding: 14px !important;
+          }
+          .sp-form-row {
+            flex-direction: column !important;
+            gap: 8px !important;
+          }
         }
       `}</style>
     </div>

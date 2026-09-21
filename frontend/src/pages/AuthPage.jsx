@@ -747,8 +747,11 @@ const AuthPage = () => {
       {/* ── LEFT PANEL (Form) ── */}
       <div className="auth-panel-left">
         <div className="auth-brand" onClick={() => navigate('/')} style={{ cursor: 'pointer' }}>
-          <span className="auth-brand-dot" />
-          <span className="auth-brand-name">AiSurf</span>
+          <img
+            src="/athnexlive-logo.png"
+            alt="athnexlive"
+            style={{ height: '45px', width: 'auto', objectFit: 'contain', filter: 'brightness(0) invert(1)' }}
+          />
         </div>
 
         {pendingApprovalUser ? (
@@ -1440,8 +1443,19 @@ const AuthPage = () => {
         )}
       </div>
 
-      {/* ── RIGHT PANEL (Image) ── */}
+      {/* ── RIGHT PANEL (Image - rendered on the Left) ── */}
       <div className="auth-panel-right">
+        <div 
+          className="auth-image-brand" 
+          onClick={() => navigate('/')} 
+          style={{ cursor: 'pointer', zIndex: 2, alignSelf: 'flex-start' }}
+        >
+          <img
+            src="/athnexlive-logo.png"
+            alt="athnexlive"
+            style={{ height: '70px', width: 'auto', objectFit: 'contain' }}
+          />
+        </div>
         <div style={{ position: 'relative', zIndex: 2, maxWidth: '500px' }}>
           <h1 style={{ fontFamily: "'Outfit', sans-serif", fontSize: '48px', fontWeight: 800, color: '#FFFFFF', lineHeight: 1.1, marginBottom: '16px' }}>
             Master the ocean.
@@ -1596,10 +1610,16 @@ const styles = `
   background-position: center;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
-  padding: 80px;
+  justify-content: space-between;
+  padding: 60px 80px;
   box-sizing: border-box;
   position: relative;
+}
+
+@media (min-width: 1025px) {
+  .auth-panel-left .auth-brand {
+    display: none;
+  }
 }
 
 @media (max-width: 1024px) {

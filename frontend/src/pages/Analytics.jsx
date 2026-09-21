@@ -159,17 +159,20 @@ const Analytics = () => {
       </main>
 
       <style>{`
-        .an-page { display: flex; min-height: 100vh; background: #F8FAFC; font-family: 'Instrument Sans', sans-serif; }
-        .an-main { flex: 1; padding: 40px 80px; display: flex; flex-direction: column; gap: 32px; overflow-y: auto; }
+        .an-page { display: flex; min-height: 100vh; background: #F8FAFC; font-family: 'Instrument Sans', sans-serif; padding-top: 84px; box-sizing: border-box; width: 100%; }
+        .an-main { flex: 1; padding: 32px 40px 80px 40px; display: flex; flex-direction: column; gap: 28px; overflow-y: auto; width: 100%; box-sizing: border-box; }
 
         /* Header */
         .an-header { display: flex; justify-content: space-between; align-items: center; }
+        .an-header-text { display: flex; flex-direction: column; }
         .an-title { font-family: 'Outfit', sans-serif; font-size: 32px; font-weight: 700; color: #0F172A; margin: 0; line-height: 1.2; }
-        .an-sub { font-size: 16px; color: #64748B; margin: 8px 0 0 0; }
+        .an-sub { font-size: 15px; color: #64748B; margin: 6px 0 0 0; }
         .an-export-btn {
           background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 8px;
-          padding: 12px 24px; font-family: 'Outfit', sans-serif; font-size: 12px; font-weight: 600; color: #0F172A; cursor: pointer;
+          padding: 10px 20px; font-family: 'Outfit', sans-serif; font-size: 12px; font-weight: 600; color: #0F172A; cursor: pointer;
+          transition: all 0.2s ease;
         }
+        .an-export-btn:hover { background: #F1F5F9; border-color: #CBD5E1; }
 
         /* Loading */
         .an-loading { display: flex; justify-content: center; align-items: center; height: 300px; }
@@ -181,43 +184,187 @@ const Analytics = () => {
         @keyframes an-spin { to { transform: rotate(360deg); } }
 
         /* Stats Row */
-        .an-stats-row { display: flex; gap: 20px; }
+        .an-stats-row { display: flex; gap: 16px; width: 100%; }
         .an-stat-card {
-          flex: 1; background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 16px; padding: 24px;
-          display: flex; flex-direction: column; gap: 12px;
+          flex: 1; background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 16px; padding: 20px;
+          display: flex; flex-direction: column; gap: 8px; box-sizing: border-box;
         }
         .an-stat-top { display: flex; justify-content: space-between; align-items: center; }
-        .an-stat-label { font-size: 12px; font-weight: 700; color: #64748B; opacity: 0.6; text-transform: uppercase; }
-        .an-stat-dot { width: 12px; height: 12px; border-radius: 50%; }
-        .an-stat-count { font-family: 'Outfit', sans-serif; font-size: 40px; font-weight: 700; line-height: 1.2; }
-        .an-stat-desc { font-size: 12px; color: #64748B; }
+        .an-stat-label { font-size: 12px; font-weight: 700; color: #64748B; opacity: 0.7; text-transform: uppercase; }
+        .an-stat-dot { width: 10px; height: 10px; border-radius: 50%; }
+        .an-stat-count { font-family: 'Outfit', sans-serif; font-size: 32px; font-weight: 700; line-height: 1.1; }
+        .an-stat-desc { font-size: 12px; color: #64748B; line-height: 1.3; }
 
         /* Funnel Card */
         .an-funnel-card {
-          background: #050B1A; border-radius: 24px; padding: 40px;
-          display: flex; flex-direction: column; align-items: center; gap: 32px;
+          background: #050B1A; border-radius: 20px; padding: 32px;
+          display: flex; flex-direction: column; align-items: center; gap: 24px; box-sizing: border-box;
         }
         .an-funnel-title { font-family: 'Outfit', sans-serif; font-size: 20px; font-weight: 700; color: #FFFFFF; margin: 0; }
-        .an-funnel-chart { display: flex; flex-direction: column; gap: 12px; width: 600px; }
-        .an-funnel-row { display: flex; align-items: center; gap: 16px; }
-        .an-funnel-label { width: 60px; font-size: 12px; font-weight: 700; color: #FFFFFF; opacity: 0.6; }
-        .an-funnel-bar-container { flex: 1; display: flex; align-items: center; gap: 12px; }
-        .an-funnel-bar { height: 32px; border-radius: 4px; transition: width 0.6s ease; min-width: 4px; }
+        .an-funnel-chart { display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: 600px; box-sizing: border-box; }
+        .an-funnel-row { display: flex; align-items: center; gap: 16px; width: 100%; }
+        .an-funnel-label { width: 60px; font-size: 12px; font-weight: 700; color: #FFFFFF; opacity: 0.7; flex-shrink: 0; }
+        .an-funnel-bar-container { flex: 1; display: flex; align-items: center; gap: 12px; min-width: 0; }
+        .an-funnel-bar { height: 26px; border-radius: 4px; transition: width 0.6s ease; min-width: 4px; }
         .an-funnel-value { font-size: 12px; font-weight: 700; color: #FFFFFF; }
 
         /* Table */
-        .an-table-container { background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 16px; overflow: hidden; }
+        .an-table-container { background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 16px; overflow: hidden; width: 100%; }
         .an-table { width: 100%; border-collapse: collapse; }
         .an-table th {
-          text-align: left; padding: 20px 24px; font-size: 12px; font-weight: 700;
+          text-align: left; padding: 16px 20px; font-size: 12px; font-weight: 700;
           color: #94A3B8; text-transform: uppercase; border-bottom: 1px solid #E2E8F0; background: #F8F6F2;
         }
-        .an-table td { padding: 20px 24px; vertical-align: middle; font-size: 12px; }
+        .an-table td { padding: 16px 20px; vertical-align: middle; font-size: 12px; }
         .an-student-name { font-weight: 600; color: #0F172A; }
         .an-instructor-name { color: #0F172A; }
         .an-badge-history { display: flex; gap: 8px; }
         .an-badge-circle { width: 16px; height: 16px; border-radius: 50%; transition: transform 0.2s; cursor: help; }
         .an-badge-circle:hover { transform: scale(1.3); }
+
+        @media (max-width: 768px) {
+          .an-page {
+            padding-top: 60px !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            overflow-x: hidden !important;
+          }
+          .an-main {
+            padding: 14px 12px 60px 12px !important;
+            gap: 14px !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
+            overflow-x: hidden !important;
+          }
+
+          /* Header */
+          .an-header {
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            gap: 10px !important;
+            width: 100% !important;
+          }
+          .an-header-text {
+            width: 100% !important;
+          }
+          .an-title {
+            font-size: 20px !important;
+            font-weight: 800 !important;
+          }
+          .an-sub {
+            font-size: 12px !important;
+            margin: 2px 0 0 0 !important;
+          }
+          .an-export-btn {
+            padding: 6px 14px !important;
+            font-size: 11px !important;
+            border-radius: 8px !important;
+            align-self: flex-start !important;
+          }
+
+          /* Stats Row - Compact and responsive, no side scrolling! */
+          .an-stats-row {
+            display: grid !important;
+            grid-template-columns: repeat(auto-fit, minmax(95px, 1fr)) !important;
+            gap: 8px !important;
+            width: 100% !important;
+          }
+          .an-stat-card {
+            padding: 10px 12px !important;
+            border-radius: 12px !important;
+            gap: 4px !important;
+            flex: unset !important;
+            box-sizing: border-box !important;
+          }
+          .an-stat-top {
+            gap: 4px !important;
+          }
+          .an-stat-label {
+            font-size: 10px !important;
+          }
+          .an-stat-dot {
+            width: 8px !important;
+            height: 8px !important;
+          }
+          .an-stat-count {
+            font-size: 20px !important;
+            line-height: 1.1 !important;
+          }
+          .an-stat-desc {
+            font-size: 10px !important;
+            line-height: 1.2 !important;
+            color: #64748B !important;
+          }
+
+          /* Retention Funnel - Compact dark card */
+          .an-funnel-card {
+            padding: 16px 14px !important;
+            border-radius: 16px !important;
+            gap: 14px !important;
+            width: 100% !important;
+            box-sizing: border-box !important;
+            align-items: stretch !important;
+          }
+          .an-funnel-title {
+            font-size: 15px !important;
+            font-weight: 700 !important;
+            text-align: left !important;
+            width: 100% !important;
+          }
+          .an-funnel-chart {
+            width: 100% !important;
+            max-width: 100% !important;
+            gap: 8px !important;
+            box-sizing: border-box !important;
+          }
+          .an-funnel-row {
+            gap: 8px !important;
+            width: 100% !important;
+          }
+          .an-funnel-label {
+            width: 50px !important;
+            font-size: 11px !important;
+            flex-shrink: 0 !important;
+          }
+          .an-funnel-bar-container {
+            flex: 1 !important;
+            min-width: 0 !important;
+            gap: 8px !important;
+          }
+          .an-funnel-bar {
+            height: 18px !important;
+            min-width: 6px !important;
+            border-radius: 4px !important;
+          }
+          .an-funnel-value {
+            font-size: 11px !important;
+            font-weight: 700 !important;
+          }
+
+          /* Table - Touch scrollable & compact */
+          .an-table-container {
+            border-radius: 12px !important;
+            width: 100% !important;
+            overflow-x: auto !important;
+            -webkit-overflow-scrolling: touch;
+            box-sizing: border-box !important;
+          }
+          .an-table th {
+            padding: 10px 12px !important;
+            font-size: 10px !important;
+            white-space: nowrap !important;
+          }
+          .an-table td {
+            padding: 10px 12px !important;
+            font-size: 11px !important;
+            white-space: nowrap !important;
+          }
+          .an-badge-circle {
+            width: 12px !important;
+            height: 12px !important;
+          }
+        }
       `}</style>
     </div>
   );

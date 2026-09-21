@@ -330,6 +330,7 @@ const StudentsManagement = () => {
   const isSuperAdmin = currentUser?.role === 'superadmin' || schoolLower === 'super admin';
   const isAdminOrSchoolAdmin = isSuperAdmin || userRole === 'admin' || userRole === 'school' || userRole === 'school_admin' || userRole === 'schooladmin';
   const canManagePendingRequests = isAdminOrSchoolAdmin && !isCoach;
+  const canDeleteStudent = isAdminOrSchoolAdmin && !isCoach;
 
   const effectiveSchool = (activeSchoolName && schoolLower !== 'school admin' && schoolLower !== 'super admin')
     ? activeSchoolName
@@ -571,11 +572,11 @@ const StudentsManagement = () => {
   }, [approvedStudents]);
 
   const stats = [
-    { value: approvedStudents.length, label: 'TOTAL', color: '#050B1A', active: activeStatFilter === 'TOTAL' },
-    { value: approvedStudents.filter(s => s.last_active === 'Today' || s.last_active === 'Yesterday').length, label: 'ACTIVE', color: '#0D9488', active: activeStatFilter === 'ACTIVE' },
-    { value: approvedStudents.filter(s => s.level === 'Beginner').length, label: 'BEGINNER', color: '#F59E0B', active: activeStatFilter === 'BEGINNER' },
-    { value: approvedStudents.filter(s => s.level === 'Intermediate').length, label: 'INTERMEDIATE', color: '#0D9488', active: activeStatFilter === 'INTERMEDIATE' },
-    { value: approvedStudents.filter(s => s.level === 'Advanced').length, label: 'ADVANCED', color: '#7C3AED', active: activeStatFilter === 'ADVANCED' },
+    { value: approvedStudents.length, label: 'TOTAL', shortLabel: 'TOTAL', color: '#050B1A', active: activeStatFilter === 'TOTAL' },
+    { value: approvedStudents.filter(s => s.last_active === 'Today' || s.last_active === 'Yesterday').length, label: 'ACTIVE', shortLabel: 'ACTIVE', color: '#0D9488', active: activeStatFilter === 'ACTIVE' },
+    { value: approvedStudents.filter(s => s.level === 'Beginner').length, label: 'BEGINNER', shortLabel: 'BEGINNER', color: '#F59E0B', active: activeStatFilter === 'BEGINNER' },
+    { value: approvedStudents.filter(s => s.level === 'Intermediate').length, label: 'INTERMEDIATE', shortLabel: 'INTERMED', color: '#0D9488', active: activeStatFilter === 'INTERMEDIATE' },
+    { value: approvedStudents.filter(s => s.level === 'Advanced').length, label: 'ADVANCED', shortLabel: 'ADVANCED', color: '#7C3AED', active: activeStatFilter === 'ADVANCED' },
   ];
 
 
@@ -1198,7 +1199,7 @@ const StudentsManagement = () => {
             <h1 className="sm-title">Students ({loading ? '…' : approvedStudents.length})</h1>
             <p className="sm-sub">Manage your student body and track their progression across badge levels.</p>
           </div>
-          <div className="sm-actions" style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <div className="sm-actions">
             {canManagePendingRequests && (
               <button 
                 className="sm-btn-secondary"
@@ -1379,7 +1380,10 @@ const StudentsManagement = () => {
               title={`Click to filter by ${s.label}`}
             >
               <span className="sm-stat-value" style={{ color: s.color }}>{s.value}</span>
-              <span className="sm-stat-label">{s.label}</span>
+              <span className="sm-stat-label">
+                <span className="sm-label-full">{s.label}</span>
+                <span className="sm-label-short">{s.shortLabel || s.label}</span>
+              </span>
             </div>
           ))}
         </div>
@@ -1388,8 +1392,39 @@ const StudentsManagement = () => {
         <div className="sm-table-container">
           {loading ? (
             <div className="sm-loading"><div className="sm-spinner" /></div>
+          ) : filtered.length === 0 ? (
+            <div className="sm-empty-state-card">
+              <div style={{ fontSize: '38px', marginBottom: '8px' }}>🏄‍♂️</div>
+              <div style={{ fontSize: '16px', fontWeight: 700, color: '#0F172A', marginBottom: '4px' }}>
+                {students.length === 0 ? 'No students yet' : 'No students match your search'}
+              </div>
+              <p style={{ margin: '0 auto 16px', fontSize: '13px', color: '#64748B', maxWidth: '340px', lineHeight: '1.4' }}>
+                {students.length === 0 ? 'Add your first student to get started.' : 'Try changing your search query or clearing filters.'}
+              </p>
+              {students.length === 0 ? (
+                <button
+                  className="sm-btn-primary"
+                  style={{ margin: '0 auto', height: '36px', padding: '6px 16px', fontSize: '12.5px' }}
+                  onClick={() => { setShowModal(true); setAddMode('single'); }}
+                >
+                  + Add Student
+                </button>
+              ) : (
+                <button
+                  className="sm-btn-secondary"
+                  style={{ margin: '0 auto', height: '36px', padding: '6px 16px', fontSize: '12.5px' }}
+                  onClick={() => { setSearch(''); setDateFilter('All'); setLevelFilter('All'); setActiveStatFilter('TOTAL'); }}
+                >
+                  Clear Filters
+                </button>
+              )}
+            </div>
           ) : (
-            <table className="sm-table">
+            <>
+              <div className="sm-mobile-scroll-hint">
+                <span>👉 Swipe horizontally on the table to view students & actions</span>
+              </div>
+              <table className="sm-table">
               <thead>
                 <tr>
                   <th>Student & WhatsApp</th>
@@ -1583,14 +1618,16 @@ const StudentsManagement = () => {
                     </td>
                     <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                       <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-                        <button
-                          className="sm-action-btn"
-                          title="Delete / Remove Student"
-                          style={{ color: '#EF4444', borderColor: 'rgba(239, 68, 68, 0.25)', background: 'rgba(239, 68, 68, 0.06)' }}
-                          onClick={e => { e.stopPropagation(); handleDeleteStudent(s.id, s.name, s.email); }}
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
-                        </button>
+                        {canDeleteStudent && (
+                          <button
+                            className="sm-action-btn"
+                            title="Delete / Remove Student"
+                            style={{ color: '#EF4444', borderColor: 'rgba(239, 68, 68, 0.25)', background: 'rgba(239, 68, 68, 0.06)' }}
+                            onClick={e => { e.stopPropagation(); handleDeleteStudent(s.id, s.name, s.email); }}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                          </button>
+                        )}
                         <button className="sm-action-btn" title="View Profile" onClick={e => { e.stopPropagation(); navigate(`/students/${s.id}`); }}>
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                         </button>
@@ -1598,15 +1635,9 @@ const StudentsManagement = () => {
                     </td>
                   </tr>
                 ))}
-                {filtered.length === 0 && !loading && (
-                  <tr>
-                    <td colSpan="7" style={{ textAlign: 'center', padding: '40px', color: '#94A3B8' }}>
-                      {students.length === 0 ? 'No students yet — add one above.' : 'No students match your search.'}
-                    </td>
-                  </tr>
-                )}
               </tbody>
             </table>
+            </>
           )}
         </div>
       </main>
@@ -2851,6 +2882,209 @@ const StudentsManagement = () => {
         .sm-step-item.done .sm-step-circle { background: #10B981; color: #FFF; }
         .sm-step-item.active .sm-step-circle { background: #0D9488; color: #FFF; }
         .sm-step-line { width: 32px; height: 2px; background: #E2E8F0; }
+
+        /* Responsive Overrides */
+        @media (max-width: 900px) {
+          .sm-main {
+            padding: 20px 16px !important;
+            gap: 20px !important;
+            margin-left: 0 !important;
+            width: 100% !important;
+          }
+          .sm-stats-grid {
+            display: grid !important;
+            grid-template-columns: repeat(2, 1fr) !important;
+            gap: 12px !important;
+          }
+          .sm-header {
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            gap: 16px !important;
+          }
+          .sm-actions {
+            width: 100% !important;
+            flex-wrap: wrap !important;
+          }
+          .sm-actions button {
+            flex: 1 !important;
+            justify-content: center !important;
+          }
+        }
+
+        .sm-label-short { display: none; }
+        .sm-label-full { display: inline; }
+        .sm-mobile-scroll-hint { display: none; }
+        .sm-empty-state-card {
+          text-align: center;
+          padding: 44px 20px;
+          width: 100%;
+          box-sizing: border-box;
+          background: #FFFFFF;
+        }
+
+        @media (max-width: 768px) {
+          .sm-label-full { display: none !important; }
+          .sm-label-short { display: inline !important; }
+          .sm-mobile-scroll-hint {
+            display: block !important;
+            background: #F0FDFA;
+            border-bottom: 1px solid #CCFBF1;
+            padding: 8px 12px;
+            font-size: 11.5px;
+            font-weight: 600;
+            color: #0F766E;
+            text-align: center;
+          }
+          .sm-main {
+            margin-top: 64px !important;
+            padding: 14px 12px 90px 12px !important;
+            gap: 12px !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
+          }
+          .sm-header {
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            text-align: left !important;
+            gap: 8px !important;
+            width: 100% !important;
+          }
+          .sm-header-text {
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            text-align: left !important;
+            width: 100% !important;
+          }
+          .sm-title {
+            font-size: 20px !important;
+            text-align: left !important;
+            line-height: 1.2 !important;
+            width: 100% !important;
+          }
+          .sm-sub {
+            font-size: 12px !important;
+            text-align: left !important;
+            margin: 2px 0 0 0 !important;
+            line-height: 1.35 !important;
+            width: 100% !important;
+          }
+          .sm-actions {
+            display: flex !important;
+            flex-direction: row !important;
+            flex-wrap: wrap !important;
+            gap: 8px !important;
+            width: 100% !important;
+          }
+          .sm-btn-secondary,
+          .sm-btn-primary {
+            flex: 1 1 auto !important;
+            min-width: 110px !important;
+            height: 38px !important;
+            padding: 6px 12px !important;
+            font-size: 12.5px !important;
+            font-weight: 700 !important;
+            border-radius: 8px !important;
+            justify-content: center !important;
+            box-sizing: border-box !important;
+          }
+          .sm-filters {
+            display: flex !important;
+            flex-direction: row !important;
+            align-items: center !important;
+            gap: 8px !important;
+            padding: 8px !important;
+            border-radius: 10px !important;
+            background: #FFFFFF !important;
+            box-sizing: border-box !important;
+          }
+          .sm-search-wrap {
+            flex: 1 !important;
+            height: 38px !important;
+            padding: 0 10px !important;
+            gap: 6px !important;
+            background: #F8FAFC !important;
+            border: 1px solid #E2E8F0 !important;
+            border-radius: 8px !important;
+            box-sizing: border-box !important;
+          }
+          .sm-search-input {
+            font-size: 12px !important;
+          }
+          .sm-select {
+            width: 120px !important;
+            height: 38px !important;
+            padding: 0 8px !important;
+            font-size: 11.5px !important;
+            border-radius: 8px !important;
+            border: 1px solid #E2E8F0 !important;
+            background: #F8FAFC !important;
+            box-sizing: border-box !important;
+          }
+          .sm-stats-grid {
+            display: grid !important;
+            grid-template-columns: repeat(5, 1fr) !important;
+            gap: 4px !important;
+            width: 100% !important;
+            box-sizing: border-box !important;
+          }
+          .sm-stat-card {
+            height: 48px !important;
+            min-width: 0 !important;
+            border-radius: 8px !important;
+            border: 1.5px solid #E2E8F0 !important;
+            padding: 4px 1px !important;
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: center !important;
+            justify-content: center !important;
+            gap: 1px !important;
+            background: #FFFFFF !important;
+            box-sizing: border-box !important;
+          }
+          .sm-stat-value {
+            font-size: 16px !important;
+            font-weight: 800 !important;
+            line-height: 1.1 !important;
+          }
+          .sm-stat-label {
+            font-size: 8px !important;
+            font-weight: 700 !important;
+            letter-spacing: 0 !important;
+            text-transform: uppercase !important;
+            white-space: nowrap !important;
+            overflow: hidden !important;
+            text-overflow: clip !important;
+            max-width: 100% !important;
+            text-align: center !important;
+          }
+          .sm-table-container {
+            overflow-x: auto !important;
+            -webkit-overflow-scrolling: touch !important;
+            border-radius: 12px !important;
+          }
+          .sm-table {
+            min-width: 720px !important;
+          }
+          .sm-modal {
+            width: calc(100% - 24px) !important;
+            padding: 20px 16px !important;
+            margin: 12px !important;
+            max-height: 90vh !important;
+            border-radius: 18px !important;
+          }
+          .sm-modal-form {
+            gap: 14px !important;
+          }
+          .sm-modal-actions {
+            flex-direction: column !important;
+          }
+          .sm-modal-actions button {
+            width: 100% !important;
+          }
+        }
       `}</style>
     </div>
   );

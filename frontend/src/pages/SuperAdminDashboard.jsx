@@ -683,8 +683,12 @@ const SuperAdminDashboard = () => {
       <nav className="sa-nav">
         <div className="sa-nav-left">
           <div className="sa-brand" onClick={() => navigate('/dashboard')}>
-            <span className="sa-brand-dot" />
-            <span className="sa-brand-text">WaveCoach <span className="sa-brand-badge">Super Admin</span></span>
+            <img
+              src="/athnexlive-logo.png"
+              alt="athnexlive"
+              style={{ height: '28px', width: 'auto', objectFit: 'contain', filter: 'brightness(0) invert(1)' }}
+            />
+            <span className="sa-brand-badge">Super Admin</span>
           </div>
           <div className="sa-nav-tabs">
             <button 
@@ -1537,7 +1541,7 @@ const SuperAdminDashboard = () => {
                 <div className="sa-section-header">
                   <div>
                     <h2>App Integration & Client Keys</h2>
-                    <p>Configure credentials and webhook destinations linking WaveCoach with the Live Scoring App</p>
+                    <p>Configure credentials and webhook destinations linking athnexlive with the Live Scoring App</p>
                   </div>
                   <button className="sa-btn-primary" onClick={() => setShowKeyModal(true)}>
                     + Register Client App

@@ -822,16 +822,31 @@ const StudentProfile = () => {
                 )}
               </div>
               <div className="sp-hero-meta">
-                <span className="sp-level-badge">
-                  {(student.level || 'INTERMEDIATE').toUpperCase()}
-                </span>
-                <span className="sp-badge-dot-label">
-                  <span className="sp-color-dot" style={{ backgroundColor: badgeDotColor }} />
-                  {badgeDisplayName}
-                </span>
-                <span className="sp-instructor-text">
-                  Instructor: {(student.instructor && student.instructor !== 'Assigned Surf Coach') ? student.instructor : (nextSession?.instructor || 'Not Assigned Yet')}
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                  <span className="sp-level-badge">
+                    {(student.level || 'INTERMEDIATE').toUpperCase()}
+                  </span>
+                  <span className="sp-badge-dot-label">
+                    <span className="sp-color-dot" style={{ backgroundColor: badgeDotColor }} />
+                    {badgeDisplayName}
+                  </span>
+                </div>
+                <div style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontSize: '12px',
+                  color: '#475569',
+                  background: '#F1F5F9',
+                  padding: '4px 12px',
+                  borderRadius: '20px',
+                  fontWeight: 600
+                }}>
+                  <span>🏄‍♂️ Coach:</span>
+                  <span style={{ color: '#0F172A', fontWeight: 700 }}>
+                    {(student.instructor && student.instructor !== 'Assigned Surf Coach') ? student.instructor : (nextSession?.instructor || 'Not Assigned Yet')}
+                  </span>
+                </div>
               </div>
             </div>
           </div>
@@ -840,15 +855,21 @@ const StudentProfile = () => {
             {/* NEXT SESSION Banner Box */}
             {nextSession ? (
               <div className="sp-next-session-box">
-                <span className="sp-ns-box-label">NEXT SESSION</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span>⏰</span>
+                  <span className="sp-ns-box-label">NEXT SESSION</span>
+                </div>
                 <div className="sp-ns-box-time">{nextSessionTime}</div>
                 <div className="sp-ns-box-sub">{nextSessionSub}</div>
               </div>
             ) : (
-              <div className="sp-next-session-box" style={{ background: '#F8FAFC', border: '1.5px dashed #CBD5E1', boxShadow: 'none' }}>
-                <span className="sp-ns-box-label" style={{ color: '#64748B' }}>NEXT SESSION</span>
-                <div className="sp-ns-box-time" style={{ color: '#64748B', fontSize: '15px', fontWeight: 700 }}>Not Assigned Yet</div>
-                <div className="sp-ns-box-sub" style={{ color: '#94A3B8' }}>No scheduled session yet</div>
+              <div className="sp-next-session-box-empty">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center' }}>
+                  <span style={{ fontSize: '13px' }}>📅</span>
+                  <span className="sp-ns-empty-label">NEXT SESSION</span>
+                </div>
+                <div className="sp-ns-empty-title">Not Assigned Yet</div>
+                <div className="sp-ns-empty-sub">Your next surf session will appear here once scheduled</div>
               </div>
             )}
           </div>
@@ -992,14 +1013,11 @@ const StudentProfile = () => {
                       ))}
                     </div>
                   ) : (
-                    <div style={{ padding: '28px 16px', textAlign: 'center', color: '#64748B', fontSize: '13px', background: '#F8FAFC', borderRadius: '12px', border: '1px dashed #CBD5E1' }}>
-                      <div style={{ fontSize: '28px', marginBottom: '6px' }}>👥</div>
-                      <div style={{ fontWeight: 700, color: '#334155', fontSize: '14px' }}>
-                        No Accompanying Guests
-                      </div>
-                      <div style={{ fontSize: '12px', color: '#94A3B8', marginTop: '4px' }}>
-                        No guests were registered during sign up.
-                      </div>
+                    <div className="sp-empty-box" style={{ padding: '14px 12px', textAlign: 'center', background: '#F8FAFC', borderRadius: '10px', border: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '18px' }}>👥</span>
+                      <span style={{ fontWeight: 600, color: '#64748B', fontSize: '13px' }}>
+                        No accompanying guests registered
+                      </span>
                     </div>
                   )}
                 </div>
@@ -1016,7 +1034,7 @@ const StudentProfile = () => {
                   style={{
                     background: 'none',
                     border: 'none',
-                    color: '#3B82F6',
+                    color: '#0284C7',
                     fontSize: '13px',
                     fontWeight: 700,
                     cursor: 'pointer',
@@ -1027,15 +1045,15 @@ const StudentProfile = () => {
                 </button>
               </div>
 
-              <div style={{ fontSize: '13px', fontWeight: 600, color: '#94A3B8', marginBottom: '16px' }}>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '12px' }}>
                 Recents
               </div>
 
               {(effectiveSessions.filter(s => s.status === 'Completed')).length === 0 ? (
-                <div style={{ padding: '24px 12px', textAlign: 'center', color: '#94A3B8', fontSize: '13px', background: '#F8FAFC', borderRadius: '12px', border: '1px dashed #E2E8F0' }}>
-                  <div style={{ fontSize: '24px', marginBottom: '6px' }}>🏄</div>
-                  <div style={{ fontWeight: 600, color: '#64748B' }}>No completed sessions yet</div>
-                  <div style={{ fontSize: '11.5px', marginTop: '2px' }}>Completed surf logs will be recorded here.</div>
+                <div className="sp-empty-box" style={{ padding: '14px 12px', textAlign: 'center', background: '#F8FAFC', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
+                  <div style={{ fontSize: '22px', marginBottom: '4px' }}>🏄‍♂️</div>
+                  <div style={{ fontWeight: 700, color: '#1E293B', fontSize: '13.5px' }}>No Completed Sessions Yet</div>
+                  <div style={{ fontSize: '12px', color: '#94A3B8', marginTop: '2px' }}>Your surf coaching logs and analysis will appear here after each session.</div>
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
@@ -1088,7 +1106,7 @@ const StudentProfile = () => {
               </div>
 
               {upcomingSessions.length === 0 ? (
-                <div style={{ padding: '24px 12px', textAlign: 'center', color: '#94A3B8', fontSize: '13px', background: '#F8FAFC', borderRadius: '12px', border: '1px dashed #E2E8F0' }}>
+                <div className="sp-empty-box" style={{ padding: '14px 12px', textAlign: 'center', color: '#94A3B8', fontSize: '13px', background: '#F8FAFC', borderRadius: '10px', border: '1px dashed #E2E8F0' }}>
                   <div style={{ fontSize: '24px', marginBottom: '6px' }}>📅</div>
                   <div style={{ fontWeight: 600, color: '#64748B' }}>No pending sessions</div>
                   <div style={{ fontSize: '11.5px', marginTop: '2px' }}>Upcoming scheduled sessions will appear here once assigned by the school.</div>
@@ -1759,17 +1777,268 @@ const StudentProfile = () => {
           display: flex; justify-content: flex-end; gap: 12px;
         }
 
-        @media (max-width: 768px) {
-          .sp-main { padding: 20px 14px !important; }
-          .sp-hero { flex-direction: column !important; text-align: center !important; padding: 20px !important; }
-          .sp-hero-meta { justify-content: center !important; }
-          .sp-content { flex-direction: column !important; }
-          .sp-col-left { width: 100% !important; }
-          .sp-modal { width: 95% !important; margin: 10px !important; max-height: 90vh !important; }
-          .sp-form-row { flex-direction: column !important; gap: 10px !important; }
-          .sp-guest-grid { grid-template-columns: 1fr !important; }
-          .sp-video-grid { grid-template-columns: 1fr !important; }
+        .sp-next-session-box-empty {
+          background: #F8FAFC;
+          border: 1px solid #E2E8F0;
+          border-radius: 16px;
+          padding: 12px 20px;
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          text-align: center;
+          align-items: center;
+          box-sizing: border-box;
+          width: 100%;
+        }
+        .sp-ns-empty-label {
+          font-size: 10px;
+          font-weight: 800;
+          color: #64748B;
+          letter-spacing: 0.7px;
+        }
+        .sp-ns-empty-title {
+          font-family: 'Outfit', sans-serif;
+          font-size: 15px;
+          font-weight: 700;
+          color: #0F172A;
+          margin: 1px 0;
+        }
+        .sp-ns-empty-sub {
+          font-size: 11.5px;
+          color: #94A3B8;
+        }
+
+        @media (max-width: 900px) {
+          .sp-main { padding: 20px 16px !important; gap: 20px !important; }
+          .sp-content { flex-direction: column !important; gap: 20px !important; }
+          .sp-col-left, .sp-col-right { width: 100% !important; min-width: 0 !important; }
           .sp-row-top { flex-direction: column !important; }
+        }
+
+        @media (max-width: 768px) {
+          .sp-page {
+            width: 100% !important;
+            max-width: 100% !important;
+            flex-direction: column !important;
+            overflow-x: hidden !important;
+            box-sizing: border-box !important;
+          }
+          .sp-main {
+            padding: 10px 10px 70px 10px !important;
+            margin-top: 64px !important;
+            gap: 10px !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            overflow-x: hidden !important;
+            box-sizing: border-box !important;
+          }
+          .sp-content {
+            flex-direction: column !important;
+            gap: 10px !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
+          }
+          .sp-col-left, .sp-col-right {
+            width: 100% !important;
+            min-width: 0 !important;
+            max-width: 100% !important;
+            gap: 10px !important;
+            box-sizing: border-box !important;
+          }
+          .sp-row-top {
+            flex-direction: column !important;
+            gap: 10px !important;
+          }
+
+          /* Compact Hero Section */
+          .sp-hero {
+            flex-direction: column !important;
+            align-items: stretch !important;
+            text-align: left !important;
+            padding: 12px 14px !important;
+            border-radius: 14px !important;
+            gap: 10px !important;
+            box-sizing: border-box !important;
+            width: 100% !important;
+            max-width: 100% !important;
+          }
+          .sp-hero-left {
+            flex-direction: row !important;
+            align-items: center !important;
+            gap: 10px !important;
+            width: 100% !important;
+            text-align: left !important;
+          }
+          .sp-avatar-wrapper {
+            width: 48px !important;
+            height: 48px !important;
+            border-radius: 24px !important;
+            flex-shrink: 0 !important;
+          }
+          .sp-avatar-fallback {
+            font-size: 18px !important;
+          }
+          .sp-hero-info {
+            align-items: flex-start !important;
+            text-align: left !important;
+            gap: 2px !important;
+            flex: 1 !important;
+            min-width: 0 !important;
+          }
+          .sp-name {
+            font-size: 17px !important;
+            font-weight: 800 !important;
+            line-height: 1.2 !important;
+            margin: 0 !important;
+            word-break: break-word !important;
+          }
+          .sp-hero-meta {
+            flex-direction: row !important;
+            flex-wrap: wrap !important;
+            align-items: center !important;
+            justify-content: flex-start !important;
+            gap: 4px 6px !important;
+            width: 100% !important;
+            margin-top: 2px !important;
+          }
+          .sp-level-badge {
+            font-size: 9px !important;
+            padding: 2px 6px !important;
+            border-radius: 4px !important;
+          }
+          .sp-badge-dot-label {
+            font-size: 10.5px !important;
+            gap: 4px !important;
+          }
+          .sp-color-dot {
+            width: 7px !important;
+            height: 7px !important;
+          }
+          .sp-hero-right {
+            width: 100% !important;
+            margin-top: 2px !important;
+          }
+          .sp-next-session-box {
+            width: 100% !important;
+            min-width: unset !important;
+            box-sizing: border-box !important;
+            padding: 8px 12px !important;
+            border-radius: 10px !important;
+            gap: 2px !important;
+            text-align: left !important;
+            align-items: flex-start !important;
+          }
+          .sp-ns-box-label {
+            font-size: 9px !important;
+            letter-spacing: 0.5px !important;
+          }
+          .sp-ns-box-time {
+            font-size: 13px !important;
+            font-weight: 800 !important;
+            line-height: 1.25 !important;
+            margin: 0 !important;
+          }
+          .sp-ns-box-sub {
+            font-size: 10.5px !important;
+            line-height: 1.2 !important;
+          }
+          .sp-next-session-box-empty {
+            width: 100% !important;
+            min-width: unset !important;
+            box-sizing: border-box !important;
+            padding: 8px 12px !important;
+            border-radius: 10px !important;
+            gap: 2px !important;
+            text-align: center !important;
+            align-items: center !important;
+          }
+          .sp-ns-empty-label {
+            font-size: 8.5px !important;
+          }
+          .sp-ns-empty-title {
+            font-size: 12px !important;
+          }
+          .sp-ns-empty-sub {
+            font-size: 10.5px !important;
+          }
+
+          /* Compact Cards */
+          .sp-card {
+            padding: 12px 12px !important;
+            border-radius: 12px !important;
+            gap: 10px !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
+          }
+          .sp-card-title {
+            font-size: 14.5px !important;
+            font-weight: 800 !important;
+            margin: 0 !important;
+          }
+          .sp-detail-row {
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            gap: 2px !important;
+            padding: 4px 0 !important;
+            font-size: 12px !important;
+          }
+          .sp-detail-label {
+            font-size: 10px !important;
+            text-transform: uppercase !important;
+            letter-spacing: 0.3px !important;
+            color: #64748B !important;
+            font-weight: 700 !important;
+          }
+          .sp-detail-value {
+            font-size: 12px !important;
+            font-weight: 700 !important;
+            color: #0F172A !important;
+            word-break: break-word !important;
+          }
+          .sp-video-grid {
+            grid-template-columns: 1fr !important;
+            gap: 10px !important;
+          }
+          .sp-video-card {
+            height: 130px !important;
+          }
+          .sp-guest-grid {
+            grid-template-columns: 1fr !important;
+            gap: 8px !important;
+          }
+          .sp-radar-container {
+            overflow-x: auto !important;
+            padding: 8px 0 !important;
+          }
+          .sp-radar-mock {
+            transform: scale(0.85) !important;
+          }
+          .sp-empty-box {
+            padding: 10px 10px !important;
+            border-radius: 8px !important;
+          }
+          .sp-empty-box > div:first-child, .sp-empty-box > span:first-child {
+            font-size: 16px !important;
+            margin-bottom: 2px !important;
+          }
+          .sp-empty-box div, .sp-empty-box span {
+            font-size: 11.5px !important;
+          }
+          .sp-modal {
+            width: calc(100% - 24px) !important;
+            margin: 12px !important;
+            max-height: 90vh !important;
+            border-radius: 14px !important;
+          }
+          .sp-modal-body {
+            padding: 14px !important;
+          }
+          .sp-form-row {
+            flex-direction: column !important;
+            gap: 8px !important;
+          }
         }
       `}</style>
     </div>

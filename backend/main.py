@@ -2899,15 +2899,29 @@ def get_instructor(instructor_id: int, db: OrmSession = Depends(get_db)):
     # Include sessions
     d["sessions"] = [
         {
+            "id": s.id,
             "date": s.date,
             "time": s.time,
+            "student_id": s.student_id,
             "student": s.student_rel.name if s.student_rel else "",
             "location": s.location,
             "status": s.status,
+            "type": s.type,
+            "image_url": getattr(s, 'image_url', '') or "",
         }
         for s in i.sessions
     ]
-    d["student_count"] = len(set(s.student_id for s in i.sessions))
+    # Collect unique assigned students (from direct assignment + sessions)
+    assigned_students_map = {}
+    direct_students = db.query(Student).filter(Student.instructor_id == instructor_id).all()
+    for ds in direct_students:
+        assigned_students_map[ds.id] = student_to_dict(ds)
+    for s in i.sessions:
+        if s.student_rel and s.student_rel.id not in assigned_students_map:
+            assigned_students_map[s.student_rel.id] = student_to_dict(s.student_rel)
+
+    d["assigned_students"] = list(assigned_students_map.values())
+    d["student_count"] = len(assigned_students_map)
     return d
 
 
@@ -3717,6 +3731,8 @@ def get_session(session_id: int, db: OrmSession = Depends(get_db)):
 def create_session(data: SessionCreate, db: OrmSession = Depends(get_db)):
     student = db.query(Student).filter(Student.id == data.student_id).first()
     instructor = db.query(Instructor).filter(Instructor.id == data.instructor_id).first()
+    if student and not student.instructor_id:
+        student.instructor_id = data.instructor_id
     session = SurfSession(
         date=data.date, time=data.time, duration_mins=data.duration_mins,
         student_id=data.student_id, instructor_id=data.instructor_id,
@@ -3752,6 +3768,8 @@ def create_sessions_bulk(data: SessionBulkCreate, db: OrmSession = Depends(get_d
         st = db.query(Student).filter(Student.id == sid).first()
         if st:
             student_names.append(st.name)
+            if not st.instructor_id:
+                st.instructor_id = data.instructor_id
         session = SurfSession(
             date=data.date, time=data.time, duration_mins=data.duration_mins,
             student_id=sid, instructor_id=data.instructor_id,

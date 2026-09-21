@@ -6,17 +6,38 @@
   padding: 0;
 }
 
+html {
+  overflow-x: hidden;
+  max-width: 100%;
+  width: 100%;
+  box-sizing: border-box;
+}
+
 body {
   font-family: 'Inter', sans-serif;
   background-color: #F8F6F2;
   color: #050B1A;
   overflow-x: hidden;
+  max-width: 100%;
+  width: 100%;
+  position: relative;
+  box-sizing: border-box;
+}
+
+#root {
+  overflow-x: hidden;
+  max-width: 100%;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .app-container {
   display: flex;
   flex-direction: column;
   width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+  box-sizing: border-box;
 }
 
 /* Typography */
@@ -420,7 +441,7 @@ h2 {
   background: none;
   border: none;
   cursor: pointer;
-  color: #050B1A;
+  color: #FFFFFF;
   padding: 8px;
 }
 
@@ -622,18 +643,38 @@ h2 {
 /* Responsive Overrides */
 @media (max-width: 900px) {
   .db-top-header {
-    padding: 0 20px;
+    padding: 0 16px !important;
+    height: 64px !important;
   }
   .db-header-nav {
-    display: none;
+    display: none !important;
+  }
+  .db-header-usertext {
+    display: none !important;
+  }
+  .db-header-right {
+    gap: 10px !important;
+  }
+  .db-header-userinfo {
+    gap: 8px !important;
   }
   .db-mobile-toggle {
-    display: block;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    color: #FFFFFF !important;
+    padding: 6px !important;
+  }
+  .db-mobile-menu {
+    top: 64px !important;
   }
   .db-page, .im-page, .sm-page, .ses-page, .an-page, .cmp-page, .va-page, .ip-page, .sp-page, .ns-page, .cr-page {
     flex-direction: column !important;
     height: auto !important;
-    overflow: visible !important;
+    overflow-x: hidden !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
   }
   .db-stats-row {
     grid-template-columns: repeat(2, 1fr) !important;
@@ -641,11 +682,13 @@ h2 {
   }
   .db-main, .im-main, .sm-main, .ses-main, .an-main, .cmp-main, .va-main, .ip-main, .sp-main, .ns-main, .cr-main {
     margin-left: 0 !important;
-    margin-top: 72px !important;
+    margin-top: 64px !important;
     width: 100% !important;
-    padding: 24px 16px !important;
+    max-width: 100% !important;
+    padding: 16px 14px !important;
     height: auto !important;
-    overflow: visible !important;
+    overflow-x: hidden !important;
+    box-sizing: border-box !important;
   }
 }
 

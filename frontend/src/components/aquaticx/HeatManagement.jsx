@@ -2985,13 +2985,13 @@ const HeatManagement = ({ currentUser }) => {
                     </div>
                 </div>
             )}
-            <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
-                <div className="flex items-center justify-between">
+            <div className="hm-main-container animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+                <div className="hm-header-top flex items-center justify-between">
                     <div>
                         <h2 style={{ fontSize: '30px', fontWeight: '700', letterSpacing: '-0.5px' }}>Heat Management</h2>
                         <p className="text-secondary" style={{ marginTop: '4px' }}>Schedule and manage competition heats</p>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                    <div className="hm-header-actions" style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                         {/* View Mode Toggle Switch */}
                         <div style={{
                             display: 'flex',

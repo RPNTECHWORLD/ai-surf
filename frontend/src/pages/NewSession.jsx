@@ -411,7 +411,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
 
   // ─── Step 3 State: Instructor Groups Matching (Real School Instructors) ───
   const [dbInstructors, setDbInstructors] = useState([]);
-  const [studentTab, setStudentTab] = useState('All Active');
+  const [step3DayFilter, setStep3DayFilter] = useState('all'); // 'all' | '1' | '2' | '3'...
+  const [step3StatusFilter, setStep3StatusFilter] = useState('all'); // 'all' | 'unassigned' | 'assigned'
+  const [step3LevelFilter, setStep3LevelFilter] = useState('all'); // 'all' | 'beginner' | 'intermediate' | 'advanced'
   const [step3SlotFilter, setStep3SlotFilter] = useState(() => slots[0]?.id || 1);
   const [studentSearch, setStudentSearch] = useState('');
   const [step3CheckedStudentIds, setStep3CheckedStudentIds] = useState([]);
@@ -816,20 +818,27 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
   }, [allPoolStudents]);
 
   // Step 2 Filtered & Sorted students from database:
-  // Unselected students on TOP, selected students at the BOTTOM
+  // Active slot's assigned students on TOP (0), Unassigned in MIDDLE (1), Other slots' students at BOTTOM (2)
   const filteredStudents = useMemo(() => {
-    const selectedSet = new Set(allSelectedStudentIds);
+    const activeSlotIdStep2 = selectedSlotId || activeSlotsForDay[0]?.id || slots[0]?.id;
+    const currentSlotStudentIds = new Set(slotStudentMap[activeSlotIdStep2] || []);
+    const allSelectedSet = new Set(allSelectedStudentIds);
+
+    const getStudentPriority = (id) => {
+      if (currentSlotStudentIds.has(id)) return 0; // Top: In this active slot
+      if (!allSelectedSet.has(id)) return 1;       // Middle: Unassigned / available
+      return 2;                                    // Bottom: Assigned in another slot
+    };
 
     return allPoolStudents
       .filter(s => levelFilter === 'all' || s.level.toLowerCase() === levelFilter.toLowerCase())
       .filter(s => !studentSearchStep2 || s.name.toLowerCase().includes(studentSearchStep2.toLowerCase()))
       .slice()
       .sort((a, b) => {
-        // 1. Unselected students on TOP, selected students at BOTTOM
-        const aSelected = selectedSet.has(a.id);
-        const bSelected = selectedSet.has(b.id);
-        if (!aSelected && bSelected) return -1;
-        if (aSelected && !bSelected) return 1;
+        // 1. Priority sort: active slot students on TOP, unassigned in MIDDLE, other slots at BOTTOM
+        const prioA = getStudentPriority(a.id);
+        const prioB = getStudentPriority(b.id);
+        if (prioA !== prioB) return prioA - prioB;
 
         // 2. If day filter is active
         if (courseDayFilter !== 'all') {
@@ -847,7 +856,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
         // 4. Alphabetical name
         return a.name.localeCompare(b.name);
       });
-  }, [allPoolStudents, levelFilter, courseDayFilter, studentSearchStep2, allSelectedStudentIds]);
+  }, [allPoolStudents, levelFilter, courseDayFilter, studentSearchStep2, allSelectedStudentIds, slotStudentMap, selectedSlotId, activeSlotsForDay, slots]);
 
   // Transition from Step 2 to Step 3: Multi-slot aware group initialization
   const proceedToStep3 = () => {
@@ -876,18 +885,35 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
       const targetIds = allSelectedStudentIds.length > 0 ? allSelectedStudentIds : selectedStudentIds;
 
       if (targetIds && targetIds.length > 0) {
-        setTrainingGroups([
-          {
-            id: `group-1`,
-            name: `Group A`,
-            day: `Day 1`,
-            level: 'General',
-            slotId: initialSlot?.id || null,
-            studentIds: targetIds,
-            assignedInstructorId: null,
-          }
-        ]);
-        setActiveDropGroupId('group-1');
+        if (activeSlotsWithStudents.length > 1) {
+          const newGroups = activeSlotsWithStudents.map(slot => {
+            const slotStudents = slotStudentMap[slot.id] || [];
+            return {
+              id: `group-${slot.id}-A`,
+              name: `Group A`,
+              day: `Day 1`,
+              level: 'General',
+              slotId: slot.id,
+              studentIds: slotStudents,
+              assignedInstructorId: null,
+            };
+          });
+          setTrainingGroups(newGroups);
+          setActiveDropGroupId(newGroups[0]?.id || null);
+        } else {
+          setTrainingGroups([
+            {
+              id: `group-1`,
+              name: `Group A`,
+              day: `Day 1`,
+              level: 'General',
+              slotId: initialSlot?.id || null,
+              studentIds: targetIds,
+              assignedInstructorId: null,
+            }
+          ]);
+          setActiveDropGroupId('group-1');
+        }
       } else {
         setTrainingGroups([]);
         setActiveDropGroupId(null);
@@ -902,6 +928,35 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
     return allPoolStudents.filter(s => targetIds.includes(s.id));
   }, [allPoolStudents, allSelectedStudentIds, selectedStudentIds]);
 
+  // Step 3: Available Days for Imported Students
+  const step3AvailableDays = useMemo(() => {
+    const daysSet = new Set();
+    importedStudents.forEach(s => {
+      const d = parseInt(s.whichDay, 10);
+      if (d) daysSet.add(d);
+    });
+    if (daysSet.size === 0) {
+      return (availableDays && availableDays.length > 0) ? availableDays.slice(0, 7) : [1, 2, 3];
+    }
+    return Array.from(daysSet).sort((a, b) => a - b);
+  }, [importedStudents, availableDays]);
+
+  // Students in active slot (for option counts)
+  const slotImportedStudents = useMemo(() => {
+    if (step3SlotFilter === 'ALL') return importedStudents;
+    const slotAssignedIds = slotStudentMap[step3SlotFilter] || [];
+    return importedStudents.filter(s => slotAssignedIds.includes(s.id));
+  }, [importedStudents, step3SlotFilter, slotStudentMap]);
+
+  const hasActiveStep3Filters = step3DayFilter !== 'all' || step3StatusFilter !== 'all' || step3LevelFilter !== 'all' || Boolean(studentSearch);
+
+  const resetStep3Filters = () => {
+    setStep3DayFilter('all');
+    setStep3StatusFilter('all');
+    setStep3LevelFilter('all');
+    setStudentSearch('');
+  };
+
   const filteredColumn1Students = useMemo(() => {
     return importedStudents
       .filter(s => {
@@ -911,11 +966,22 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
           if (!slotAssignedIds.includes(s.id)) return false;
         }
 
-        if (studentTab === 'All Active') return true;
+        // Day filtering
+        if (step3DayFilter !== 'all' && String(s.whichDay) !== String(step3DayFilter)) {
+          return false;
+        }
+
+        // Status filtering (All Active / Unassigned / Assigned)
         const isAssigned = trainingGroups.some(g => g.studentIds.includes(s.id));
-        if (studentTab === 'Unassigned') return !isAssigned;
-        if (studentTab === 'Assigned') return isAssigned;
-        return s.level?.toLowerCase() === studentTab.toLowerCase();
+        if (step3StatusFilter === 'unassigned' && isAssigned) return false;
+        if (step3StatusFilter === 'assigned' && !isAssigned) return false;
+
+        // Level filtering (All / Beginner / Intermediate / Advanced)
+        if (step3LevelFilter !== 'all') {
+          if ((s.level || '').toLowerCase() !== step3LevelFilter.toLowerCase()) return false;
+        }
+
+        return true;
       })
       .filter(s => !studentSearch || s.name.toLowerCase().includes(studentSearch.toLowerCase()))
       .slice()
@@ -931,7 +997,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
         if (dayA !== dayB) return dayA - dayB;
         return a.name.localeCompare(b.name);
       });
-  }, [importedStudents, studentTab, step3SlotFilter, slotStudentMap, studentSearch, trainingGroups]);
+  }, [importedStudents, step3DayFilter, step3StatusFilter, step3LevelFilter, step3SlotFilter, slotStudentMap, studentSearch, trainingGroups]);
 
   // Step 3: Training groups filtered by slot
   const displayedTrainingGroups = useMemo(() => {
@@ -948,7 +1014,6 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
 
   // Create Group from checked students or create a fresh empty group card with assigned slot
   const handleCreateGroup = () => {
-    const newGroupLetter = String.fromCharCode(65 + trainingGroups.length);
     const checkedStudents = importedStudents.filter(s => step3CheckedStudentIds.includes(s.id));
     const levelLabel = checkedStudents.length > 0 ? (checkedStudents[0]?.level || 'General') : 'General';
     
@@ -960,10 +1025,32 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
     }
     if (!defaultSlotId) defaultSlotId = selectedSlot?.id || slots[0]?.id;
 
+    // Filter existing groups for this specific time slot
+    const slotGroups = trainingGroups.filter(
+      g => String(g.slotId || slots[0]?.id) === String(defaultSlotId)
+    );
+
+    // Find used letters in this slot so each time slot starts from Group A, Group B, Group C...
+    const usedLetters = new Set();
+    slotGroups.forEach(g => {
+      const match = (g.name || '').match(/Group\s+([A-Za-z])/i);
+      if (match) usedLetters.add(match[1].toUpperCase());
+    });
+
+    let charCode = 65; // 'A'
+    while (usedLetters.has(String.fromCharCode(charCode))) {
+      charCode++;
+    }
+    const newGroupLetter = String.fromCharCode(charCode);
+
+    const dayLabel = (checkedStudents.length > 0 && checkedStudents[0]?.whichDay)
+      ? `Day ${checkedStudents[0].whichDay}`
+      : `Day ${slotGroups.length + 1}`;
+
     const newGroup = {
       id: `group-${Date.now()}`,
       name: `Group ${newGroupLetter}`,
-      day: `Day ${trainingGroups.length + 1}`,
+      day: dayLabel,
       level: levelLabel,
       slotId: defaultSlotId,
       studentIds: [...step3CheckedStudentIds],
@@ -1942,22 +2029,30 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                     const badge = getBadgeStyle(student.level);
                     const isSelectedFilterMatch = courseDayFilter !== 'all' && String(student.whichDay) === String(courseDayFilter);
                     const assignment = getStudentSlotAssignment(student.id);
-                    const isChecked = !!assignment;
+                    const activeSlotId = selectedSlotId || activeSlotsForDay[0]?.id || slots[0]?.id;
+                    const isCurrentSlotStudent = assignment && String(assignment.slot.id) === String(activeSlotId);
+                    const isOtherSlotStudent = assignment && String(assignment.slot.id) !== String(activeSlotId);
+                    const isChecked = isCurrentSlotStudent;
                     const isScheduledInDb = isStudentScheduledInDbOnDate(student);
 
                     const cardStyle = () => {
                       return {
-                        background: '#FFFFFF',
-                        border: isChecked ? '1.5px solid #CBD5E1' : '1.5px solid #E2E8F0',
-                        boxShadow: isChecked ? '0 1px 3px rgba(0, 0, 0, 0.03)' : '0 1px 2px rgba(0, 0, 0, 0.02)',
-                        opacity: 1,
+                        background: isCurrentSlotStudent ? '#FFFFFF' : isOtherSlotStudent ? '#F8FAFC' : '#FFFFFF',
+                        border: isCurrentSlotStudent
+                          ? '1.5px solid #0F172A'
+                          : isOtherSlotStudent
+                          ? '1.5px dashed #CBD5E1'
+                          : '1.5px solid #E2E8F0',
+                        boxShadow: isCurrentSlotStudent ? '0 1px 4px rgba(15, 23, 42, 0.08)' : '0 1px 2px rgba(0, 0, 0, 0.02)',
+                        opacity: isOtherSlotStudent ? 0.72 : 1,
                         transition: 'all 0.15s ease',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
                         padding: '12px 18px',
                         borderRadius: '12px',
-                        gap: '16px'
+                        gap: '16px',
+                        cursor: 'pointer'
                       };
                     };
 
@@ -1976,8 +2071,20 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                               width: '22px',
                               height: '22px',
                               borderRadius: '50%',
-                              border: isChecked ? '2px solid #0F172A' : isScheduledInDb ? '2px solid #D97706' : '2px solid #CBD5E1',
-                              background: isChecked ? '#0F172A' : isScheduledInDb ? '#D97706' : '#FFFFFF',
+                              border: isCurrentSlotStudent
+                                ? '2px solid #0F172A'
+                                : isOtherSlotStudent
+                                ? '2px solid #94A3B8'
+                                : isScheduledInDb
+                                ? '2px solid #D97706'
+                                : '2px solid #CBD5E1',
+                              background: isCurrentSlotStudent
+                                ? '#0F172A'
+                                : isOtherSlotStudent
+                                ? '#E2E8F0'
+                                : isScheduledInDb
+                                ? '#D97706'
+                                : '#FFFFFF',
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
@@ -1985,7 +2092,17 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                               transition: 'all 0.15s ease'
                             }}
                           >
-                            {(isChecked || isScheduledInDb) && (
+                            {isCurrentSlotStudent && (
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="20 6 9 17 4 12" />
+                              </svg>
+                            )}
+                            {isOtherSlotStudent && (
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#64748B" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="20 6 9 17 4 12" />
+                              </svg>
+                            )}
+                            {!isCurrentSlotStudent && !isOtherSlotStudent && isScheduledInDb && (
                               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
                                 <polyline points="20 6 9 17 4 12" />
                               </svg>
@@ -2029,11 +2146,11 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                         <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexShrink: 0 }}>
                           {/* Column 1: Slot Status (140px) */}
                           <div style={{ width: '140px', display: 'flex', justifyContent: 'center' }}>
-                            {isChecked && assignment ? (
+                            {isCurrentSlotStudent && assignment ? (
                               <span style={{
-                                background: '#F1F5F9',
-                                color: '#0F172A',
-                                border: '1px solid #CBD5E1',
+                                background: '#0F172A',
+                                color: '#FFFFFF',
+                                border: '1px solid #0F172A',
                                 padding: '4px 10px',
                                 borderRadius: '14px',
                                 fontSize: '11px',
@@ -2044,6 +2161,22 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                                 whiteSpace: 'nowrap'
                               }}>
                                 ✓ {assignment.slot.startTime || assignment.slot.time} SLOT
+                              </span>
+                            ) : isOtherSlotStudent && assignment ? (
+                              <span style={{
+                                background: '#F1F5F9',
+                                color: '#64748B',
+                                border: '1px dashed #CBD5E1',
+                                padding: '4px 10px',
+                                borderRadius: '14px',
+                                fontSize: '11px',
+                                fontWeight: 600,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                whiteSpace: 'nowrap'
+                              }} title="Assigned to another time slot. Click row to move to this slot.">
+                                ⏰ {assignment.slot.startTime || assignment.slot.time}
                               </span>
                             ) : isScheduledInDb ? (
                               <span style={{
@@ -2268,6 +2401,13 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                         onClick={() => {
                           setStep3SlotFilter(s.id);
                           setSelectedSlotId(s.id);
+                          // Auto-target the group belonging to the new slot so coach clicks assign to this slot
+                          const groupsInNewSlot = trainingGroups.filter(g => String(g.slotId || slots[0]?.id) === String(s.id));
+                          if (groupsInNewSlot.length > 0) {
+                            setActiveDropGroupId(groupsInNewSlot[0].id);
+                          } else {
+                            setActiveDropGroupId(null);
+                          }
                         }}
                         style={isSelected ? {
                           background: '#0F172A',
@@ -2321,12 +2461,39 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                 onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}
                 onDrop={handleDropOnColumn1}
               >
-                <div className="ns-col-head">
-                  <h3 className="ns-col-title">Students List</h3>
-                  <span className="ns-col-badge">{filteredColumn1Students.length} Students</span>
+                <div className="ns-col-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <h3 className="ns-col-title">Students List</h3>
+                    <span className="ns-col-badge">{filteredColumn1Students.length} Students</span>
+                  </div>
+                  {hasActiveStep3Filters && (
+                    <button
+                      type="button"
+                      onClick={resetStep3Filters}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: '#0284C7',
+                        fontSize: '11.5px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        padding: '2px 4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px'
+                      }}
+                      title="Reset all filters"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                        <path d="M3 3v5h5"/>
+                      </svg>
+                      Reset
+                    </button>
+                  )}
                 </div>
 
-                {/* Level & Group Filter Tabs - Fixed 3x2 Grid (No layout shifting) */}
+                {/* Filter Toolbar: Day, Status, Level */}
                 <div style={{
                   display: 'grid',
                   gridTemplateColumns: 'repeat(3, 1fr)',
@@ -2334,29 +2501,109 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                   width: '100%',
                   boxSizing: 'border-box'
                 }}>
-                  {['All Active', 'Unassigned', 'Assigned', 'Beginner', 'Intermediate', 'Advanced'].map(tab => (
-                    <button
-                      key={tab}
-                      className={`ns-day-tab ${studentTab === tab ? 'active' : ''}`}
-                      onClick={() => setStudentTab(tab)}
+                  {/* Day Filter */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                    <label style={{ fontSize: '10px', fontWeight: 700, color: '#64748B', display: 'flex', alignItems: 'center', gap: '3px', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+                      <span>📅</span> Day
+                    </label>
+                    <select
+                      value={step3DayFilter}
+                      onChange={(e) => setStep3DayFilter(e.target.value)}
                       style={{
                         width: '100%',
-                        padding: '6px 2px',
+                        height: '34px',
+                        padding: '0 4px',
                         fontSize: '11.5px',
-                        textAlign: 'center',
-                        justifyContent: 'center',
-                        display: 'flex',
-                        alignItems: 'center',
-                        boxSizing: 'border-box',
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        transition: 'all 0.15s ease'
+                        fontWeight: step3DayFilter !== 'all' ? 700 : 500,
+                        color: step3DayFilter !== 'all' ? '#0284C7' : '#0F172A',
+                        background: step3DayFilter !== 'all' ? '#F0F9FF' : '#F8FAFC',
+                        border: `1.5px solid ${step3DayFilter !== 'all' ? '#0284C7' : '#CBD5E1'}`,
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        outline: 'none',
+                        boxSizing: 'border-box'
                       }}
                     >
-                      {tab}
-                    </button>
-                  ))}
+                      <option value="all">All Days ({slotImportedStudents.length})</option>
+                      {step3AvailableDays.map(d => {
+                        const count = slotImportedStudents.filter(s => String(s.whichDay) === String(d)).length;
+                        return (
+                          <option key={d} value={String(d)}>
+                            Day {d} ({count})
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+
+                  {/* Status Filter */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                    <label style={{ fontSize: '10px', fontWeight: 700, color: '#64748B', display: 'flex', alignItems: 'center', gap: '3px', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+                      <span>⚡</span> Status
+                    </label>
+                    <select
+                      value={step3StatusFilter}
+                      onChange={(e) => setStep3StatusFilter(e.target.value)}
+                      style={{
+                        width: '100%',
+                        height: '34px',
+                        padding: '0 4px',
+                        fontSize: '11.5px',
+                        fontWeight: step3StatusFilter !== 'all' ? 700 : 500,
+                        color: step3StatusFilter !== 'all' ? '#0284C7' : '#0F172A',
+                        background: step3StatusFilter !== 'all' ? '#F0F9FF' : '#F8FAFC',
+                        border: `1.5px solid ${step3StatusFilter !== 'all' ? '#0284C7' : '#CBD5E1'}`,
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        outline: 'none',
+                        boxSizing: 'border-box'
+                      }}
+                    >
+                      <option value="all">All Active ({slotImportedStudents.length})</option>
+                      <option value="unassigned">
+                        Unassigned ({slotImportedStudents.filter(s => !trainingGroups.some(g => g.studentIds.includes(s.id))).length})
+                      </option>
+                      <option value="assigned">
+                        Assigned ({slotImportedStudents.filter(s => trainingGroups.some(g => g.studentIds.includes(s.id))).length})
+                      </option>
+                    </select>
+                  </div>
+
+                  {/* Level Filter */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                    <label style={{ fontSize: '10px', fontWeight: 700, color: '#64748B', display: 'flex', alignItems: 'center', gap: '3px', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+                      <span>🎯</span> Level
+                    </label>
+                    <select
+                      value={step3LevelFilter}
+                      onChange={(e) => setStep3LevelFilter(e.target.value)}
+                      style={{
+                        width: '100%',
+                        height: '34px',
+                        padding: '0 4px',
+                        fontSize: '11.5px',
+                        fontWeight: step3LevelFilter !== 'all' ? 700 : 500,
+                        color: step3LevelFilter !== 'all' ? '#0284C7' : '#0F172A',
+                        background: step3LevelFilter !== 'all' ? '#F0F9FF' : '#F8FAFC',
+                        border: `1.5px solid ${step3LevelFilter !== 'all' ? '#0284C7' : '#CBD5E1'}`,
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        outline: 'none',
+                        boxSizing: 'border-box'
+                      }}
+                    >
+                      <option value="all">All Levels ({slotImportedStudents.length})</option>
+                      <option value="beginner">
+                        Beginner ({slotImportedStudents.filter(s => (s.level || '').toLowerCase() === 'beginner').length})
+                      </option>
+                      <option value="intermediate">
+                        Intermediate ({slotImportedStudents.filter(s => (s.level || '').toLowerCase() === 'intermediate').length})
+                      </option>
+                      <option value="advanced">
+                        Advanced ({slotImportedStudents.filter(s => (s.level || '').toLowerCase() === 'advanced').length})
+                      </option>
+                    </select>
+                  </div>
                 </div>
 
                 {/* Search */}
@@ -2378,8 +2625,27 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                 {/* Students Checklist */}
                 <div className="ns-ws-student-list">
                   {filteredColumn1Students.length === 0 ? (
-                    <div style={{ padding: '24px 12px', textAlign: 'center', color: '#94A3B8', fontSize: '12px' }}>
-                      No students found in this tab.
+                    <div style={{ padding: '28px 12px', textAlign: 'center', color: '#94A3B8', fontSize: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '22px' }}>🔍</span>
+                      <span>No students found matching current filters.</span>
+                      {hasActiveStep3Filters && (
+                        <button
+                          type="button"
+                          onClick={resetStep3Filters}
+                          style={{
+                            background: '#F1F5F9',
+                            border: '1px solid #CBD5E1',
+                            borderRadius: '6px',
+                            padding: '4px 10px',
+                            fontSize: '11px',
+                            fontWeight: 600,
+                            color: '#0284C7',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Clear Filters
+                        </button>
+                      )}
                     </div>
                   ) : (
                     filteredColumn1Students.map(student => {
@@ -2613,84 +2879,33 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                           }}
                           onDrop={(e) => handleDropOnGroup(e, grp.id)}
                         >
-                          <div className="ns-gc-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              <span className="ns-gc-day">{grp.day}</span>
-                              
-                              {/* Slot Dropdown for Group */}
-                              <select
-                                value={grp.slotId || (slots[0]?.id)}
-                                onChange={(e) => {
-                                  const newSlotId = e.target.value;
-                                  const assignedIds = grp.assignedInstructorIds || (grp.assignedInstructorId ? [grp.assignedInstructorId] : []);
-                                  for (const instId of assignedIds) {
-                                    const conflict = getCoachSlotConflict(grp.id, instId, newSlotId);
-                                    if (conflict) {
-                                      const coach = allInstructors.find(i => String(i.id) === String(instId));
-                                      const coachName = coach ? coach.name : 'This coach';
-                                      setUiAlert({
-                                        title: 'Time Slot Conflict',
-                                        message: `${coachName} is already assigned to ${conflict.conflictingGroup.name} at ${conflict.time}. Cannot move ${grp.name} to this time slot unless you remove or change the conflicting coach first.`,
-                                        type: 'warning',
-                                        icon: '⚠️'
-                                      });
-                                      return;
-                                    }
-                                  }
-                                  setTrainingGroups(prev => prev.map(g => g.id === grp.id ? { ...g, slotId: newSlotId } : g));
-                                }}
-                                onClick={(e) => e.stopPropagation()}
-                                style={{
-                                  fontSize: '11px',
-                                  fontWeight: 700,
-                                  background: `${grpTheme.primary}18`,
-                                  color: grpTheme.primary,
-                                  border: `1px solid ${grpTheme.primary}50`,
-                                  borderRadius: '8px',
-                                  padding: '2px 6px',
-                                  cursor: 'pointer',
-                                  outline: 'none'
-                                }}
-                              >
-                                {slots.map((s, idx) => {
-                                  const count = (slotStudentMap[s.id] || []).length;
-                                  return (
-                                    <option key={s.id} value={s.id} style={{ color: '#0F172A', background: '#FFF' }}>
-                                      ⏰ {s.startTime || s.time} ({count} {count === 1 ? 'Student' : 'Students'})
-                                    </option>
-                                  );
-                                })}
-                              </select>
-
-                              <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 600 }}>{grp.level}</span>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                deleteGroup(grp.id);
-                              }}
-                              style={{
-                                background: 'none',
-                                border: 'none',
-                                color: '#94A3B8',
-                                cursor: 'pointer',
-                                fontSize: '18px',
-                                padding: '2px 6px',
-                                borderRadius: '4px',
-                                lineHeight: 1
-                              }}
-                              title="Delete group"
-                            >
-                              &times;
-                            </button>
-                          </div>
-
-                          <div className="ns-gc-title-row">
+                          <div className="ns-gc-title-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <h4 className="ns-gc-title">{grp.name}</h4>
-                            <span className="ns-gc-count" style={{ fontWeight: 700, color: grpStudents.length > 0 ? '#0F172A' : '#94A3B8' }}>
-                              {grpStudents.length} Students
-                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span className="ns-gc-count" style={{ fontWeight: 700, color: grpStudents.length > 0 ? '#0F172A' : '#94A3B8' }}>
+                                {grpStudents.length} Students
+                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  deleteGroup(grp.id);
+                                }}
+                                style={{
+                                  background: 'none',
+                                  border: 'none',
+                                  color: '#94A3B8',
+                                  cursor: 'pointer',
+                                  fontSize: '18px',
+                                  padding: '2px 6px',
+                                  borderRadius: '4px',
+                                  lineHeight: 1
+                                }}
+                                title="Delete group"
+                              >
+                                &times;
+                              </button>
+                            </div>
                           </div>
 
                           {/* Students Inside Group */}
@@ -2892,35 +3107,48 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                     </div>
                   ) : (
                     allInstructors.map(inst => {
-                      const assignedCount = trainingGroups.filter(g => {
+                      const currentSlotId = step3SlotFilter !== 'ALL' ? step3SlotFilter : (selectedSlotId || slots[0]?.id);
+                      const currentSlotGroups = displayedTrainingGroups;
+                      const currentActiveGroup = currentSlotGroups.find(g => g.id === activeDropGroupId) || currentSlotGroups[0] || null;
+
+                      // Is instructor already assigned to a group in THIS current time slot?
+                      const isAssignedInCurrentSlot = currentSlotGroups.some(g => {
+                        const ids = g.assignedInstructorIds || (g.assignedInstructorId ? [g.assignedInstructorId] : []);
+                        return ids.map(String).includes(String(inst.id));
+                      });
+
+                      const totalAssignedCount = trainingGroups.filter(g => {
                         const ids = g.assignedInstructorIds || (g.assignedInstructorId ? [g.assignedInstructorId] : []);
                         return ids.map(String).includes(String(inst.id));
                       }).length;
-                      const isAssigned = assignedCount > 0;
+
                       const isOnLeave = inst.status === 'On Leave';
 
-                      const targetGroup = activeDropGroupId ? trainingGroups.find(g => g.id === activeDropGroupId) : null;
-                      const activeConflict = targetGroup ? getCoachSlotConflict(targetGroup.id, inst.id) : null;
+                      const activeConflict = currentActiveGroup
+                        ? getCoachSlotConflict(currentActiveGroup.id, inst.id)
+                        : getCoachSlotConflict(null, inst.id, currentSlotId);
 
                       const badgeText = isOnLeave
                         ? 'On Leave'
                         : activeConflict
                           ? `Busy (${activeConflict.conflictingGroup.name})`
-                          : isAssigned
-                            ? `${assignedCount} Assigned`
-                            : 'Available';
+                          : isAssignedInCurrentSlot
+                            ? 'Assigned'
+                            : totalAssignedCount > 0
+                              ? `Assigned (Other slot)`
+                              : 'Available';
                       const badgeClass = isOnLeave
                         ? 'leave'
                         : activeConflict
                           ? 'conflict'
-                          : isAssigned
+                          : isAssignedInCurrentSlot
                             ? 'assigned'
                             : 'available';
 
                       return (
                         <div
                           key={inst.id}
-                          className={`ns-inst-card ${isAssigned ? 'assigned' : ''} ${isOnLeave ? 'leave' : ''} ${activeConflict ? 'conflict-busy' : ''}`}
+                          className={`ns-inst-card ${isAssignedInCurrentSlot ? 'assigned' : ''} ${isOnLeave ? 'leave' : ''} ${activeConflict ? 'conflict-busy' : ''}`}
                           draggable={!isOnLeave}
                           onDragStart={(e) => {
                             if (isOnLeave) return;
@@ -2945,25 +3173,44 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                               });
                               return;
                             }
-                            if (activeDropGroupId) {
-                              assignInstructorToGroup(activeDropGroupId, inst.id);
-                            } else {
-                              const unassignedGroup = trainingGroups.find(g => {
+
+                            // Strictly target groups in the CURRENT time slot
+                            const activeSlotId = step3SlotFilter !== 'ALL' ? step3SlotFilter : (selectedSlotId || slots[0]?.id);
+                            const activeSlotGroups = displayedTrainingGroups;
+
+                            let targetGroup = activeSlotGroups.find(g => g.id === activeDropGroupId);
+
+                            // If active group is from another slot, pick an unassigned group in this slot
+                            if (!targetGroup) {
+                              targetGroup = activeSlotGroups.find(g => {
                                 const ids = g.assignedInstructorIds || (g.assignedInstructorId ? [g.assignedInstructorId] : []);
                                 return ids.length === 0;
                               });
-                              if (unassignedGroup) {
-                                assignInstructorToGroup(unassignedGroup.id, inst.id);
-                              } else if (trainingGroups.length > 0) {
-                                assignInstructorToGroup(trainingGroups[0].id, inst.id);
-                              } else {
-                                setUiAlert({
-                                  title: 'Create Group First',
-                                  message: 'Please create a Group Card in the center column first before assigning coaches.',
-                                  type: 'warning',
-                                  icon: '📋'
-                                });
-                              }
+                            }
+
+                            // If still none, fallback to first group in current slot
+                            if (!targetGroup && activeSlotGroups.length > 0) {
+                              targetGroup = activeSlotGroups[0];
+                            }
+
+                            if (targetGroup) {
+                              setActiveDropGroupId(targetGroup.id);
+                              assignInstructorToGroup(targetGroup.id, inst.id);
+                            } else {
+                              // If NO group exists in current slot yet, auto-create Group A for THIS slot and assign coach
+                              const slotStudents = slotStudentMap[activeSlotId] || [];
+                              const newGroup = {
+                                id: `group-${activeSlotId}-${Date.now()}`,
+                                name: 'Group A',
+                                day: 'Day 1',
+                                level: 'General',
+                                slotId: activeSlotId,
+                                studentIds: slotStudents,
+                                assignedInstructorId: inst.id,
+                                assignedInstructorIds: [inst.id],
+                              };
+                              setTrainingGroups(prev => [...prev, newGroup]);
+                              setActiveDropGroupId(newGroup.id);
                             }
                           }}
                           title={isOnLeave ? 'On Leave' : activeConflict ? `Already coaching ${activeConflict.conflictingGroup.name} at ${activeConflict.time}` : 'Drag into a group or click to assign'}
