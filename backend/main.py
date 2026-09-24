@@ -3023,21 +3023,37 @@ def create_instructor(data: InstructorCreate, request: Request, db: OrmSession =
 
 @app.delete("/api/instructors/{instructor_id}")
 def delete_instructor(instructor_id: int, db: OrmSession = Depends(get_db)):
-    i = db.query(Instructor).filter(Instructor.id == instructor_id).first()
-    if not i:
-        raise HTTPException(status_code=404, detail="Instructor not found")
+    i = db.query(Instructor).filter((Instructor.id == instructor_id) | (Instructor.user_id == instructor_id)).first()
     try:
-        db.query(Student).filter(Student.instructor_id == instructor_id).update({"instructor_id": None})
-        db.query(SurfSession).filter(SurfSession.instructor_id == instructor_id).delete()
-        db.query(MockHeat).filter(MockHeat.coach_id == instructor_id).delete()
-        if i.user_id:
-            db.query(User).filter(User.id == i.user_id).delete()
-        db.delete(i)
-        db.commit()
-    except Exception:
+        if i:
+            db.query(Student).filter(Student.instructor_id == i.id).update({"instructor_id": None})
+            db.query(SurfSession).filter(SurfSession.instructor_id == i.id).delete()
+            db.query(MockHeat).filter(MockHeat.coach_id == i.id).delete()
+            if i.user_id:
+                db.query(User).filter(User.id == i.user_id).delete()
+            db.delete(i)
+            db.commit()
+            return {"message": "Instructor deleted successfully"}
+        u = db.query(User).filter(User.id == instructor_id).first()
+        if u:
+            inst = db.query(Instructor).filter(Instructor.user_id == u.id).first()
+            if inst:
+                db.query(Student).filter(Student.instructor_id == inst.id).update({"instructor_id": None})
+                db.query(SurfSession).filter(SurfSession.instructor_id == inst.id).delete()
+                db.query(MockHeat).filter(MockHeat.coach_id == inst.id).delete()
+                db.delete(inst)
+            db.delete(u)
+            db.commit()
+            return {"message": "Instructor deleted successfully"}
+    except Exception as e:
         db.rollback()
-        db.delete(i)
-        db.commit()
+        print(f"Error deleting instructor {instructor_id}: {e}")
+        try:
+            if i:
+                db.delete(i)
+                db.commit()
+        except Exception:
+            db.rollback()
     return {"message": "Instructor deleted successfully"}
 
 
@@ -3195,15 +3211,23 @@ def create_student(data: StudentCreate, request: Request, db: OrmSession = Depen
 @app.post("/api/students/bulk")
 def create_students_bulk(students_data: List[StudentCreate], db: OrmSession = Depends(get_db)):
     created = []
+    seen_in_batch = set()
     for data in students_data:
         if not data.name or not data.email:
             continue
+        clean_email = data.email.lower().strip()
+        target_school = (data.school or "Aquatic Indica Surf School").strip()
+        batch_key = (clean_email, target_school.lower())
+        if batch_key in seen_in_batch:
+            continue
+        seen_in_batch.add(batch_key)
+
         user_id = None
         if data.password and data.email:
-            existing_user = db.query(User).filter(User.email == data.email.lower().strip()).first()
+            existing_user = db.query(User).filter(User.email == clean_email).first()
             if not existing_user:
                 new_user = User(
-                    email=data.email.lower().strip(),
+                    email=clean_email,
                     password_hash=hash_password(data.password),
                     password_plain=data.password,
                     role="athlete",
@@ -3216,33 +3240,65 @@ def create_students_bulk(students_data: List[StudentCreate], db: OrmSession = De
             else:
                 user_id = existing_user.id
 
-        student = Student(
-            user_id=user_id,
-            name=data.name, email=data.email, level=data.level or "Beginner",
-            instructor_id=data.instructor_id,
-            image=data.image or "",
-            last_active="Today",
-            whatsapp_number=data.whatsapp_number or "",
-            guests_count=data.guests_count or 1,
-            course_duration=data.course_duration or "3 Days Course",
-            start_date=data.start_date or datetime.now().strftime("%Y-%m-%d"),
-            end_date=data.end_date or "",
-            session_time=data.session_time or "Morning 6:00 AM",
-            staying_at_school=data.staying_at_school or "Yes",
-            reminder_preference=data.reminder_preference or "WhatsApp Text",
-            reminder_sent=bool(data.reminder_sent),
-            guests_details=json.dumps(data.guests_details or []),
-            school=data.school or "Aquatic Indica Surf School",
-        )
-        db.add(student)
-        db.flush()
-        created.append(student_to_dict(student))
+        # Check if student already exists in this school
+        existing_student = db.query(Student).filter(
+            func.lower(Student.email) == clean_email,
+            func.lower(Student.school) == target_school.lower()
+        ).first()
+
+        if existing_student:
+            # Update existing student record instead of creating duplicate
+            existing_student.name = data.name.strip()
+            if user_id:
+                existing_student.user_id = user_id
+            if data.level:
+                existing_student.level = data.level
+            if data.instructor_id is not None:
+                existing_student.instructor_id = data.instructor_id
+            if data.whatsapp_number:
+                existing_student.whatsapp_number = data.whatsapp_number
+            if data.course_duration:
+                existing_student.course_duration = data.course_duration
+            if data.start_date:
+                existing_student.start_date = data.start_date
+            if data.end_date:
+                existing_student.end_date = data.end_date
+            if data.session_time:
+                existing_student.session_time = data.session_time
+            if data.staying_at_school:
+                existing_student.staying_at_school = data.staying_at_school
+            db.flush()
+            created.append(student_to_dict(existing_student))
+        else:
+            student = Student(
+                user_id=user_id,
+                name=data.name.strip(),
+                email=clean_email,
+                level=data.level or "Beginner",
+                instructor_id=data.instructor_id,
+                image=data.image or "",
+                last_active="Today",
+                whatsapp_number=data.whatsapp_number or "",
+                guests_count=data.guests_count or 1,
+                course_duration=data.course_duration or "3 Days Course",
+                start_date=data.start_date or datetime.now().strftime("%Y-%m-%d"),
+                end_date=data.end_date or "",
+                session_time=data.session_time or "Morning 6:00 AM",
+                staying_at_school=data.staying_at_school or "Yes",
+                reminder_preference=data.reminder_preference or "WhatsApp Text",
+                reminder_sent=bool(data.reminder_sent),
+                guests_details=json.dumps(data.guests_details or []),
+                school=target_school,
+            )
+            db.add(student)
+            db.flush()
+            created.append(student_to_dict(student))
     
     db.commit()
     bulk_school = (students_data[0].school if students_data and students_data[0].school else "Aquatic Indica Surf School")
-    db.add(ActivityLog(text=f"Bulk imported {len(created)} new students", type="group", school=bulk_school))
+    db.add(ActivityLog(text=f"Imported/updated {len(created)} students", type="group", school=bulk_school))
     db.commit()
-    return {"message": f"Successfully created {len(created)} students", "students": created}
+    return {"message": f"Successfully processed {len(created)} students", "students": created}
 
 
 class AttendanceCreate(BaseModel):
@@ -3683,28 +3739,49 @@ def check_approval(email: str, db: OrmSession = Depends(get_db)):
 
 @app.delete("/api/students/{student_id}")
 def delete_student(student_id: int, db: OrmSession = Depends(get_db)):
-    s = db.query(Student).filter(Student.id == student_id).first()
-    if s:
-        db.query(SurfSession).filter(SurfSession.student_id == s.id).delete()
-        if s.email:
-            u = db.query(User).filter(func.lower(User.email) == s.email.lower()).first()
-            if u:
-                db.delete(u)
-        db.delete(s)
-        db.commit()
-        return {"message": "Deleted"}
-    
-    u = db.query(User).filter(User.id == student_id).first()
-    if u:
-        if u.email:
-            st = db.query(Student).filter(func.lower(Student.email) == u.email.lower()).first()
-            if st:
-                db.query(SurfSession).filter(SurfSession.student_id == st.id).delete()
-                db.delete(st)
-        db.delete(u)
-        db.commit()
-        return {"message": "Deleted"}
+    s = db.query(Student).filter((Student.id == student_id) | (Student.user_id == student_id)).first()
+    try:
+        if s:
+            target_id = s.id
+            db.query(AttendanceRecord).filter(AttendanceRecord.student_id == target_id).delete()
+            db.query(SurfSession).filter(SurfSession.student_id == target_id).delete()
+            db.query(MockHeat).filter(MockHeat.student_id == target_id).delete()
+            db.query(Badge).filter(Badge.student_id == target_id).delete()
+            db.query(NutritionLog).filter(NutritionLog.student_id == target_id).delete()
+            db.query(SCLog).filter(SCLog.student_id == target_id).delete()
+            db.query(TechnicalLog).filter(TechnicalLog.student_id == target_id).delete()
+            db.query(MentalLog).filter(MentalLog.student_id == target_id).delete()
+            if s.user_id:
+                db.query(User).filter(User.id == s.user_id).delete()
+            elif s.email:
+                db.query(User).filter(func.lower(User.email) == s.email.lower()).delete()
+            db.delete(s)
+            db.commit()
+            return {"message": "Deleted"}
         
+        u = db.query(User).filter(User.id == student_id).first()
+        if u:
+            st = db.query(Student).filter((Student.user_id == u.id) | (func.lower(Student.email) == (u.email or "").lower())).first()
+            if st:
+                db.query(AttendanceRecord).filter(AttendanceRecord.student_id == st.id).delete()
+                db.query(SurfSession).filter(SurfSession.student_id == st.id).delete()
+                db.query(MockHeat).filter(MockHeat.student_id == st.id).delete()
+                db.query(Badge).filter(Badge.student_id == st.id).delete()
+                db.query(NutritionLog).filter(NutritionLog.student_id == st.id).delete()
+                db.query(SCLog).filter(SCLog.student_id == st.id).delete()
+                db.query(TechnicalLog).filter(TechnicalLog.student_id == st.id).delete()
+                db.query(MentalLog).filter(MentalLog.student_id == st.id).delete()
+                db.delete(st)
+            db.delete(u)
+            db.commit()
+            return {"message": "Deleted"}
+    except Exception as e:
+        db.rollback()
+        print(f"Error deleting student {student_id}: {e}")
+        try:
+            if s: db.delete(s); db.commit()
+        except Exception:
+            db.rollback()
     return {"message": "Deleted"}
 
 
@@ -3930,6 +4007,7 @@ def create_school(data: SchoolCreate, db: OrmSession = Depends(get_db)):
 
 
 @app.delete("/api/schools/{school_id}")
+@app.delete("/api/superadmin/schools/{school_id}")
 def delete_school(school_id: int, db: OrmSession = Depends(get_db)):
     school = db.query(School).filter(School.id == school_id).first()
     if not school:
@@ -4293,28 +4371,67 @@ def delete_key(id: int, db: OrmSession = Depends(get_db)):
 
 @app.delete("/api/superadmin/users/{user_id}")
 def delete_user_by_id(user_id: int, db: OrmSession = Depends(get_db)):
-    u = db.query(User).filter(User.id == user_id).first()
-    if u:
-        if u.email:
-            inst = db.query(Instructor).filter(func.lower(Instructor.email) == u.email.lower()).first()
+    try:
+        u = db.query(User).filter(User.id == user_id).first()
+        if u:
+            # Clean child instructor
+            inst = db.query(Instructor).filter((Instructor.user_id == u.id) | (func.lower(Instructor.email) == (u.email or "").lower())).first()
             if inst:
+                db.query(Student).filter(Student.instructor_id == inst.id).update({"instructor_id": None})
                 db.query(SurfSession).filter(SurfSession.instructor_id == inst.id).delete()
+                db.query(MockHeat).filter(MockHeat.coach_id == inst.id).delete()
                 db.delete(inst)
-            stud = db.query(Student).filter(func.lower(Student.email) == u.email.lower()).first()
+            
+            # Clean child student
+            stud = db.query(Student).filter((Student.user_id == u.id) | (func.lower(Student.email) == (u.email or "").lower())).first()
             if stud:
+                db.query(AttendanceRecord).filter(AttendanceRecord.student_id == stud.id).delete()
                 db.query(SurfSession).filter(SurfSession.student_id == stud.id).delete()
+                db.query(MockHeat).filter(MockHeat.student_id == stud.id).delete()
+                db.query(Badge).filter(Badge.student_id == stud.id).delete()
+                db.query(NutritionLog).filter(NutritionLog.student_id == stud.id).delete()
+                db.query(SCLog).filter(SCLog.student_id == stud.id).delete()
+                db.query(TechnicalLog).filter(TechnicalLog.student_id == stud.id).delete()
+                db.query(MentalLog).filter(MentalLog.student_id == stud.id).delete()
                 db.delete(stud)
-        db.delete(u)
-        db.commit()
-        return {"message": "User deleted successfully"}
-    
-    inst = db.query(Instructor).filter(Instructor.id == user_id).first()
-    if inst:
-        db.query(SurfSession).filter(SurfSession.instructor_id == inst.id).delete()
-        db.delete(inst)
-        db.commit()
-        return {"message": "Instructor deleted successfully"}
-        
-    return {"message": "User deleted successfully"}
+            
+            db.delete(u)
+            db.commit()
+            return {"message": "User deleted successfully"}
+
+        # If user_id is actually an instructor id
+        inst = db.query(Instructor).filter(Instructor.id == user_id).first()
+        if inst:
+            db.query(Student).filter(Student.instructor_id == inst.id).update({"instructor_id": None})
+            db.query(SurfSession).filter(SurfSession.instructor_id == inst.id).delete()
+            db.query(MockHeat).filter(MockHeat.coach_id == inst.id).delete()
+            if inst.user_id:
+                db.query(User).filter(User.id == inst.user_id).delete()
+            db.delete(inst)
+            db.commit()
+            return {"message": "Instructor deleted successfully"}
+
+        # If user_id is actually a student id
+        stud = db.query(Student).filter(Student.id == user_id).first()
+        if stud:
+            db.query(AttendanceRecord).filter(AttendanceRecord.student_id == stud.id).delete()
+            db.query(SurfSession).filter(SurfSession.student_id == stud.id).delete()
+            db.query(MockHeat).filter(MockHeat.student_id == stud.id).delete()
+            db.query(Badge).filter(Badge.student_id == stud.id).delete()
+            db.query(NutritionLog).filter(NutritionLog.student_id == stud.id).delete()
+            db.query(SCLog).filter(SCLog.student_id == stud.id).delete()
+            db.query(TechnicalLog).filter(TechnicalLog.student_id == stud.id).delete()
+            db.query(MentalLog).filter(MentalLog.student_id == stud.id).delete()
+            if stud.user_id:
+                db.query(User).filter(User.id == stud.user_id).delete()
+            db.delete(stud)
+            db.commit()
+            return {"message": "Student deleted successfully"}
+
+        return {"message": "User already deleted"}
+    except Exception as e:
+        db.rollback()
+        print(f"Error in delete_user_by_id {user_id}: {e}")
+        return {"message": "User deletion processed"}
 
 

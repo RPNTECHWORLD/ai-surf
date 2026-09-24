@@ -281,6 +281,10 @@ const StudentsManagement = () => {
     setAddedStudentSummary(null);
     setAddMode('single');
     setCopied(false);
+    setCsvFileName('');
+    setBulkRows([
+      { name: '', email: '', phone: '', age: '', level: 'Beginner', start_date: '', end_date: '', instructor_id: '' }
+    ]);
     setForm({
       name: '', email: '', password: '', level: 'Beginner', instructor_id: '',
       whatsapp_number: '', course_duration: '3 Days Course', session_time: '08:30 AM',
@@ -733,13 +737,14 @@ const StudentsManagement = () => {
   };
 
   const handleBulkSubmit = async () => {
-    const validRows = bulkRows.filter(r => r.name.trim() && r.email.trim());
+    if (saving) return;
+    const validRows = bulkRows.filter(r => r.name && r.name.trim() && r.email && r.email.trim());
     if (validRows.length === 0) return;
     setSaving(true);
     try {
       const formatted = validRows.map(r => ({
         name: r.name.trim(),
-        email: r.email.trim(),
+        email: r.email.trim().toLowerCase(),
         whatsapp_number: r.phone || '',
         age: r.age ? parseInt(r.age) : undefined,
         level: r.level || 'Beginner',
@@ -758,16 +763,22 @@ const StudentsManagement = () => {
       });
       if (res.ok) {
         const result = await res.json();
-        fetchStudents();
+        await fetchStudents();
         if (result.students && result.students.length > 0) {
           setAddedStudentSummary(result.students[0]);
           setAddMode('summary');
         } else {
           closeModal();
         }
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.detail || 'Failed to import students');
       }
-    } catch (err) {}
-    setSaving(false);
+    } catch (err) {
+      console.error('Error submitting bulk students:', err);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleCSVUpload = (file) => {
@@ -780,24 +791,59 @@ const StudentsManagement = () => {
       if (lines.length <= 1) return;
       
       const rows = [];
+      const seenEmails = new Set();
       for (let i = 1; i < lines.length; i++) {
         const cols = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
         if (cols[0] && cols[1]) {
+          const email = cols[1].toLowerCase().trim();
+          if (seenEmails.has(email)) continue; // ignore duplicate in same CSV
+          seenEmails.add(email);
+
+          // Calculate age from DOB if given as YYYY-MM-DD or numeric
+          let age = '20';
+          const dobRaw = cols[3] || '';
+          if (dobRaw.includes('-')) {
+            const birthYear = parseInt(dobRaw.split('-')[0], 10);
+            if (!isNaN(birthYear) && birthYear > 1920 && birthYear <= new Date().getFullYear()) {
+              age = String(new Date().getFullYear() - birthYear);
+            }
+          } else if (!isNaN(parseInt(dobRaw, 10)) && parseInt(dobRaw, 10) > 0 && parseInt(dobRaw, 10) < 120) {
+            age = dobRaw;
+          }
+
+          // Match instructor by name if provided
+          let instructor_id = '';
+          let instructor_name = '';
+          const coachQuery = (cols[5] || '').toLowerCase().trim();
+          if (coachQuery && Array.isArray(instructors) && instructors.length > 0) {
+            const matched = instructors.find(ins => {
+              const iname = (ins.name || '').toLowerCase().trim();
+              return iname === coachQuery || iname.includes(coachQuery) || coachQuery.includes(iname);
+            });
+            if (matched) {
+              instructor_id = matched.id;
+              instructor_name = matched.name;
+            } else {
+              instructor_name = cols[5] || '';
+            }
+          }
+
           rows.push({
             name: cols[0],
             email: cols[1],
             phone: cols[2] || '',
-            age: cols[3] || '20',
+            dob: dobRaw,
+            age: age,
             level: cols[4] || 'Beginner',
             start_date: new Date().toISOString().split('T')[0],
             end_date: '',
-            instructor_id: ''
+            instructor_id: instructor_id,
+            instructor_name: instructor_name
           });
         }
       }
       if (rows.length > 0) {
         setBulkRows(rows);
-        setAddMode('multiple');
       }
     };
     reader.readAsText(file);
@@ -885,17 +931,6 @@ const StudentsManagement = () => {
           if (studentId) {
             await fetch(`${API}/api/students/${studentId}`, { method: 'DELETE' }).catch(() => {});
           }
-          if (studentEmail) {
-            const emailLower = studentEmail.toLowerCase().trim();
-            const deletedEmails = JSON.parse(localStorage.getItem('deleted_student_emails') || '[]');
-            if (!deletedEmails.includes(emailLower)) {
-              deletedEmails.push(emailLower);
-              localStorage.setItem('deleted_student_emails', JSON.stringify(deletedEmails));
-            }
-            const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-            const filteredReqs = savedReqs.filter(r => (r.student_email || r.email || '').toLowerCase().trim() !== emailLower);
-            localStorage.setItem('school_join_requests', JSON.stringify(filteredReqs));
-          }
           setStudents(prev => prev.filter(s => s.id !== studentId && (s.email || '').toLowerCase().trim() !== (studentEmail || '').toLowerCase().trim()));
           showToast(`Student "${studentName}" removed.`);
         } catch (err) {
@@ -910,19 +945,15 @@ const StudentsManagement = () => {
     (approvedStudents || []).map(s => String(s.email).toLowerCase().trim()).filter(Boolean)
   );
 
-  // Comprehensive Pending Students List from AWS Backend & local join requests
+  // Comprehensive Pending Students List from AWS Backend
   const allPendingRequests = useMemo(() => {
     try {
-      const deletedEmails = new Set(
-        JSON.parse(localStorage.getItem('deleted_student_emails') || '[]').map(e => String(e).toLowerCase().trim())
-      );
-
       const seenEmails = new Set();
       const pending = [];
 
       const addIfPending = (email, name, schoolName, startDate, sessionTime, phone, id, courseDuration, stayingAtSchool) => {
         const emailLower = (email || '').toLowerCase().trim();
-        if (!emailLower || deletedEmails.has(emailLower) || seenEmails.has(emailLower)) return;
+        if (!emailLower || seenEmails.has(emailLower)) return;
 
         // If student is ALREADY approved and present in the active table, do not show in pending
         if (approvedEmailsSet.has(emailLower)) return;
@@ -1429,7 +1460,7 @@ const StudentsManagement = () => {
                 <tr>
                   <th>Student & WhatsApp</th>
                   <th>Course Progress</th>
-                  <th>Session</th>
+                  <th>Date</th>
                   <th>Invite</th>
                   <th></th>
                 </tr>
@@ -1536,14 +1567,9 @@ const StudentsManagement = () => {
                       })()}
                     </td>
                     <td>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                        <span style={{ fontSize: '12px', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          🗓️ {s.start_date || '2026-08-28'}
-                        </span>
-                        <span style={{ fontSize: '12px', fontWeight: 600, color: '#0D9488' }}>
-                          ⏰ {s.session_time || 'Morning 6:00 AM'}
-                        </span>
-                      </div>
+                      <span style={{ fontSize: '12.5px', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        🗓️ {s.start_date || '—'}
+                      </span>
                     </td>
                     <td style={{ textAlign: 'right' }}>
                         {!s.has_password && (
@@ -1974,9 +2000,102 @@ const StudentsManagement = () => {
                         onChange={e => e.target.files && handleCSVUpload(e.target.files[0])}
                       />
                     </label>
-                    <div className="sm-dropzone-hint">Supports .csv and .xlsx files up to 10MB</div>
-                    {csvFileName && <div className="sm-csv-filename">Uploaded: {csvFileName}</div>}
+                    {csvFileName && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
+                        <span className="sm-csv-filename">Uploaded: {csvFileName}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCsvFileName('');
+                            setBulkRows([{ name: '', email: '', phone: '', age: '', level: 'Beginner', start_date: '', end_date: '', instructor_id: '' }]);
+                          }}
+                          style={{
+                            background: 'none', border: 'none', color: '#EF4444',
+                            fontSize: '12px', cursor: 'pointer', textDecoration: 'underline'
+                          }}
+                        >
+                          Clear
+                        </button>
+                      </div>
+                    )}
                   </div>
+
+                  {/* If CSV has been parsed, display preview card with Import button right here! */}
+                  {bulkRows.some(r => r.name && r.email) && (
+                    <div className="sm-csv-preview-card" style={{
+                      background: '#FFFFFF',
+                      border: '1.5px solid #0D9488',
+                      borderRadius: '14px',
+                      padding: '18px 20px',
+                      boxShadow: '0 4px 16px rgba(13,148,136,0.08)'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+                        <div>
+                          <h4 style={{ margin: 0, fontSize: '15px', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span>✅</span>
+                            <span>Ready to Import: {bulkRows.filter(r => r.name && r.email).length} Students</span>
+                          </h4>
+                          <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#64748B' }}>
+                            File: <strong>{csvFileName || 'CSV Upload'}</strong> — duplicates are automatically updated without redundant rows.
+                          </p>
+                        </div>
+                        <div style={{ display: 'flex', gap: '10px' }}>
+                          <button
+                            type="button"
+                            onClick={() => setAddMode('multiple')}
+                            className="sm-btn-secondary"
+                            style={{ fontSize: '12px', padding: '8px 14px' }}
+                          >
+                            ✏️ Edit in Grid
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleBulkSubmit}
+                            disabled={saving}
+                            className="sm-btn-primary"
+                            style={{
+                              fontSize: '13px',
+                              padding: '8px 20px',
+                              background: 'linear-gradient(135deg, #0D9488 0%, #059669 100%)',
+                              color: '#FFFFFF',
+                              fontWeight: 700,
+                              borderRadius: '10px',
+                              cursor: saving ? 'not-allowed' : 'pointer',
+                              boxShadow: '0 2px 10px rgba(13,148,136,0.3)'
+                            }}
+                          >
+                            {saving ? '⏳ Importing...' : `🚀 Import ${bulkRows.filter(r => r.name && r.email).length} Students Now`}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Preview mini table */}
+                      <div style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid #E2E8F0', borderRadius: '8px' }}>
+                        <table className="sm-csv-table" style={{ margin: 0 }}>
+                          <thead>
+                            <tr>
+                              <th>Name</th>
+                              <th>Email</th>
+                              <th>Phone</th>
+                              <th>Age / Level</th>
+                              <th>Assigned Coach</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {bulkRows.filter(r => r.name && r.email).map((row, idx) => (
+                              <tr key={idx}>
+                                <td><strong>{row.name}</strong></td>
+                                <td>{row.email}</td>
+                                <td>{row.phone || '—'}</td>
+                                <td>{row.age ? `${row.age} yrs` : '—'} • <span className="sm-badge-opt">{row.level}</span></td>
+                                <td>{row.instructor_name || (instructors.find(i => String(i.id) === String(row.instructor_id))?.name) || 'None'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
 
                   {/* CSV Format Table */}
                   <div className="sm-csv-format-wrap">

@@ -237,6 +237,11 @@ const StudentProfile = () => {
           }
         } catch (e) {}
 
+        // Remove invite token from URL so banner and modal never re-trigger on refresh
+        try {
+          window.history.replaceState({}, document.title, window.location.pathname);
+        } catch (e) {}
+
         setTimeout(() => {
           setShowPasswordModal(false);
           setPassSuccess('');
@@ -332,6 +337,14 @@ const StudentProfile = () => {
       sessionStorage.setItem('user', JSON.stringify(savedUser));
     }
 
+    const updatedPassEmails = (JSON.parse(localStorage.getItem('passwords_updated_emails') || '[]')).map(e => String(e).toLowerCase().trim());
+    const isPassUpdated = Boolean(
+      savedUser.password_updated || 
+      savedUser.has_password || 
+      (emailLower && updatedPassEmails.includes(emailLower)) ||
+      (req && (req.password_updated || req.has_password || req.password))
+    );
+
     return {
       id: id || savedUser.student_id || savedUser.id || 1,
       name: savedUser.name || req?.student_name || req?.name || 'Registered Surfer',
@@ -354,6 +367,8 @@ const StudentProfile = () => {
       staying_at_school: savedUser.staying_at_school || req?.staying_at_school || 'Yes',
       reminder_preference: 'WhatsApp Text',
       guests_details: savedUser.guests_details || req?.guests_details || [],
+      has_password: isPassUpdated,
+      password_updated: isPassUpdated,
       badges: [
         { id: 1, name: 'White Badge (Student Registered)', date: 'Earned Today', color: '#00F2FE', textColor: '#0F172A' }
       ]
@@ -506,25 +521,19 @@ const StudentProfile = () => {
         }
       }
 
-      // Check if password has been updated or student registered manually with password
+      // Check if password has been set in database or updated locally
       const updatedPassEmails = (JSON.parse(localStorage.getItem('passwords_updated_emails') || '[]')).map(e => String(e).toLowerCase().trim());
-      let isPassSet = true;
-      if (data.is_temporary_password || data.has_password === false || data.password_set === false) {
-        isPassSet = stEmail ? updatedPassEmails.includes(stEmail) : false;
+      const emailUpdatedLocally = Boolean(stEmail && updatedPassEmails.includes(stEmail));
+      
+      let isPassSet = Boolean(data.has_password);
+      if (data.has_password === false || data.password_set === false) {
+        isPassSet = emailUpdatedLocally;
       }
-      try {
-        const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-        const req = reqs.find(r => (r.student_email || r.email || '').toLowerCase().trim() === stEmail);
-        if (req && (req.password_updated || req.has_password || req.password)) {
-          isPassSet = true;
-        }
-      } catch (e) {}
 
       cleanStudent.has_password = isPassSet;
       cleanStudent.password_updated = isPassSet;
 
-      const urlParams = new URLSearchParams(window.location.search);
-      if (!isPassSet && urlParams.has('token')) {
+      if (!isPassSet) {
         setShowPasswordModal(true);
       }
 
@@ -847,6 +856,32 @@ const StudentProfile = () => {
                     {(student.instructor && student.instructor !== 'Assigned Surf Coach') ? student.instructor : (nextSession?.instructor || 'Not Assigned Yet')}
                   </span>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPassError('');
+                    setPassSuccess('');
+                    setShowPasswordModal(true);
+                  }}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '12px',
+                    color: student.has_password ? '#475569' : '#B45309',
+                    background: student.has_password ? '#F1F5F9' : '#FEF3C7',
+                    border: student.has_password ? '1px solid #CBD5E1' : '1.5px solid #F59E0B',
+                    padding: '4px 12px',
+                    borderRadius: '20px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    boxShadow: student.has_password ? 'none' : '0 2px 8px rgba(245, 158, 11, 0.25)'
+                  }}
+                  title={student.has_password ? 'Change Password' : 'Action Required: Set Your Permanent Password'}
+                >
+                  <span>{student.has_password ? '🔑' : '🔐'}</span>
+                  <span>{student.has_password ? 'Change Password' : 'Set Permanent Password'}</span>
+                </button>
               </div>
             </div>
           </div>
@@ -875,69 +910,80 @@ const StudentProfile = () => {
           </div>
         </section>
 
-        {(new URLSearchParams(window.location.search).has('token') || window.location.search.includes('token=')) && !student?.password_updated && (
-          <div style={{
-            background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(239, 68, 68, 0.08) 100%)',
-            border: '1.5px solid rgba(245, 158, 11, 0.35)',
-            borderRadius: '16px',
-            padding: '18px 22px',
-            marginBottom: '24px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '16px',
-            flexWrap: 'wrap',
-            boxShadow: '0 8px 20px rgba(245, 158, 11, 0.08)'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-              <div style={{
-                width: '44px',
-                height: '44px',
-                borderRadius: '12px',
-                background: 'rgba(245, 158, 11, 0.2)',
-                color: '#D97706',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '22px',
-                flexShrink: 0
-              }}>
-                🔐
-              </div>
-              <div>
-                <h4 style={{ margin: '0 0 3px 0', fontSize: '15px', fontWeight: 800, color: '#92400E', fontFamily: 'Outfit, sans-serif' }}>
-                  Action Required: Set Your Permanent Password
-                </h4>
-                <p style={{ margin: 0, fontSize: '13px', color: '#B45309', lineHeight: 1.4 }}>
-                  Your account password is not updated yet. Please set your permanent password to enable direct login with your email anytime.
-                </p>
-              </div>
-            </div>
+        {(() => {
+          const emailLower = (student?.email || currentUser?.email || '').toLowerCase().trim();
+          let updatedEmails = [];
+          try {
+            updatedEmails = (JSON.parse(localStorage.getItem('passwords_updated_emails') || '[]')).map(e => String(e).toLowerCase().trim());
+          } catch (e) {}
+          const isPasswordSet = Boolean(student?.password_updated || (student?.has_password && !student?.is_temporary_password) || (emailLower && updatedEmails.includes(emailLower)));
 
-            <button
-              type="button"
-              onClick={() => {
-                setPassError('');
-                setPassSuccess('');
-                setShowPasswordModal(true);
-              }}
-              style={{
-                background: '#D97706',
-                color: '#FFFFFF',
-                border: 'none',
-                padding: '10px 20px',
-                borderRadius: '10px',
-                fontSize: '13px',
-                fontWeight: '700',
-                cursor: 'pointer',
-                boxShadow: '0 4px 12px rgba(217, 119, 6, 0.3)',
-                whiteSpace: 'nowrap'
-              }}
-            >
-              🔑 Set Password Now
-            </button>
-          </div>
-        )}
+          if (isPasswordSet) return null;
+
+          return (
+            <div style={{
+              background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.1) 0%, rgba(239, 68, 68, 0.08) 100%)',
+              border: '1.5px solid rgba(245, 158, 11, 0.35)',
+              borderRadius: '16px',
+              padding: '18px 22px',
+              marginBottom: '24px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '16px',
+              flexWrap: 'wrap',
+              boxShadow: '0 8px 20px rgba(245, 158, 11, 0.08)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                <div style={{
+                  width: '44px',
+                  height: '44px',
+                  borderRadius: '12px',
+                  background: 'rgba(245, 158, 11, 0.2)',
+                  color: '#D97706',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '22px',
+                  flexShrink: 0
+                }}>
+                  🔐
+                </div>
+                <div>
+                  <h4 style={{ margin: '0 0 3px 0', fontSize: '15px', fontWeight: 800, color: '#92400E', fontFamily: 'Outfit, sans-serif' }}>
+                    Action Required: Set Your Permanent Password
+                  </h4>
+                  <p style={{ margin: 0, fontSize: '13px', color: '#B45309', lineHeight: 1.4 }}>
+                    Your account password is not updated yet. Please set your permanent password to enable direct login with your email anytime.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setPassError('');
+                  setPassSuccess('');
+                  setShowPasswordModal(true);
+                }}
+                style={{
+                  background: '#D97706',
+                  color: '#FFFFFF',
+                  border: 'none',
+                  padding: '10px 20px',
+                  borderRadius: '10px',
+                  fontSize: '13px',
+                  fontWeight: '700',
+                  cursor: 'pointer',
+                  boxShadow: '0 4px 12px rgba(217, 119, 6, 0.3)',
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                🔑 Set Password Now
+              </button>
+            </div>
+          );
+        })()}
 
 
 

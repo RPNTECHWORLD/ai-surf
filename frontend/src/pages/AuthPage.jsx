@@ -88,19 +88,19 @@ const AuthPage = () => {
     confirmPassword: '',
     dob: '',
     age: '',
-    gender: 'Male',
-    stance: 'regular',
+    gender: '',
+    stance: '',
     specializations: [],
-    rates: '$75 / hr',
+    rates: '',
     location: '',
-    school: 'Aquatic Indica Surf School',
+    school: '',
     whatsapp_number: '',
-    course_duration: '3 Days Course',
-    start_date: new Date().toISOString().split('T')[0],
-    session_time: '08:30 AM',
-    staying_at_school: 'Yes',
-    reminder_preference: 'WhatsApp Text',
-    guests_count: 0,
+    course_duration: '',
+    start_date: '',
+    session_time: '',
+    staying_at_school: '',
+    reminder_preference: '',
+    guests_count: '',
   });
 
   const [schoolsList, setSchoolsList] = useState([
@@ -163,9 +163,6 @@ const AuthPage = () => {
 
         const uniqueSchools = Array.from(new Set(validNames));
         setSchoolsList(uniqueSchools.length > 0 ? uniqueSchools : ['Aquatic Indica Surf School']);
-        if (uniqueSchools.length > 0 && (!formData.school || !uniqueSchools.includes(formData.school))) {
-          setFormData(prev => ({ ...prev, school: uniqueSchools[0] }));
-        }
       })
       .catch(() => {
         setSchoolsList(['Aquatic Indica Surf School']);
@@ -1030,7 +1027,13 @@ const AuthPage = () => {
                       </div>
                       <div className="auth-field" style={{ flex: 1 }}>
                         <label>Register As</label>
-                        <select value={role} onChange={e => setRole(e.target.value)}>
+                        <select value={role} onChange={e => {
+                          const newRole = e.target.value;
+                          setRole(newRole);
+                          if (newRole === 'admin') {
+                            setFormData(prev => ({ ...prev, school: '' }));
+                          }
+                        }}>
                           <option value="athlete">Student (Athlete)</option>
                           <option value="coach">Coach (Instructor)</option>
                           <option value="admin">School Admin (Surf School)</option>
@@ -1220,14 +1223,16 @@ const AuthPage = () => {
                           </div>
                           <div className="auth-field">
                             <label>Surf Stance</label>
-                            <select name="stance" value={formData.stance} onChange={handleChange}>
+                            <select name="stance" value={formData.stance || ''} onChange={handleChange}>
+                              <option value="">-- Select Surf Stance --</option>
                               <option value="regular">Regular</option>
                               <option value="goofy">Goofy</option>
                             </select>
                           </div>
                           <div className="auth-field">
                             <label>Gender</label>
-                            <select name="gender" value={formData.gender || 'Male'} onChange={handleChange}>
+                            <select name="gender" value={formData.gender || ''} onChange={handleChange}>
+                              <option value="">-- Select Gender --</option>
                               <option value="Male">Male</option>
                               <option value="Female">Female</option>
                               <option value="Other">Other</option>
@@ -1243,8 +1248,8 @@ const AuthPage = () => {
                           </div>
                           <div className="auth-field" style={{ flex: 1 }}>
                             <label>👥 Accompanying Guests</label>
-                            <input type="number" name="guests_count" min={0} max={10}
-                              value={formData.guests_count} onChange={handleChange} />
+                            <input type="number" name="guests_count" min={0} max={10} placeholder="0"
+                              value={formData.guests_count === '' || formData.guests_count === undefined ? '' : formData.guests_count} onChange={handleChange} />
                           </div>
                         </div>
 
@@ -1303,8 +1308,9 @@ const AuthPage = () => {
                                   </div>
                                   <div className="auth-field" style={{ minWidth: 0 }}>
                                     <label style={{ fontSize: '11px', color: '#94A3B8' }}>Gender</label>
-                                    <select value={formData.guests_details?.[gIdx]?.gender || 'Male'}
+                                    <select value={formData.guests_details?.[gIdx]?.gender || ''}
                                       onChange={e => handleGuestChange(gIdx, 'gender', e.target.value)}>
+                                      <option value="">-- Select Gender --</option>
                                       <option value="Male">Male</option>
                                       <option value="Female">Female</option>
                                       <option value="Other">Other</option>
@@ -1312,8 +1318,9 @@ const AuthPage = () => {
                                   </div>
                                   <div className="auth-field" style={{ minWidth: 0 }}>
                                     <label style={{ fontSize: '11px', color: '#94A3B8' }}>Surf Stance</label>
-                                    <select value={formData.guests_details?.[gIdx]?.stance || 'regular'}
+                                    <select value={formData.guests_details?.[gIdx]?.stance || ''}
                                       onChange={e => handleGuestChange(gIdx, 'stance', e.target.value)}>
+                                      <option value="">-- Select Surf Stance --</option>
                                       <option value="regular">Regular</option>
                                       <option value="goofy">Goofy</option>
                                     </select>
@@ -1327,7 +1334,8 @@ const AuthPage = () => {
                         <div className="auth-fields-row" style={{ marginTop: '10px' }}>
                           <div className="auth-field">
                             <label>🏄 Course Duration</label>
-                            <select name="course_duration" value={formData.course_duration} onChange={handleChange}>
+                            <select name="course_duration" value={formData.course_duration || ''} onChange={handleChange}>
+                              <option value="">-- Select Course Duration --</option>
                               <option value="3 Days Course">3 Days Course</option>
                               <option value="5 Days Course">5 Days Course</option>
                               <option value="7 Days Course">7 Days Course</option>
@@ -1336,7 +1344,7 @@ const AuthPage = () => {
                           </div>
                           <div className="auth-field">
                             <label>🗓️ Start Date</label>
-                            <input type="date" name="start_date" value={formData.start_date} onChange={handleChange} style={{ colorScheme: 'dark' }} />
+                            <input type="date" name="start_date" value={formData.start_date || ''} onChange={handleChange} style={{ colorScheme: 'dark' }} />
                           </div>
                         </div>
 
@@ -1351,7 +1359,7 @@ const AuthPage = () => {
                           </label>
                           <select 
                             name="school" 
-                            value={formData.school} 
+                            value={formData.school || ''} 
                             onChange={handleChange} 
                             disabled={!!(inviteData || searchParams.get('school'))} 
                             style={{ 
@@ -1360,6 +1368,9 @@ const AuthPage = () => {
                               fontWeight: (inviteData || searchParams.get('school')) ? 700 : undefined
                             }}
                           >
+                            {!(inviteData || searchParams.get('school')) && (
+                              <option value="">-- Select Surf School --</option>
+                            )}
                             {schoolsList.map(s => <option key={s} value={s}>{s}</option>)}
                           </select>
                         </div>
@@ -1377,9 +1388,10 @@ const AuthPage = () => {
                           </label>
                           <select
                             name="school"
-                            value={formData.school || 'Individual / Freelance Coach'}
+                            value={formData.school || ''}
                             onChange={handleChange}
                           >
+                            <option value="">-- Select Affiliation / Surf School --</option>
                             <option value="Individual / Freelance Coach">👤 Individual / Freelance Coach (Independent)</option>
                             {schoolsList.filter(s => s !== 'Individual / Freelance Coach').map(s => (
                               <option key={s} value={s}>🏫 {s}</option>
@@ -1423,8 +1435,8 @@ const AuthPage = () => {
                         <h4 className="subfields-title">School Admin Details</h4>
                         <div className="auth-field">
                           <label>Your Surf School Name</label>
-                          <input type="text" name="school" placeholder="e.g. Aquatic Indica Surf School"
-                            value={formData.school} onChange={handleChange} required />
+                          <input type="text" name="school" placeholder="Enter your surf school name"
+                            value={formData.school || ''} onChange={handleChange} required />
                           <small style={{ color: '#94A3B8', fontSize: '11px', marginTop: '4px', display: 'block' }}>
                             This name will be saved dynamically as your official school dashboard name.
                           </small>

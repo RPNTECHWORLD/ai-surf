@@ -165,7 +165,13 @@ const SuperAdminDashboard = () => {
 
   const loadData = async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
-    else setLoading(true);
+    try {
+      localStorage.removeItem('deleted_school_ids');
+      localStorage.removeItem('deleted_school_names');
+      localStorage.removeItem('deleted_school_emails');
+      localStorage.removeItem('deleted_student_ids');
+      localStorage.removeItem('deleted_student_emails');
+    } catch (e) {}
 
     try {
       // 1. Fetch instructors/credentials
@@ -204,31 +210,12 @@ const SuperAdminDashboard = () => {
       }
       setStudentsList(allStudents);
 
-      // 9. Fetch schools for management
+      // 9. Fetch schools for management (Direct from AWS Backend)
       const schoolsRes = await fetch(`${API}/api/schools`);
       if (schoolsRes.ok) {
         const schoolsData = await schoolsRes.json();
-        const deletedSchoolIds = new Set(JSON.parse(localStorage.getItem('deleted_school_ids') || '[]').map(String));
-        const deletedSchoolEmails = new Set(JSON.parse(localStorage.getItem('deleted_school_emails') || '[]').map(e => String(e).toLowerCase().trim()));
-        const deletedSchoolNames = new Set(JSON.parse(localStorage.getItem('deleted_school_names') || '[]').map(n => String(n).toLowerCase().trim()));
-
-        let filtered = (Array.isArray(schoolsData) ? schoolsData : []).filter(sc => 
-          sc && !deletedSchoolIds.has(String(sc.id)) && (!sc.email || !deletedSchoolEmails.has(String(sc.email).toLowerCase().trim())) && (!sc.name || !deletedSchoolNames.has(String(sc.name).toLowerCase().trim()))
-        );
-
-        // Keep the primary official school (Aquatic Indica Surf School) always present as the active primary school
-        if (!deletedSchoolNames.has('aquatic indica surf school') && !filtered.some(s => s.name?.toLowerCase().includes('aquatic indica'))) {
-          filtered.unshift({
-            id: 1,
-            name: "Aquatic Indica Surf School",
-            owner: "Aquatic Admin",
-            email: "rpntechworld@gmail.com",
-            phone: "+91 9876543210",
-            location: "Kovalam / Chennai, India",
-            website: "https://aquaticindica.com"
-          });
-        }
-        setSchoolsList(filtered);
+        const schools = Array.isArray(schoolsData) ? schoolsData : [];
+        setSchoolsList(schools);
       }
 
       setError('');
@@ -302,34 +289,12 @@ const SuperAdminDashboard = () => {
     }));
   };
 
-  const markStudentAsDeleted = (id, email) => {
-    if (id) {
-      const deletedIds = JSON.parse(localStorage.getItem('deleted_student_ids') || '[]');
-      if (!deletedIds.includes(String(id))) {
-        deletedIds.push(String(id));
-        localStorage.setItem('deleted_student_ids', JSON.stringify(deletedIds));
-      }
-    }
-    if (email) {
-      const emailLower = email.toLowerCase().trim();
-      const deletedEmails = JSON.parse(localStorage.getItem('deleted_student_emails') || '[]');
-      if (!deletedEmails.includes(emailLower)) {
-        deletedEmails.push(emailLower);
-        localStorage.setItem('deleted_student_emails', JSON.stringify(deletedEmails));
-      }
-      const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-      const filteredReqs = savedReqs.filter(r => (r.student_email || r.email || '').toLowerCase().trim() !== emailLower);
-      localStorage.setItem('school_join_requests', JSON.stringify(filteredReqs));
-    }
-  };
-
   const handleDeleteStudent = (id, name, email) => {
     showConfirm(
       'Delete Student',
       `Are you sure you want to delete student "${name}"?`,
       async () => {
         closeConfirm();
-        markStudentAsDeleted(id, email);
         try {
           await fetch(`${API}/api/superadmin/users/${id}`, { method: 'DELETE' });
           await fetch(`${API}/api/students/${id}`, { method: 'DELETE' });
@@ -365,7 +330,6 @@ const SuperAdminDashboard = () => {
         for (const id of idsToDelete) {
           const student = studentsList.find(s => s.id === id || s.id == id);
           if (student) {
-            markStudentAsDeleted(student.id, student.email);
             try {
               await fetch(`${API}/api/superadmin/users/${id}`, { method: 'DELETE' });
               await fetch(`${API}/api/students/${id}`, { method: 'DELETE' });
@@ -416,32 +380,6 @@ const SuperAdminDashboard = () => {
     }
   };
 
-  const markSchoolAsDeleted = (id, name, email) => {
-    if (id) {
-      const deletedIds = JSON.parse(localStorage.getItem('deleted_school_ids') || '[]');
-      if (!deletedIds.includes(String(id))) {
-        deletedIds.push(String(id));
-        localStorage.setItem('deleted_school_ids', JSON.stringify(deletedIds));
-      }
-    }
-    if (name) {
-      const nameLower = name.toLowerCase().trim();
-      const deletedNames = JSON.parse(localStorage.getItem('deleted_school_names') || '[]');
-      if (!deletedNames.includes(nameLower)) {
-        deletedNames.push(nameLower);
-        localStorage.setItem('deleted_school_names', JSON.stringify(deletedNames));
-      }
-    }
-    if (email) {
-      const emailLower = email.toLowerCase().trim();
-      const deletedEmails = JSON.parse(localStorage.getItem('deleted_school_emails') || '[]');
-      if (!deletedEmails.includes(emailLower)) {
-        deletedEmails.push(emailLower);
-        localStorage.setItem('deleted_school_emails', JSON.stringify(deletedEmails));
-      }
-    }
-  };
-
   const handleBulkDeleteSchools = () => {
     if (selectedSchoolIds.length === 0) return;
     showConfirm(
@@ -451,13 +389,9 @@ const SuperAdminDashboard = () => {
         closeConfirm();
         const idsToDelete = [...selectedSchoolIds];
         for (const id of idsToDelete) {
-          const sch = schoolsList.find(s => s.id === id || s.id == id);
-          if (sch) {
-            markSchoolAsDeleted(sch.id, sch.name, sch.email);
-            try {
-              await fetch(`${API}/api/superadmin/schools/${id}`, { method: 'DELETE' });
-            } catch (e) {}
-          }
+          try {
+            await fetch(`${API}/api/schools/${id}`, { method: 'DELETE' });
+          } catch (e) {}
         }
         setSchoolsList(prev => prev.filter(s => !idsToDelete.includes(s.id)));
         setSelectedSchoolIds([]);
@@ -517,10 +451,8 @@ const SuperAdminDashboard = () => {
           await fetch(`${API}/api/instructors/${id}`, { method: 'DELETE' });
           setSuccessMsg(`Coach "${name}" deleted.`);
           setCoaches(prev => prev.filter(c => c.id !== id && c.user_id !== id));
-          setInstructorsList(prev => prev.filter(i => i.id !== id && i.user_id !== id));
         } catch (err) {
           setCoaches(prev => prev.filter(c => c.id !== id && c.user_id !== id));
-          setInstructorsList(prev => prev.filter(i => i.id !== id && i.user_id !== id));
           setSuccessMsg(`Coach "${name}" deleted.`);
         }
       }
@@ -533,8 +465,6 @@ const SuperAdminDashboard = () => {
       `Are you sure you want to delete surf school "${name}"?`,
       async () => {
         closeConfirm();
-        const sch = schoolsList.find(s => s.id === id || s.id == id);
-        markSchoolAsDeleted(id, name, sch?.email);
         try {
           const res = await fetch(`${API}/api/schools/${id}`, { method: 'DELETE' });
           if (res.ok) {

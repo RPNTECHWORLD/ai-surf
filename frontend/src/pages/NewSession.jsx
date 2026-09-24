@@ -242,7 +242,7 @@ function getStudentCourseDayInfo(s, idx = 0) {
   return { whichDay, totalDays, courseDuration: durStr };
 }
 
-const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } = {}) => {
+const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, editSession = null } = {}) => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -557,12 +557,160 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
   }, []);
 
   // Real Students Pool (Excludes students already scheduled on selected date)
+  // In edit mode: ONLY show students who belong to the session/group being edited!
   const allPoolStudents = useMemo(() => {
+    if (editSession) {
+      const editStudentIds = new Set();
+      const editStudentNames = new Set();
+      const sessList = Array.isArray(editSession.sessions) && editSession.sessions.length > 0
+        ? editSession.sessions
+        : (editSession.id ? [editSession] : []);
+      sessList.forEach(s => {
+        if (s.student_id != null) editStudentIds.add(String(s.student_id));
+        if (s.student) editStudentNames.add(s.student.toLowerCase().trim());
+        if (s.student_name) editStudentNames.add(s.student_name.toLowerCase().trim());
+      });
+
+      const matched = dbStudents.filter(s => {
+        if (editStudentIds.has(String(s.id))) return true;
+        const nameLow = (s.name || '').toLowerCase().trim();
+        return Boolean(nameLow && editStudentNames.has(nameLow));
+      });
+
+      // Fallback: if any session student is not in dbStudents, synthesize from sessList
+      sessList.forEach(sess => {
+        const sid = sess.student_id;
+        const sname = sess.student || sess.student_name;
+        if (!sname) return;
+        const exists = matched.some(m => (sid != null && String(m.id) === String(sid)) || m.name.toLowerCase().trim() === sname.toLowerCase().trim());
+        if (!exists) {
+          matched.push({
+            id: sid || `session-st-${sname}`,
+            name: sname,
+            level: sess.type || sess.level || 'Beginner',
+            day: 'day1',
+            whichDay: 1,
+            totalDays: 3,
+            courseDuration: '3 Days Course',
+            waitlistGroup: '3 Days Course',
+            avatar: sess.image || '',
+            isReal: true
+          });
+        }
+      });
+
+      return matched;
+    }
+    // Normal Create Mode: Exclude students already scheduled on selected date
     return dbStudents.filter(s => !isStudentScheduledInDbOnDate(s));
-  }, [dbStudents, isStudentScheduledInDbOnDate]);
+  }, [dbStudents, isStudentScheduledInDbOnDate, editSession]);
 
   // Real Instructors (NO fake data)
   const allInstructors = dbInstructors;
+
+  // ─── Pre-fill from editSession (edit mode) ───
+  // When editSession is passed, pre-select date, slot, and students and jump to Step 3.
+  const [editSessionPreloaded, setEditSessionPreloaded] = useState(false);
+
+  useEffect(() => {
+    if (!editSession || editSessionPreloaded) return;
+
+    // 1. Pre-fill the date
+    const rawDate = editSession.date || '';
+    const dateStr = String(rawDate).trim();
+    // Try YYYY-MM-DD
+    const ymd = dateStr.match(/^(\d{4})[-/](\d{2})[-/](\d{2})/);
+    // Try DD-MM-YYYY
+    const dmy = dateStr.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
+    if (ymd) {
+      setCurrentCalendarDate(new Date(parseInt(ymd[1], 10), parseInt(ymd[2], 10) - 1, 1));
+      setSelectedDayNumber(parseInt(ymd[3], 10));
+    } else if (dmy) {
+      setCurrentCalendarDate(new Date(parseInt(dmy[3], 10), parseInt(dmy[2], 10) - 1, 1));
+      setSelectedDayNumber(parseInt(dmy[1], 10));
+    } else if (dateStr) {
+      const d = new Date(dateStr);
+      if (!isNaN(d.getTime())) {
+        setCurrentCalendarDate(new Date(d.getFullYear(), d.getMonth(), 1));
+        setSelectedDayNumber(d.getDate());
+      }
+    }
+
+    setEditSessionPreloaded(true);
+  }, [editSession, editSessionPreloaded]);
+
+  // After dbStudents load AND editSession is set: pre-select students and jump to Step 3
+  useEffect(() => {
+    if (!editSession || !editSessionPreloaded) return;
+    if (dbStudents.length === 0) return; // wait for students to load
+
+    const sessionList = Array.isArray(editSession.sessions) && editSession.sessions.length > 0
+      ? editSession.sessions
+      : (editSession.id ? [editSession] : []);
+
+    const sessionStudentNames = sessionList
+      .map(s => (s.student || s.student_name || '').toLowerCase().trim())
+      .filter(Boolean);
+    const sessionStudentIds = sessionList
+      .map(s => s.student_id)
+      .filter(id => id != null);
+
+    // Find matching students from the pool (match by name or id)
+    const matchedStudents = dbStudents.filter(st => {
+      if (sessionStudentIds.length > 0 && (sessionStudentIds.includes(st.id) || sessionStudentIds.includes(String(st.id)))) return true;
+      const nameLow = (st.name || '').toLowerCase().trim();
+      return sessionStudentNames.some(n => n === nameLow || n.includes(nameLow) || nameLow.includes(n));
+    });
+
+    const matchedIds = matchedStudents.map(s => s.id);
+
+    // 2. Find the matching configured slot by time
+    const editTime = (editSession.time || '').trim().toLowerCase();
+    let targetSlot = slots.find(s => {
+      const t = (s.time || s.startTime || '').trim().toLowerCase();
+      return t === editTime || editTime.startsWith(t) || t.startsWith(editTime.split(' - ')[0]);
+    });
+    if (!targetSlot) targetSlot = slots[0];
+    const targetSlotId = targetSlot?.id || slots[0]?.id;
+
+    if (targetSlotId) {
+      setSelectedSlotId(targetSlotId);
+      setStep3SlotFilter(targetSlotId);
+    }
+
+    // 3. Pre-populate slotStudentMap
+    if (matchedIds.length > 0 && targetSlotId) {
+      setSlotStudentMap({ [targetSlotId]: matchedIds });
+    }
+
+    // 4. Pre-populate trainingGroups with existing group name and instructor
+    const existingGroupName = editSession.groupName || editSession.group_name || 'Group A';
+    const existingInstructor = editSession.instructor || '';
+    const existingInstructorId = editSession.instructor_id || null;
+    const matchedInstructor = dbInstructors.find(i =>
+      String(i.id) === String(existingInstructorId) ||
+      (i.name || '').toLowerCase().trim() === existingInstructor.toLowerCase().trim()
+    );
+
+    if (matchedIds.length > 0 || sessionList.length > 0) {
+      setTrainingGroups([
+        {
+          id: 'group-edit-1',
+          name: existingGroupName,
+          day: 'Day 1',
+          level: 'General',
+          slotId: targetSlotId || null,
+          studentIds: matchedIds,
+          assignedInstructorId: matchedInstructor?.id || existingInstructorId || null,
+          assignedInstructorIds: matchedInstructor ? [matchedInstructor.id] : (existingInstructorId ? [existingInstructorId] : []),
+        }
+      ]);
+      setActiveDropGroupId('group-edit-1');
+    }
+
+    // 5. Jump directly to Step 3
+    setCurrentStep(3);
+  }, [editSession, editSessionPreloaded, dbStudents, dbInstructors, slots]);
 
   // Sync with Session Configuration changes (live in same tab or across tabs)
   useEffect(() => {
@@ -918,15 +1066,40 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
         setTrainingGroups([]);
         setActiveDropGroupId(null);
       }
+    } else if (editSession) {
+      // In edit mode: sync the group's slotId and studentIds if user adjusted slots/students in Step 2
+      const activeSlotsWithStudents = slots.filter(s => (slotStudentMap[s.id] || []).length > 0);
+      const chosenSlot = activeSlotsWithStudents.length > 0 ? activeSlotsWithStudents[0] : (selectedSlot || slots[0]);
+      const chosenSlotId = chosenSlot?.id || null;
+      const targetIds = allSelectedStudentIds.length > 0 ? allSelectedStudentIds : selectedStudentIds;
+
+      setTrainingGroups(prev => prev.map(grp => {
+        if (grp.id === 'group-edit-1' || prev.length === 1) {
+          return {
+            ...grp,
+            slotId: chosenSlotId || grp.slotId,
+            studentIds: (chosenSlotId && slotStudentMap[chosenSlotId]) ? slotStudentMap[chosenSlotId] : (targetIds.length > 0 ? targetIds : grp.studentIds),
+          };
+        }
+        return grp;
+      }));
+      if (chosenSlotId) {
+        setStep3SlotFilter(chosenSlotId);
+        setSelectedSlotId(chosenSlotId);
+      }
     }
     setCurrentStep(3);
   };
 
   // Step 3: Students in Column 1 (All selected students across all slots)
   const importedStudents = useMemo(() => {
+    if (editSession) {
+      // In edit mode: allPoolStudents is already strictly the group's students
+      return allPoolStudents;
+    }
     const targetIds = allSelectedStudentIds.length > 0 ? allSelectedStudentIds : selectedStudentIds;
     return allPoolStudents.filter(s => targetIds.includes(s.id));
-  }, [allPoolStudents, allSelectedStudentIds, selectedStudentIds]);
+  }, [allPoolStudents, allSelectedStudentIds, selectedStudentIds, editSession]);
 
   // Step 3: Available Days for Imported Students
   const step3AvailableDays = useMemo(() => {
@@ -943,10 +1116,10 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
 
   // Students in active slot (for option counts)
   const slotImportedStudents = useMemo(() => {
-    if (step3SlotFilter === 'ALL') return importedStudents;
+    if (editSession || step3SlotFilter === 'ALL') return importedStudents;
     const slotAssignedIds = slotStudentMap[step3SlotFilter] || [];
     return importedStudents.filter(s => slotAssignedIds.includes(s.id));
-  }, [importedStudents, step3SlotFilter, slotStudentMap]);
+  }, [importedStudents, step3SlotFilter, slotStudentMap, editSession]);
 
   const hasActiveStep3Filters = step3DayFilter !== 'all' || step3StatusFilter !== 'all' || step3LevelFilter !== 'all' || Boolean(studentSearch);
 
@@ -960,8 +1133,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
   const filteredColumn1Students = useMemo(() => {
     return importedStudents
       .filter(s => {
-        // Slot filtering in Step 3
-        if (step3SlotFilter !== 'ALL') {
+        // Slot filtering in Step 3 (bypassed in edit mode so group students never disappear)
+        if (!editSession && step3SlotFilter !== 'ALL') {
           const slotAssignedIds = slotStudentMap[step3SlotFilter] || [];
           if (!slotAssignedIds.includes(s.id)) return false;
         }
@@ -997,13 +1170,13 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
         if (dayA !== dayB) return dayA - dayB;
         return a.name.localeCompare(b.name);
       });
-  }, [importedStudents, step3DayFilter, step3StatusFilter, step3LevelFilter, step3SlotFilter, slotStudentMap, studentSearch, trainingGroups]);
+  }, [importedStudents, step3DayFilter, step3StatusFilter, step3LevelFilter, step3SlotFilter, slotStudentMap, studentSearch, trainingGroups, editSession]);
 
   // Step 3: Training groups filtered by slot
   const displayedTrainingGroups = useMemo(() => {
-    if (step3SlotFilter === 'ALL') return trainingGroups;
+    if (editSession || step3SlotFilter === 'ALL') return trainingGroups;
     return trainingGroups.filter(g => String(g.slotId || slots[0]?.id) === String(step3SlotFilter));
-  }, [trainingGroups, step3SlotFilter, slots]);
+  }, [trainingGroups, step3SlotFilter, slots, editSession]);
 
   // Step 3: Toggle check in Column 1
   const toggleStep3StudentCheck = (id) => {
@@ -1316,6 +1489,45 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
           group_name: grp.name || '',
         };
 
+        // ── EDIT MODE: Update existing sessions via PUT ──
+        const existingSessions = editSession ? (Array.isArray(editSession.sessions) && editSession.sessions.length > 0 ? editSession.sessions : (editSession.id ? [editSession] : [])) : [];
+        if (existingSessions.length > 0) {
+          const grpSlot = slots.find(s => s.id === grp.slotId) || selectedSlot;
+          const slotTimeStr = grpSlot ? (grpSlot.time || grpSlot.startTime) : (editSession.time || '08:30 AM');
+          const slotDuration = grpSlot?.duration ? parseInt(grpSlot.duration, 10) : 90;
+          const coachIds = (grp.assignedInstructorIds && grp.assignedInstructorIds.length > 0)
+            ? grp.assignedInstructorIds
+            : (grp.assignedInstructorId ? [grp.assignedInstructorId] : []);
+          const assignedCoachObjs = allInstructors.filter(i => coachIds.map(String).includes(String(i.id)));
+          const assignedCoachObj = allInstructors.find(i => String(i.id) === String(grp.assignedInstructorId || coachIds[0]));
+          const coachName = assignedCoachObj?.name || editSession.instructor || 'Instructor';
+          const assignedInstNames = assignedCoachObjs.length > 0 ? assignedCoachObjs.map(i => i.name).join(', ') : coachName;
+          const primaryInstructorId = coachIds[0] || null;
+
+          const updatePayload = {
+            date: formattedSessionDate,
+            time: slotTimeStr,
+            duration_mins: slotDuration,
+            instructor_id: primaryInstructorId,
+            instructor: assignedInstNames || coachName,
+            location: spotName || editSession.location || 'Main Beach',
+            group_name: grp.name || editSession.groupName || '',
+          };
+
+          await Promise.all(
+            existingSessions.map(sess =>
+              fetch(`${API}/api/sessions/${sess.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(updatePayload),
+              }).catch(err => console.error('Failed updating session', sess.id, err))
+            )
+          );
+          publishedCount++;
+          continue;
+        }
+
+        // ── CREATE MODE: Bulk create new sessions ──
         const res = await fetch(`${API}/api/sessions/bulk`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1331,6 +1543,11 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
       }
 
       if (publishedCount > 0) {
+        if (editSession) {
+          if (onSessionCreated) onSessionCreated();
+          if (onClose) onClose();
+          return;
+        }
         setShowSuccessModal(true);
       } else {
         setUiAlert({
@@ -1392,9 +1609,11 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
             </button>
           )}
           <h1 className="ns-title" style={isModal ? { fontSize: '20px' } : {}}>
-            {currentStep === 1 && 'Schedule Surf Session'}
-            {currentStep === 2 && 'Roster Selector Pool'}
-            {currentStep === 3 && 'Instructor Groups Matching'}
+            {editSession ? 'Edit Session' : (
+              currentStep === 1 ? 'Schedule Surf Session' :
+              currentStep === 2 ? 'Roster Selector Pool' :
+              'Instructor Groups Matching'
+            )}
           </h1>
           <span className={`ns-status-tag ${currentStep === 3 ? 'review' : 'upcoming'}`}>
             {currentStep === 3 ? 'Review' : 'Upcoming'}
@@ -1425,7 +1644,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
               ) : '2'}
             </div>
-            <span className="ns-step-text">2. Import Students</span>
+            <span className="ns-step-text">2. Select Students</span>
             <span className="ns-step-chevron">&gt;</span>
           </div>
 
@@ -1761,7 +1980,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                   transition: 'all 0.15s ease'
                 }}
               >
-                Save configuration and Next: Import Students &rarr;
+                {editSession ? 'Confirm Date & Slot → Review Groups' : 'Save configuration and Next: Import Students »'}
               </button>
             </div>
           </div>
@@ -2401,6 +2620,20 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                         onClick={() => {
                           setStep3SlotFilter(s.id);
                           setSelectedSlotId(s.id);
+                          if (editSession) {
+                            setTrainingGroups(prev => prev.map(g => (g.id === 'group-edit-1' || prev.length === 1) ? { ...g, slotId: s.id } : g));
+                            setSlotStudentMap(prev => {
+                              const newMap = { ...prev };
+                              const allGroupStudents = trainingGroups[0]?.studentIds || [];
+                              Object.keys(newMap).forEach(k => {
+                                if (Array.isArray(newMap[k])) {
+                                  newMap[k] = newMap[k].filter(id => !allGroupStudents.includes(id));
+                                }
+                              });
+                              newMap[s.id] = allGroupStudents;
+                              return newMap;
+                            });
+                          }
                           // Auto-target the group belonging to the new slot so coach clicks assign to this slot
                           const groupsInNewSlot = trainingGroups.filter(g => String(g.slotId || slots[0]?.id) === String(s.id));
                           if (groupsInNewSlot.length > 0) {
@@ -2879,8 +3112,47 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                           }}
                           onDrop={(e) => handleDropOnGroup(e, grp.id)}
                         >
-                          <div className="ns-gc-title-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <h4 className="ns-gc-title">{grp.name}</h4>
+                          <div className="ns-gc-title-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <h4 className="ns-gc-title">{grp.name}</h4>
+                              <select
+                                value={grp.slotId || selectedSlotId || slots[0]?.id}
+                                onChange={(e) => {
+                                  const newSlotId = isNaN(parseInt(e.target.value, 10)) ? e.target.value : parseInt(e.target.value, 10);
+                                  setTrainingGroups(prev => prev.map(g => g.id === grp.id ? { ...g, slotId: newSlotId } : g));
+                                  setSlotStudentMap(prev => {
+                                    const newMap = { ...prev };
+                                    Object.keys(newMap).forEach(k => {
+                                      if (Array.isArray(newMap[k])) {
+                                        newMap[k] = newMap[k].filter(id => !grp.studentIds.includes(id));
+                                      }
+                                    });
+                                    newMap[newSlotId] = Array.from(new Set([...(newMap[newSlotId] || []), ...grp.studentIds]));
+                                    return newMap;
+                                  });
+                                  setSelectedSlotId(newSlotId);
+                                  setStep3SlotFilter(newSlotId);
+                                }}
+                                style={{
+                                  padding: '2px 8px',
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  borderRadius: '6px',
+                                  border: '1.5px solid #0D9488',
+                                  background: '#F0FDFA',
+                                  color: '#0F766E',
+                                  cursor: 'pointer',
+                                  outline: 'none'
+                                }}
+                                title="Change group time slot"
+                              >
+                                {slots.map((s, idx) => (
+                                  <option key={s.id} value={s.id}>
+                                    ⏰ {s.startTime || s.time || `Slot ${idx + 1}`}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                               <span className="ns-gc-count" style={{ fontWeight: 700, color: grpStudents.length > 0 ? '#0F172A' : '#94A3B8' }}>
                                 {grpStudents.length} Students
@@ -3273,7 +3545,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                   onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)'}
                   onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)'}
                 >
-                  ← Back to Import Students
+                  {editSession ? '← Back to Select Students' : '← Back to Import Students'}
                 </button>
                 <button
                   className="ns-primary-btn finalize-btn"
@@ -3292,7 +3564,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
                     transition: 'all 0.2s ease'
                   }}
                 >
-                  {isPublishing ? 'Publishing Sessions...' : '🚀 Finalize & Publish'}
+                  {isPublishing
+                    ? (editSession ? 'Saving Changes...' : 'Publishing Sessions...')
+                    : (editSession ? '✓ Save Changes' : '🚀 Finalize & Publish')}
                 </button>
               </div>
             </div>
@@ -3642,6 +3916,11 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated } 
         .ns-step-item.completed {
           color: #10B981;
           font-weight: 600;
+        }
+        .ns-step-item.ns-step-disabled {
+          opacity: 0.4;
+          cursor: not-allowed !important;
+          pointer-events: none;
         }
 
         .ns-step-circle {

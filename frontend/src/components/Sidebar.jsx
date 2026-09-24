@@ -125,8 +125,10 @@ const Sidebar = () => {
       );
     }
 
+    const sessionsLabel = (role === 'athlete' || role === 'student' || role === 'coach' || role === 'user') ? 'My Sessions' : 'Sessions';
+
     items.push(
-      { label: 'Sessions', path: '/sessions' },
+      { label: sessionsLabel, path: '/sessions' },
       { label: 'Analytics', path: '/analytics' },
       { label: 'Competitions', path: '/competitions' },
       { label: 'Athlete Intel', path: '/athlete-intelligence' }

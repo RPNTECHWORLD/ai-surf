@@ -182,3 +182,30 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
 14. Floating Sticky Action Bar in Session Configuration: Replaced bottom inline buttons in `SessionConfigure.jsx` with a floating sticky dark pill action bar (`.sc-sticky-bar`) matching the Photo 1 design in `NewSession.jsx` (displaying `SESSION SETUP` emerald badge, active slots & default capacity summary, back button, and a glowing `#00D2B4` Save Configuration button).
 15. Removed Details Button from Sessions Table: Removed the `🔍 Details` button from session rows in `Sessions.jsx`, leaving only `+ Video`, `Analysis`, and `Delete` action buttons.
 16. Removed "Default Session Settings" Card: Removed the redundant "Default Session Settings" card (duration, max students, break between sessions, and cancellation window) from `SessionConfigure.jsx`, keeping the configuration interface clean and focused on daily time slots.
+
+### changes on 23-09-26
+1. CSV Bulk Import Quick Preview & One-Click Import: Added an instant CSV preview card (`sm-csv-preview-card`) right below the file dropzone in `StudentsManagement.jsx` displaying the parsed student count, source filename, mini-roster table preview (Name, Email, Phone, Age/Level, Assigned Coach), and a direct `🚀 Import Students Now` button with duplicate-prevention handling.
+2. Students Management Table Column Refinement: Replaced the `Session` column header with `Date` in `StudentsManagement.jsx` table roster, showing a clean `🗓️ {start_date}` display without hardcoded slot times.
+3. Pending Approval Filtering: Filtered out already approved active students from the pending join requests list in `StudentsManagement.jsx` to prevent duplicate displays.
+4. Backend Multi-Tenant Data Consistency: Synchronized `invite_token`, `approval_status`, and `school` fields across backend student creation, lookup queries, and session assignments.
+
+### changes on 24-09-26
+1. SMTP Health Check & Quota Diagnostic: Audited outgoing mail delivery and identified Gmail SMTP relay error `550 5.4.5 Daily user sending limit exceeded` caused by Gmail personal account daily limits.
+2. AWS SES Email Migration Architecture Proposal: Prepared a comprehensive technical proposal document (`email_service_migration_proposal.md`) comparing Gmail SMTP vs AWS Simple Email Service (SES) with high sending throughput (50,000+ mails/day), ₹8.50 per 1,000 email pricing, SPF/DKIM verification, and native `us-east-1` AWS infrastructure alignment.
+3. Student Registration Autofill Elimination: Removed all default and auto-filled field values across Student Registration in `AuthPage.jsx`:
+   - `Gender`: Reset default `Male` to empty prompt `-- Select Gender --`.
+   - `Surf Stance`: Reset default `regular` to empty prompt `-- Select Surf Stance --`.
+   - `Accompanying Guests`: Removed pre-filled `0` to allow clean user entry.
+   - `Course Duration`: Reset default `3 Days Course` to empty prompt `-- Select Course Duration --`.
+   - `Start Date`: Removed auto-filled current date to leave a clean calendar picker (`dd - mm - yyyy`).
+   - `Assigned Surf School`: Removed automatic assignment to the first school in the list so users manually select their school from `-- Select Surf School --` (preserved only on direct invite links).
+   - Removed pre-filled defaults in guest profile rows and coach hourly rate.
+4. Student Profile Password Setup Prompt Fix:
+   - Fixed issue where students without passwords (`has_password: false`) could not see the password setup banner or modal in `StudentProfile.jsx`.
+   - Removed the restrictive `?token=` URL requirement so the password setup prompt always appears when a password has not been created.
+   - Prevented stale `localStorage` join-request records from overriding the database password status.
+   - Added an automatic popup of the "Update Account Password" modal on first load if the student has no password.
+   - Added a prominent **`🔐 Set Permanent Password`** / **`🔑 Change Password`** button in the student profile header.
+5. Dynamic "My Sessions" Navigation & Page Header:
+   - Top Header Navigation (`Sidebar.jsx`): Dynamically displays **`My Sessions`** instead of `Sessions` when logged in as a Student (`athlete`/`student`/`user`) or Coach (`coach`).
+   - Sessions Page Title (`Sessions.jsx`): Updated main heading to display **`My Sessions`** for students and coaches with personalized coaching and schedule subtitles.

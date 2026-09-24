@@ -140,6 +140,9 @@ const Sessions = () => {
   });
   const [scheduleModalInitialDate, setScheduleModalInitialDate] = useState(null);
 
+  // Edit Session Wizard State (uses the same NewSession modal)
+  const [editSessionData, setEditSessionData] = useState(null); // null | hubSession object
+
   useEffect(() => {
     const isNewSessionAction = searchParams.get('action') === 'new_session' || searchParams.get('action') === 'schedule' || searchParams.get('new_session') === 'true';
     if (isNewSessionAction) {
@@ -286,6 +289,7 @@ const Sessions = () => {
   const [hubIsUploadingImage, setHubIsUploadingImage] = useState(false);
   const [hubIsSaving, setHubIsSaving] = useState(false);
   const [hubSaveSuccess, setHubSaveSuccess] = useState(false);
+  const [hubHasChanges, setHubHasChanges] = useState(false);
   const [hubZoomImage, setHubZoomImage] = useState(null);
   const hubVideoFileRef = useRef(null);
   const hubImageFileRef = useRef(null);
@@ -304,6 +308,7 @@ const Sessions = () => {
     setHubNotes(data.notes || '');
     setHubStatus(data.status || 'Upcoming');
     setHubSaveSuccess(false);
+    setHubHasChanges(false);
   };
 
   const autoSaveHubVideo = async (videosList) => {
@@ -443,12 +448,18 @@ const Sessions = () => {
         const data = await res.json();
         const uploadedUrl = data.image_url || data.url || URL.createObjectURL(file);
         setHubImageUrl(uploadedUrl);
+        setHubHasChanges(true);
+        setHubSaveSuccess(false);
       } else {
         setHubImageUrl(URL.createObjectURL(file));
+        setHubHasChanges(true);
+        setHubSaveSuccess(false);
       }
     } catch (err) {
       console.error('Image upload error:', err);
       setHubImageUrl(URL.createObjectURL(file));
+      setHubHasChanges(true);
+      setHubSaveSuccess(false);
     } finally {
       setHubIsUploadingImage(false);
     }
@@ -527,7 +538,7 @@ const Sessions = () => {
       }));
 
       setHubSaveSuccess(true);
-      setTimeout(() => setHubSaveSuccess(false), 3500);
+      setHubHasChanges(false);
     } catch (err) {
       console.error('Error saving session updates:', err);
     } finally {
@@ -584,7 +595,12 @@ const Sessions = () => {
       }
     });
   };
-  
+
+  // Open Edit Session — launches the full Schedule Session wizard pre-filled with existing data
+  const handleOpenEditSession = (hubSession) => {
+    setEditSessionData(hubSession);
+  };
+
   // Calendar Modal State
   const [showCalendarModal, setShowCalendarModal] = useState(false);
   const [currentDate, setCurrentDate] = useState(() => new Date(2026, 8, 15)); // Default September 2026
@@ -1139,13 +1155,17 @@ const Sessions = () => {
         <header className="ses-header">
           <div className="ses-header-info">
             <div className="ses-title-wrap" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <h1 className="ses-title">Surf Sessions</h1>
+              <h1 className="ses-title">{isStudent || isCoach ? 'My Sessions' : 'Surf Sessions'}</h1>
               <span className="ses-live-pill">
                 <span className="ses-pulsing-dot"></span> LIVE SCHEDULE
               </span>
             </div>
             <p className="ses-subtitle" style={{ margin: '4px 0 0', color: '#64748B', fontSize: '14px' }}>
-              Aquatic Indica Ground Operations & Coaching Management Platform
+              {isStudent
+                ? 'Your personalized surf coaching, training logs & scheduled slots'
+                : (isCoach
+                  ? 'Your assigned coaching roster, student trainees & scheduled slots'
+                  : 'Aquatic Indica Ground Operations & Coaching Management Platform')}
             </p>
           </div>
           <div className="ses-actions">
@@ -2253,7 +2273,20 @@ const Sessions = () => {
           <div className="ses-modal-overlay" onClick={() => setSelectedHubSession(null)}>
             <div
               className="ses-modal-box ses-hub-modal"
-              style={{ maxWidth: '820px', width: '95%', maxHeight: '90vh', padding: '0', display: 'flex', flexDirection: 'column', overflow: 'hidden', borderRadius: '16px', border: '1px solid #E2E8F0', boxShadow: '0 20px 50px rgba(15, 23, 42, 0.2)' }}
+              style={{
+                maxWidth: '820px',
+                width: '95%',
+                height: 'min(580px, 90vh)',
+                minHeight: 'min(540px, 90vh)',
+                maxHeight: '90vh',
+                padding: '0',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+                borderRadius: '16px',
+                border: '1px solid #E2E8F0',
+                boxShadow: '0 20px 50px rgba(15, 23, 42, 0.2)'
+              }}
               onClick={(e) => e.stopPropagation()}
             >
               {/* Modal Top Header - Clean, Light & Minimal */}
@@ -2324,7 +2357,11 @@ const Sessions = () => {
                   ) : (
                     <select
                       value={hubStatus}
-                      onChange={(e) => setHubStatus(e.target.value)}
+                      onChange={(e) => {
+                        setHubStatus(e.target.value);
+                        setHubHasChanges(true);
+                        setHubSaveSuccess(false);
+                      }}
                       style={{
                         background: statusBg(hubStatus),
                         color: statusColor(hubStatus),
@@ -2392,7 +2429,7 @@ const Sessions = () => {
               </div>
 
               {/* Scrollable Tab Content */}
-              <div style={{ padding: '20px 24px', overflowY: 'auto', flex: 1, maxHeight: '60vh' }}>
+              <div style={{ padding: '20px 24px', overflowY: 'auto', flex: 1, minHeight: 0 }}>
                 {/* ─── TAB 1: ATHLETES ROSTER ─── */}
                 {hubActiveTab === 'overview' && (
                   <div>
@@ -2777,7 +2814,11 @@ const Sessions = () => {
                                 type="text"
                                 placeholder="Or paste external video link (e.g. S3 link, MP4 URL)..."
                                 value={hubNewVideoUrl}
-                                onChange={(e) => setHubNewVideoUrl(e.target.value)}
+                                onChange={(e) => {
+                                  setHubNewVideoUrl(e.target.value);
+                                  setHubHasChanges(true);
+                                  setHubSaveSuccess(false);
+                                }}
                                 style={{
                                   flex: 1,
                                   padding: '10px 14px',
@@ -2869,7 +2910,11 @@ const Sessions = () => {
                                 type="text"
                                 placeholder="Add another video by external link / S3 URL..."
                                 value={hubNewVideoUrl}
-                                onChange={(e) => setHubNewVideoUrl(e.target.value)}
+                                onChange={(e) => {
+                                  setHubNewVideoUrl(e.target.value);
+                                  setHubHasChanges(true);
+                                  setHubSaveSuccess(false);
+                                }}
                                 style={{
                                   flex: 1,
                                   padding: '8px 12px',
@@ -2931,7 +2976,11 @@ const Sessions = () => {
                               <button
                                 type="button"
                                 style={{ background: '#FEE2E2', color: '#DC2626', border: '1px solid #FCA5A5', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
-                                onClick={() => setHubImageUrl('')}
+                                onClick={() => {
+                                  setHubImageUrl('');
+                                  setHubHasChanges(true);
+                                  setHubSaveSuccess(false);
+                                }}
                               >
                                 🗑️ Remove
                               </button>
@@ -3014,7 +3063,11 @@ const Sessions = () => {
                             type="text"
                             placeholder="Or paste external image URL (e.g. S3 link, photo URL)..."
                             value={hubImageUrl}
-                            onChange={(e) => setHubImageUrl(e.target.value)}
+                            onChange={(e) => {
+                              setHubImageUrl(e.target.value);
+                              setHubHasChanges(true);
+                              setHubSaveSuccess(false);
+                            }}
                             style={{
                               flex: 1,
                               padding: '10px 14px',
@@ -3041,7 +3094,11 @@ const Sessions = () => {
                         placeholder={isStudent ? "No coach notes available yet..." : "Add training goals, wave count, board setup notes, pop-up corrections, or student feedback for this session..."}
                         value={hubNotes}
                         readOnly={isStudent}
-                        onChange={(e) => setHubNotes(e.target.value)}
+                        onChange={(e) => {
+                          setHubNotes(e.target.value);
+                          setHubHasChanges(true);
+                          setHubSaveSuccess(false);
+                        }}
                         style={{
                           width: '100%',
                           padding: '12px 14px',
@@ -3082,7 +3139,7 @@ const Sessions = () => {
                         type="button"
                         className="ses-btn-secondary"
                         style={{ padding: '6px 14px', fontSize: '12px', background: '#FFFFFF', border: '1px solid #CBD5E1', color: '#475569', borderRadius: '8px' }}
-                        onClick={() => navigate(`/sessions/${selectedHubSession.sessions ? selectedHubSession.sessions[0]?.id : selectedHubSession.id}/edit`)}
+                        onClick={() => handleOpenEditSession(selectedHubSession)}
                       >
                         Edit Session
                       </button>
@@ -3124,20 +3181,31 @@ const Sessions = () => {
                     style={{
                       padding: '7px 18px',
                       borderRadius: '8px',
-                      border: 'none',
-                      background: '#0D9488',
-                      color: '#FFFFFF',
-                      fontWeight: 600,
+                      border: hubHasChanges ? 'none' : '1px solid rgba(13, 148, 136, 0.3)',
+                      background: hubHasChanges ? '#0D9488' : 'rgba(13, 148, 136, 0.1)',
+                      color: hubHasChanges ? '#FFFFFF' : '#0D9488',
+                      fontWeight: 700,
                       fontSize: '13px',
-                      cursor: 'pointer',
+                      cursor: hubHasChanges ? 'pointer' : 'default',
                       display: 'inline-flex',
                       alignItems: 'center',
-                      gap: '6px'
+                      gap: '6px',
+                      transition: 'all 0.2s ease',
+                      boxShadow: hubHasChanges ? '0 2px 10px rgba(13, 148, 136, 0.25)' : 'none'
                     }}
-                    onClick={handleSaveHubChanges}
+                    onClick={hubHasChanges ? handleSaveHubChanges : undefined}
                     disabled={hubIsSaving}
                   >
-                    {hubIsSaving ? 'Saving…' : 'Save Changes'}
+                    {hubIsSaving ? (
+                      'Saving…'
+                    ) : hubHasChanges ? (
+                      'Save Changes'
+                    ) : (
+                      <>
+                        <span style={{ fontSize: '14px' }}>✓</span>
+                        Saved
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
@@ -3624,6 +3692,23 @@ const Sessions = () => {
           />
         )}
 
+        {/* ─── EDIT SESSION WIZARD (NewSession pre-filled) ─── */}
+        {editSessionData && canManageSessions && (
+          <NewSession
+            isModal={true}
+            editSession={editSessionData}
+            onClose={() => {
+              setEditSessionData(null);
+            }}
+            onSessionCreated={() => {
+              setEditSessionData(null);
+              setSelectedHubSession(null);
+              showToast('Session updated successfully', 'success');
+              fetchSessions();
+            }}
+          />
+        )}
+
         {/* In-App Confirmation Modal (Replaces Native Browser window.confirm) */}
         {confirmModal.isOpen && (
           <div
@@ -4103,6 +4188,10 @@ const Sessions = () => {
           background: #FFFFFF; border-radius: 20px; max-width: 1100px; width: 100%; max-height: 90vh;
           display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 24px 60px rgba(0,0,0,0.35);
           border: 1px solid rgba(255,255,255,0.2);
+        }
+        .ses-hub-modal {
+          height: min(580px, 90vh) !important;
+          min-height: min(540px, 90vh) !important;
         }
         .ses-modal-header {
           display: flex; justify-content: space-between; align-items: center; padding: 20px 28px;
