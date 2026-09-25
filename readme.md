@@ -209,3 +209,49 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
 5. Dynamic "My Sessions" Navigation & Page Header:
    - Top Header Navigation (`Sidebar.jsx`): Dynamically displays **`My Sessions`** instead of `Sessions` when logged in as a Student (`athlete`/`student`/`user`) or Coach (`coach`).
    - Sessions Page Title (`Sessions.jsx`): Updated main heading to display **`My Sessions`** for students and coaches with personalized coaching and schedule subtitles.
+
+### changes on 25-09-26
+1. Interactive Calendar & Day Details Roster View (`Sessions.jsx`):
+   - Touching or clicking any calendar date cell or group pill immediately launches a dedicated **Day Details Modal** and synchronizes the embedded **Day Roster Drawer** below the grid.
+   - Shows long formatted date, total slots count, `TODAY` indicator, training group cards, session timings, assigned coach, spot location, and enrolled student roster with avatars and levels.
+   - Quick session creation button (`+ Schedule on this Date` / `+ Create`) for current & future dates.
+   - Cleaned up Day Details modal action buttons by removing the redundant "AI Video Analysis" button, retaining a clean and direct `View in Sessions Table →` button.
+2. Session Status Workflow & Dynamic Metrics Bar (`Sessions.jsx`):
+   - Dynamic Date-Aware Status Transitions: Arrived or past sessions automatically transition to **`IN PROGRESS`** / `Completed`, while future dates display **`UPCOMING`**.
+   - Redesigned status metrics into a dedicated 4-card horizontal row:
+     - `UPCOMING SESSIONS` (sky blue) with days upcoming count.
+     - `IN PROGRESS SESSIONS` (emerald teal) with days in progress count.
+     - `SESSIONS COMPLETED` (green) with days completed count.
+     - `NUMBER OF STUDENTS` (purple) with live breakdown across Upcoming, In Progress, and Completed.
+   - Each metric card acts as an instant one-click filter for the session table.
+3. Student & Coach Gender Filters in Session Creation Wizard (`NewSession.jsx`):
+   - Step 3 Column 1 (Available Students): Added dedicated 4-column filter grid (`📅 DAY`, `⚡ STATUS`, `🎯 LEVEL`, `👤 GENDER`) with gender badges on student cards (`♀ Female` / `♂ Male`).
+   - Step 3 Column 3 (Available Instructors): Added segmented gender filter buttons (`All (N) | Male (N) | Female (N)`), dynamic coach counts, gender badges on coach cards, and empty state prompts.
+   - Step 2 (Roster Selection): Added gender filter chips (`All`, `Male`, `Female`).
+   - Backend database support: Added `gender` column to `Student` SQLAlchemy model and updated SQLite `aisurf.db` table schema and queries.
+4. Coach Profile DOB & Real-Time Age Management (`InstructorProfile.jsx`, `backend/main.py`):
+   - Added Date of Birth (DOB) datepicker input and Gender selector inside the **Edit Coach Profile** modal.
+   - Integrated live automatic age calculation (`calculateAge`), displaying real-time age preview (`Age: XX yrs`) next to the DOB input field.
+   - Updated Personal Details card on Coach Profile to display `Date of Birth (DOB)` and calculated age (`YYYY-MM-DD (XX years old)`).
+   - Enhanced backend `update_instructor` endpoint to persist `dob` and automatically compute and save `instructor.age`.
+5. Stability & Blank Screen Fix (`Sessions.jsx`):
+   - Resolved uncaught `ReferenceError: UserAvatar is not defined` runtime error that caused a blank screen upon touching calendar date cells.
+   - Embedded standalone `UserAvatar`, `getInitials`, and `getAvatarColor` utilities in `Sessions.jsx`.
+   - Included `statusFilter` in the `filteredSessions` memoization dependency array.
+6. Production Deployment (`Vercel`):
+   - Built and deployed frontend production bundle to Vercel:
+     - Production URL: `https://aisurf-d6z20uyfs-nithishwaran-rps-projects.vercel.app`
+     - Live Custom Domain: `https://www.athnexlive.com`
+7. Athlete Intelligence & Analytics Single Calendar Modal (`AthleteIntelligence.jsx`):
+   - Removed cluttered horizontal day strip and multiple pill buttons from the dashboard view.
+   - Added a sleek single **`📅 View Calendar`** button at the top header (with active date indicator).
+   - Clicking the button launches a full **Interactive Monthly Calendar Modal** (matching the pro Sessions calendar design):
+     - Month navigation (‹ Prev, Today, Next ›) and weekday matrix (Mon-Sun).
+     - Date cells display day numbers, `TODAY` badges, total activity log counts, and color-coded mini badges for Surfing (🏄), S&C (🏋️), Nutrition (🍎), and Mental Prep (🧠).
+     - Clicking any date cell instantly filters the dashboard and highlights the selected date's activity roster and metrics.
+   - Clean dashboard interface: Removed intermediate status banners so metrics cards and history load directly beneath the navigation tabs.
+   - Form logging tabs (`Log Nutrition`, `S&C Workout`, `Technical Training`, `Mental Prep`) now include explicit date pickers to log entries for any chosen date.
+8. Athlete Intelligence Student Skill Level Filter (`AthleteIntelligence.jsx`):
+   - Added dynamic **`Level:`** filter dropdown (`All Levels`, `Beginner`, `Intermediate`, `Advanced`, `Master`) directly alongside the `Logging for:` student selector in the top header.
+   - Shows live counts of students in each tier (e.g. `Beginner (4)`, `Intermediate (2)`).
+   - Changing the level filter instantly filters the athlete selection dropdown to only display students in that category and auto-selects the first student in the filtered group.

@@ -46,9 +46,26 @@ const InstructorProfile = () => {
   const [saving, setSaving] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [photoPreview, setPhotoPreview] = useState('');
+  const calculateAge = (dobString) => {
+    if (!dobString) return null;
+    const str = String(dobString).trim();
+    const birthDate = new Date(str);
+    if (isNaN(birthDate.getTime())) return null;
+    const today = new Date();
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const m = today.getMonth() - birthDate.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+      age--;
+    }
+    return age > 0 ? age : null;
+  };
+
   const [editForm, setEditForm] = useState({
     name: '',
     email: '',
+    dob: '',
+    age: '',
+    gender: 'Male',
     bio: '',
     experience: '',
     fitness_level: 'Elite',
@@ -364,6 +381,10 @@ const InstructorProfile = () => {
   const handleEditClick = () => {
     setEditForm({
       name: instructor.name || '',
+      email: instructor.email || '',
+      dob: instructor.dob || '',
+      age: instructor.age || (instructor.dob ? calculateAge(instructor.dob) : '') || '',
+      gender: instructor.gender || 'Male',
       bio: instructor.bio || '',
       experience: instructor.experience || '',
       fitness_level: instructor.fitness_level || 'Elite',
@@ -394,8 +415,12 @@ const InstructorProfile = () => {
     try {
       const token = sessionStorage.getItem('token');
       const safeImage = (editForm.image && !editForm.image.startsWith('blob:')) ? editForm.image : '';
+      const calcAge = calculateAge(editForm.dob);
       const payload = {
         name: editForm.name,
+        dob: editForm.dob || '',
+        age: calcAge || (editForm.age ? parseInt(editForm.age) : null),
+        gender: editForm.gender || 'Male',
         bio: editForm.bio,
         experience: editForm.experience,
         fitness_level: editForm.fitness_level,
@@ -597,6 +622,21 @@ const InstructorProfile = () => {
                   <span className="ip-detail-label">Email (Login ID)</span>
                   <span className="ip-detail-value" style={{ fontWeight: 700, color: instructor.email ? '#0F172A' : '#94A3B8' }}>
                     {instructor.email || 'No email set'}
+                  </span>
+                </div>
+                <div className="ip-detail-row">
+                  <span className="ip-detail-label">Date of Birth (DOB)</span>
+                  <span className="ip-detail-value" style={{ fontWeight: 600 }}>
+                    {instructor.dob ? (
+                      <>
+                        {instructor.dob}
+                        {calculateAge(instructor.dob) ? (
+                          <span style={{ color: '#64748B', fontWeight: 500, marginLeft: '6px', fontSize: '12px' }}>
+                            ({calculateAge(instructor.dob)} years old)
+                          </span>
+                        ) : null}
+                      </>
+                    ) : (instructor.age ? `${instructor.age} years old` : '—')}
                   </span>
                 </div>
                 <div className="ip-detail-row">
@@ -863,6 +903,44 @@ const InstructorProfile = () => {
                   <div className="sp-form-field">
                     <label>Full Name</label>
                     <input type="text" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required />
+                  </div>
+
+                  <div className="sp-form-row">
+                    <div className="sp-form-field">
+                      <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>Date of Birth (DOB)</span>
+                        {editForm.dob && calculateAge(editForm.dob) && (
+                          <span style={{ fontSize: '11px', color: '#0D9488', fontWeight: 700 }}>
+                            Age: {calculateAge(editForm.dob)} yrs
+                          </span>
+                        )}
+                      </label>
+                      <input
+                        type="date"
+                        value={editForm.dob || ''}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const cAge = calculateAge(val);
+                          setEditForm(prev => ({
+                            ...prev,
+                            dob: val,
+                            age: cAge || prev.age
+                          }));
+                        }}
+                        max={new Date().toISOString().split('T')[0]}
+                      />
+                    </div>
+                    <div className="sp-form-field">
+                      <label>Gender</label>
+                      <select
+                        value={editForm.gender || 'Male'}
+                        onChange={(e) => setEditForm({ ...editForm, gender: e.target.value })}
+                      >
+                        <option value="Male">Male</option>
+                        <option value="Female">Female</option>
+                        <option value="Other">Other</option>
+                      </select>
+                    </div>
                   </div>
 
                   <div className="sp-form-row">

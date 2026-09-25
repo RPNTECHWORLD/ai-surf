@@ -401,6 +401,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const [dbStudents, setDbStudents] = useState([]);
   const [levelFilter, setLevelFilter] = useState('all'); // 'all' | 'Beginner' | 'Intermediate' | 'Advanced'
   const [courseDayFilter, setCourseDayFilter] = useState('all'); // 'all' | '1' | '2' | '3' | ... | '7'
+  const [genderFilterStep2, setGenderFilterStep2] = useState('all'); // 'all' | 'male' | 'female'
   const [dayFilter, setDayFilter] = useState('all');
   const [selectedSlotStep2, setSelectedSlotStep2] = useState(1);
   const [studentSearchStep2, setStudentSearchStep2] = useState('');
@@ -414,6 +415,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const [step3DayFilter, setStep3DayFilter] = useState('all'); // 'all' | '1' | '2' | '3'...
   const [step3StatusFilter, setStep3StatusFilter] = useState('all'); // 'all' | 'unassigned' | 'assigned'
   const [step3LevelFilter, setStep3LevelFilter] = useState('all'); // 'all' | 'beginner' | 'intermediate' | 'advanced'
+  const [step3GenderFilter, setStep3GenderFilter] = useState('all'); // 'all' | 'male' | 'female'
+  const [step3CoachGenderFilter, setStep3CoachGenderFilter] = useState('all'); // 'all' | 'male' | 'female'
   const [step3SlotFilter, setStep3SlotFilter] = useState(() => slots[0]?.id || 1);
   const [studentSearch, setStudentSearch] = useState('');
   const [step3CheckedStudentIds, setStep3CheckedStudentIds] = useState([]);
@@ -510,6 +513,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             return {
               id: s.id,
               name: s.name,
+              gender: s.gender || (s.division && s.division.toLowerCase().includes('women') ? 'Female' : 'Male'),
               level: s.level || 'Beginner',
               day: idx % 2 === 0 ? 'day1' : 'day2',
               whichDay: s.which_day || s.whichDay || dayInfo.whichDay,
@@ -544,6 +548,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             return {
               id: i.id,
               name: i.name,
+              gender: i.gender || 'Male',
               role: roleStr,
               status: i.status || 'Available',
               avatar: (i.image && !i.image.includes('unsplash.com') && !i.image.includes('1500648767791')) ? i.image : '',
@@ -587,6 +592,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           matched.push({
             id: sid || `session-st-${sname}`,
             name: sname,
+            gender: sess.gender || 'Male',
             level: sess.type || sess.level || 'Beginner',
             day: 'day1',
             whichDay: 1,
@@ -607,6 +613,15 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
   // Real Instructors (NO fake data)
   const allInstructors = dbInstructors;
+
+  // Filtered Instructors for Step 3 (Coach Gender Filter)
+  const filteredInstructors = useMemo(() => {
+    return allInstructors.filter(inst => {
+      if (step3CoachGenderFilter === 'all') return true;
+      const g = (inst.gender || 'male').toLowerCase();
+      return g === step3CoachGenderFilter.toLowerCase();
+    });
+  }, [allInstructors, step3CoachGenderFilter]);
 
   // ─── Pre-fill from editSession (edit mode) ───
   // When editSession is passed, pre-select date, slot, and students and jump to Step 3.
@@ -980,6 +995,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
     return allPoolStudents
       .filter(s => levelFilter === 'all' || s.level.toLowerCase() === levelFilter.toLowerCase())
+      .filter(s => genderFilterStep2 === 'all' || (s.gender || 'male').toLowerCase() === genderFilterStep2.toLowerCase())
       .filter(s => !studentSearchStep2 || s.name.toLowerCase().includes(studentSearchStep2.toLowerCase()))
       .slice()
       .sort((a, b) => {
@@ -1004,7 +1020,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         // 4. Alphabetical name
         return a.name.localeCompare(b.name);
       });
-  }, [allPoolStudents, levelFilter, courseDayFilter, studentSearchStep2, allSelectedStudentIds, slotStudentMap, selectedSlotId, activeSlotsForDay, slots]);
+  }, [allPoolStudents, levelFilter, courseDayFilter, genderFilterStep2, studentSearchStep2, allSelectedStudentIds, slotStudentMap, selectedSlotId, activeSlotsForDay, slots]);
 
   // Transition from Step 2 to Step 3: Multi-slot aware group initialization
   const proceedToStep3 = () => {
@@ -1121,12 +1137,13 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     return importedStudents.filter(s => slotAssignedIds.includes(s.id));
   }, [importedStudents, step3SlotFilter, slotStudentMap, editSession]);
 
-  const hasActiveStep3Filters = step3DayFilter !== 'all' || step3StatusFilter !== 'all' || step3LevelFilter !== 'all' || Boolean(studentSearch);
+  const hasActiveStep3Filters = step3DayFilter !== 'all' || step3StatusFilter !== 'all' || step3LevelFilter !== 'all' || step3GenderFilter !== 'all' || Boolean(studentSearch);
 
   const resetStep3Filters = () => {
     setStep3DayFilter('all');
     setStep3StatusFilter('all');
     setStep3LevelFilter('all');
+    setStep3GenderFilter('all');
     setStudentSearch('');
   };
 
@@ -1154,6 +1171,12 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           if ((s.level || '').toLowerCase() !== step3LevelFilter.toLowerCase()) return false;
         }
 
+        // Gender filtering (All / Male / Female)
+        if (step3GenderFilter !== 'all') {
+          const sGender = (s.gender || 'male').toLowerCase();
+          if (sGender !== step3GenderFilter.toLowerCase()) return false;
+        }
+
         return true;
       })
       .filter(s => !studentSearch || s.name.toLowerCase().includes(studentSearch.toLowerCase()))
@@ -1170,7 +1193,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         if (dayA !== dayB) return dayA - dayB;
         return a.name.localeCompare(b.name);
       });
-  }, [importedStudents, step3DayFilter, step3StatusFilter, step3LevelFilter, step3SlotFilter, slotStudentMap, studentSearch, trainingGroups, editSession]);
+  }, [importedStudents, step3DayFilter, step3StatusFilter, step3LevelFilter, step3GenderFilter, step3SlotFilter, slotStudentMap, studentSearch, trainingGroups, editSession]);
 
   // Step 3: Training groups filtered by slot
   const displayedTrainingGroups = useMemo(() => {
@@ -2121,6 +2144,31 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                 </div>
               </div>
 
+              {/* Filter by Gender */}
+              <div className="ns-filter-row" style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #F1F5F9' }}>
+                <span className="ns-filter-label">Filter by Gender:</span>
+                <div className="ns-pill-group" style={{ flexWrap: 'wrap', gap: '6px' }}>
+                  <button
+                    className={`ns-pill ${genderFilterStep2 === 'all' ? 'active' : ''}`}
+                    onClick={() => setGenderFilterStep2('all')}
+                  >
+                    All Genders ({allPoolStudents.length})
+                  </button>
+                  <button
+                    className={`ns-pill ${genderFilterStep2 === 'male' ? 'active' : ''}`}
+                    onClick={() => setGenderFilterStep2('male')}
+                  >
+                    Male ({allPoolStudents.filter(s => (s.gender || 'male').toLowerCase() === 'male').length})
+                  </button>
+                  <button
+                    className={`ns-pill ${genderFilterStep2 === 'female' ? 'active' : ''}`}
+                    onClick={() => setGenderFilterStep2('female')}
+                  >
+                    Female ({allPoolStudents.filter(s => (s.gender || '').toLowerCase() === 'female').length})
+                  </button>
+                </div>
+              </div>
+
               {/* Search Student */}
               <div className="ns-filter-row" style={{ marginTop: '12px' }}>
                 <span className="ns-filter-label">Search Student:</span>
@@ -2726,10 +2774,10 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                   )}
                 </div>
 
-                {/* Filter Toolbar: Day, Status, Level */}
+                {/* Filter Toolbar: Day, Status, Level, Gender */}
                 <div style={{
                   display: 'grid',
-                  gridTemplateColumns: 'repeat(3, 1fr)',
+                  gridTemplateColumns: 'repeat(4, 1fr)',
                   gap: '6px',
                   width: '100%',
                   boxSizing: 'border-box'
@@ -2746,7 +2794,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                         width: '100%',
                         height: '34px',
                         padding: '0 4px',
-                        fontSize: '11.5px',
+                        fontSize: '11px',
                         fontWeight: step3DayFilter !== 'all' ? 700 : 500,
                         color: step3DayFilter !== 'all' ? '#0284C7' : '#0F172A',
                         background: step3DayFilter !== 'all' ? '#F0F9FF' : '#F8FAFC',
@@ -2757,7 +2805,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                         boxSizing: 'border-box'
                       }}
                     >
-                      <option value="all">All Days ({slotImportedStudents.length})</option>
+                      <option value="all">All ({slotImportedStudents.length})</option>
                       {step3AvailableDays.map(d => {
                         const count = slotImportedStudents.filter(s => String(s.whichDay) === String(d)).length;
                         return (
@@ -2781,7 +2829,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                         width: '100%',
                         height: '34px',
                         padding: '0 4px',
-                        fontSize: '11.5px',
+                        fontSize: '11px',
                         fontWeight: step3StatusFilter !== 'all' ? 700 : 500,
                         color: step3StatusFilter !== 'all' ? '#0284C7' : '#0F172A',
                         background: step3StatusFilter !== 'all' ? '#F0F9FF' : '#F8FAFC',
@@ -2792,7 +2840,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                         boxSizing: 'border-box'
                       }}
                     >
-                      <option value="all">All Active ({slotImportedStudents.length})</option>
+                      <option value="all">All ({slotImportedStudents.length})</option>
                       <option value="unassigned">
                         Unassigned ({slotImportedStudents.filter(s => !trainingGroups.some(g => g.studentIds.includes(s.id))).length})
                       </option>
@@ -2814,7 +2862,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                         width: '100%',
                         height: '34px',
                         padding: '0 4px',
-                        fontSize: '11.5px',
+                        fontSize: '11px',
                         fontWeight: step3LevelFilter !== 'all' ? 700 : 500,
                         color: step3LevelFilter !== 'all' ? '#0284C7' : '#0F172A',
                         background: step3LevelFilter !== 'all' ? '#F0F9FF' : '#F8FAFC',
@@ -2825,15 +2873,48 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                         boxSizing: 'border-box'
                       }}
                     >
-                      <option value="all">All Levels ({slotImportedStudents.length})</option>
+                      <option value="all">All ({slotImportedStudents.length})</option>
                       <option value="beginner">
                         Beginner ({slotImportedStudents.filter(s => (s.level || '').toLowerCase() === 'beginner').length})
                       </option>
                       <option value="intermediate">
-                        Intermediate ({slotImportedStudents.filter(s => (s.level || '').toLowerCase() === 'intermediate').length})
+                        Inter. ({slotImportedStudents.filter(s => (s.level || '').toLowerCase() === 'intermediate').length})
                       </option>
                       <option value="advanced">
-                        Advanced ({slotImportedStudents.filter(s => (s.level || '').toLowerCase() === 'advanced').length})
+                        Adv. ({slotImportedStudents.filter(s => (s.level || '').toLowerCase() === 'advanced').length})
+                      </option>
+                    </select>
+                  </div>
+
+                  {/* Gender Filter */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                    <label style={{ fontSize: '10px', fontWeight: 700, color: '#64748B', display: 'flex', alignItems: 'center', gap: '3px', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+                      <span>👤</span> Gender
+                    </label>
+                    <select
+                      value={step3GenderFilter}
+                      onChange={(e) => setStep3GenderFilter(e.target.value)}
+                      style={{
+                        width: '100%',
+                        height: '34px',
+                        padding: '0 4px',
+                        fontSize: '11px',
+                        fontWeight: step3GenderFilter !== 'all' ? 700 : 500,
+                        color: step3GenderFilter !== 'all' ? '#0284C7' : '#0F172A',
+                        background: step3GenderFilter !== 'all' ? '#F0F9FF' : '#F8FAFC',
+                        border: `1.5px solid ${step3GenderFilter !== 'all' ? '#0284C7' : '#CBD5E1'}`,
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        outline: 'none',
+                        boxSizing: 'border-box'
+                      }}
+                    >
+                      <option value="all">All ({slotImportedStudents.length})</option>
+                      <option value="male">
+                        Male ({slotImportedStudents.filter(s => (s.gender || 'male').toLowerCase() === 'male').length})
+                      </option>
+                      <option value="female">
+                        Female ({slotImportedStudents.filter(s => (s.gender || '').toLowerCase() === 'female').length})
                       </option>
                     </select>
                   </div>
@@ -2954,6 +3035,24 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                 }}
                               >
                                 Day {student.whichDay}/{student.totalDays}
+                              </span>
+
+                              {/* Gender Badge */}
+                              <span
+                                style={{
+                                  fontSize: '10px',
+                                  padding: '1.5px 6px',
+                                  borderRadius: '4px',
+                                  fontWeight: 700,
+                                  background: (student.gender || '').toLowerCase() === 'female' ? '#FDF2F8' : '#EFF6FF',
+                                  color: (student.gender || '').toLowerCase() === 'female' ? '#DB2777' : '#1D4ED8',
+                                  border: `1px solid ${(student.gender || '').toLowerCase() === 'female' ? '#FBCFE8' : '#BFDBFE'}`,
+                                  whiteSpace: 'nowrap',
+                                  flexShrink: 0
+                                }}
+                                title={`Gender: ${student.gender || 'Male'}`}
+                              >
+                                {(student.gender || '').toLowerCase() === 'female' ? '♀ Female' : '♂ Male'}
                               </span>
 
                               {/* Time Slot Badge */}
@@ -3363,9 +3462,78 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
               {/* Column 3: Available Instructors (Draggable) */}
               <div className="ns-ws-col ns-ws-col-instructors">
-                <div className="ns-col-head">
-                  <h3 className="ns-col-title">Available Instructors</h3>
-                  <span className="ns-col-badge">{allInstructors.length} Staff</span>
+                <div className="ns-col-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <h3 className="ns-col-title">Available Instructors</h3>
+                    <span className="ns-col-badge">{filteredInstructors.length} Staff</span>
+                  </div>
+                  {step3CoachGenderFilter !== 'all' && (
+                    <button
+                      type="button"
+                      onClick={() => setStep3CoachGenderFilter('all')}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: '#0284C7',
+                        fontSize: '11.5px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        padding: '2px 4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px'
+                      }}
+                      title="Reset coach filter"
+                    >
+                      Reset
+                    </button>
+                  )}
+                </div>
+
+                {/* Coach Gender Filter Toolbar */}
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '6px',
+                  background: '#F8FAFC',
+                  padding: '6px 10px',
+                  borderRadius: '8px',
+                  border: '1px solid #E2E8F0',
+                  boxSizing: 'border-box'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '10.5px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+                    <span>👤</span> Gender:
+                  </div>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    {[
+                      { key: 'all', label: 'All', count: allInstructors.length },
+                      { key: 'male', label: 'Male', count: allInstructors.filter(i => (i.gender || 'male').toLowerCase() === 'male').length },
+                      { key: 'female', label: 'Female', count: allInstructors.filter(i => (i.gender || '').toLowerCase() === 'female').length },
+                    ].map(({ key, label, count }) => {
+                      const isActive = step3CoachGenderFilter === key;
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => setStep3CoachGenderFilter(key)}
+                          style={{
+                            border: `1px solid ${isActive ? '#0284C7' : '#CBD5E1'}`,
+                            borderRadius: '6px',
+                            padding: '3px 8px',
+                            fontSize: '11px',
+                            fontWeight: isActive ? 700 : 500,
+                            background: isActive ? '#F0F9FF' : '#FFFFFF',
+                            color: isActive ? '#0284C7' : '#475569',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          {label} ({count})
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 <div style={{ fontSize: '11px', color: '#64748B', display: 'flex', alignItems: 'center', gap: '4px', background: '#F8FAFC', padding: '6px 10px', borderRadius: '6px' }}>
@@ -3373,12 +3541,14 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                 </div>
 
                 <div className="ns-instructors-list">
-                  {allInstructors.length === 0 ? (
+                  {filteredInstructors.length === 0 ? (
                     <div style={{ padding: '24px', textAlign: 'center', color: '#64748B', background: '#FFFFFF', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
-                      No instructors registered for this school yet.
+                      {step3CoachGenderFilter !== 'all'
+                        ? `No ${step3CoachGenderFilter} instructors registered.`
+                        : 'No instructors registered for this school yet.'}
                     </div>
                   ) : (
-                    allInstructors.map(inst => {
+                    filteredInstructors.map(inst => {
                       const currentSlotId = step3SlotFilter !== 'ALL' ? step3SlotFilter : (selectedSlotId || slots[0]?.id);
                       const currentSlotGroups = displayedTrainingGroups;
                       const currentActiveGroup = currentSlotGroups.find(g => g.id === activeDropGroupId) || currentSlotGroups[0] || null;
@@ -3491,7 +3661,23 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                           <UserAvatar src={inst.avatar} name={inst.name} size={36} className="ns-inst-avatar" />
                           <div className="ns-inst-info">
                             <h4 className="ns-inst-name">{inst.name}</h4>
-                            <span className="ns-inst-role">{inst.role}</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                              <span className="ns-inst-role">{inst.role}</span>
+                              <span
+                                style={{
+                                  fontSize: '9.5px',
+                                  padding: '1px 5px',
+                                  borderRadius: '4px',
+                                  fontWeight: 700,
+                                  background: (inst.gender || '').toLowerCase() === 'female' ? '#FDF2F8' : '#EFF6FF',
+                                  color: (inst.gender || '').toLowerCase() === 'female' ? '#DB2777' : '#1D4ED8',
+                                  border: `1px solid ${(inst.gender || '').toLowerCase() === 'female' ? '#FBCFE8' : '#BFDBFE'}`,
+                                  whiteSpace: 'nowrap'
+                                }}
+                              >
+                                {(inst.gender || '').toLowerCase() === 'female' ? '♀ Female' : '♂ Male'}
+                              </span>
+                            </div>
                           </div>
                           <span
                             className={`ns-inst-badge ${badgeClass}`}

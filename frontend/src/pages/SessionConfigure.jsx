@@ -99,7 +99,7 @@ const SessionConfigure = () => {
     try {
       const saved = localStorage.getItem('session_slots');
       return saved ? JSON.parse(saved) : defaultSlots;
-    } catch(e) { return defaultSlots; }
+    } catch (e) { return defaultSlots; }
   });
   const [settings, setSettings] = useState({ defaultDuration: "90", maxStudents: "4", breakBetween: "30", cancellationWindow: "24" });
   const [saving, setSaving] = useState(false);
@@ -186,7 +186,7 @@ const SessionConfigure = () => {
                             if (typeof e.target.showPicker === 'function') {
                               e.target.showPicker();
                             }
-                          } catch (err) {}
+                          } catch (err) { }
                         }}
                         style={{
                           ...inp,

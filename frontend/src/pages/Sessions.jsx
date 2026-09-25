@@ -5,38 +5,93 @@ import NewSession from './NewSession';
 
 const API = import.meta.env.VITE_API_URL || '';
 
+// Helper functions for user avatars
+function getInitials(name) {
+  if (!name) return '?';
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) {
+    return parts[0].length >= 2 ? parts[0].slice(0, 2).toUpperCase() : parts[0].toUpperCase();
+  }
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function getAvatarColor(name) {
+  const gradients = [
+    'linear-gradient(135deg, #0284C7 0%, #0369A1 100%)', // Blue
+    'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)', // Teal
+    'linear-gradient(135deg, #7C3AED 0%, #6D28D9 100%)', // Purple
+    'linear-gradient(135deg, #D97706 0%, #B45309 100%)', // Amber
+    'linear-gradient(135deg, #E11D48 0%, #BE123C 100%)', // Rose
+    'linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%)', // Indigo
+  ];
+  if (!name) return gradients[0];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = (hash << 5) - hash + name.charCodeAt(i);
+  return gradients[Math.abs(hash) % gradients.length];
+}
+
+// Renders user-uploaded image if present; otherwise renders initials fallback
+const UserAvatar = ({ src, name, size = 32, className = '', style = {} }) => {
+  const [imgError, setImgError] = useState(false);
+
+  const hasRealUserImage = src &&
+    typeof src === 'string' &&
+    src.trim().length > 0 &&
+    !src.includes('unsplash.com') &&
+    !src.includes('1500648767791');
+
+  if (hasRealUserImage && !imgError) {
+    return (
+      <img
+        src={src}
+        alt={name || 'Avatar'}
+        className={className}
+        style={{
+          width: `${size}px`,
+          height: `${size}px`,
+          borderRadius: '50%',
+          objectFit: 'cover',
+          flexShrink: 0,
+          ...style
+        }}
+        onError={() => setImgError(true)}
+      />
+    );
+  }
+
+  return (
+    <div
+      className={className}
+      style={{
+        width: `${size}px`,
+        height: `${size}px`,
+        borderRadius: '50%',
+        background: getAvatarColor(name),
+        color: '#FFFFFF',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontWeight: 700,
+        fontSize: `${Math.max(10, Math.floor(size * 0.4))}px`,
+        letterSpacing: '0.5px',
+        flexShrink: 0,
+        userSelect: 'none',
+        ...style
+      }}
+      title={name || ''}
+    >
+      {getInitials(name)}
+    </div>
+  );
+};
+
 
 const conditionColor = (c) => {
   if (c === 'Hard') return '#F43F5E';
   if (c === 'Easy') return '#0D9488';
   return '#F59E0B';
 };
-
-const formatSessionStatus = (s) => {
-  if (!s || s === 'Upcoming' || s === 'upcoming' || s === 'Scheduled') return 'Pending';
-  return s;
-};
-
-const statusColor = (s) => {
-  const norm = formatSessionStatus(s);
-  if (norm === 'Completed') return '#0D9488';
-  if (norm === 'IN PROGRESS' || norm === 'In Progress') return '#00D1B2';
-  return '#F59E0B'; // Pending
-};
-
-const statusBg = (s) => {
-  const norm = formatSessionStatus(s);
-  if (norm === 'Completed') return 'rgba(13, 148, 136, 0.12)';
-  if (norm === 'IN PROGRESS' || norm === 'In Progress') return 'rgba(0, 209, 178, 0.15)';
-  return 'rgba(245, 158, 11, 0.12)'; // Pending
-};
-
-const MONTH_NAMES = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December'
-];
-
-const DAYS_OF_WEEK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 const normalizeToYYYYMMDD = (dVal) => {
   if (!dVal) return '';
@@ -65,6 +120,83 @@ const normalizeToYYYYMMDD = (dVal) => {
   
   return str;
 };
+
+const getTodayYYYYMMDD = () => {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+const formatCalendarLongDate = (isoStr) => {
+  if (!isoStr) return '';
+  const parts = String(isoStr).split('-');
+  if (parts.length === 3) {
+    const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+    return d.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric', year: 'numeric' });
+  }
+  return isoStr;
+};
+
+const formatSessionStatus = (s, dateStr) => {
+  let rawStatus = s;
+  let rawDate = dateStr;
+
+  if (typeof s === 'object' && s !== null) {
+    rawStatus = s.status;
+    rawDate = s.date || dateStr;
+  }
+
+  const str = String(rawStatus || '').trim();
+  const lower = str.toLowerCase();
+  
+  // Explicitly completed stays Completed
+  if (lower === 'completed') return 'Completed';
+  // Explicitly in progress stays In Progress
+  if (lower === 'in progress' || lower === 'in_progress') return 'In Progress';
+  
+  // If date is provided, check if date has arrived (today or past date)
+  if (rawDate) {
+    const sessionISO = normalizeToYYYYMMDD(rawDate);
+    const todayISO = getTodayYYYYMMDD();
+    if (sessionISO) {
+      if (sessionISO <= todayISO) {
+        // Date has arrived or passed -> automatically In Progress!
+        return 'In Progress';
+      } else {
+        // Future date -> Upcoming!
+        return 'Upcoming';
+      }
+    }
+  }
+
+  if (lower === 'in progress' || lower === 'pending' || lower === 'in_progress') return 'In Progress';
+  return 'Upcoming';
+};
+
+const statusColor = (s, dateStr) => {
+  const norm = formatSessionStatus(s, dateStr);
+  if (norm === 'Upcoming') return '#0284C7';
+  if (norm === 'Completed') return '#0D9488';
+  if (norm === 'IN PROGRESS' || norm === 'In Progress') return '#00D1B2';
+  return '#00D1B2';
+};
+
+const statusBg = (s, dateStr) => {
+  const norm = formatSessionStatus(s, dateStr);
+  if (norm === 'Upcoming') return 'rgba(2, 132, 199, 0.12)';
+  if (norm === 'Completed') return 'rgba(13, 148, 136, 0.12)';
+  if (norm === 'IN PROGRESS' || norm === 'In Progress') return 'rgba(0, 209, 178, 0.15)';
+  return 'rgba(0, 209, 178, 0.15)';
+};
+
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'
+];
+
+const DAYS_OF_WEEK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 const Sessions = () => {
   const navigate = useNavigate();
@@ -131,6 +263,7 @@ const Sessions = () => {
   const [dateFilter, setDateFilter] = useState('');
   const [slotFilter, setSlotFilter] = useState('All');
   const [instructorFilter, setInstructorFilter] = useState('All');
+  const [statusFilter, setStatusFilter] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
   
   // Schedule Session Popup Modal State
@@ -606,6 +739,7 @@ const Sessions = () => {
   const [currentDate, setCurrentDate] = useState(() => new Date(2026, 8, 15)); // Default September 2026
   const [selectedCalendarDate, setSelectedCalendarDate] = useState('');
   const [selectedSessionDetail, setSelectedSessionDetail] = useState(null);
+  const [selectedDayDetailsModal, setSelectedDayDetailsModal] = useState(null);
 
   const effectiveSchool = (activeSchoolName && schoolLower !== 'school admin' && schoolLower !== 'super admin')
     ? activeSchoolName
@@ -760,6 +894,14 @@ const Sessions = () => {
         if (!matches) return false;
       }
 
+      // Status filter
+      if (statusFilter !== 'All') {
+        const normStatus = formatSessionStatus(s.status, s.date);
+        if (normStatus !== statusFilter) {
+          return false;
+        }
+      }
+
       // Search Query filter
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
@@ -776,7 +918,7 @@ const Sessions = () => {
 
       return true;
     });
-  }, [roleScopedSessions, dateFilter, slotFilter, instructorFilter, searchQuery]);
+  }, [roleScopedSessions, dateFilter, slotFilter, instructorFilter, statusFilter, searchQuery]);
 
   // Helper function to group sessions by explicit group_name OR by Date + Time + Instructor
   const buildSessionGrouping = (sessionList) => {
@@ -928,12 +1070,14 @@ const Sessions = () => {
     dateFilter !== '' ||
     slotFilter !== 'All' ||
     instructorFilter !== 'All' ||
+    statusFilter !== 'All' ||
     searchQuery.trim() !== '';
 
   const resetFilters = () => {
     setDateFilter('');
     setSlotFilter('All');
     setInstructorFilter('All');
+    setStatusFilter('All');
     setSearchQuery('');
   };
 
@@ -1038,16 +1182,23 @@ const Sessions = () => {
     ? Math.round(roleScopedSessions.reduce((sum, s) => sum + (s.duration_mins || 60), 0) / roleScopedSessions.length)
     : 0;
 
-  // Status Metrics (Pending / Completed)
-  const pendingSessionsList = roleScopedSessions.filter(s => formatSessionStatus(s.status) === 'Pending' || s.status === 'In Progress');
-  const pendingCount = getGroupSessionCount(pendingSessionsList);
-  const pendingDays = new Set(pendingSessionsList.map(s => s.date).filter(Boolean)).size;
+  // Status Metrics (Upcoming / In Progress / Completed)
+  const upcomingSessionsList = roleScopedSessions.filter(s => formatSessionStatus(s.status, s.date) === 'Upcoming');
+  const upcomingCount = getGroupSessionCount(upcomingSessionsList);
+  const upcomingDays = new Set(upcomingSessionsList.map(s => s.date).filter(Boolean)).size;
+
+  const inProgressSessionsList = roleScopedSessions.filter(s => {
+    const norm = formatSessionStatus(s.status, s.date);
+    return norm === 'In Progress' || norm === 'IN PROGRESS' || norm === 'Pending';
+  });
+  const inProgressCount = getGroupSessionCount(inProgressSessionsList);
+  const inProgressDays = new Set(inProgressSessionsList.map(s => s.date).filter(Boolean)).size;
 
   const bookedSessionsList = roleScopedSessions;
   const bookedCount = getGroupSessionCount(bookedSessionsList);
   const bookedDays = new Set(bookedSessionsList.map(s => s.date).filter(Boolean)).size;
 
-  const completedSessionsList = roleScopedSessions.filter(s => s.status === 'Completed');
+  const completedSessionsList = roleScopedSessions.filter(s => formatSessionStatus(s.status, s.date) === 'Completed');
   const completedCount = getGroupSessionCount(completedSessionsList);
   const completedDays = new Set(completedSessionsList.map(s => s.date).filter(Boolean)).size;
 
@@ -1062,15 +1213,25 @@ const Sessions = () => {
   }, [roleScopedSessions]);
   const totalStudentsCount = allUniqueStudentKeys.size;
 
-  const pendingStudentKeys = useMemo(() => {
+  const upcomingStudentKeys = useMemo(() => {
     const set = new Set();
-    pendingSessionsList.forEach(s => {
+    upcomingSessionsList.forEach(s => {
       const key = s.student_id ? String(s.student_id) : (s.student || '').trim().toLowerCase();
       if (key) set.add(key);
     });
     return set;
-  }, [pendingSessionsList]);
-  const pendingStudentsCount = pendingStudentKeys.size;
+  }, [upcomingSessionsList]);
+  const upcomingStudentsCount = upcomingStudentKeys.size;
+
+  const inProgressStudentKeys = useMemo(() => {
+    const set = new Set();
+    inProgressSessionsList.forEach(s => {
+      const key = s.student_id ? String(s.student_id) : (s.student || '').trim().toLowerCase();
+      if (key) set.add(key);
+    });
+    return set;
+  }, [inProgressSessionsList]);
+  const inProgressStudentsCount = inProgressStudentKeys.size;
 
   const completedStudentKeys = useMemo(() => {
     const set = new Set();
@@ -1305,6 +1466,27 @@ const Sessions = () => {
               </div>
             )}
 
+            {/* Status Filter */}
+            <div className="ses-select-wrap">
+              <label className="ses-select-label">Status</label>
+              <select
+                className="ses-select"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+                style={{
+                  fontWeight: statusFilter !== 'All' ? 700 : 500,
+                  color: statusFilter !== 'All' ? '#0284C7' : '#0F172A',
+                  borderColor: statusFilter !== 'All' ? '#0284C7' : '#E2E8F0',
+                  background: statusFilter !== 'All' ? '#F0F9FF' : '#F8FAFC'
+                }}
+              >
+                <option value="All">All Statuses</option>
+                <option value="Upcoming">Upcoming</option>
+                <option value="In Progress">In Progress</option>
+                <option value="Completed">Completed</option>
+              </select>
+            </div>
+
             {/* Reset Filters Button */}
             {hasActiveFilters && (
               <button className="ses-reset-btn" onClick={resetFilters} title="Reset all filters">
@@ -1499,6 +1681,42 @@ const Sessions = () => {
               <button
                 type="button"
                 className="ses-bulk-btn-complete"
+                onClick={() => handleBulkStatusChange('Upcoming')}
+                title="Mark all selected sessions as Upcoming"
+                style={{
+                  background: '#0284C7',
+                  color: '#FFFFFF',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '7px 14px',
+                  fontSize: '12.5px',
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+              >
+                ⏱ Mark Upcoming
+              </button>
+              <button
+                type="button"
+                className="ses-bulk-btn-complete"
+                onClick={() => handleBulkStatusChange('In Progress')}
+                title="Mark all selected sessions as In Progress"
+                style={{
+                  background: '#0D9488',
+                  color: '#FFFFFF',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '7px 14px',
+                  fontSize: '12.5px',
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+              >
+                ▶ Mark In Progress
+              </button>
+              <button
+                type="button"
+                className="ses-bulk-btn-complete"
                 onClick={() => handleBulkStatusChange('Completed')}
                 title="Mark all selected sessions as Completed"
               >
@@ -1522,22 +1740,48 @@ const Sessions = () => {
 
         {/* Metric Cards Row - Placed Between Filters & Table */}
         <div className="ses-metrics-row">
-          <div className="ses-status-metric-card pending-card">
-            <div className="ses-smc-label">PENDING SESSIONS</div>
-            <div className="ses-smc-value">{loading ? '…' : pendingCount}</div>
-            <div className="ses-smc-sub">Days Pending: {loading ? '…' : pendingDays}</div>
+          <div
+            className={`ses-status-metric-card upcoming-card ${statusFilter === 'Upcoming' ? 'active-filter' : ''}`}
+            onClick={() => setStatusFilter(prev => prev === 'Upcoming' ? 'All' : 'Upcoming')}
+            style={{ cursor: 'pointer' }}
+            title="Click to filter by Upcoming sessions"
+          >
+            <div className="ses-smc-label">UPCOMING SESSIONS</div>
+            <div className="ses-smc-value">{loading ? '…' : upcomingCount}</div>
+            <div className="ses-smc-sub">Days Upcoming: {loading ? '…' : upcomingDays}</div>
           </div>
 
-          <div className="ses-status-metric-card completed-card">
+          <div
+            className={`ses-status-metric-card inprogress-card ${statusFilter === 'In Progress' ? 'active-filter' : ''}`}
+            onClick={() => setStatusFilter(prev => prev === 'In Progress' ? 'All' : 'In Progress')}
+            style={{ cursor: 'pointer' }}
+            title="Click to filter by In Progress sessions"
+          >
+            <div className="ses-smc-label">IN PROGRESS SESSIONS</div>
+            <div className="ses-smc-value">{loading ? '…' : inProgressCount}</div>
+            <div className="ses-smc-sub">Days In Progress: {loading ? '…' : inProgressDays}</div>
+          </div>
+
+          <div
+            className={`ses-status-metric-card completed-card ${statusFilter === 'Completed' ? 'active-filter' : ''}`}
+            onClick={() => setStatusFilter(prev => prev === 'Completed' ? 'All' : 'Completed')}
+            style={{ cursor: 'pointer' }}
+            title="Click to filter by Completed sessions"
+          >
             <div className="ses-smc-label">SESSIONS COMPLETED</div>
             <div className="ses-smc-value">{loading ? '…' : completedCount}</div>
             <div className="ses-smc-sub">Days Completed: {loading ? '…' : completedDays}</div>
           </div>
 
-          <div className="ses-status-metric-card students-card">
+          <div
+            className={`ses-status-metric-card students-card ${statusFilter === 'All' ? '' : ''}`}
+            onClick={() => setStatusFilter('All')}
+            style={{ cursor: 'pointer' }}
+            title="Click to show all students & sessions"
+          >
             <div className="ses-smc-label">NUMBER OF STUDENTS</div>
             <div className="ses-smc-value">{loading ? '…' : totalStudentsCount}</div>
-            <div className="ses-smc-sub">Active: {loading ? '…' : pendingStudentsCount} &bull; Completed: {loading ? '…' : completedStudentsCount}</div>
+            <div className="ses-smc-sub">Upcoming: {loading ? '…' : upcomingStudentsCount} &bull; In Progress: {loading ? '…' : inProgressStudentsCount} &bull; Completed: {loading ? '…' : completedStudentsCount}</div>
           </div>
         </div>
 
@@ -1705,13 +1949,13 @@ const Sessions = () => {
                           <span
                             className="ses-status-pill"
                             style={{
-                              backgroundColor: statusBg(groupObj.status),
-                              color: statusColor(groupObj.status),
+                              backgroundColor: statusBg(groupObj.status, groupObj.date),
+                              color: statusColor(groupObj.status, groupObj.date),
                               whiteSpace: 'nowrap'
                             }}
                           >
-                            <span className="ses-status-dot" style={{ backgroundColor: statusColor(groupObj.status) }}></span>
-                            {formatSessionStatus(groupObj.status)}
+                            <span className="ses-status-dot" style={{ backgroundColor: statusColor(groupObj.status, groupObj.date) }}></span>
+                            {formatSessionStatus(groupObj.status, groupObj.date)}
                           </span>
                         </td>
                         <td style={{ textAlign: 'right' }}>
@@ -1920,13 +2164,13 @@ const Sessions = () => {
                               <span
                                 className="ses-status-pill"
                                 style={{
-                                  backgroundColor: statusBg(session.status),
-                                  color: statusColor(session.status),
+                                  backgroundColor: statusBg(session.status, session.date),
+                                  color: statusColor(session.status, session.date),
                                   whiteSpace: 'nowrap'
                                 }}
                               >
-                                <span className="ses-status-dot" style={{ backgroundColor: statusColor(session.status) }}></span>
-                                {formatSessionStatus(session.status)}
+                                <span className="ses-status-dot" style={{ backgroundColor: statusColor(session.status, session.date) }}></span>
+                                {formatSessionStatus(session.status, session.date)}
                               </span>
                             </td>
                             <td style={{ textAlign: 'right' }}>
@@ -2141,13 +2385,13 @@ const Sessions = () => {
                         <span
                           className="ses-status-pill"
                           style={{
-                            backgroundColor: statusBg(session.status),
-                            color: statusColor(session.status),
+                            backgroundColor: statusBg(session.status, session.date),
+                            color: statusColor(session.status, session.date),
                             whiteSpace: 'nowrap'
                           }}
                         >
-                          <span className="ses-status-dot" style={{ backgroundColor: statusColor(session.status) }}></span>
-                          {formatSessionStatus(session.status)}
+                          <span className="ses-status-dot" style={{ backgroundColor: statusColor(session.status, session.date) }}></span>
+                          {formatSessionStatus(session.status, session.date)}
                         </span>
                       </td>
                       <td style={{ textAlign: 'right' }}>
@@ -3467,6 +3711,7 @@ const Sessions = () => {
                                 title={isPastDate ? `${cellISO} (Past Date - Cannot create session)` : `Date: ${cellISO}`}
                                 onClick={() => {
                                   setSelectedCalendarDate(cellISO);
+                                  setSelectedDayDetailsModal(cellISO);
                                 }}
                               >
                                 <div className="ses-cal-day-num">
@@ -3516,8 +3761,15 @@ const Sessions = () => {
                                         color: isToday ? '#1E40AF' : '#0F766E',
                                         fontWeight: 600,
                                         fontSize: '11px',
-                                        padding: '2px 6px'
+                                        padding: '2px 6px',
+                                        cursor: 'pointer'
                                       }}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setSelectedCalendarDate(cellISO);
+                                        setSelectedDayDetailsModal(cellISO);
+                                      }}
+                                      title={`Click to view ${gName} roster & details`}
                                     >
                                       🏄‍♂️ {gName} ({count})
                                     </div>
@@ -3528,13 +3780,16 @@ const Sessions = () => {
                                         key={s.id}
                                         className="ses-cal-event-pill"
                                         style={{
-                                          borderLeftColor: statusColor(s.status),
-                                          backgroundColor: statusBg(s.status)
+                                          borderLeftColor: statusColor(s.status, s.date),
+                                          backgroundColor: statusBg(s.status, s.date),
+                                          cursor: 'pointer'
                                         }}
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          setSelectedSessionDetail(s);
+                                          setSelectedCalendarDate(cellISO);
+                                          setSelectedDayDetailsModal(cellISO);
                                         }}
+                                        title="Click to view session details"
                                       >
                                         <strong>{s.time}</strong> {s.student}
                                       </div>
@@ -3582,9 +3837,443 @@ const Sessions = () => {
                       );
                     })()}
 
+                {/* Selected Date Details Roster Section (Embedded below calendar) */}
+                {selectedCalendarDate && (
+                  <div className="ses-cal-day-drawer" style={{ marginTop: '24px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '10px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <div style={{ background: '#0D9488', color: '#FFFFFF', padding: '6px 10px', borderRadius: '8px', fontSize: '16px' }}>
+                          📅
+                        </div>
+                        <div>
+                          <h3 style={{ margin: 0, fontSize: '16px', color: '#0F172A', fontWeight: 700 }}>
+                            {formatCalendarLongDate(selectedCalendarDate)}
+                          </h3>
+                          <span style={{ fontSize: '12px', color: '#64748B' }}>
+                            {activeDaySessions.length} total session{activeDaySessions.length === 1 ? '' : 's'} scheduled
+                          </span>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        {canManageSessions && normalizeToYYYYMMDD(selectedCalendarDate) >= getTodayYYYYMMDD() && (
+                          <button
+                            type="button"
+                            className="ses-btn-primary"
+                            style={{ padding: '6px 12px', fontSize: '12px' }}
+                            onClick={() => {
+                              setScheduleModalInitialDate(selectedCalendarDate);
+                              setShowScheduleModal(true);
+                            }}
+                          >
+                            + Schedule on this Date
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="ses-btn-secondary"
+                          style={{ padding: '6px 10px', fontSize: '12px' }}
+                          onClick={() => {
+                            setDateFilter(selectedCalendarDate);
+                            setShowCalendarModal(false);
+                          }}
+                        >
+                          Filter in Table →
+                        </button>
+                      </div>
+                    </div>
+
+                    {activeDaySessions.length === 0 ? (
+                      <div style={{ textAlign: 'center', padding: '28px 16px', background: '#FFFFFF', borderRadius: '10px', border: '1px dashed #CBD5E1', color: '#64748B' }}>
+                        <div style={{ fontSize: '24px', marginBottom: '6px' }}>🏄‍♂️</div>
+                        <div style={{ fontWeight: 600, color: '#334155' }}>No surf sessions scheduled on this date</div>
+                        <div style={{ fontSize: '12px', marginTop: '2px' }}>Click "+ Schedule on this Date" to organize training groups.</div>
+                      </div>
+                    ) : (
+                      <div className="ses-cal-drawer-cards">
+                        {activeDayGroups.groupedList.map(grp => (
+                          <div
+                            key={grp.key || grp.groupName}
+                            className="ses-cal-drawer-item"
+                            style={{ cursor: 'default' }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                              <div>
+                                <h4 style={{ margin: '0 0 2px', fontSize: '15px', color: '#0F172A', fontWeight: 700 }}>
+                                  🏄‍♂️ {grp.groupName}
+                                </h4>
+                                <span style={{ fontSize: '12px', color: '#0D9488', fontWeight: 600 }}>
+                                  ⏰ {grp.time}
+                                </span>
+                              </div>
+                              <span
+                                className="ses-status-pill"
+                                style={{
+                                  backgroundColor: statusBg(grp.status, grp.date),
+                                  color: statusColor(grp.status, grp.date),
+                                  fontSize: '11px',
+                                  padding: '2px 8px'
+                                }}
+                              >
+                                {formatSessionStatus(grp.status, grp.date)}
+                              </span>
+                            </div>
+
+                            <div style={{ fontSize: '12px', color: '#64748B', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <span>Coach: <strong style={{ color: '#0F172A' }}>{grp.instructor || 'Assigned Coach'}</strong></span>
+                              {grp.location && <span>&bull; 🌊 {grp.location}</span>}
+                            </div>
+
+                            {/* Students list chips */}
+                            <div style={{ background: '#F8FAFC', padding: '8px 10px', borderRadius: '8px', border: '1px solid #E2E8F0', marginBottom: '10px' }}>
+                              <div style={{ fontSize: '11px', fontWeight: 700, color: '#475569', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+                                Students ({grp.sessions.length}):
+                              </div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                {grp.sessions.map((sess, sIdx) => (
+                                  <span
+                                    key={sess.id || sIdx}
+                                    style={{
+                                      background: '#FFFFFF',
+                                      border: '1px solid #CBD5E1',
+                                      borderRadius: '6px',
+                                      padding: '2px 8px',
+                                      fontSize: '12px',
+                                      fontWeight: 600,
+                                      color: '#0F172A',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px'
+                                    }}
+                                  >
+                                    👤 {sess.student}
+                                    <span style={{ fontSize: '10px', color: '#0D9488' }}>({sess.type || 'General'})</span>
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+
+                            {/* Actions */}
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              <button
+                                type="button"
+                                className="ses-btn-secondary"
+                                style={{ flex: 1, padding: '6px 12px', fontSize: '11.5px', justifyContent: 'center' }}
+                                onClick={() => {
+                                  setDateFilter(grp.date || selectedCalendarDate);
+                                  setShowCalendarModal(false);
+                                }}
+                              >
+                                View in Sessions Table →
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+
+                        {activeDayGroups.ungroupedList.map((sess, uIdx) => (
+                          <div
+                            key={sess.id || uIdx}
+                            className="ses-cal-drawer-item"
+                            style={{ cursor: 'default' }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                              <div>
+                                <h4 style={{ margin: '0 0 2px', fontSize: '14px', color: '#0F172A', fontWeight: 700 }}>
+                                  👤 {sess.student}
+                                </h4>
+                                <span style={{ fontSize: '12px', color: '#0D9488', fontWeight: 600 }}>
+                                  ⏰ {sess.time}
+                                </span>
+                              </div>
+                              <span
+                                className="ses-status-pill"
+                                style={{
+                                  backgroundColor: statusBg(sess.status, sess.date),
+                                  color: statusColor(sess.status, sess.date),
+                                  fontSize: '11px',
+                                  padding: '2px 8px'
+                                }}
+                              >
+                                {formatSessionStatus(sess.status, sess.date)}
+                              </span>
+                            </div>
+
+                            <div style={{ fontSize: '12px', color: '#64748B', marginBottom: '10px' }}>
+                              Coach: <strong style={{ color: '#0F172A' }}>{sess.instructor || 'Assigned Coach'}</strong>
+                              {sess.location && <span> &bull; 🌊 {sess.location}</span>}
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              <button
+                                type="button"
+                                className="ses-btn-secondary"
+                                style={{ flex: 1, padding: '6px 10px', fontSize: '11.5px', justifyContent: 'center' }}
+                                onClick={() => setSelectedSessionDetail(sess)}
+                              >
+                                View Details
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
 
               </div>
             </div>
+
+            {/* Day Details Popup Modal (Triggered on date touch/click) */}
+            {selectedDayDetailsModal && (() => {
+              const targetISO = selectedDayDetailsModal;
+              const targetDaySessions = sessionsByISO[targetISO] || roleScopedSessions.filter(s => normalizeToYYYYMMDD(s.date) === targetISO);
+              const { groups: modalGroups, ungrouped: modalUngrouped } = buildSessionGrouping(targetDaySessions);
+              const isPast = targetISO < getTodayYYYYMMDD();
+              const isToday = targetISO === getTodayYYYYMMDD();
+
+              return (
+                <div className="ses-modal-overlay" style={{ zIndex: 10002 }} onClick={() => setSelectedDayDetailsModal(null)}>
+                  <div
+                    className="ses-modal-box"
+                    style={{ maxWidth: '640px', width: '92%', maxHeight: '88vh', display: 'flex', flexDirection: 'column', padding: '0', overflow: 'hidden' }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {/* Modal Header */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: '1px solid #E2E8F0', background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', color: '#FFFFFF' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <span style={{ fontSize: '24px' }}>📅</span>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <h3 style={{ margin: 0, fontSize: '17px', color: '#FFFFFF', fontFamily: 'Outfit, sans-serif', fontWeight: 800 }}>
+                              {formatCalendarLongDate(targetISO)}
+                            </h3>
+                            {isToday && (
+                              <span style={{ background: '#2563EB', color: '#FFFFFF', fontSize: '10px', fontWeight: 800, padding: '2px 6px', borderRadius: '4px' }}>
+                                TODAY
+                              </span>
+                            )}
+                          </div>
+                          <span style={{ fontSize: '12px', color: '#94A3B8' }}>
+                            {targetDaySessions.length} total session{targetDaySessions.length === 1 ? '' : 's'} scheduled &bull; {modalGroups.length} group{modalGroups.length === 1 ? '' : 's'}
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        className="ses-modal-close"
+                        style={{ width: '28px', height: '28px', fontSize: '12px', color: '#FFFFFF', background: 'rgba(255,255,255,0.1)' }}
+                        onClick={() => setSelectedDayDetailsModal(null)}
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    {/* Modal Body */}
+                    <div style={{ padding: '18px 20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px', background: '#F8FAFC', flex: 1 }}>
+                      {targetDaySessions.length === 0 ? (
+                        <div style={{ textAlign: 'center', padding: '36px 16px', background: '#FFFFFF', borderRadius: '12px', border: '1.5px dashed #CBD5E1' }}>
+                          <div style={{ fontSize: '36px', marginBottom: '8px' }}>🏖️</div>
+                          <h4 style={{ margin: '0 0 6px', color: '#0F172A', fontSize: '16px', fontWeight: 700 }}>
+                            No Sessions Scheduled
+                          </h4>
+                          <p style={{ margin: '0 0 16px', color: '#64748B', fontSize: '13px' }}>
+                            No surf coaching sessions are scheduled for {formatCalendarLongDate(targetISO)}.
+                          </p>
+                          {canManageSessions && !isPast && (
+                            <button
+                              type="button"
+                              className="ses-btn-primary"
+                              style={{ margin: '0 auto' }}
+                              onClick={() => {
+                                setScheduleModalInitialDate(targetISO);
+                                setShowScheduleModal(true);
+                                setSelectedDayDetailsModal(null);
+                              }}
+                            >
+                              + Schedule Session for this Date
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <>
+                          {/* Groups list */}
+                          {modalGroups.map(grp => {
+                            const statusColorCode = statusColor(grp.status, grp.date);
+                            const statusBgCode = statusBg(grp.status, grp.date);
+                            return (
+                              <div
+                                key={grp.key || grp.groupName}
+                                style={{
+                                  background: '#FFFFFF',
+                                  border: '1.5px solid #E2E8F0',
+                                  borderRadius: '12px',
+                                  padding: '16px',
+                                  boxShadow: '0 2px 6px rgba(0,0,0,0.02)'
+                                }}
+                              >
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                                  <div>
+                                    <h4 style={{ margin: '0 0 4px', fontSize: '16px', color: '#0F172A', fontWeight: 800 }}>
+                                      🏄‍♂️ {grp.groupName}
+                                    </h4>
+                                    <div style={{ fontSize: '13px', color: '#0D9488', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                      <span>⏰ {grp.time || '08:30 AM'}</span>
+                                      {grp.duration_mins && <span>({grp.duration_mins} mins)</span>}
+                                    </div>
+                                  </div>
+                                  <span
+                                    className="ses-status-pill"
+                                    style={{
+                                      backgroundColor: statusBgCode,
+                                      color: statusColorCode,
+                                      whiteSpace: 'nowrap',
+                                      fontSize: '11px',
+                                      padding: '3px 9px'
+                                    }}
+                                  >
+                                    <span className="ses-status-dot" style={{ backgroundColor: statusColorCode }}></span>
+                                    {formatSessionStatus(grp.status, grp.date)}
+                                  </span>
+                                </div>
+
+                                <div style={{ fontSize: '13px', color: '#475569', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                  <span>Coach: <strong style={{ color: '#0F172A' }}>{grp.instructor || 'Assigned Coach'}</strong></span>
+                                  {grp.location && <span>&bull; 🌊 Spot: <strong style={{ color: '#0F172A' }}>{grp.location}</strong></span>}
+                                </div>
+
+                                {/* Enrolled Students */}
+                                <div style={{ background: '#F8FAFC', padding: '10px 12px', borderRadius: '10px', border: '1px solid #E2E8F0', marginBottom: '12px' }}>
+                                  <div style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                                    Enrolled Students ({grp.sessions.length}):
+                                  </div>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                    {grp.sessions.map((sess, sIdx) => (
+                                      <div
+                                        key={sess.id || sIdx}
+                                        style={{
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'space-between',
+                                          background: '#FFFFFF',
+                                          border: '1px solid #E2E8F0',
+                                          borderRadius: '8px',
+                                          padding: '6px 10px'
+                                        }}
+                                      >
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                          <UserAvatar src={sess.image || ''} name={sess.student} size={26} />
+                                          <div>
+                                            <span style={{ fontWeight: 700, color: '#0F172A', fontSize: '13px' }}>
+                                              {sess.student}
+                                            </span>
+                                            <span style={{ fontSize: '11px', color: '#64748B', marginLeft: '6px' }}>
+                                              &bull; {sess.type || 'General'}
+                                            </span>
+                                          </div>
+                                        </div>
+
+                                        <button
+                                          type="button"
+                                          className="ses-btn-secondary"
+                                          style={{ padding: '3px 8px', fontSize: '11px' }}
+                                          onClick={() => setSelectedSessionDetail(sess)}
+                                        >
+                                          Details
+                                        </button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                {/* Group Action Buttons */}
+                                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                  <button
+                                    type="button"
+                                    className="ses-btn-secondary"
+                                    style={{ flex: 1, padding: '8px 14px', fontSize: '12.5px', fontWeight: 600, justifyContent: 'center' }}
+                                    onClick={() => {
+                                      setDateFilter(targetISO);
+                                      setShowCalendarModal(false);
+                                      setSelectedDayDetailsModal(null);
+                                    }}
+                                  >
+                                    View in Sessions Table →
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+
+                          {/* Ungrouped sessions */}
+                          {modalUngrouped.map((sess, uIdx) => (
+                            <div
+                              key={sess.id || uIdx}
+                              style={{
+                                background: '#FFFFFF',
+                                border: '1.5px solid #E2E8F0',
+                                borderRadius: '12px',
+                                padding: '14px 16px'
+                              }}
+                            >
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                  <UserAvatar src={sess.image || ''} name={sess.student} size={32} />
+                                  <div>
+                                    <h4 style={{ margin: 0, fontSize: '14.5px', color: '#0F172A', fontWeight: 700 }}>
+                                      {sess.student}
+                                    </h4>
+                                    <span style={{ fontSize: '12px', color: '#64748B' }}>
+                                      ⏰ {sess.time} &bull; Coach: {sess.instructor || 'Coach'}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                <div style={{ display: 'flex', gap: '6px' }}>
+                                  <button
+                                    type="button"
+                                    className="ses-btn-secondary"
+                                    style={{ padding: '5px 12px', fontSize: '12px' }}
+                                    onClick={() => setSelectedSessionDetail(sess)}
+                                  >
+                                    Details
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </>
+                      )}
+                    </div>
+
+                    {/* Modal Footer */}
+                    <div style={{ padding: '12px 20px', borderTop: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#FFFFFF' }}>
+                      {canManageSessions && !isPast ? (
+                        <button
+                          type="button"
+                          className="ses-btn-primary"
+                          style={{ fontSize: '12px', padding: '6px 12px' }}
+                          onClick={() => {
+                            setScheduleModalInitialDate(targetISO);
+                            setShowScheduleModal(true);
+                            setSelectedDayDetailsModal(null);
+                          }}
+                        >
+                          + Schedule on this Date
+                        </button>
+                      ) : <div />}
+
+                      <button
+                        type="button"
+                        className="ses-btn-secondary"
+                        style={{ fontSize: '12px', padding: '6px 14px' }}
+                        onClick={() => setSelectedDayDetailsModal(null)}
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
               {/* Single Session Detail Popup (When clicked) */}
               {selectedSessionDetail && (
@@ -4144,8 +4833,18 @@ const Sessions = () => {
         /* Metrics Row - Placed Horizontally Between Filters & Table */
         .ses-metrics-row {
           display: grid;
-          grid-template-columns: repeat(3, 1fr);
+          grid-template-columns: repeat(4, 1fr);
           gap: 16px;
+        }
+        @media (max-width: 1024px) {
+          .ses-metrics-row {
+            grid-template-columns: repeat(2, 1fr);
+          }
+        }
+        @media (max-width: 600px) {
+          .ses-metrics-row {
+            grid-template-columns: 1fr;
+          }
         }
         
         .ses-status-metric-card {
@@ -4153,8 +4852,19 @@ const Sessions = () => {
           display: flex; flex-direction: column; gap: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.02);
           transition: all 0.2s ease;
         }
+        .ses-status-metric-card.upcoming-card {
+          background: #F0F9FF; border: 1.5px solid #BAE6FD;
+        }
+        .ses-status-metric-card.upcoming-card .ses-smc-label {
+          color: #0369A1;
+        }
+        .ses-status-metric-card.inprogress-card,
         .ses-status-metric-card.pending-card {
-          background: #F0F7FF; border: 1.5px solid #BFDBFE;
+          background: #F0FDFA; border: 1.5px solid #99F6E4;
+        }
+        .ses-status-metric-card.inprogress-card .ses-smc-label,
+        .ses-status-metric-card.pending-card .ses-smc-label {
+          color: #0F766E;
         }
         .ses-status-metric-card.booked-card {
           background: #F8FAFC; border: 1.5px solid #E2E8F0;
@@ -4162,8 +4872,18 @@ const Sessions = () => {
         .ses-status-metric-card.completed-card {
           background: #F0FDF4; border: 1.5px solid #BBF7D0;
         }
+        .ses-status-metric-card.completed-card .ses-smc-label {
+          color: #15803D;
+        }
         .ses-status-metric-card.students-card {
           background: #FAF5FF; border: 1.5px solid #E9D5FF;
+        }
+        .ses-status-metric-card.students-card .ses-smc-label {
+          color: #7E22CE;
+        }
+        .ses-status-metric-card.active-filter {
+          box-shadow: 0 0 0 2.5px #0284C7, 0 6px 16px rgba(2, 132, 199, 0.2);
+          transform: translateY(-2px);
         }
         .ses-status-metric-card:hover {
           transform: translateY(-2px);

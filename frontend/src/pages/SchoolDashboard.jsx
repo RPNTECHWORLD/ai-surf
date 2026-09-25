@@ -52,7 +52,7 @@ const buildDashboardTodayGroups = (sessionList) => {
         isGroup: Boolean(explicitGrp),
         time: session.time || '08:30 AM',
         instructor: session.instructor || session.instructor_name || 'Assigned Coach',
-        status: session.status || 'Pending',
+        status: (session.status && session.status.toLowerCase() === 'completed') ? 'Completed' : 'In Progress',
         location: session.location || '',
         students: []
       });
@@ -431,7 +431,7 @@ const SchoolDashboard = () => {
                             <span className="db-sic-coach-label">Coach</span>
                             <span className="db-sic-coach-val">🏄‍♂️ {grp.instructor}</span>
                           </div>
-                          <span className={`db-status-pill ${grp.status?.toLowerCase()}`}>
+                          <span className={`db-status-pill ${(grp.status || '').toLowerCase().replace(/\s+/g, '-')}`}>
                             {grp.status}
                           </span>
                         </div>
@@ -870,7 +870,7 @@ const SchoolDashboard = () => {
           background: #DCFCE7;
           color: #15803D;
         }
-        .db-status-pill.in\ progress {
+        .db-status-pill.in-progress, .db-status-pill.in\ progress {
           background: #CCFBF1;
           color: #0F766E;
         }

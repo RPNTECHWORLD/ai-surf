@@ -165,6 +165,7 @@ class Student(Base):
     bio = Column(Text, nullable=True)
     dob = Column(String, default="")  # Date of birth (YYYY-MM-DD)
     age = Column(Integer, nullable=True) # Dynamically calculated from dob or stored
+    gender = Column(String, default="Male", nullable=True)
     division = Column(String, nullable=True)
     stance = Column(String, nullable=True) # "regular" / "goofy"
     surf_stats = Column(Text, nullable=True) # JSON
@@ -1591,6 +1592,7 @@ def student_to_dict(s: Student):
         "bio": s.bio or "",
         "dob": s.dob or "",
         "age": computed_age,
+        "gender": s.gender or ("Female" if "women" in (s.division or "").lower() or "girl" in (s.division or "").lower() else "Male"),
         "division": s.division or "",
         "stance": s.stance or "regular",
         "surf_stats": json.loads(s.surf_stats) if s.surf_stats else {},
@@ -2248,6 +2250,8 @@ def update_student(student_id: int, data: StudentUpdate, db: OrmSession = Depend
         student.age = data.age
     if data.division is not None:
         student.division = data.division
+    if data.gender is not None:
+        student.gender = data.gender
     if data.surf_stats is not None:
         student.surf_stats = json.dumps(data.surf_stats)
     if data.performance_logs is not None:
@@ -2297,6 +2301,16 @@ def update_instructor(instructor_id: int, data: InstructorUpdate, db: OrmSession
         instructor.email = data.email
     if data.dob is not None:
         instructor.dob = data.dob
+        if data.age is None and data.dob.strip():
+            try:
+                from datetime import date
+                dob_dt = date.fromisoformat(data.dob.strip())
+                today = date.today()
+                calc_age = today.year - dob_dt.year - ((today.month, today.day) < (dob_dt.month, dob_dt.day))
+                if 0 < calc_age < 120:
+                    instructor.age = calc_age
+            except Exception:
+                pass
     if data.age is not None:
         instructor.age = data.age
     if data.gender is not None:
