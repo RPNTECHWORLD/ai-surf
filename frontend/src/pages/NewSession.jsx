@@ -402,6 +402,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const [levelFilter, setLevelFilter] = useState('all'); // 'all' | 'Beginner' | 'Intermediate' | 'Advanced'
   const [courseDayFilter, setCourseDayFilter] = useState('all'); // 'all' | '1' | '2' | '3' | ... | '7'
   const [genderFilterStep2, setGenderFilterStep2] = useState('all'); // 'all' | 'male' | 'female'
+  const [swimmingFilterStep2, setSwimmingFilterStep2] = useState('all'); // 'all' | 'swimmer' | 'non-swimmer'
   const [dayFilter, setDayFilter] = useState('all');
   const [selectedSlotStep2, setSelectedSlotStep2] = useState(1);
   const [studentSearchStep2, setStudentSearchStep2] = useState('');
@@ -416,6 +417,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const [step3StatusFilter, setStep3StatusFilter] = useState('all'); // 'all' | 'unassigned' | 'assigned'
   const [step3LevelFilter, setStep3LevelFilter] = useState('all'); // 'all' | 'beginner' | 'intermediate' | 'advanced'
   const [step3GenderFilter, setStep3GenderFilter] = useState('all'); // 'all' | 'male' | 'female'
+  const [step3SwimmingFilter, setStep3SwimmingFilter] = useState('all'); // 'all' | 'swimmer' | 'non-swimmer'
   const [step3CoachGenderFilter, setStep3CoachGenderFilter] = useState('all'); // 'all' | 'male' | 'female'
   const [step3SlotFilter, setStep3SlotFilter] = useState(() => slots[0]?.id || 1);
   const [studentSearch, setStudentSearch] = useState('');
@@ -521,6 +523,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
               courseDuration: s.course_duration || dayInfo.courseDuration,
               waitlistGroup: s.course_duration || `${dayInfo.totalDays} Days Course`,
               avatar: (s.image && !s.image.includes('unsplash.com') && !s.image.includes('1500648767791')) ? s.image : '',
+              swimming_ability: s.swimming_ability || 'Swimmer',
               isReal: true
             };
           });
@@ -996,6 +999,13 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     return allPoolStudents
       .filter(s => levelFilter === 'all' || s.level.toLowerCase() === levelFilter.toLowerCase())
       .filter(s => genderFilterStep2 === 'all' || (s.gender || 'male').toLowerCase() === genderFilterStep2.toLowerCase())
+      .filter(s => {
+        if (swimmingFilterStep2 === 'all') return true;
+        const sSwim = (s.swimming_ability || 'Swimmer').toLowerCase();
+        if (swimmingFilterStep2 === 'swimmer') return !sSwim.includes('non') && sSwim !== 'no';
+        if (swimmingFilterStep2 === 'non-swimmer') return sSwim.includes('non') || sSwim === 'no';
+        return true;
+      })
       .filter(s => !studentSearchStep2 || s.name.toLowerCase().includes(studentSearchStep2.toLowerCase()))
       .slice()
       .sort((a, b) => {
@@ -1020,7 +1030,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         // 4. Alphabetical name
         return a.name.localeCompare(b.name);
       });
-  }, [allPoolStudents, levelFilter, courseDayFilter, genderFilterStep2, studentSearchStep2, allSelectedStudentIds, slotStudentMap, selectedSlotId, activeSlotsForDay, slots]);
+  }, [allPoolStudents, levelFilter, courseDayFilter, genderFilterStep2, swimmingFilterStep2, studentSearchStep2, allSelectedStudentIds, slotStudentMap, selectedSlotId, activeSlotsForDay, slots]);
 
   // Transition from Step 2 to Step 3: Multi-slot aware group initialization
   const proceedToStep3 = () => {
@@ -1137,13 +1147,14 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     return importedStudents.filter(s => slotAssignedIds.includes(s.id));
   }, [importedStudents, step3SlotFilter, slotStudentMap, editSession]);
 
-  const hasActiveStep3Filters = step3DayFilter !== 'all' || step3StatusFilter !== 'all' || step3LevelFilter !== 'all' || step3GenderFilter !== 'all' || Boolean(studentSearch);
+  const hasActiveStep3Filters = step3DayFilter !== 'all' || step3StatusFilter !== 'all' || step3LevelFilter !== 'all' || step3GenderFilter !== 'all' || step3SwimmingFilter !== 'all' || Boolean(studentSearch);
 
   const resetStep3Filters = () => {
     setStep3DayFilter('all');
     setStep3StatusFilter('all');
     setStep3LevelFilter('all');
     setStep3GenderFilter('all');
+    setStep3SwimmingFilter('all');
     setStudentSearch('');
   };
 
@@ -1177,6 +1188,13 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           if (sGender !== step3GenderFilter.toLowerCase()) return false;
         }
 
+        // Swimming Ability filtering (All / Swimmer / Non-Swimmer)
+        if (step3SwimmingFilter !== 'all') {
+          const sSwim = (s.swimming_ability || 'Swimmer').toLowerCase();
+          if (step3SwimmingFilter === 'swimmer' && (sSwim.includes('non') || sSwim === 'no')) return false;
+          if (step3SwimmingFilter === 'non-swimmer' && (!sSwim.includes('non') && sSwim !== 'no')) return false;
+        }
+
         return true;
       })
       .filter(s => !studentSearch || s.name.toLowerCase().includes(studentSearch.toLowerCase()))
@@ -1193,7 +1211,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         if (dayA !== dayB) return dayA - dayB;
         return a.name.localeCompare(b.name);
       });
-  }, [importedStudents, step3DayFilter, step3StatusFilter, step3LevelFilter, step3GenderFilter, step3SlotFilter, slotStudentMap, studentSearch, trainingGroups, editSession]);
+  }, [importedStudents, step3DayFilter, step3StatusFilter, step3LevelFilter, step3GenderFilter, step3SwimmingFilter, step3SlotFilter, slotStudentMap, studentSearch, trainingGroups, editSession]);
 
   // Step 3: Training groups filtered by slot
   const displayedTrainingGroups = useMemo(() => {
@@ -2169,6 +2187,31 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                 </div>
               </div>
 
+              {/* Filter by Swimming Ability */}
+              <div className="ns-filter-row" style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #F1F5F9' }}>
+                <span className="ns-filter-label">Swimming Ability:</span>
+                <div className="ns-pill-group" style={{ flexWrap: 'wrap', gap: '6px' }}>
+                  <button
+                    className={`ns-pill ${swimmingFilterStep2 === 'all' ? 'active' : ''}`}
+                    onClick={() => setSwimmingFilterStep2('all')}
+                  >
+                    All ({allPoolStudents.length})
+                  </button>
+                  <button
+                    className={`ns-pill ${swimmingFilterStep2 === 'swimmer' ? 'active' : ''}`}
+                    onClick={() => setSwimmingFilterStep2('swimmer')}
+                  >
+                    🏊 Swimmer ({allPoolStudents.filter(s => !(s.swimming_ability || '').toLowerCase().includes('non') && (s.swimming_ability || '').toLowerCase() !== 'no').length})
+                  </button>
+                  <button
+                    className={`ns-pill ${swimmingFilterStep2 === 'non-swimmer' ? 'active' : ''}`}
+                    onClick={() => setSwimmingFilterStep2('non-swimmer')}
+                  >
+                    🤿 Non-Swimmer ({allPoolStudents.filter(s => (s.swimming_ability || '').toLowerCase().includes('non') || (s.swimming_ability || '').toLowerCase() === 'no').length})
+                  </button>
+                </div>
+              </div>
+
               {/* Search Student */}
               <div className="ns-filter-row" style={{ marginTop: '12px' }}>
                 <span className="ns-filter-label">Search Student:</span>
@@ -2388,6 +2431,16 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                           }}>
                             {student.name}
                           </span>
+
+                          {student.swimming_ability?.toLowerCase() === 'non-swimmer' ? (
+                            <span style={{ fontSize: '10.5px', fontWeight: 700, color: '#D97706', background: '#FEF3C7', border: '1px solid #FDE68A', padding: '1px 6px', borderRadius: '4px', flexShrink: 0 }}>
+                              🤿 Non-Swimmer
+                            </span>
+                          ) : (
+                            <span style={{ fontSize: '10.5px', fontWeight: 700, color: '#0D9488', background: '#ECFDF5', border: '1px solid #A7F3D0', padding: '1px 6px', borderRadius: '4px', flexShrink: 0 }}>
+                              🏊 Swimmer
+                            </span>
+                          )}
 
                           {isSelectedFilterMatch && (
                             <span style={{
@@ -2774,10 +2827,10 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                   )}
                 </div>
 
-                {/* Filter Toolbar: Day, Status, Level, Gender */}
+                {/* Filter Toolbar: Day, Status, Level, Gender, Swimming */}
                 <div style={{
                   display: 'grid',
-                  gridTemplateColumns: 'repeat(4, 1fr)',
+                  gridTemplateColumns: 'repeat(5, 1fr)',
                   gap: '6px',
                   width: '100%',
                   boxSizing: 'border-box'
@@ -2915,6 +2968,39 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                       </option>
                       <option value="female">
                         Female ({slotImportedStudents.filter(s => (s.gender || '').toLowerCase() === 'female').length})
+                      </option>
+                    </select>
+                  </div>
+
+                  {/* Swimming Filter */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                    <label style={{ fontSize: '10px', fontWeight: 700, color: '#64748B', display: 'flex', alignItems: 'center', gap: '3px', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+                      <span>🏊</span> Swim
+                    </label>
+                    <select
+                      value={step3SwimmingFilter}
+                      onChange={(e) => setStep3SwimmingFilter(e.target.value)}
+                      style={{
+                        width: '100%',
+                        height: '34px',
+                        padding: '0 4px',
+                        fontSize: '11px',
+                        fontWeight: step3SwimmingFilter !== 'all' ? 700 : 500,
+                        color: step3SwimmingFilter !== 'all' ? '#0284C7' : '#0F172A',
+                        background: step3SwimmingFilter !== 'all' ? '#F0F9FF' : '#F8FAFC',
+                        border: `1.5px solid ${step3SwimmingFilter !== 'all' ? '#0284C7' : '#CBD5E1'}`,
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        outline: 'none',
+                        boxSizing: 'border-box'
+                      }}
+                    >
+                      <option value="all">All ({slotImportedStudents.length})</option>
+                      <option value="swimmer">
+                        Swimmer ({slotImportedStudents.filter(s => !(s.swimming_ability || '').toLowerCase().includes('non') && (s.swimming_ability || '').toLowerCase() !== 'no').length})
+                      </option>
+                      <option value="non-swimmer">
+                        Non-Swim ({slotImportedStudents.filter(s => (s.swimming_ability || '').toLowerCase().includes('non') || (s.swimming_ability || '').toLowerCase() === 'no').length})
                       </option>
                     </select>
                   </div>

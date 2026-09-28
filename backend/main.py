@@ -1,5 +1,5 @@
 # pyrefly: ignore [missing-import]
-from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Header, Request
+from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Header, Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 # pyrefly: ignore [missing-import]
 from fastapi.middleware.cors import CORSMiddleware
@@ -179,6 +179,7 @@ class Student(Base):
     end_date = Column(String, nullable=True)
     session_time = Column(String, default="08:30 AM")
     staying_at_school = Column(String, default="Yes") # "Yes" / "No"
+    swimming_ability = Column(String, default="Swimmer", nullable=True) # "Swimmer" / "Non-Swimmer"
     reminder_preference = Column(String, default="WhatsApp Text") # "WhatsApp Text", "Phone Call", "Notice Board"
     reminder_sent = Column(Boolean, default=False)
     guests_details = Column(Text, nullable=True) # JSON list of accompanying guest profiles
@@ -341,6 +342,17 @@ class MockHeatWave(Base):
     heat_rel = relationship("MockHeat", back_populates="waves")
 
 
+class SchoolInviteLink(Base):
+    __tablename__ = "school_invite_links"
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String, unique=True, index=True)
+    school = Column(String, nullable=False, index=True)
+    max_count = Column(Integer, default=1)
+    used_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    is_active = Column(Boolean, default=True)
+
+
 class Surfer(Base):
     __tablename__ = "surfers"
     id = Column(Integer, primary_key=True, index=True)
@@ -448,6 +460,14 @@ try:
         db_migrate.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS price DOUBLE PRECISION DEFAULT 100.00"))
         
         # Student Registration fields migration
+        db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS gender VARCHAR(50) DEFAULT 'Male'"))
+        db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS age INTEGER DEFAULT 20"))
+        db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS bio TEXT DEFAULT ''"))
+        db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS dob VARCHAR(50) DEFAULT ''"))
+        db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS division VARCHAR(50) DEFAULT ''"))
+        db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS stance VARCHAR(50) DEFAULT 'regular'"))
+        db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS surf_stats TEXT DEFAULT '{}'"))
+        db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS performance_logs TEXT DEFAULT '[]'"))
         db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS whatsapp_number VARCHAR(50) DEFAULT ''"))
         db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS guests_count INTEGER DEFAULT 1"))
         db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS course_duration VARCHAR(100) DEFAULT '3 Days Course'"))
@@ -458,11 +478,14 @@ try:
         db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS reminder_preference VARCHAR(50) DEFAULT 'WhatsApp Text'"))
         db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS reminder_sent BOOLEAN DEFAULT FALSE"))
         db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS guests_details TEXT DEFAULT '[]'"))
-        db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS dob VARCHAR(50) DEFAULT ''"))
         db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS invite_token VARCHAR(128) DEFAULT NULL"))
         db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS school VARCHAR(150) DEFAULT 'Aquatic Indica Surf School'"))
         db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS approval_status VARCHAR(50) DEFAULT 'approved'"))
         db_migrate.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS approval_status VARCHAR(50) DEFAULT 'approved'"))
+        db_migrate.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_by_school BOOLEAN DEFAULT false"))
+        db_migrate.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider VARCHAR(50) DEFAULT 'email'"))
+        db_migrate.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS social_id VARCHAR(255)"))
+        db_migrate.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_plain VARCHAR(255)"))
         db_migrate.execute(text("ALTER TABLE activity_log ADD COLUMN IF NOT EXISTS school VARCHAR(150) DEFAULT 'Aquatic Indica Surf School'"))
         try:
             db_migrate.execute(text("""
@@ -714,6 +737,7 @@ from email.mime.multipart import MIMEMultipart
 
 SMTP_EMAIL = os.getenv("SMTP_EMAIL", "clientrequirements.rpn@gmail.com")
 SMTP_APP_PASSWORD = os.getenv("SMTP_APP_PASSWORD", "urmpuumqjellqrlq")
+SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "athnexlive")
 
 def get_app_base_url(request: Request = None) -> str:
     """
@@ -742,13 +766,14 @@ def get_app_base_url(request: Request = None) -> str:
     return "https://aisurf-one.vercel.app"
 
 
-def send_smtp_email(to_email: str, subject: str, html_body: str) -> bool:
+def send_smtp_email(to_email: str, subject: str, html_body: str, from_name: Optional[str] = None) -> bool:
     if not to_email:
         return False
     try:
+        sender_label = from_name or SMTP_FROM_NAME
         msg = MIMEMultipart('alternative')
         msg['Subject'] = subject
-        msg['From'] = f"Aquatic Indica / AiSurf <{SMTP_EMAIL}>"
+        msg['From'] = f"{sender_label} <{SMTP_EMAIL}>"
         msg['To'] = to_email
 
         html_part = MIMEText(html_body, 'html')
@@ -761,6 +786,67 @@ def send_smtp_email(to_email: str, subject: str, html_body: str) -> bool:
         return True
     except Exception as e:
         print(f"SMTP email delivery error to {to_email}: {e}")
+        return False
+
+def send_student_welcome_email(
+    student_email: str,
+    student_name: str,
+    student_school: str,
+    invite_token: str,
+    course_duration: str = "3 Days Course",
+    session_time: str = "Morning 6:00 AM",
+    password: Optional[str] = None,
+    app_base_url: str = "https://aisurf-one.vercel.app"
+) -> bool:
+    if not student_email:
+        return False
+    try:
+        clean_email = student_email.strip().lower()
+        school_name = student_school or "Aquatic Indica Surf School"
+        portal_link = f"{app_base_url}/student-portal?token={invite_token}" if invite_token else f"{app_base_url}/auth"
+        pass_info = f"<li><strong>Temporary Password:</strong> {password.strip()}</li>" if (password and len(password.strip()) >= 6) else ""
+        
+        student_html = f"""
+        <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 24px; background: #0F172A; color: #F8FAFC; border-radius: 16px; max-width: 540px; margin: auto;">
+            <div style="text-align: center; margin-bottom: 20px;">
+                <h1 style="color: #00F2FE; margin: 0; font-size: 24px;">🏄 {school_name}</h1>
+                <p style="color: #94A3B8; font-size: 13px; margin: 4px 0 0 0;">Student Portal Invitation &amp; Training Access</p>
+            </div>
+            <div style="background: rgba(255,255,255,0.05); padding: 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
+                <h3 style="margin-top: 0; color: #F1F5F9;">Aloha {student_name}! 🏄‍♀️</h3>
+                <p style="font-size: 14px; line-height: 1.6; color: #CBD5E1;">
+                    Welcome to <strong>{school_name}</strong>! Your student account and surf training schedule have been created.
+                </p>
+                <div style="background: rgba(14, 165, 233, 0.15); border: 1px solid rgba(14, 165, 233, 0.4); padding: 14px; border-radius: 10px; margin: 16px 0;">
+                    <p style="margin: 0 0 8px 0; font-weight: 700; color: #38BDF8; font-size: 13px;">📋 Your Student Credentials &amp; Schedule:</p>
+                    <ul style="font-size: 13px; color: #F8FAFC; margin: 0; padding-left: 18px; line-height: 1.8;">
+                        <li><strong>Registered Email:</strong> {clean_email}</li>
+                        {pass_info}
+                        <li><strong>Course:</strong> {course_duration or '3 Days Course'}</li>
+                        <li><strong>Session Slot:</strong> {session_time or 'Morning 6:00 AM'}</li>
+                        <li><strong>School:</strong> {school_name}</li>
+                    </ul>
+                </div>
+                <p style="font-size: 13px; color: #94A3B8;">
+                    You can log in anytime to view your session schedules, track wave performance, and access AI analysis directly from your Student Portal.
+                </p>
+            </div>
+            <div style="text-align: center; margin: 24px 0 16px 0;">
+                <a href="{portal_link}" style="background: linear-gradient(135deg, #00F2FE 0%, #4FACFE 100%); color: #0F172A; text-decoration: none; font-weight: 800; font-size: 15px; padding: 14px 30px; border-radius: 12px; display: inline-block; box-shadow: 0 4px 18px rgba(0,242,254,0.45);">
+                    🏄 Open Your Student Portal &amp; Set Password →
+                </a>
+            </div>
+            <p style="font-size: 11px; color: #64748B; text-align: center; word-break: break-all; margin: 0 0 8px 0;">
+                Direct link: <a href="{portal_link}" style="color: #00F2FE;">{portal_link}</a>
+            </p>
+            <p style="font-size: 11px; color: #64748B; text-align: center; margin-top: 16px;">
+                Sent via {school_name} / athnexlive SMTP Server
+            </p>
+        </div>
+        """
+        return send_smtp_email(clean_email, f"🏄 Welcome {student_name} — Student Access to {school_name}!", student_html)
+    except Exception as e:
+        print(f"Failed to send student welcome email to {student_email}: {e}")
         return False
 
 def verify_token(token: str) -> Optional[dict]:
@@ -1260,6 +1346,7 @@ class StudentCreate(BaseModel):
     end_date: Optional[str] = ""
     session_time: Optional[str] = "Morning 6:00 AM"
     staying_at_school: Optional[str] = "Yes"
+    swimming_ability: Optional[str] = "Swimmer" # "Swimmer" / "Non-Swimmer"
     reminder_preference: Optional[str] = "WhatsApp Text"
     reminder_sent: Optional[bool] = False
     guests_details: Optional[List[dict]] = []
@@ -1335,6 +1422,7 @@ class UserSignup(BaseModel):
     image: Optional[str] = ""
     # Athlete fields
     gender: Optional[str] = "Male"
+    swimming_ability: Optional[str] = "Swimmer"
     stance: Optional[str] = "regular"
     dob: Optional[str] = ""
     age: Optional[int] = None
@@ -1355,6 +1443,13 @@ class UserSignup(BaseModel):
     school: Optional[str] = ""
     # Invite token (pre-links to an existing student record created by admin)
     invite_token: Optional[str] = None
+    # School batch invite code (locks school and limits total capacity)
+    invite_code: Optional[str] = None
+
+
+class SchoolInviteCreate(BaseModel):
+    school: str
+    max_count: int = 1
 
 
 class UserLogin(BaseModel):
@@ -1379,6 +1474,7 @@ class StudentUpdate(BaseModel):
     level: Optional[str] = None
     bio: Optional[str] = None
     gender: Optional[str] = None
+    swimming_ability: Optional[str] = None
     stance: Optional[str] = None
     dob: Optional[str] = None
     age: Optional[int] = None
@@ -1606,6 +1702,7 @@ def student_to_dict(s: Student):
         "end_date": s.end_date or "",
         "session_time": s.session_time or "Morning 6:00 AM",
         "staying_at_school": s.staying_at_school or "Yes",
+        "swimming_ability": s.swimming_ability or "Swimmer",
         "reminder_preference": s.reminder_preference or "WhatsApp Text",
         "reminder_sent": bool(s.reminder_sent),
         "guests_details": json.loads(s.guests_details) if s.guests_details else [],
@@ -1728,7 +1825,28 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
     if existing:
         raise HTTPException(status_code=400, detail=f"This email is already registered as {role}. Please log in instead.")
 
-    initial_approval = "approved" if (data.invite_token or role != "athlete") else "pending"
+    initial_approval = "approved" if (data.invite_token or data.invite_code or role != "athlete") else "pending"
+
+    # If signup is via school invite link, validate and lock early
+    school_invite_record = None
+    slots_needed = 1 + (data.guests_count or 0)
+    if data.invite_code and role == "athlete":
+        school_invite_record = db.query(SchoolInviteLink).filter(SchoolInviteLink.code == data.invite_code.strip()).first()
+        if not school_invite_record:
+            raise HTTPException(status_code=400, detail="Invalid school invite link.")
+        remaining_slots = school_invite_record.max_count - school_invite_record.used_count
+        if slots_needed > remaining_slots:
+            raise HTTPException(
+                status_code=400,
+                detail=f"This invite link has only {max(0, remaining_slots)} slot(s) remaining, but this registration requires {slots_needed} slot(s)."
+            )
+        # Deduct used slots
+        school_invite_record.used_count += slots_needed
+        if school_invite_record.used_count >= school_invite_record.max_count:
+            school_invite_record.is_active = False
+        # Lock school strictly to the invite link's school
+        data.school = school_invite_record.school
+        initial_approval = "approved"
 
     user = User(
         email=data.email.lower(),
@@ -1751,7 +1869,7 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
     if role == "athlete":
         computed_age = calculate_age_from_dob(data.dob) if data.dob else data.age
 
-        # Check if this signup is via an admin invite link
+        # Check if this signup is via an admin individual invite link
         existing_student = None
         if data.invite_token:
             existing_student = db.query(Student).filter(
@@ -1766,6 +1884,8 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
             existing_student.dob = data.dob or existing_student.dob or ""
             existing_student.age = computed_age or existing_student.age
             existing_student.stance = data.stance or existing_student.stance or "regular"
+            if data.swimming_ability:
+                existing_student.swimming_ability = data.swimming_ability
             # Keep invite_token permanent so portal link in email remains permanently valid
             existing_student.last_active = "Today"
             existing_student.approval_status = "approved"
@@ -1781,12 +1901,13 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
                 age=computed_age,
                 division=data.division,
                 stance=data.stance,
+                swimming_ability=data.swimming_ability or "Swimmer",
                 surf_stats=json.dumps({"waves_ridden": 0, "max_speed": "0 mph", "avg_session_mins": 0}),
                 performance_logs=json.dumps([]),
                 image=data.image or "",
                 last_active="Today",
                 whatsapp_number=data.whatsapp_number or "",
-                guests_count=data.guests_count or 1,
+                guests_count=data.guests_count or 0,
                 course_duration=data.course_duration or "3 Days Course",
                 start_date=data.start_date or "",
                 end_date=data.end_date or "",
@@ -1799,7 +1920,11 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
                 approval_status=initial_approval
             )
             db.add(student)
-            db.add(ActivityLog(text=f"{data.name} signed up for {data.course_duration or '3 Days Course'}", type="group", school=student.school or "Aquatic Indica Surf School"))
+            if school_invite_record:
+                rem_left = max(0, school_invite_record.max_count - school_invite_record.used_count)
+                db.add(ActivityLog(text=f"{data.name} joined via School Invite Link ({slots_needed} slot(s) used, {rem_left} remaining)", type="group", school=student.school))
+            else:
+                db.add(ActivityLog(text=f"{data.name} signed up for {data.course_duration or '3 Days Course'}", type="group", school=student.school or "Aquatic Indica Surf School"))
     elif role == "coach":
         instructor = Instructor(
             user_id=user.id,
@@ -1877,8 +2002,8 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
         welcome_html = f"""
         <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 24px; background: #0F172A; color: #F8FAFC; border-radius: 16px; max-width: 540px; margin: auto;">
             <div style="text-align: center; margin-bottom: 20px;">
-                <h1 style="color: #00F2FE; margin: 0; font-size: 24px;">🏄 Aquatic Indica Surf School</h1>
-                <p style="color: #94A3B8; font-size: 13px; margin: 4px 0 0 0;">AiSurf Athletic &amp; Operations Platform</p>
+                <h1 style="color: #00F2FE; margin: 0; font-size: 24px;">🏄 athnexlive</h1>
+                <p style="color: #94A3B8; font-size: 13px; margin: 4px 0 0 0;">Athletic &amp; Operations Platform</p>
             </div>
             <div style="background: rgba(255,255,255,0.05); padding: 18px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
                 <h3 style="margin-top: 0; color: #F1F5F9;">Aloha {data.name}! 🤙</h3>
@@ -1901,11 +2026,11 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
                 Direct link: <a href="{portal_link}" style="color: #00F2FE;">{portal_link}</a>
             </p>
             <p style="font-size: 11px; color: #64748B; text-align: center; margin-top: 16px;">
-                Sent via Aquatic-X Cloud SMTP • Client Requirements Hub
+                Sent via athnexlive Cloud SMTP • Client Requirements Hub
             </p>
         </div>
         """
-        send_smtp_email(data.email, "🏄 Welcome to Aquatic Indica Surf School & AiSurf!", welcome_html)
+        send_smtp_email(data.email, "🏄 Welcome to athnexlive!", welcome_html)
     except Exception as e:
         print(f"Welcome email error: {e}")
 
@@ -1918,16 +2043,16 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
 
 class EmailTestRequest(BaseModel):
     to_email: str
-    subject: Optional[str] = "🏄 Aquatic Indica / AiSurf SMTP Test"
-    message: Optional[str] = "Hello from Aquatic Indica Surf School SMTP!"
+    subject: Optional[str] = "🏄 athnexlive SMTP Test"
+    message: Optional[str] = "Hello from athnexlive SMTP!"
 
 @app.post("/api/email/test")
 def test_email_endpoint(data: EmailTestRequest):
     html_body = f"""
     <div style="font-family: Arial, sans-serif; padding: 20px; background: #0f172a; color: #fff; border-radius: 12px;">
-        <h2 style="color: #00F2FE;">Aquatic Indica & AiSurf SMTP Connection Live 🚀</h2>
+        <h2 style="color: #00F2FE;">athnexlive SMTP Connection Live 🚀</h2>
         <p>{data.message}</p>
-        <p style="color: #94a3b8; font-size: 12px;">Connected using Aquatic-X Gmail SMTP credentials (clientrequirements.rpn@gmail.com).</p>
+        <p style="color: #94a3b8; font-size: 12px;">Connected using athnexlive Gmail SMTP credentials (clientrequirements.rpn@gmail.com).</p>
     </div>
     """
     success = send_smtp_email(data.to_email, data.subject, html_body)
@@ -1986,7 +2111,7 @@ def send_otp_endpoint(data: SendOtpRequest, db: OrmSession = Depends(get_db)):
     html = f"""
     <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 24px; background: #0F172A; color: #F8FAFC; border-radius: 16px; max-width: 480px; margin: auto;">
         <div style="text-align: center; margin-bottom: 20px;">
-            <h1 style="color: #00F2FE; margin: 0; font-size: 24px;">🏄 Aquatic Indica / AiSurf</h1>
+            <h1 style="color: #00F2FE; margin: 0; font-size: 24px;">🏄 athnexlive</h1>
             <p style="color: #94A3B8; font-size: 13px; margin: 4px 0 0 0;">Authentication Code</p>
         </div>
         <div style="background: rgba(255,255,255,0.05); padding: 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1); text-align: center;">
@@ -1997,11 +2122,11 @@ def send_otp_endpoint(data: SendOtpRequest, db: OrmSession = Depends(get_db)):
             <p style="font-size: 12px; color: #94A3B8; margin: 12px 0 0 0;">Valid for 10 minutes. Please do not share this code.</p>
         </div>
         <p style="font-size: 11px; color: #64748B; text-align: center; margin-top: 20px;">
-            Sent via Aquatic-X Cloud SMTP
+            Sent via athnexlive Cloud SMTP
         </p>
     </div>
     """
-    sent = send_smtp_email(email, f"🔑 {otp} is your AiSurf Login Verification Code", html)
+    sent = send_smtp_email(email, f"🔑 {otp} is your athnexlive Login Verification Code", html)
     if not sent:
         print(f"\n[DEV MODE] SMTP Failed. OTP Generated for {email}: {otp}\n")
         return {"status": "success", "message": f"Verification code generated (Dev Mode Fallback: {otp})"}
@@ -2270,6 +2395,8 @@ def update_student(student_id: int, data: StudentUpdate, db: OrmSession = Depend
         student.session_time = data.session_time
     if data.staying_at_school is not None:
         student.staying_at_school = data.staying_at_school
+    if data.swimming_ability is not None:
+        student.swimming_ability = data.swimming_ability
     if data.reminder_preference is not None:
         student.reminder_preference = data.reminder_preference
     if data.reminder_sent is not None:
@@ -3024,11 +3151,11 @@ def create_instructor(data: InstructorCreate, request: Request, db: OrmSession =
                     Direct link: <a href="{coach_portal_link}" style="color: #2DD4BF;">{coach_portal_link}</a>
                 </p>
                 <p style="font-size: 11px; color: #64748B; text-align: center; margin-top: 16px;">
-                    Sent via Aquatic Indica / AiSurf SMTP Server
+                    Sent via {instructor.school or 'athnexlive'} / athnexlive SMTP Server
                 </p>
             </div>
             """
-            send_smtp_email(email_clean, f"🏄 Welcome Coach {data.name} — Aquatic Indica Surf Academy Login Access", coach_html)
+            send_smtp_email(email_clean, f"🏄 Welcome Coach {data.name} — athnexlive Login Access", coach_html)
         except Exception as e:
             print(f"Failed to send instructor invitation email to {email_clean}: {e}")
 
@@ -3140,12 +3267,20 @@ def create_student(data: StudentCreate, request: Request, db: OrmSession = Depen
     if not student_school:
         student_school = "Aquatic Indica Surf School"
 
+    computed_age = data.age
+    if data.dob:
+        c_age = calculate_age_from_dob(data.dob)
+        if c_age is not None:
+            computed_age = c_age
+
     student = Student(
         user_id=user_id,
         name=data.name, email=data.email, level=data.level,
         instructor_id=data.instructor_id,
         image=data.image or "",
         last_active="Today",
+        dob=data.dob or "",
+        age=computed_age,
         whatsapp_number=data.whatsapp_number or "",
         guests_count=data.guests_count or 1,
         course_duration=data.course_duration or "3 Days Course",
@@ -3153,6 +3288,7 @@ def create_student(data: StudentCreate, request: Request, db: OrmSession = Depen
         end_date=end_date or "",
         session_time=data.session_time or "Morning 6:00 AM",
         staying_at_school=data.staying_at_school or "Yes",
+        swimming_ability=data.swimming_ability or "Swimmer",
         reminder_preference=data.reminder_preference or "WhatsApp Text",
         reminder_sent=bool(data.reminder_sent),
         guests_details=json.dumps(data.guests_details or []),
@@ -3169,53 +3305,19 @@ def create_student(data: StudentCreate, request: Request, db: OrmSession = Depen
     if data.email:
         try:
             import secrets as _secrets
-            app_base_url = get_app_base_url(request)
-            student_email = data.email.strip().lower()
-            # Ensure invite token exists for portal magic link
             if not student.invite_token:
                 student.invite_token = _secrets.token_urlsafe(32)
                 db.commit()
-            student_portal_link = f"{app_base_url}/student-portal?token={student.invite_token}"
-            pass_info = f"<li><strong>Password:</strong> {data.password.strip()}</li>" if (data.password and len(data.password.strip()) >= 6) else ""
-            student_html = f"""
-            <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 24px; background: #0F172A; color: #F8FAFC; border-radius: 16px; max-width: 540px; margin: auto;">
-                <div style="text-align: center; margin-bottom: 20px;">
-                    <h1 style="color: #00F2FE; margin: 0; font-size: 24px;">🏄 Aquatic Indica Surf School</h1>
-                    <p style="color: #94A3B8; font-size: 13px; margin: 4px 0 0 0;">Student Portal Invitation &amp; Training Access</p>
-                </div>
-                <div style="background: rgba(255,255,255,0.05); padding: 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
-                    <h3 style="margin-top: 0; color: #F1F5F9;">Aloha {data.name}! 🏄‍♀️</h3>
-                    <p style="font-size: 14px; line-height: 1.6; color: #CBD5E1;">
-                        Welcome to <strong>{student_school}</strong>! Your student account and surf training schedule have been created.
-                    </p>
-                    <div style="background: rgba(14, 165, 233, 0.15); border: 1px solid rgba(14, 165, 233, 0.4); padding: 14px; border-radius: 10px; margin: 16px 0;">
-                        <p style="margin: 0 0 8px 0; font-weight: 700; color: #38BDF8; font-size: 13px;">📋 Your Student Credentials & Schedule:</p>
-                        <ul style="font-size: 13px; color: #F8FAFC; margin: 0; padding-left: 18px; line-height: 1.8;">
-                            <li><strong>Registered Email:</strong> {student_email}</li>
-                            {pass_info}
-                            <li><strong>Course:</strong> {data.course_duration or '3 Days Course'}</li>
-                            <li><strong>Session Slot:</strong> {data.session_time or 'Morning 6:00 AM'}</li>
-                            <li><strong>School:</strong> {student_school}</li>
-                        </ul>
-                    </div>
-                    <p style="font-size: 13px; color: #94A3B8;">
-                        You can log in anytime to view your session schedules, track wave performance, and access AI analysis directly from your Student Portal.
-                    </p>
-                </div>
-                <div style="text-align: center; margin: 24px 0 16px 0;">
-                    <a href="{student_portal_link}" style="background: linear-gradient(135deg, #00F2FE 0%, #4FACFE 100%); color: #0F172A; text-decoration: none; font-weight: 800; font-size: 15px; padding: 14px 30px; border-radius: 12px; display: inline-block; box-shadow: 0 4px 18px rgba(0,242,254,0.45);">
-                        🏄 Open Your Student Portal &amp; Set Password →
-                    </a>
-                </div>
-                <p style="font-size: 11px; color: #64748B; text-align: center; word-break: break-all; margin: 0 0 8px 0;">
-                    Direct link: <a href="{student_portal_link}" style="color: #00F2FE;">{student_portal_link}</a>
-                </p>
-                <p style="font-size: 11px; color: #64748B; text-align: center; margin-top: 16px;">
-                    Sent via Aquatic Indica / AiSurf SMTP Server
-                </p>
-            </div>
-            """
-            send_smtp_email(student_email, f"🏄 Welcome {data.name} — Student Access to Aquatic Indica Surf School!", student_html)
+            send_student_welcome_email(
+                student_email=data.email,
+                student_name=data.name,
+                student_school=student_school,
+                invite_token=student.invite_token,
+                course_duration=data.course_duration or "3 Days Course",
+                session_time=data.session_time or "Morning 6:00 AM",
+                password=data.password,
+                app_base_url=get_app_base_url(request)
+            )
         except Exception as e:
             print(f"Failed to send student welcome email to {data.email}: {e}")
 
@@ -3223,9 +3325,18 @@ def create_student(data: StudentCreate, request: Request, db: OrmSession = Depen
 
 
 @app.post("/api/students/bulk")
-def create_students_bulk(students_data: List[StudentCreate], db: OrmSession = Depends(get_db)):
+def create_students_bulk(
+    students_data: List[StudentCreate],
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: OrmSession = Depends(get_db)
+):
+    import secrets as _secrets
     created = []
     seen_in_batch = set()
+    emails_to_send = []
+    app_base_url = get_app_base_url(request)
+
     for data in students_data:
         if not data.name or not data.email:
             continue
@@ -3260,6 +3371,27 @@ def create_students_bulk(students_data: List[StudentCreate], db: OrmSession = De
             func.lower(Student.school) == target_school.lower()
         ).first()
 
+        computed_age = data.age
+        if data.dob:
+            c_age = calculate_age_from_dob(data.dob)
+            if c_age is not None:
+                computed_age = c_age
+
+        end_date = data.end_date
+        if data.start_date and not end_date:
+            try:
+                total_days = 3
+                for token in (data.course_duration or "3 Days Course").split():
+                    if token.isdigit():
+                        total_days = int(token)
+                        break
+                s_date = datetime.strptime(data.start_date.strip(), "%Y-%m-%d").date()
+                e_date = s_date + timedelta(days=total_days - 1)
+                end_date = e_date.strftime("%Y-%m-%d")
+            except Exception:
+                pass
+
+        target_student = None
         if existing_student:
             # Update existing student record instead of creating duplicate
             existing_student.name = data.name.strip()
@@ -3267,6 +3399,10 @@ def create_students_bulk(students_data: List[StudentCreate], db: OrmSession = De
                 existing_student.user_id = user_id
             if data.level:
                 existing_student.level = data.level
+            if data.dob:
+                existing_student.dob = data.dob
+            if computed_age is not None:
+                existing_student.age = computed_age
             if data.instructor_id is not None:
                 existing_student.instructor_id = data.instructor_id
             if data.whatsapp_number:
@@ -3275,20 +3411,28 @@ def create_students_bulk(students_data: List[StudentCreate], db: OrmSession = De
                 existing_student.course_duration = data.course_duration
             if data.start_date:
                 existing_student.start_date = data.start_date
-            if data.end_date:
-                existing_student.end_date = data.end_date
+            if end_date:
+                existing_student.end_date = end_date
             if data.session_time:
                 existing_student.session_time = data.session_time
             if data.staying_at_school:
                 existing_student.staying_at_school = data.staying_at_school
+            if data.swimming_ability:
+                existing_student.swimming_ability = data.swimming_ability
+            if not existing_student.invite_token:
+                existing_student.invite_token = _secrets.token_urlsafe(32)
             db.flush()
+            target_student = existing_student
             created.append(student_to_dict(existing_student))
         else:
+            new_invite_token = _secrets.token_urlsafe(32)
             student = Student(
                 user_id=user_id,
                 name=data.name.strip(),
                 email=clean_email,
                 level=data.level or "Beginner",
+                dob=data.dob or "",
+                age=computed_age,
                 instructor_id=data.instructor_id,
                 image=data.image or "",
                 last_active="Today",
@@ -3296,23 +3440,50 @@ def create_students_bulk(students_data: List[StudentCreate], db: OrmSession = De
                 guests_count=data.guests_count or 1,
                 course_duration=data.course_duration or "3 Days Course",
                 start_date=data.start_date or datetime.now().strftime("%Y-%m-%d"),
-                end_date=data.end_date or "",
+                end_date=end_date or "",
                 session_time=data.session_time or "Morning 6:00 AM",
                 staying_at_school=data.staying_at_school or "Yes",
+                swimming_ability=data.swimming_ability or "Swimmer",
                 reminder_preference=data.reminder_preference or "WhatsApp Text",
                 reminder_sent=bool(data.reminder_sent),
                 guests_details=json.dumps(data.guests_details or []),
                 school=target_school,
+                invite_token=new_invite_token
             )
             db.add(student)
             db.flush()
+            target_student = student
             created.append(student_to_dict(student))
+
+        if target_student and clean_email:
+            emails_to_send.append({
+                "student_email": clean_email,
+                "student_name": data.name.strip(),
+                "student_school": target_school,
+                "invite_token": target_student.invite_token,
+                "course_duration": data.course_duration or "3 Days Course",
+                "session_time": data.session_time or "Morning 6:00 AM",
+                "password": data.password,
+                "app_base_url": app_base_url
+            })
     
     db.commit()
     bulk_school = (students_data[0].school if students_data and students_data[0].school else "Aquatic Indica Surf School")
-    db.add(ActivityLog(text=f"Imported/updated {len(created)} students", type="group", school=bulk_school))
+    db.add(ActivityLog(text=f"Imported/updated {len(created)} students & sent welcome emails", type="group", school=bulk_school))
     db.commit()
-    return {"message": f"Successfully processed {len(created)} students", "students": created}
+
+    # Dispatch welcome emails in background
+    def dispatch_bulk_emails(email_list):
+        for item in email_list:
+            try:
+                send_student_welcome_email(**item)
+            except Exception as e:
+                print(f"Error dispatching bulk email to {item.get('student_email')}: {e}")
+
+    if emails_to_send:
+        background_tasks.add_task(dispatch_bulk_emails, emails_to_send)
+
+    return {"message": f"Successfully processed {len(created)} students and dispatched welcome emails", "students": created}
 
 
 class AttendanceCreate(BaseModel):
@@ -3664,6 +3835,84 @@ def set_instructor_password(instructor_id: int, data: dict, db: OrmSession = Dep
     instructor.user_id = user.id
     db.commit()
     return {"success": True, "message": "Password set! You can now log in anytime with your email.", "email": email, "password_plain": password}
+
+
+# ─── School Batch Invite Routes ─────────────────────────────────────────────
+
+@app.post("/api/school-invites")
+def create_school_invite(data: SchoolInviteCreate, db: OrmSession = Depends(get_db)):
+    """Create a new batch/school registration invite link with a strict capacity count."""
+    import secrets as _secrets
+    school_name = data.school.strip() if data.school else "Aquatic Indica Surf School"
+    capacity = max(1, int(data.max_count or 1))
+    code = f"inv_{_secrets.token_urlsafe(12)}"
+
+    invite = SchoolInviteLink(
+        code=code,
+        school=school_name,
+        max_count=capacity,
+        used_count=0,
+        is_active=True
+    )
+    db.add(invite)
+    db.commit()
+    db.refresh(invite)
+    return {
+        "status": "success",
+        "code": invite.code,
+        "school": invite.school,
+        "max_count": invite.max_count,
+        "used_count": invite.used_count,
+        "remaining": invite.max_count - invite.used_count,
+        "is_active": invite.is_active,
+        "created_at": invite.created_at.isoformat() if invite.created_at else ""
+    }
+
+
+@app.get("/api/school-invites")
+def list_school_invites(school: Optional[str] = None, db: OrmSession = Depends(get_db)):
+    """List school invite links, optionally filtered by school."""
+    query = db.query(SchoolInviteLink)
+    if school:
+        query = query.filter(func.lower(SchoolInviteLink.school) == school.lower().strip())
+    invites = query.order_by(SchoolInviteLink.created_at.desc()).limit(50).all()
+    res = []
+    for inv in invites:
+        rem = max(0, inv.max_count - inv.used_count)
+        res.append({
+            "id": inv.id,
+            "code": inv.code,
+            "school": inv.school,
+            "max_count": inv.max_count,
+            "used_count": inv.used_count,
+            "remaining": rem,
+            "is_active": inv.is_active and (rem > 0),
+            "created_at": inv.created_at.isoformat() if inv.created_at else ""
+        })
+    return res
+
+
+@app.get("/api/school-invites/{code}")
+def get_school_invite(code: str, db: OrmSession = Depends(get_db)):
+    """Retrieve and validate a school invite link by code."""
+    invite = db.query(SchoolInviteLink).filter(SchoolInviteLink.code == code.strip()).first()
+    if not invite:
+        return {"valid": False, "detail": "Invite link not found or has been revoked."}
+
+    remaining = max(0, invite.max_count - invite.used_count)
+    is_valid = invite.is_active and (remaining > 0)
+
+    return {
+        "valid": is_valid,
+        "code": invite.code,
+        "school": invite.school,
+        "max_count": invite.max_count,
+        "used_count": invite.used_count,
+        "remaining": remaining,
+        "is_active": invite.is_active,
+        "detail": "Invite link is valid" if is_valid else "This invite link has reached its maximum registration limit."
+    }
+
 
 
 @app.post("/api/students/{student_id}/approve")

@@ -31,16 +31,28 @@ const AuthPage = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const inviteToken = searchParams.get('invite');
+  const inviteCode = searchParams.get('invite_code');
   const urlSchool = searchParams.get('school');
   const [inviteData, setInviteData] = useState(null);
   const [inviteLoading, setInviteLoading] = useState(!!inviteToken);
   const [inviteError, setInviteError] = useState('');
-  const [isLogin, setIsLogin] = useState(!inviteToken && !urlSchool); // default to register when school or invite in URL
+  const [schoolInviteData, setSchoolInviteData] = useState(null);
+  const [schoolInviteLoading, setSchoolInviteLoading] = useState(!!inviteCode);
+  const [schoolInviteError, setSchoolInviteError] = useState('');
+  const [isLogin, setIsLogin] = useState(!inviteToken && !inviteCode && !urlSchool); // default to register when school or invite in URL
+  const isInviteRoleLocked = !!(inviteCode || inviteToken || schoolInviteData || searchParams.get('invite_code') || searchParams.get('invite'));
   const [role, setRole] = useState('athlete');
-  const [loginRole, setLoginRole] = useState('auto');
+  const [loginRole, setLoginRole] = useState('athlete');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  // Strictly enforce Student role when coming via any invite link
+  useEffect(() => {
+    if (isInviteRoleLocked && role !== 'athlete') {
+      setRole('athlete');
+    }
+  }, [isInviteRoleLocked, role]);
 
   // Saved device accounts (Only populated when real users save accounts on this device)
   const [savedAccounts, setSavedAccounts] = useState(() => {
@@ -90,6 +102,7 @@ const AuthPage = () => {
     age: '',
     gender: '',
     stance: '',
+    swimming_ability: 'Swimmer',
     specializations: [],
     rates: '',
     location: '',
@@ -125,17 +138,79 @@ const AuthPage = () => {
   // Auto-fill school and land directly on Student Registration when opening via ?school=...
   useEffect(() => {
     const urlSchool = searchParams.get('school');
-    if (urlSchool) {
+    if (urlSchool && !inviteCode) {
       setSignupPassword('');
       setSignupConfirmPassword('');
       setFormData(prev => ({ ...prev, school: urlSchool, password: '', confirmPassword: '' }));
       setSchoolsList(prev => Array.from(new Set([urlSchool, ...prev])));
       setRole('athlete');
-      setOtpVerified(true);
+      setOtpVerified(false);
+      setOtpSent(false);
       setIsLogin(false);
     }
+  }, [searchParams, inviteCode]);
 
-  }, [searchParams]);
+  // Fetch school batch invite info if invite_code present in URL
+  useEffect(() => {
+    if (!inviteCode) return;
+    setSchoolInviteLoading(true);
+    setSchoolInviteError('');
+    setIsLogin(false);
+    setRole('athlete');
+    setOtpVerified(false);
+    setOtpSent(false);
+
+    fetch(`${API}/api/school-invites/${inviteCode}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.valid || data.remaining !== undefined) {
+          setSchoolInviteData(data);
+          const lockedSchool = data.school || urlSchool || 'Aquatic Indica Surf School';
+          setFormData(prev => ({
+            ...prev,
+            school: lockedSchool,
+            password: '',
+            confirmPassword: '',
+          }));
+          setSchoolsList(prev => Array.from(new Set([lockedSchool, ...prev])));
+          // Do not skip OTP: Student must enter email and verify in proper step-by-step flow
+          if (!data.valid || data.remaining <= 0) {
+            setSchoolInviteError(data.detail || 'This invite link has reached its maximum registration limit.');
+          }
+        } else {
+          setSchoolInviteError(data.detail || 'Invalid or expired invite link.');
+        }
+      })
+      .catch(() => {
+        // Local storage fallback for offline / mock testing
+        try {
+          const localInvites = JSON.parse(localStorage.getItem('local_school_invites') || '[]');
+          const match = localInvites.find(i => i.code === inviteCode);
+          if (match) {
+            const rem = Math.max(0, match.max_count - (match.used_count || 0));
+            const isValid = match.is_active && rem > 0;
+            const mockData = {
+              valid: isValid,
+              code: match.code,
+              school: match.school,
+              max_count: match.max_count,
+              used_count: match.used_count || 0,
+              remaining: rem,
+              is_active: match.is_active
+            };
+            setSchoolInviteData(mockData);
+            setFormData(prev => ({ ...prev, school: match.school }));
+            setSchoolsList(prev => Array.from(new Set([match.school, ...prev])));
+            if (!isValid) {
+              setSchoolInviteError('This invite link has reached its maximum registration limit.');
+            }
+            return;
+          }
+        } catch (e) {}
+        setSchoolInviteError('Could not verify invite link. Please check your connection.');
+      })
+      .finally(() => setSchoolInviteLoading(false));
+  }, [inviteCode, urlSchool]);
 
   // Always fetch all registered surf schools for dropdown options on load
   useEffect(() => {
@@ -187,7 +262,8 @@ const AuthPage = () => {
             school: finalSchool,
           }));
           setSchoolsList(prev => Array.from(new Set([finalSchool, ...prev])));
-          setOtpVerified(true); // skip OTP for invited students
+          setOtpSent(true);
+          setOtpVerified(true); // skip OTP for pre-invited specific students
           setIsLogin(false);
         } else {
           setInviteError(data.detail || 'Invalid invite link.');
@@ -388,7 +464,7 @@ const AuthPage = () => {
         email: formData.email.toLowerCase().trim(),
         password: pwd
       };
-      if (loginRole && loginRole !== 'auto') {
+      if (loginRole) {
         payload.role = loginRole;
       }
       const res = await fetch(`${API}/api/auth/login`, {
@@ -481,6 +557,7 @@ const AuthPage = () => {
           age: formData.dob ? calculateAge(formData.dob) : (formData.age ? parseInt(formData.age) : null),
           gender: formData.gender,
           stance: formData.stance,
+          swimming_ability: formData.swimming_ability || 'Swimmer',
           specializations: formData.specializations,
           rates: formData.rates,
           location: formData.location,
@@ -492,9 +569,10 @@ const AuthPage = () => {
           reminder_preference: formData.reminder_preference,
           guests_count: parseInt(formData.guests_count) || 0,
           guests_details: formData.guests_details || [],
-          school: formData.school,
-          // Pass invite token so backend links to pre-created student record
+          school: (schoolInviteData?.school) || formData.school,
+          // Pass individual invite token or school batch invite code
           ...(inviteToken ? { invite_token: inviteToken } : {}),
+          ...(inviteCode ? { invite_code: inviteCode } : {}),
         })
       });
       const data = await safeJson(res);
@@ -504,15 +582,34 @@ const AuthPage = () => {
           name: formData.name.trim(),
           email: formData.email.toLowerCase().trim(),
           role: role,
-          school: formData.school || 'Aquatic Indica Surf School',
-          approval_status: inviteToken ? 'approved' : 'pending'
+          school: (schoolInviteData?.school) || formData.school || 'Aquatic Indica Surf School',
+          approval_status: (inviteToken || inviteCode) ? 'approved' : 'pending'
         };
-        userObj.approval_status = inviteToken ? 'approved' : 'pending';
+        userObj.approval_status = (inviteToken || inviteCode) ? 'approved' : 'pending';
 
+        // Update local school invite tracking if inviteCode used
+        if (inviteCode) {
+          try {
+            const saved = JSON.parse(localStorage.getItem('local_school_invites') || '[]');
+            const slotsUsed = 1 + (parseInt(formData.guests_count) || 0);
+            const updated = saved.map(i => {
+              if (i.code === inviteCode) {
+                const nextUsed = (i.used_count || 0) + slotsUsed;
+                return {
+                  ...i,
+                  used_count: nextUsed,
+                  remaining: Math.max(0, i.max_count - nextUsed),
+                  is_active: nextUsed < i.max_count
+                };
+              }
+              return i;
+            });
+            localStorage.setItem('local_school_invites', JSON.stringify(updated));
+          } catch (e) {}
+        }
 
-
-        // If direct signup without invite token, ALWAYS record pending join request for school admin
-        if (!inviteToken && (role === 'athlete' || role === 'student' || role === 'user')) {
+        // If direct signup without invite token/code, record pending join request for school admin
+        if (!inviteToken && !inviteCode && (role === 'athlete' || role === 'student' || role === 'user')) {
           try {
             const existingReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
             const studentEmail = formData.email.toLowerCase().trim();
@@ -888,7 +985,15 @@ const AuthPage = () => {
                     <div className="saved-accounts-label">Saved Accounts</div>
                     {savedAccounts.map((acc, idx) => (
                       <div key={idx} className="saved-account-row"
-                        onClick={() => { setFormData(p => ({ ...p, email: acc.email, password: '' })); }}>
+                        onClick={() => {
+                          setFormData(p => ({ ...p, email: acc.email, password: '' }));
+                          if (acc.role) {
+                            const r = acc.role.toLowerCase();
+                            if (r.includes('admin')) setLoginRole('admin');
+                            else if (r.includes('coach')) setLoginRole('coach');
+                            else setLoginRole('athlete');
+                          }
+                        }}>
                         <div className="saved-account-avatar">
                           {acc.image
                             ? <img src={acc.image} alt={acc.name} />
@@ -917,7 +1022,6 @@ const AuthPage = () => {
                     <div className="auth-field" style={{ flex: 1 }}>
                       <label>Login As</label>
                       <select value={loginRole} onChange={e => setLoginRole(e.target.value)}>
-                        <option value="auto">Auto-Detect</option>
                         <option value="athlete">Student</option>
                         <option value="coach">Coach</option>
                         <option value="admin">School Admin</option>
@@ -998,9 +1102,57 @@ const AuthPage = () => {
             {/* ── REGISTRATION FORM (3-Step) ── */}
             {!isLogin && (
               <>
+                {/* School Registration Invite Banner (Shown at top of registration across all steps) */}
+                {schoolInviteData && (
+                  <div style={{
+                    background: (schoolInviteData.valid && schoolInviteData.remaining > 0) ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                    border: `1.5px solid ${(schoolInviteData.valid && schoolInviteData.remaining > 0) ? '#10B981' : '#EF4444'}`,
+                    borderRadius: '12px',
+                    padding: '14px 16px',
+                    marginBottom: '16px',
+                    boxShadow: (schoolInviteData.valid && schoolInviteData.remaining > 0) ? '0 0 15px rgba(16, 185, 129, 0.15)' : 'none'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <span style={{ fontSize: '22px' }}>{(schoolInviteData.valid && schoolInviteData.remaining > 0) ? '🎟️' : '⛔'}</span>
+                        <div>
+                          <div style={{ fontSize: '15px', fontWeight: 800, color: (schoolInviteData.valid && schoolInviteData.remaining > 0) ? '#FFFFFF' : '#FCA5A5' }}>
+                            {(schoolInviteData.valid && schoolInviteData.remaining > 0) ? 'School Registration Invite' : 'Invite Link Limit Reached / Expired'}
+                          </div>
+                          <div style={{ fontSize: '13px', color: '#E2E8F0', marginTop: '3px' }}>
+                            🔒 School locked to: <strong style={{ color: '#38BDF8', fontSize: '14px' }}>{schoolInviteData.school}</strong>
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{
+                        background: (schoolInviteData.valid && schoolInviteData.remaining > 0) ? '#10B981' : '#EF4444',
+                        color: '#FFFFFF',
+                        fontSize: '11.5px',
+                        fontWeight: 800,
+                        padding: '4px 12px',
+                        borderRadius: '20px',
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.2)'
+                      }}>
+                        {(schoolInviteData.valid && schoolInviteData.remaining > 0)
+                          ? `${schoolInviteData.remaining} of ${schoolInviteData.max_count} Slots Available`
+                          : `Full (${schoolInviteData.used_count}/${schoolInviteData.max_count} Used)`}
+                      </div>
+                    </div>
+                    {(schoolInviteData.valid && schoolInviteData.remaining > 0) ? (
+                      <div style={{ fontSize: '12px', color: '#A7F3D0', marginTop: '10px', borderTop: '1px dashed rgba(16,185,129,0.3)', paddingTop: '8px' }}>
+                        💡 <strong>Capacity:</strong> You are taking 1 slot for yourself. You can add up to <strong style={{ color: '#FFFFFF' }}>{Math.max(0, schoolInviteData.remaining - 1)}</strong> accompanying guest(s) during Step 3 setup.
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: '12px', color: '#FCA5A5', marginTop: '10px', borderTop: '1px dashed rgba(239,68,68,0.3)', paddingTop: '8px', fontWeight: 600 }}>
+                        ⛔ This invite link has reached its maximum registration limit ({schoolInviteData.used_count || schoolInviteData.max_count}/{schoolInviteData.max_count} used). All spots for this invite have been filled. Please request a new invite link from {schoolInviteData.school}.
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Step indicator */}
                 <div className="reg-steps">
-                  <div className={`reg-step ${!otpSent ? 'active' : otpVerified ? 'done' : 'done'}`}>
+                  <div className={`reg-step ${!otpSent && !otpVerified ? 'active' : 'done'}`}>
                     <span className="reg-step-num">{otpVerified ? '✓' : '1'}</span>
                     <span className="reg-step-label">Email</span>
                   </div>
@@ -1017,7 +1169,7 @@ const AuthPage = () => {
                 </div>
 
                 {/* Step 1: Email + Role → Send OTP */}
-                {!otpSent && (
+                {!otpSent && !otpVerified && (
                   <div className="auth-form">
                     <div className="auth-fields-row">
                       <div className="auth-field" style={{ flex: 1.5 }}>
@@ -1026,18 +1178,46 @@ const AuthPage = () => {
                           value={formData.email} onChange={handleChange} required />
                       </div>
                       <div className="auth-field" style={{ flex: 1 }}>
-                        <label>Register As</label>
-                        <select value={role} onChange={e => {
-                          const newRole = e.target.value;
-                          setRole(newRole);
-                          if (newRole === 'admin') {
-                            setFormData(prev => ({ ...prev, school: '' }));
-                          }
-                        }}>
-                          <option value="athlete">Student (Athlete)</option>
-                          <option value="coach">Coach (Instructor)</option>
-                          <option value="admin">School Admin (Surf School)</option>
-                        </select>
+                        <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span>Register As</span>
+                          {isInviteRoleLocked && (
+                            <span style={{ color: '#10B981', fontSize: '11px', fontWeight: 800 }}>🔒 Locked</span>
+                          )}
+                        </label>
+                        {isInviteRoleLocked ? (
+                          <div style={{
+                            padding: '10px 14px',
+                            background: 'rgba(16, 185, 129, 0.08)',
+                            border: '1.5px solid #10B981',
+                            borderRadius: '8px',
+                            color: '#FFFFFF',
+                            fontWeight: 700,
+                            fontSize: '13.5px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            height: '42px',
+                            boxSizing: 'border-box',
+                            userSelect: 'none'
+                          }}>
+                            <span>Student (Athlete)</span>
+                            <span style={{ fontSize: '10.5px', background: '#10B981', color: '#FFF', padding: '2px 7px', borderRadius: '4px', fontWeight: 800 }}>
+                              Locked
+                            </span>
+                          </div>
+                        ) : (
+                          <select value={role} onChange={e => {
+                            const newRole = e.target.value;
+                            setRole(newRole);
+                            if (newRole === 'admin') {
+                              setFormData(prev => ({ ...prev, school: '' }));
+                            }
+                          }}>
+                            <option value="athlete">Student (Athlete)</option>
+                            <option value="coach">Coach (Instructor)</option>
+                            <option value="admin">School Admin (Surf School)</option>
+                          </select>
+                        )}
                       </div>
                     </div>
                     <button type="button" className="btn-primary auth-submit"
@@ -1077,7 +1257,7 @@ const AuthPage = () => {
                 {/* Step 3: Setup profile + password */}
                 {otpVerified && (
                   <form className="auth-form" onSubmit={completeRegistration}>
-                    {/* Invite banner or OTP verified banner */}
+                    {/* Individual Invite banner OR OTP verified banner */}
                     {inviteData ? (
                       <div style={{ background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.3)', borderRadius: '12px', padding: '12px 16px', display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
                         <span style={{ fontSize: '18px', flexShrink: 0 }}>🏄</span>
@@ -1092,7 +1272,7 @@ const AuthPage = () => {
                         </div>
                       </div>
                     ) : (
-                      <div style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: '10px', padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: '10px', padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
                         <span style={{ fontSize: '12.5px', color: '#6EE7B7', fontWeight: 600 }}>
                           ✔ Email Verified: {formData.email} ({role === 'athlete' ? 'Student' : role === 'coach' ? 'Coach' : 'School Admin'})
                         </span>
@@ -1238,6 +1418,13 @@ const AuthPage = () => {
                               <option value="Other">Other</option>
                             </select>
                           </div>
+                          <div className="auth-field">
+                            <label>🏊 Swimming Ability *</label>
+                            <select name="swimming_ability" value={formData.swimming_ability || 'Swimmer'} onChange={handleChange}>
+                              <option value="Swimmer">🏊 Swimmer</option>
+                              <option value="Non-Swimmer">🤿 Non-Swimmer</option>
+                            </select>
+                          </div>
                         </div>
 
                         <div className="auth-fields-row" style={{ marginTop: '10px' }}>
@@ -1248,8 +1435,32 @@ const AuthPage = () => {
                           </div>
                           <div className="auth-field" style={{ flex: 1 }}>
                             <label>👥 Accompanying Guests</label>
-                            <input type="number" name="guests_count" min={0} max={10} placeholder="0"
-                              value={formData.guests_count === '' || formData.guests_count === undefined ? '' : formData.guests_count} onChange={handleChange} />
+                            <input 
+                              type="number" 
+                              name="guests_count" 
+                              min={0} 
+                              max={schoolInviteData && schoolInviteData.remaining > 0 ? Math.max(0, schoolInviteData.remaining - 1) : 10} 
+                              placeholder="0"
+                              value={formData.guests_count === '' || formData.guests_count === undefined ? '' : formData.guests_count} 
+                              onChange={e => {
+                                let val = e.target.value;
+                                if (schoolInviteData && schoolInviteData.remaining > 0) {
+                                  const maxAllowed = Math.max(0, schoolInviteData.remaining - 1);
+                                  if (parseInt(val) > maxAllowed) {
+                                    val = String(maxAllowed);
+                                  }
+                                }
+                                handleChange({ target: { name: 'guests_count', value: val } });
+                              }}
+                              disabled={schoolInviteData && schoolInviteData.remaining <= 1}
+                            />
+                            {schoolInviteData && schoolInviteData.remaining > 0 && (
+                              <small style={{ color: '#0D9488', fontSize: '11px', marginTop: '4px', display: 'block', fontWeight: 600 }}>
+                                {schoolInviteData.remaining <= 1
+                                  ? 'Only 1 slot left (reserved for yourself)'
+                                  : `Max ${Math.max(0, schoolInviteData.remaining - 1)} guest(s) allowed (${schoolInviteData.remaining} slots remaining on invite)`}
+                              </small>
+                            )}
                           </div>
                         </div>
 
@@ -1325,6 +1536,14 @@ const AuthPage = () => {
                                       <option value="goofy">Goofy</option>
                                     </select>
                                   </div>
+                                  <div className="auth-field" style={{ minWidth: 0 }}>
+                                    <label style={{ fontSize: '11px', color: '#94A3B8' }}>Swimming Ability</label>
+                                    <select value={formData.guests_details?.[gIdx]?.swimming_ability || 'Swimmer'}
+                                      onChange={e => handleGuestChange(gIdx, 'swimming_ability', e.target.value)}>
+                                      <option value="Swimmer">🏊 Swimmer</option>
+                                      <option value="Non-Swimmer">🤿 Non-Swimmer</option>
+                                    </select>
+                                  </div>
                                 </div>
                               </div>
                             ))}
@@ -1353,26 +1572,46 @@ const AuthPage = () => {
                         <div className="auth-field" style={{ marginTop: '12px' }}>
                           <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <span>Assigned Surf School</span>
-                            {(inviteData || searchParams.get('school')) && (
-                              <span style={{ color: '#10B981', fontSize: '11px', fontWeight: 700 }}>✓ Auto-Selected via Link</span>
+                            {(schoolInviteData || inviteData || searchParams.get('school')) && (
+                              <span style={{ color: '#10B981', fontSize: '11px', fontWeight: 800 }}>
+                                🔒 Locked: {schoolInviteData ? 'School Invite Link' : 'Auto-Selected via Link'}
+                              </span>
                             )}
                           </label>
-                          <select 
-                            name="school" 
-                            value={formData.school || ''} 
-                            onChange={handleChange} 
-                            disabled={!!(inviteData || searchParams.get('school'))} 
-                            style={{ 
-                              borderColor: (inviteData || searchParams.get('school')) ? '#10B981' : undefined, 
-                              background: (inviteData || searchParams.get('school')) ? 'rgba(16,185,129,0.06)' : undefined,
-                              fontWeight: (inviteData || searchParams.get('school')) ? 700 : undefined
-                            }}
-                          >
-                            {!(inviteData || searchParams.get('school')) && (
+                          {(schoolInviteData || inviteData || searchParams.get('school')) ? (
+                            <div style={{
+                              padding: '12px 16px',
+                              background: 'rgba(16, 185, 129, 0.12)',
+                              border: '1.5px solid #10B981',
+                              borderRadius: '8px',
+                              color: '#FFFFFF',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: '10px',
+                              boxShadow: '0 0 12px rgba(16, 185, 129, 0.15)'
+                            }}>
+                              <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <span style={{ fontSize: '20px' }}>🏫</span>
+                                <span style={{ color: '#FFFFFF', fontWeight: 800, fontSize: '15px', letterSpacing: '0.3px' }}>
+                                  {(schoolInviteData?.school) || formData.school || searchParams.get('school') || 'Aquatic Indica Surf School'}
+                                </span>
+                              </span>
+                              <span style={{ fontSize: '11px', background: '#10B981', color: '#FFFFFF', padding: '3px 8px', borderRadius: '4px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                Locked
+                              </span>
+                            </div>
+                          ) : (
+                            <select 
+                              name="school" 
+                              value={formData.school || ''} 
+                              onChange={handleChange} 
+                              style={{ fontWeight: 600 }}
+                            >
                               <option value="">-- Select Surf School --</option>
-                            )}
-                            {schoolsList.map(s => <option key={s} value={s}>{s}</option>)}
-                          </select>
+                              {schoolsList.map(s => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                          )}
                         </div>
                       </div>
                     )}
@@ -1444,8 +1683,16 @@ const AuthPage = () => {
                       </div>
                     )}
 
-                    <button type="submit" className="btn-primary auth-submit" disabled={loading}>
-                      {loading ? <span className="auth-spinner" /> : 'Create Account'}
+                    <button 
+                      type="submit" 
+                      className="btn-primary auth-submit" 
+                      disabled={loading || (schoolInviteData && (!schoolInviteData.valid || schoolInviteData.remaining <= 0))}
+                      style={{
+                        opacity: (schoolInviteData && (!schoolInviteData.valid || schoolInviteData.remaining <= 0)) ? 0.5 : 1,
+                        cursor: (schoolInviteData && (!schoolInviteData.valid || schoolInviteData.remaining <= 0)) ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      {loading ? <span className="auth-spinner" /> : (schoolInviteData && (!schoolInviteData.valid || schoolInviteData.remaining <= 0)) ? 'Invite Limit Reached' : 'Create Account'}
                     </button>
                   </form>
                 )}

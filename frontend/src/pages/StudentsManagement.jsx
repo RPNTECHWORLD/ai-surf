@@ -16,6 +16,7 @@ const StudentsManagement = () => {
   const [sessionTimeFilter, setSessionTimeFilter] = useState('All');
   const [stayFilter, setStayFilter] = useState('All');
   const [dateFilter, setDateFilter] = useState('All');
+  const [swimmingFilter, setSwimmingFilter] = useState('All'); // 'All' | 'Swimmer' | 'Non-Swimmer'
   const [activeStatFilter, setActiveStatFilter] = useState('TOTAL');
   const [showModal, setShowModal] = useState(false);
   const [modalInvite, setModalInvite] = useState(null); // link shown inside the add-student modal after creation
@@ -23,6 +24,13 @@ const StudentsManagement = () => {
   const [copiedInviteId, setCopiedInviteId] = useState(null);
   const [inviteModalData, setInviteModalData] = useState(null);
   const [inviteLinkCopied, setInviteLinkCopied] = useState(false);
+  // School Batch Registration Invite states
+  const [showSchoolInviteModal, setShowSchoolInviteModal] = useState(false);
+  const [inviteCapacityCount, setInviteCapacityCount] = useState(3);
+  const [createdSchoolInvite, setCreatedSchoolInvite] = useState(null);
+  const [schoolInviteLoading, setSchoolInviteLoading] = useState(false);
+  const [copiedSchoolInviteCode, setCopiedSchoolInviteCode] = useState(null);
+  const [schoolInvitesList, setSchoolInvitesList] = useState([]);
   const [attendanceModal, setAttendanceModal] = useState(null); // student object to mark attendance
   const [attSaving, setAttSaving] = useState(false);
   const [attError, setAttError] = useState('');
@@ -130,6 +138,53 @@ const StudentsManagement = () => {
     return diffDays > 0 ? diffDays : 1;
   };
 
+  const calculateAge = (dobString) => {
+    if (!dobString) return '';
+    try {
+      const birthDate = new Date(dobString);
+      if (isNaN(birthDate.getTime())) {
+        const parts = String(dobString).split(/[-/]/);
+        if (parts.length === 3) {
+          if (parts[0].length === 4) {
+            const d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+            if (!isNaN(d.getTime())) return Math.floor((new Date() - d) / (365.25 * 24 * 60 * 60 * 1000));
+          } else if (parts[2].length === 4) {
+            const d = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+            if (!isNaN(d.getTime())) return Math.floor((new Date() - d) / (365.25 * 24 * 60 * 60 * 1000));
+          }
+        }
+        return '';
+      }
+      const today = new Date();
+      let age = today.getFullYear() - birthDate.getFullYear();
+      const m = today.getMonth() - birthDate.getMonth();
+      if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+        age--;
+      }
+      return age >= 0 && age < 120 ? age : '';
+    } catch (e) {
+      return '';
+    }
+  };
+
+  const parseDateString = (dateStr) => {
+    if (!dateStr) return '';
+    const s = String(dateStr).trim();
+    if (s.includes('-') || s.includes('/')) {
+      const parts = s.split(/[-/]/);
+      if (parts.length === 3) {
+        if (parts[0].length === 4) {
+          // YYYY-MM-DD
+          return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+        } else if (parts[2].length === 4) {
+          // DD-MM-YYYY
+          return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+        }
+      }
+    }
+    return s;
+  };
+
   const defaultStartDate = new Date().toISOString().split('T')[0];
   const defaultEndDate = addDaysToDate(defaultStartDate, 3);
 
@@ -229,7 +284,8 @@ const StudentsManagement = () => {
 
   const [form, setForm] = useState({
     name: '', email: '', password: '', level: 'Beginner', instructor_id: '',
-    whatsapp_number: '', course_duration: '3 Days Course', session_time: '08:30 AM',
+    swimming_ability: 'Swimmer',
+    whatsapp_number: '', dob: '', age: '', course_duration: '3 Days Course', session_time: '08:30 AM',
     start_date: defaultStartDate, end_date: defaultEndDate, staying_at_school: 'Yes'
   });
 
@@ -283,11 +339,12 @@ const StudentsManagement = () => {
     setCopied(false);
     setCsvFileName('');
     setBulkRows([
-      { name: '', email: '', phone: '', age: '', level: 'Beginner', start_date: '', end_date: '', instructor_id: '' }
+      { name: '', email: '', phone: '', dob: '', age: '', level: 'Beginner', swimming_ability: 'Swimmer', start_date: '', end_date: '', instructor_id: '' }
     ]);
     setForm({
       name: '', email: '', password: '', level: 'Beginner', instructor_id: '',
-      whatsapp_number: '', course_duration: '3 Days Course', session_time: '08:30 AM',
+      swimming_ability: 'Swimmer',
+      whatsapp_number: '', dob: '', age: '', course_duration: '3 Days Course', session_time: '08:30 AM',
       start_date: new Date().toISOString().split('T')[0], end_date: addDaysToDate(new Date().toISOString().split('T')[0], 3), staying_at_school: 'Yes'
     });
   };
@@ -564,7 +621,11 @@ const StudentsManagement = () => {
       (s.session_time && sessionTimeFilter.startsWith(s.session_time));
     const matchStay = stayFilter === 'All' || (stayFilter === 'Lodge' ? s.staying_at_school === 'Yes' : s.staying_at_school === 'No');
     const matchDate = dateFilter === 'All' || s.start_date === dateFilter;
-    return matchSearch && matchLevel && matchStat && matchInstructor && matchSession && matchStay && matchDate;
+    const sSwim = (s.swimming_ability || 'Swimmer').toLowerCase();
+    const matchSwimming = swimmingFilter === 'All' ||
+      (swimmingFilter === 'Swimmer' && !sSwim.includes('non') && sSwim !== 'no') ||
+      (swimmingFilter === 'Non-Swimmer' && (sSwim.includes('non') || sSwim === 'no'));
+    return matchSearch && matchLevel && matchStat && matchInstructor && matchSession && matchStay && matchDate && matchSwimming;
   });
 
   const availableDates = React.useMemo(() => {
@@ -592,6 +653,7 @@ const StudentsManagement = () => {
       const isInstFreelance = (selectedInst?.school || '').toLowerCase().trim() === 'individual / freelance coach';
       const studentSchool = isInstFreelance ? 'Individual / Freelance Coach' : (effectiveSchool || 'Aquatic Indica Surf School');
 
+      const studentAge = form.dob ? (calculateAge(form.dob) || (form.age ? parseInt(form.age) : undefined)) : (form.age ? parseInt(form.age) : undefined);
       const res = await fetch(`${API}/api/students`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -600,6 +662,9 @@ const StudentsManagement = () => {
           email: form.email,
           password: form.password || undefined,
           level: form.level,
+          swimming_ability: form.swimming_ability || 'Swimmer',
+          dob: form.dob || '',
+          age: studentAge,
           instructor_id: form.instructor_id ? parseInt(form.instructor_id) : (isCoach && currentCoachId ? parseInt(currentCoachId) : null),
           whatsapp_number: form.whatsapp_number,
           course_duration: form.course_duration,
@@ -634,7 +699,10 @@ const StudentsManagement = () => {
           name: newStudent.name || form.name,
           email: newStudent.email || form.email,
           whatsapp_number: newStudent.whatsapp_number || form.whatsapp_number,
+          dob: newStudent.dob || form.dob,
+          age: newStudent.age || studentAge,
           level: newStudent.level || form.level,
+          swimming_ability: newStudent.swimming_ability || form.swimming_ability || 'Swimmer',
           course_duration: newStudent.course_duration || form.course_duration,
           session_time: newStudent.session_time || form.session_time,
           start_date: newStudent.start_date || form.start_date,
@@ -668,7 +736,7 @@ const StudentsManagement = () => {
   
   // Bulk grid rows state (Starts clean for manual data entry)
   const [bulkRows, setBulkRows] = useState([
-    { name: '', email: '', phone: '', age: '', level: 'Beginner', start_date: '', end_date: '', instructor_id: '' }
+    { name: '', email: '', phone: '', dob: '', age: '', level: 'Beginner', swimming_ability: 'Swimmer', start_date: '', end_date: '', instructor_id: '' }
   ]);
 
   // CSV Drag-drop & parser state
@@ -717,12 +785,12 @@ const StudentsManagement = () => {
   }, [summaryCompletedSessions]);
 
   const handleAddRow = () => {
-    setBulkRows(prev => [...prev, { name: '', email: '', phone: '', age: '', level: 'Beginner', start_date: '', end_date: '', instructor_id: '' }]);
+    setBulkRows(prev => [...prev, { name: '', email: '', phone: '', dob: '', age: '', level: 'Beginner', swimming_ability: 'Swimmer', start_date: '', end_date: '', instructor_id: '' }]);
   };
 
   const handleDeleteRow = (index) => {
     if (bulkRows.length <= 1) {
-      setBulkRows([{ name: '', email: '', phone: '', age: '', level: 'Beginner', start_date: '', end_date: '', instructor_id: '' }]);
+      setBulkRows([{ name: '', email: '', phone: '', dob: '', age: '', level: 'Beginner', swimming_ability: 'Swimmer', start_date: '', end_date: '', instructor_id: '' }]);
       return;
     }
     setBulkRows(prev => prev.filter((_, i) => i !== index));
@@ -731,7 +799,12 @@ const StudentsManagement = () => {
   const handleBulkChange = (index, field, value) => {
     setBulkRows(prev => {
       const next = [...prev];
-      next[index] = { ...next[index], [field]: value };
+      const updated = { ...next[index], [field]: value };
+      if (field === 'dob') {
+        const computed = calculateAge(value);
+        updated.age = computed ? String(computed) : '';
+      }
+      next[index] = updated;
       return next;
     });
   };
@@ -746,11 +819,13 @@ const StudentsManagement = () => {
         name: r.name.trim(),
         email: r.email.trim().toLowerCase(),
         whatsapp_number: r.phone || '',
-        age: r.age ? parseInt(r.age) : undefined,
+        dob: r.dob || '',
+        age: r.dob ? (calculateAge(r.dob) || (r.age ? parseInt(r.age) : undefined)) : (r.age ? parseInt(r.age) : undefined),
         level: r.level || 'Beginner',
+        swimming_ability: r.swimming_ability || 'Swimmer',
         start_date: r.start_date || new Date().toISOString().split('T')[0],
         end_date: r.end_date || '',
-        instructor_id: r.instructor_id ? parseInt(r.instructor_id) : null,
+        instructor_id: r.instructor_id ? parseInt(r.instructor_id) : (isCoach && currentCoachId ? parseInt(currentCoachId) : null),
         course_duration: '3 Days Course',
         session_time: 'Morning 6:00 AM',
         staying_at_school: 'Yes',
@@ -765,7 +840,14 @@ const StudentsManagement = () => {
         const result = await res.json();
         await fetchStudents();
         if (result.students && result.students.length > 0) {
-          setAddedStudentSummary(result.students[0]);
+          const first = result.students[0];
+          const baseUrl = window.location.origin;
+          const token = first.invite_token || `inv_${Date.now()}`;
+          setAddedStudentSummary({
+            ...first,
+            totalImported: result.students.length,
+            inviteLink: `${baseUrl}/student-portal?token=${token}`
+          });
           setAddMode('summary');
         } else {
           closeModal();
@@ -790,31 +872,73 @@ const StudentsManagement = () => {
       const lines = text.split(/\r\n|\n/).filter(line => line.trim().length > 0);
       if (lines.length <= 1) return;
       
+      const headerCols = lines[0].split(',').map(c => c.trim().toLowerCase().replace(/^"|"$/g, ''));
+      
+      const findIdx = (keywords, fallback) => {
+        const idx = headerCols.findIndex(h => keywords.some(k => h.includes(k)));
+        return idx !== -1 ? idx : fallback;
+      };
+
+      const nameIdx = findIdx(['full name', 'name', 'student'], 0);
+      const emailIdx = findIdx(['email'], 1);
+      const phoneIdx = findIdx(['phone', 'mobile', 'whatsapp'], 2);
+      const dobIdx = findIdx(['birth', 'dob'], 3);
+      const swimIdx = findIdx(['swim', 'ability'], -1);
+      const levelIdx = findIdx(['level', 'surf'], 4);
+      const startIdx = findIdx(['start', 'checkin', 'from'], headerCols.length >= 8 ? 5 : -1);
+      const endIdx = findIdx(['end', 'checkout', 'to'], headerCols.length >= 8 ? 6 : -1);
+      const coachIdx = findIdx(['instructor', 'coach', 'assign'], headerCols.length >= 8 ? 7 : 5);
+
       const rows = [];
       const seenEmails = new Set();
+      const todayISO = new Date().toISOString().split('T')[0];
+
       for (let i = 1; i < lines.length; i++) {
         const cols = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
-        if (cols[0] && cols[1]) {
-          const email = cols[1].toLowerCase().trim();
+        const name = (cols[nameIdx] || '').trim();
+        const email = (cols[emailIdx] || '').trim().toLowerCase();
+        
+        if (name && email) {
           if (seenEmails.has(email)) continue; // ignore duplicate in same CSV
           seenEmails.add(email);
 
           // Calculate age from DOB if given as YYYY-MM-DD or numeric
-          let age = '20';
-          const dobRaw = cols[3] || '';
-          if (dobRaw.includes('-')) {
-            const birthYear = parseInt(dobRaw.split('-')[0], 10);
-            if (!isNaN(birthYear) && birthYear > 1920 && birthYear <= new Date().getFullYear()) {
-              age = String(new Date().getFullYear() - birthYear);
+          let dobVal = '';
+          let computedAge = '';
+          const dobRaw = dobIdx !== -1 ? (cols[dobIdx] || '').trim() : '';
+          if (dobRaw) {
+            dobVal = parseDateString(dobRaw);
+            const cAge = calculateAge(dobVal);
+            if (cAge) computedAge = String(cAge);
+            else if (!isNaN(parseInt(dobRaw, 10)) && parseInt(dobRaw, 10) > 0 && parseInt(dobRaw, 10) < 120) {
+              computedAge = String(parseInt(dobRaw, 10));
             }
-          } else if (!isNaN(parseInt(dobRaw, 10)) && parseInt(dobRaw, 10) > 0 && parseInt(dobRaw, 10) < 120) {
-            age = dobRaw;
+          }
+
+          // Parse Swimming Ability
+          let swimVal = 'Swimmer';
+          if (swimIdx !== -1 && cols[swimIdx]) {
+            const rawSwim = cols[swimIdx].trim().toLowerCase();
+            if (rawSwim.includes('non') || rawSwim === 'no' || rawSwim === 'false') {
+              swimVal = 'Non-Swimmer';
+            } else {
+              swimVal = 'Swimmer';
+            }
+          }
+
+          // Parse Start Date and End Date
+          let startDate = startIdx !== -1 && cols[startIdx] ? parseDateString(cols[startIdx]) : '';
+          if (!startDate) startDate = todayISO;
+
+          let endDate = endIdx !== -1 && cols[endIdx] ? parseDateString(cols[endIdx]) : '';
+          if (!endDate) {
+            endDate = addDaysToDate(startDate, 3);
           }
 
           // Match instructor by name if provided
           let instructor_id = '';
           let instructor_name = '';
-          const coachQuery = (cols[5] || '').toLowerCase().trim();
+          const coachQuery = coachIdx !== -1 ? (cols[coachIdx] || '').toLowerCase().trim() : '';
           if (coachQuery && Array.isArray(instructors) && instructors.length > 0) {
             const matched = instructors.find(ins => {
               const iname = (ins.name || '').toLowerCase().trim();
@@ -824,19 +948,20 @@ const StudentsManagement = () => {
               instructor_id = matched.id;
               instructor_name = matched.name;
             } else {
-              instructor_name = cols[5] || '';
+              instructor_name = cols[coachIdx] || '';
             }
           }
 
           rows.push({
-            name: cols[0],
-            email: cols[1],
-            phone: cols[2] || '',
-            dob: dobRaw,
-            age: age,
-            level: cols[4] || 'Beginner',
-            start_date: new Date().toISOString().split('T')[0],
-            end_date: '',
+            name: name,
+            email: email,
+            phone: phoneIdx !== -1 ? (cols[phoneIdx] || '') : '',
+            dob: dobVal,
+            age: computedAge,
+            level: levelIdx !== -1 && cols[levelIdx] ? cols[levelIdx] : 'Beginner',
+            swimming_ability: swimVal,
+            start_date: startDate,
+            end_date: endDate,
             instructor_id: instructor_id,
             instructor_name: instructor_name
           });
@@ -850,7 +975,7 @@ const StudentsManagement = () => {
   };
 
   const downloadCSVSample = () => {
-    const csvContent = "data:text/csv;charset=utf-8,Full Name,Email Address,Phone Number,Date of Birth,Surf Level,Assign Instructor\nLiam Torres,liam.torres@gmail.com,(555) 123-4567,1998-05-22,Intermediate,Bethany Hamilton\nMaya Chen,maya.chen@yahoo.com,(555) 987-6543,2001-11-08,Beginner,Kelly Slater";
+    const csvContent = "data:text/csv;charset=utf-8,Full Name,Email Address,Phone Number,Date of Birth,Swimming Ability,Surf Level,Start Date,End Date,Assign Instructor\nLiam Torres,liam.torres@gmail.com,(555) 123-4567,1998-05-22,Swimmer,Intermediate,2026-10-01,2026-10-03,Bethany Hamilton\nMaya Chen,maya.chen@yahoo.com,(555) 987-6543,2001-11-08,Non-Swimmer,Beginner,2026-10-05,2026-10-07,Kelly Slater";
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
@@ -1219,6 +1344,99 @@ const StudentsManagement = () => {
     );
   };
 
+  const fetchSchoolInvites = async () => {
+    try {
+      const res = await fetch(`${API}/api/school-invites?school=${encodeURIComponent(effectiveSchool)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSchoolInvitesList(Array.isArray(data) ? data : []);
+      }
+    } catch (err) {
+      try {
+        const saved = JSON.parse(localStorage.getItem('local_school_invites') || '[]');
+        setSchoolInvitesList(saved.filter(i => (i.school || '').toLowerCase() === effectiveSchoolLower));
+      } catch (e) {}
+    }
+  };
+
+  const handleCreateSchoolInvite = async () => {
+    const count = parseInt(inviteCapacityCount) || 1;
+    if (count < 1) {
+      showToast('Please enter a capacity count of at least 1');
+      return;
+    }
+    setSchoolInviteLoading(true);
+    try {
+      const res = await fetch(`${API}/api/school-invites`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          school: effectiveSchool,
+          max_count: count
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const origin = window.location.origin;
+        const fullUrl = `${origin}/auth?mode=signup&invite_code=${data.code}&school=${encodeURIComponent(data.school)}`;
+        const newInviteObj = { ...data, fullUrl };
+        setCreatedSchoolInvite(newInviteObj);
+        setSchoolInvitesList(prev => [newInviteObj, ...prev]);
+
+        if (navigator.clipboard) {
+          await navigator.clipboard.writeText(fullUrl);
+        }
+        setCopiedSchoolInviteCode(data.code);
+        showToast(`✓ Invite link for ${count} students copied to clipboard!`);
+      } else {
+        const err = await res.json();
+        showToast(err.detail || 'Failed to generate invite link');
+      }
+    } catch (err) {
+      // Local fallback
+      const mockCode = `inv_${Date.now().toString(36)}`;
+      const origin = window.location.origin;
+      const fullUrl = `${origin}/auth?mode=signup&invite_code=${mockCode}&school=${encodeURIComponent(effectiveSchool)}`;
+      const newInviteObj = {
+        id: Date.now(),
+        code: mockCode,
+        school: effectiveSchool,
+        max_count: count,
+        used_count: 0,
+        remaining: count,
+        is_active: true,
+        created_at: new Date().toISOString(),
+        fullUrl
+      };
+      try {
+        const saved = JSON.parse(localStorage.getItem('local_school_invites') || '[]');
+        saved.unshift(newInviteObj);
+        localStorage.setItem('local_school_invites', JSON.stringify(saved));
+      } catch (e) {}
+      setCreatedSchoolInvite(newInviteObj);
+      setSchoolInvitesList(prev => [newInviteObj, ...prev]);
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(fullUrl);
+      }
+      setCopiedSchoolInviteCode(mockCode);
+      showToast(`✓ Invite link for ${count} students copied to clipboard!`);
+    } finally {
+      setSchoolInviteLoading(false);
+    }
+  };
+
+  const copySchoolInviteLink = async (inv) => {
+    const origin = window.location.origin;
+    const link = inv.fullUrl || `${origin}/auth?mode=signup&invite_code=${inv.code}&school=${encodeURIComponent(inv.school || effectiveSchool)}`;
+    if (navigator.clipboard) {
+      await navigator.clipboard.writeText(link);
+    }
+    setCopiedSchoolInviteCode(inv.code);
+    showToast('✓ Invite link copied to clipboard!');
+    setTimeout(() => setCopiedSchoolInviteCode(null), 3000);
+  };
+
+
   return (
 
     <div className="sm-page">
@@ -1261,6 +1479,27 @@ const StudentsManagement = () => {
             )}
 
 
+            <button
+              className="sm-btn-secondary"
+              onClick={() => {
+                fetchSchoolInvites();
+                setShowSchoolInviteModal(true);
+              }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                background: '#F0FDF4',
+                color: '#15803D',
+                border: '1.5px solid #BBF7D0',
+                fontWeight: 700,
+                cursor: 'pointer'
+              }}
+              title="Create and share student registration link with capacity limit"
+            >
+              <span style={{ fontSize: '15px' }}>🔗</span>
+              <span>Invite Link</span>
+            </button>
             <button className="sm-btn-secondary" onClick={downloadCSVSample}>Export CSV</button>
             <button className="sm-btn-primary" onClick={() => { setShowModal(true); setAddMode('single'); }}>+ Add Student</button>
           </div>
@@ -1397,6 +1636,30 @@ const StudentsManagement = () => {
               </button>
             )}
           </div>
+
+          {/* 2. Swimming Ability Filter */}
+          <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+            <select
+              className="sm-select"
+              value={swimmingFilter}
+              onChange={e => setSwimmingFilter(e.target.value)}
+              style={{
+                cursor: 'pointer',
+                fontWeight: swimmingFilter !== 'All' ? 700 : 500,
+                color: swimmingFilter !== 'All' ? (swimmingFilter === 'Non-Swimmer' ? '#D97706' : '#0D9488') : '#334155',
+                borderColor: swimmingFilter !== 'All' ? (swimmingFilter === 'Non-Swimmer' ? '#F59E0B' : '#0D9488') : '#CBD5E1',
+                background: swimmingFilter !== 'All' ? (swimmingFilter === 'Non-Swimmer' ? '#FFFBEB' : '#E6F9F5') : '#FFFFFF',
+                borderRadius: '10px',
+                padding: '9px 14px',
+                fontSize: '13px'
+              }}
+              title="Filter by Swimmer or Non-Swimmer"
+            >
+              <option value="All">🏊 All Swimming (Any)</option>
+              <option value="Swimmer">🏊 Swimmer Only</option>
+              <option value="Non-Swimmer">🤿 Non-Swimmer Only</option>
+            </select>
+          </div>
         </div>
 
 
@@ -1444,7 +1707,7 @@ const StudentsManagement = () => {
                 <button
                   className="sm-btn-secondary"
                   style={{ margin: '0 auto', height: '36px', padding: '6px 16px', fontSize: '12.5px' }}
-                  onClick={() => { setSearch(''); setDateFilter('All'); setLevelFilter('All'); setActiveStatFilter('TOTAL'); }}
+                  onClick={() => { setSearch(''); setDateFilter('All'); setSwimmingFilter('All'); setLevelFilter('All'); setActiveStatFilter('TOTAL'); }}
                 >
                   Clear Filters
                 </button>
@@ -1506,7 +1769,18 @@ const StudentsManagement = () => {
                           {s.name ? s.name.charAt(0).toUpperCase() : 'S'}
                         </div>
                         <div>
-                          <div className="sm-student-name">{s.name}</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                            <div className="sm-student-name">{s.name}</div>
+                            {s.swimming_ability?.toLowerCase() === 'non-swimmer' ? (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '10.5px', fontWeight: 700, color: '#D97706', background: '#FEF3C7', border: '1px solid #FDE68A', padding: '1px 6px', borderRadius: '5px' }}>
+                                🤿 Non-Swimmer
+                              </span>
+                            ) : (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '10.5px', fontWeight: 700, color: '#0D9488', background: '#ECFDF5', border: '1px solid #A7F3D0', padding: '1px 6px', borderRadius: '5px' }}>
+                                🏊 Swimmer
+                              </span>
+                            )}
+                          </div>
                           <div className="sm-student-email">
                             {s.whatsapp_number ? `📱 +91 ${s.whatsapp_number}` : s.email}
                           </div>
@@ -1748,6 +2022,30 @@ const StudentsManagement = () => {
                       <input type="text" placeholder="(555) 321-7654" value={form.whatsapp_number} onChange={e => setForm({...form, whatsapp_number: e.target.value})} />
                     </div>
                     <div className="sm-field">
+                      <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>Date of Birth (DOB) *</span>
+                        {form.dob && calculateAge(form.dob) && (
+                          <span style={{ fontSize: '11px', color: '#0D9488', fontWeight: '700', background: 'rgba(13,148,136,0.12)', padding: '2px 8px', borderRadius: '12px' }}>
+                            Age: {calculateAge(form.dob)} yrs
+                          </span>
+                        )}
+                      </label>
+                      <input
+                        type="date"
+                        value={form.dob || ''}
+                        max={new Date().toISOString().split('T')[0]}
+                        onChange={e => {
+                          const val = e.target.value;
+                          const cAge = calculateAge(val);
+                          setForm({ ...form, dob: val, age: cAge || '' });
+                        }}
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="sm-grid-2">
+                    <div className="sm-field">
                       <label>Surf Level *</label>
                       <select value={form.level} onChange={e => setForm({...form, level: e.target.value})}>
                         <option value="Beginner">Beginner</option>
@@ -1756,28 +2054,46 @@ const StudentsManagement = () => {
                         <option value="Master">Master</option>
                       </select>
                     </div>
+                    <div className="sm-field">
+                      <label>Swimming Ability *</label>
+                      <select value={form.swimming_ability || 'Swimmer'} onChange={e => setForm({...form, swimming_ability: e.target.value})}>
+                        <option value="Swimmer">🏊 Swimmer</option>
+                        <option value="Non-Swimmer">🤿 Non-Swimmer</option>
+                      </select>
+                    </div>
                   </div>
 
-                  <div className="sm-field">
-                    <label>Course Duration</label>
-                    <select
-                      value={
-                        ['3 Days Course', '5 Days Course', '7 Days Course', '10 Days Course'].includes(form.course_duration)
-                          ? form.course_duration
-                          : 'custom'
-                      }
-                      onChange={e => handleCourseDurationChange(e.target.value)}
-                    >
-                      <option value="3 Days Course">3 Days Course</option>
-                      <option value="5 Days Course">5 Days Course</option>
-                      <option value="7 Days Course">7 Days Course</option>
-                      <option value="10 Days Course">10 Days Course</option>
-                      <option value="custom">
-                        {['3 Days Course', '5 Days Course', '7 Days Course', '10 Days Course'].includes(form.course_duration)
-                          ? 'Custom (> 10 Days)'
-                          : `Custom (${form.course_duration})`}
-                      </option>
-                    </select>
+                  <div className="sm-grid-2">
+                    <div className="sm-field">
+                      <label>Course Duration</label>
+                      <select
+                        value={
+                          ['3 Days Course', '5 Days Course', '7 Days Course', '10 Days Course'].includes(form.course_duration)
+                            ? form.course_duration
+                            : 'custom'
+                        }
+                        onChange={e => handleCourseDurationChange(e.target.value)}
+                      >
+                        <option value="3 Days Course">3 Days Course</option>
+                        <option value="5 Days Course">5 Days Course</option>
+                        <option value="7 Days Course">7 Days Course</option>
+                        <option value="10 Days Course">10 Days Course</option>
+                        <option value="custom">
+                          {['3 Days Course', '5 Days Course', '7 Days Course', '10 Days Course'].includes(form.course_duration)
+                            ? 'Custom (> 10 Days)'
+                            : `Custom (${form.course_duration})`}
+                        </option>
+                      </select>
+                    </div>
+                    <div className="sm-field">
+                      <label>Assign Instructor</label>
+                      <select value={form.instructor_id} onChange={e => setForm({...form, instructor_id: e.target.value})}>
+                        <option value="">Auto-Assign / Default</option>
+                        {instructors.map(i => (
+                          <option key={i.id} value={i.id}>{i.name}</option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
 
 
@@ -1840,7 +2156,8 @@ const StudentsManagement = () => {
                         <th>Full Name *</th>
                         <th>Email Address *</th>
                         <th>Phone Number</th>
-                        <th>Age *</th>
+                        <th>Date of Birth *</th>
+                        <th>Swimming Ability *</th>
                         <th>Surf Level *</th>
                         <th>Start Date</th>
                         <th>End Date</th>
@@ -1876,13 +2193,31 @@ const StudentsManagement = () => {
                             />
                           </td>
                           <td>
-                            <input
-                              type="number"
-                              placeholder="Age"
-                              value={row.age}
-                              onChange={e => handleBulkChange(rIdx, 'age', e.target.value)}
-                              style={{ width: '60px' }}
-                            />
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                              <input
+                                type="date"
+                                value={row.dob || ''}
+                                max={new Date().toISOString().split('T')[0]}
+                                onChange={e => handleBulkChange(rIdx, 'dob', e.target.value)}
+                                style={{ minWidth: '135px', padding: '6px 8px', fontSize: '12px' }}
+                                required
+                              />
+                              {row.dob && calculateAge(row.dob) && (
+                                <span style={{ fontSize: '11px', color: '#0D9488', fontWeight: 700, paddingLeft: '2px' }}>
+                                  Age: {calculateAge(row.dob)} yrs
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td>
+                            <select
+                              value={row.swimming_ability || 'Swimmer'}
+                              onChange={e => handleBulkChange(rIdx, 'swimming_ability', e.target.value)}
+                              style={{ minWidth: '115px' }}
+                            >
+                              <option value="Swimmer">🏊 Swimmer</option>
+                              <option value="Non-Swimmer">🤿 Non-Swimmer</option>
+                            </select>
                           </td>
                           <td>
                             <select
@@ -2007,7 +2342,7 @@ const StudentsManagement = () => {
                           type="button"
                           onClick={() => {
                             setCsvFileName('');
-                            setBulkRows([{ name: '', email: '', phone: '', age: '', level: 'Beginner', start_date: '', end_date: '', instructor_id: '' }]);
+                            setBulkRows([{ name: '', email: '', phone: '', dob: '', age: '', level: 'Beginner', start_date: '', end_date: '', instructor_id: '' }]);
                           }}
                           style={{
                             background: 'none', border: 'none', color: '#EF4444',
@@ -2064,7 +2399,7 @@ const StudentsManagement = () => {
                               boxShadow: '0 2px 10px rgba(13,148,136,0.3)'
                             }}
                           >
-                            {saving ? '⏳ Importing...' : `🚀 Import ${bulkRows.filter(r => r.name && r.email).length} Students Now`}
+                            {saving ? '⏳ Importing & Sending Emails...' : `🚀 Import ${bulkRows.filter(r => r.name && r.email).length} Students Now`}
                           </button>
                         </div>
                       </div>
@@ -2077,7 +2412,9 @@ const StudentsManagement = () => {
                               <th>Name</th>
                               <th>Email</th>
                               <th>Phone</th>
-                              <th>Age / Level</th>
+                              <th>DOB / Level</th>
+                              <th>Swimming</th>
+                              <th>Start / End Date</th>
                               <th>Assigned Coach</th>
                             </tr>
                           </thead>
@@ -2087,7 +2424,41 @@ const StudentsManagement = () => {
                                 <td><strong>{row.name}</strong></td>
                                 <td>{row.email}</td>
                                 <td>{row.phone || '—'}</td>
-                                <td>{row.age ? `${row.age} yrs` : '—'} • <span className="sm-badge-opt">{row.level}</span></td>
+                                <td>
+                                  {row.dob ? (
+                                    <span>
+                                      {row.dob}
+                                      {calculateAge(row.dob) && (
+                                        <span style={{ color: '#0D9488', fontWeight: 600 }}> ({calculateAge(row.dob)} yrs)</span>
+                                      )}
+                                    </span>
+                                  ) : (
+                                    row.age ? `${row.age} yrs` : '—'
+                                  )} • <span className="sm-badge-opt">{row.level}</span>
+                                </td>
+                                <td>
+                                  {row.swimming_ability?.toLowerCase() === 'non-swimmer' ? (
+                                    <span style={{ fontSize: '11px', fontWeight: 700, color: '#D97706', background: '#FEF3C7', padding: '2px 6px', borderRadius: '4px' }}>
+                                      🤿 Non-Swimmer
+                                    </span>
+                                  ) : (
+                                    <span style={{ fontSize: '11px', fontWeight: 700, color: '#0D9488', background: '#ECFDF5', padding: '2px 6px', borderRadius: '4px' }}>
+                                      🏊 Swimmer
+                                    </span>
+                                  )}
+                                </td>
+                                <td>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                    <span style={{ fontSize: '12px', fontWeight: 600, color: '#0F172A' }}>
+                                      {row.start_date || '—'}
+                                    </span>
+                                    {row.end_date && (
+                                      <span style={{ fontSize: '11px', color: '#64748B' }}>
+                                        to {row.end_date}
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
                                 <td>{row.instructor_name || (instructors.find(i => String(i.id) === String(row.instructor_id))?.name) || 'None'}</td>
                               </tr>
                             ))}
@@ -2125,14 +2496,29 @@ const StudentsManagement = () => {
                           <td>Standard formats accepted</td>
                         </tr>
                         <tr>
-                          <td><strong>Date of Birth</strong></td>
+                          <td><strong>Date of Birth (DOB)</strong></td>
                           <td><span className="sm-badge-req">Required</span></td>
-                          <td>Numeric values only (must be under 100) or YYYY-MM-DD</td>
+                          <td>Date of Birth in YYYY-MM-DD (e.g., 1998-05-22) or DD-MM-YYYY format</td>
+                        </tr>
+                        <tr>
+                          <td><strong>Swimming Ability</strong></td>
+                          <td><span className="sm-badge-opt">Optional</span></td>
+                          <td>Swimmer or Non-Swimmer (defaults to Swimmer)</td>
                         </tr>
                         <tr>
                           <td><strong>Surf Level</strong></td>
                           <td><span className="sm-badge-opt">Optional</span></td>
                           <td>Must match: Beginner, Intermediate, or Advanced</td>
+                        </tr>
+                        <tr>
+                          <td><strong>Start Date</strong></td>
+                          <td><span className="sm-badge-req">Required</span></td>
+                          <td>Session start date in YYYY-MM-DD (e.g., 2026-10-01) or DD-MM-YYYY</td>
+                        </tr>
+                        <tr>
+                          <td><strong>End Date</strong></td>
+                          <td><span className="sm-badge-opt">Optional</span></td>
+                          <td>Session end date in YYYY-MM-DD (defaults to 3 days if left blank)</td>
                         </tr>
                         <tr>
                           <td><strong>Assign Instructor</strong></td>
@@ -2178,7 +2564,36 @@ const StudentsManagement = () => {
                 {/* Green Banner */}
                 <div className="sm-summary-banner">
                   <span className="sm-summary-banner-check">✓</span>
-                  <span>Student Successfully Added!</span>
+                  <span>
+                    {addedStudentSummary.totalImported && addedStudentSummary.totalImported > 1
+                      ? `${addedStudentSummary.totalImported} Students Successfully Added & Invited!`
+                      : 'Student Successfully Added!'}
+                  </span>
+                </div>
+
+                {/* Email Confirmation Notice */}
+                <div style={{
+                  background: 'rgba(13, 148, 136, 0.12)',
+                  border: '1px solid rgba(13, 148, 136, 0.35)',
+                  borderRadius: '12px',
+                  padding: '12px 18px',
+                  marginBottom: '20px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  color: '#0D9488',
+                  fontSize: '13px',
+                  fontWeight: 600
+                }}>
+                  <span style={{ fontSize: '20px' }}>✉️</span>
+                  <span>
+                    Welcome and student portal invitation emails with access links have been automatically sent to{' '}
+                    <strong>
+                      {addedStudentSummary.totalImported && addedStudentSummary.totalImported > 1
+                        ? `all ${addedStudentSummary.totalImported} students`
+                        : (addedStudentSummary.email || 'the student')}
+                    </strong>!
+                  </span>
                 </div>
 
                 {/* Magic Invite Link Card */}
@@ -2269,10 +2684,27 @@ const StudentsManagement = () => {
                       <tbody>
                         <tr><td>Email Address</td><td>{addedStudentSummary.email || '—'}</td></tr>
                         <tr><td>Phone Number</td><td>{addedStudentSummary.whatsapp_number || '—'}</td></tr>
-                        <tr><td>Age</td><td>{addedStudentSummary.age || '—'}</td></tr>
+                        <tr>
+                          <td>Date of Birth</td>
+                          <td>
+                            {addedStudentSummary.dob
+                              ? `${addedStudentSummary.dob}${calculateAge(addedStudentSummary.dob) ? ` (${calculateAge(addedStudentSummary.dob)} yrs)` : ''}`
+                              : (addedStudentSummary.age ? `${addedStudentSummary.age} yrs` : '—')}
+                          </td>
+                        </tr>
                         <tr>
                           <td>Surf Level</td>
                           <td><span className="sm-summary-teal-badge">{(addedStudentSummary.level || 'Beginner').toUpperCase()} TEAL LEVEL</span></td>
+                        </tr>
+                        <tr>
+                          <td>Swimming Ability</td>
+                          <td>
+                            {addedStudentSummary.swimming_ability?.toLowerCase() === 'non-swimmer' ? (
+                              <span style={{ color: '#D97706', fontWeight: 700 }}>🤿 Non-Swimmer</span>
+                            ) : (
+                              <span style={{ color: '#0D9488', fontWeight: 700 }}>🏊 Swimmer</span>
+                            )}
+                          </td>
                         </tr>
                         <tr><td>Assigned Instructor</td><td>{addedStudentSummary.instructor || 'Auto-Assigned Coach'}</td></tr>
                         <tr><td>Booking Start Date</td><td>{addedStudentSummary.start_date || '—'}</td></tr>
@@ -2541,6 +2973,288 @@ const StudentsManagement = () => {
           </div>
         </div>
       )}
+
+      {/* School Registration Invite Modal */}
+      {showSchoolInviteModal && (
+        <div 
+          className="sm-modal-overlay" 
+          onClick={() => { setShowSchoolInviteModal(false); setCreatedSchoolInvite(null); }}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(5px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '16px' }}
+        >
+          <div
+            className="sm-modal"
+            style={{ 
+              maxWidth: '580px', 
+              width: '100%', 
+              background: '#FFFFFF', 
+              borderRadius: '20px', 
+              padding: '28px', 
+              border: '1px solid #E2E8F0', 
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+              maxHeight: '90vh',
+              overflowY: 'auto'
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ width: '46px', height: '46px', borderRadius: '14px', background: '#ECFDF5', color: '#10B981', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '24px' }}>
+                  🔗
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '19px', fontWeight: '800', color: '#0F172A', fontFamily: 'Outfit, sans-serif' }}>
+                    School Invite Link
+                  </h3>
+                  <p style={{ margin: '3px 0 0 0', fontSize: '13px', color: '#64748B' }}>
+                    Share registration link locked to <strong>{effectiveSchool}</strong> with custom capacity.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => { setShowSchoolInviteModal(false); setCreatedSchoolInvite(null); }}
+                style={{ background: '#F1F5F9', border: 'none', borderRadius: '50%', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#64748B', fontSize: '14px' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* School Locking Card */}
+            <div style={{ background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: '14px', padding: '14px 16px', marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '20px' }}>🏫</span>
+                <div>
+                  <div style={{ fontSize: '11px', fontWeight: '800', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    Active School
+                  </div>
+                  <div style={{ fontSize: '14px', fontWeight: '800', color: '#0F172A', marginTop: '1px' }}>
+                    {effectiveSchool}
+                  </div>
+                </div>
+              </div>
+              <div style={{ background: '#DCFCE7', color: '#15803D', padding: '4px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: '800', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                <span>🔒</span>
+                <span>School Locked on Signup</span>
+              </div>
+            </div>
+
+            {/* Capacity Input Block */}
+            <div style={{ background: '#FFFFFF', border: '1.5px solid #E2E8F0', borderRadius: '16px', padding: '20px', marginBottom: '20px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: '800', color: '#0F172A', marginBottom: '8px' }}>
+                👥 Registration Capacity / Student Count
+              </label>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+                <button
+                  type="button"
+                  onClick={() => setInviteCapacityCount(c => Math.max(1, (parseInt(c) || 1) - 1))}
+                  style={{ width: '40px', height: '40px', borderRadius: '10px', border: '1.5px solid #CBD5E1', background: '#F8FAFC', color: '#0F172A', fontSize: '18px', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                >
+                  −
+                </button>
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={inviteCapacityCount}
+                  onChange={e => setInviteCapacityCount(e.target.value)}
+                  style={{ flex: 1, height: '40px', borderRadius: '10px', border: '1.5px solid #0D9488', textAlign: 'center', fontSize: '18px', fontWeight: 800, color: '#0F172A', outline: 'none' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setInviteCapacityCount(c => (parseInt(c) || 0) + 1)}
+                  style={{ width: '40px', height: '40px', borderRadius: '10px', border: '1.5px solid #CBD5E1', background: '#F8FAFC', color: '#0F172A', fontSize: '18px', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                >
+                  +
+                </button>
+              </div>
+
+              {/* Quick Preset Buttons */}
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
+                {[1, 2, 3, 5, 10].map(cnt => (
+                  <button
+                    key={cnt}
+                    type="button"
+                    onClick={() => setInviteCapacityCount(cnt)}
+                    style={{
+                      padding: '5px 12px',
+                      borderRadius: '8px',
+                      border: parseInt(inviteCapacityCount) === cnt ? '1.5px solid #0D9488' : '1px solid #E2E8F0',
+                      background: parseInt(inviteCapacityCount) === cnt ? '#F0FDFA' : '#F8FAFC',
+                      color: parseInt(inviteCapacityCount) === cnt ? '#0D9488' : '#64748B',
+                      fontWeight: '700',
+                      fontSize: '12px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {cnt} {cnt === 1 ? 'Person' : 'People'}
+                  </button>
+                ))}
+              </div>
+
+              {/* How it works note */}
+              <div style={{ background: '#F0F9FF', border: '1px solid #BAE6FD', borderRadius: '10px', padding: '12px', fontSize: '12.5px', color: '#0369A1', lineHeight: '1.5' }}>
+                <div style={{ fontWeight: 800, marginBottom: '3px' }}>💡 How this capacity count works:</div>
+                If set to <strong>{inviteCapacityCount || 3}</strong>:
+                <ul style={{ margin: '4px 0 0 18px', padding: 0 }}>
+                  <li><strong>Option A:</strong> 1 primary email signup with {(parseInt(inviteCapacityCount) || 3) - 1} accompanying guest(s)</li>
+                  <li><strong>Option B:</strong> {inviteCapacityCount || 3} separate students registering with their individual emails</li>
+                </ul>
+                Once all {inviteCapacityCount || 3} slot(s) are used, the link automatically locks and closes.
+              </div>
+            </div>
+
+            {/* Generate Button */}
+            <button
+              type="button"
+              onClick={handleCreateSchoolInvite}
+              disabled={schoolInviteLoading}
+              style={{
+                width: '100%',
+                padding: '12px',
+                borderRadius: '12px',
+                background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
+                color: '#FFFFFF',
+                border: 'none',
+                fontWeight: 800,
+                fontSize: '14px',
+                cursor: schoolInviteLoading ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                boxShadow: '0 4px 12px rgba(13, 148, 136, 0.25)',
+                marginBottom: '20px'
+              }}
+            >
+              {schoolInviteLoading ? 'Generating…' : '⚡ Generate & Copy Invite Link'}
+            </button>
+
+            {/* Created Invite Box */}
+            {createdSchoolInvite && (
+              <div style={{ background: '#ECFDF5', border: '1.5px solid #10B981', borderRadius: '16px', padding: '18px', marginBottom: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 800, color: '#065F46', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span>✅</span>
+                    <span>Link Ready & Copied!</span>
+                  </span>
+                  <span style={{ fontSize: '11px', fontWeight: 800, color: '#15803D', background: '#DCFCE7', padding: '3px 10px', borderRadius: '12px' }}>
+                    0 / {createdSchoolInvite.max_count} Used ({createdSchoolInvite.max_count} Slots Left)
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                  <input
+                    type="text"
+                    readOnly
+                    value={createdSchoolInvite.fullUrl}
+                    style={{ flex: 1, padding: '10px 12px', borderRadius: '8px', border: '1px solid #A7F3D0', background: '#FFFFFF', fontSize: '12px', color: '#0F172A', outline: 'none' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => copySchoolInviteLink(createdSchoolInvite)}
+                    style={{
+                      background: copiedSchoolInviteCode === createdSchoolInvite.code ? '#10B981' : '#0D9488',
+                      color: '#FFF',
+                      border: 'none',
+                      borderRadius: '8px',
+                      padding: '0 16px',
+                      fontWeight: 800,
+                      fontSize: '12px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {copiedSchoolInviteCode === createdSchoolInvite.code ? '✓ Copied!' : 'Copy'}
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const shareMsg = `Hi! Here is your registration invite link for ${effectiveSchool}: ${createdSchoolInvite.fullUrl}\n\nUp to ${createdSchoolInvite.max_count} student/guest slots are available. Please register soon!`;
+                      window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(shareMsg)}`, '_blank');
+                    }}
+                    style={{ flex: 1, padding: '9px', borderRadius: '8px', background: '#25D366', color: '#FFF', border: 'none', fontWeight: 700, fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                  >
+                    <span>💬 Share via WhatsApp</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => window.open(createdSchoolInvite.fullUrl, '_blank')}
+                    style={{ padding: '9px 14px', borderRadius: '8px', background: '#FFFFFF', color: '#0F172A', border: '1px solid #CBD5E1', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}
+                  >
+                    🚀 Test Link
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* List of Recent Invites */}
+            {schoolInvitesList.length > 0 && (
+              <div>
+                <h4 style={{ margin: '0 0 10px 0', fontSize: '13px', fontWeight: 800, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Previous Invite Links for {effectiveSchool} ({schoolInvitesList.length})
+                </h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '180px', overflowY: 'auto' }}>
+                  {schoolInvitesList.map((inv, idx) => {
+                    const rem = inv.remaining !== undefined ? inv.remaining : Math.max(0, inv.max_count - (inv.used_count || 0));
+                    const isFull = rem <= 0 || !inv.is_active;
+                    return (
+                      <div
+                        key={inv.id || inv.code || idx}
+                        style={{
+                          background: isFull ? '#F8FAFC' : '#FFFFFF',
+                          border: isFull ? '1px solid #E2E8F0' : '1px solid #BBF7D0',
+                          borderRadius: '10px',
+                          padding: '10px 12px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: '10px'
+                        }}
+                      >
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <code style={{ fontSize: '11px', fontWeight: 700, color: '#0D9488', background: '#F0FDFA', padding: '2px 6px', borderRadius: '4px' }}>
+                              {inv.code}
+                            </code>
+                            <span style={{ fontSize: '11px', color: '#64748B' }}>
+                              Capacity: <strong>{inv.max_count}</strong>
+                            </span>
+                          </div>
+                          <div style={{ fontSize: '11px', color: isFull ? '#EF4444' : '#15803D', fontWeight: 700, marginTop: '2px' }}>
+                            {isFull ? `⛔ Full (${inv.used_count || inv.max_count}/${inv.max_count} used)` : `⚡ ${rem} of ${inv.max_count} slots left`}
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => copySchoolInviteLink(inv)}
+                          disabled={isFull}
+                          style={{
+                            background: isFull ? '#E2E8F0' : (copiedSchoolInviteCode === inv.code ? '#10B981' : '#F0FDFA'),
+                            color: isFull ? '#94A3B8' : (copiedSchoolInviteCode === inv.code ? '#FFFFFF' : '#0D9488'),
+                            border: isFull ? 'none' : '1px solid #99F6E4',
+                            borderRadius: '6px',
+                            padding: '4px 10px',
+                            fontSize: '11.5px',
+                            fontWeight: 700,
+                            cursor: isFull ? 'not-allowed' : 'pointer'
+                          }}
+                        >
+                          {copiedSchoolInviteCode === inv.code ? '✓ Copied' : isFull ? 'Expired' : 'Copy Link'}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
 
       {/* Software-Native Confirmation Dialog (Replaces Browser window.confirm) */}
       {confirmDialog.isOpen && (

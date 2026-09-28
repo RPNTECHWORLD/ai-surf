@@ -501,7 +501,15 @@ const StudentProfile = () => {
           : []
       };
 
-      if (savedUser) {
+      // Only mutate savedUser if the logged-in user is actually this student
+      const isViewingOwnProfile = Boolean(
+        savedUser && (
+          (savedUser.role === 'athlete' && (savedUser.student_id === parseInt(id) || savedUser.id === parseInt(id))) ||
+          (savedUser.role === 'athlete' && savedUser.email && cleanStudent.email && savedUser.email.toLowerCase().trim() === cleanStudent.email.toLowerCase().trim())
+        )
+      );
+
+      if (isViewingOwnProfile) {
         let userChanged = false;
         if (isApproved && savedUser.approval_status !== 'approved') {
           savedUser.approval_status = 'approved';
@@ -533,7 +541,12 @@ const StudentProfile = () => {
       cleanStudent.has_password = isPassSet;
       cleanStudent.password_updated = isPassSet;
 
-      if (!isPassSet) {
+      // Only auto-show password modal if the logged in user IS THE STUDENT themselves or opened via direct student invite link
+      const urlParams = new URLSearchParams(window.location.search);
+      const isStudentMagicLink = Boolean(urlParams.get('token'));
+      const shouldPromptPass = (isViewingOwnProfile || isStudentMagicLink) && savedUser?.role !== 'coach' && savedUser?.role !== 'admin';
+
+      if (!isPassSet && shouldPromptPass) {
         setShowPasswordModal(true);
       }
 
@@ -602,6 +615,7 @@ const StudentProfile = () => {
       age: student.age || '',
       division: student.division || "Men's Open",
       stance: student.stance || 'regular',
+      swimming_ability: student.swimming_ability || 'Swimmer',
       waves_ridden: student.surf_stats?.waves_ridden || 0,
       max_speed: student.surf_stats?.max_speed || '0 mph',
       avg_session_mins: student.surf_stats?.avg_session_mins || 0,
@@ -638,6 +652,7 @@ const StudentProfile = () => {
           age: editForm.dob ? calculateAge(editForm.dob) : (editForm.age ? parseInt(editForm.age) : null),
           division: editForm.division,
           stance: editForm.stance,
+          swimming_ability: editForm.swimming_ability,
           surf_stats: {
             waves_ridden: parseInt(editForm.waves_ridden) || 0,
             max_speed: editForm.max_speed,
@@ -684,6 +699,44 @@ const StudentProfile = () => {
     (currentUser.role === 'athlete' && currentUser.student_id === parseInt(id)) ||
     (currentUser.role === 'admin')
   );
+
+  const isStudentSelf = Boolean(
+    (currentUser?.role === 'athlete' && (currentUser?.student_id === parseInt(id) || currentUser?.id === parseInt(id) || (currentUser?.email && student?.email && currentUser.email.toLowerCase().trim() === student.email.toLowerCase().trim()))) ||
+    Boolean(new URLSearchParams(window.location.search).get('token'))
+  );
+
+  const isCoach = currentUser?.role === 'coach';
+  const currentCoachName = (currentUser?.name || currentUser?.instructor_name || '').toLowerCase().trim();
+  const currentCoachId = currentUser?.instructor_id || currentUser?.id;
+  const isAssignedToCurrentCoach = Boolean(
+    isCoach && (
+      (student?.instructor && currentCoachName && student.instructor.toLowerCase().trim() === currentCoachName) ||
+      (student?.instructor_id && currentCoachId && String(student.instructor_id) === String(currentCoachId))
+    )
+  );
+
+  const handleAssignToMe = async () => {
+    if (!currentUser || currentUser.role !== 'coach' || !id) return;
+    try {
+      const token = sessionStorage.getItem('token');
+      const coachId = currentUser.instructor_id || currentUser.id;
+      const res = await fetch(`${API}/api/students/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          instructor_id: coachId ? parseInt(coachId) : undefined
+        })
+      });
+      if (res.ok) {
+        fetchStudent();
+      }
+    } catch (e) {
+      console.error('Error assigning coach:', e);
+    }
+  };
 
   const isPendingApproval = (() => {
     if (student?.approval_status === 'approved') return false;
@@ -835,53 +888,113 @@ const StudentProfile = () => {
                   <span className="sp-level-badge">
                     {(student.level || 'INTERMEDIATE').toUpperCase()}
                   </span>
+                  <span style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    padding: '4px 10px',
+                    borderRadius: '20px',
+                    color: student.swimming_ability?.toLowerCase() === 'non-swimmer' ? '#D97706' : '#0D9488',
+                    background: student.swimming_ability?.toLowerCase() === 'non-swimmer' ? '#FEF3C7' : '#ECFDF5',
+                    border: `1px solid ${student.swimming_ability?.toLowerCase() === 'non-swimmer' ? '#FDE68A' : '#A7F3D0'}`
+                  }}>
+                    {student.swimming_ability?.toLowerCase() === 'non-swimmer' ? '🤿 Non-Swimmer' : '🏊 Swimmer'}
+                  </span>
                   <span className="sp-badge-dot-label">
                     <span className="sp-color-dot" style={{ backgroundColor: badgeDotColor }} />
                     {badgeDisplayName}
                   </span>
                 </div>
-                <div style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  fontSize: '12px',
-                  color: '#475569',
-                  background: '#F1F5F9',
-                  padding: '4px 12px',
-                  borderRadius: '20px',
-                  fontWeight: 600
-                }}>
-                  <span>🏄‍♂️ Coach:</span>
-                  <span style={{ color: '#0F172A', fontWeight: 700 }}>
-                    {(student.instructor && student.instructor !== 'Assigned Surf Coach') ? student.instructor : (nextSession?.instructor || 'Not Assigned Yet')}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setPassError('');
-                    setPassSuccess('');
-                    setShowPasswordModal(true);
-                  }}
-                  style={{
+                {currentUser?.role === 'coach' ? (
+                  <div style={{
                     display: 'inline-flex',
                     alignItems: 'center',
                     gap: '6px',
                     fontSize: '12px',
-                    color: student.has_password ? '#475569' : '#B45309',
-                    background: student.has_password ? '#F1F5F9' : '#FEF3C7',
-                    border: student.has_password ? '1px solid #CBD5E1' : '1.5px solid #F59E0B',
+                    color: isAssignedToCurrentCoach ? '#0D9488' : '#475569',
+                    background: isAssignedToCurrentCoach ? '#F0FDFA' : '#F1F5F9',
+                    border: isAssignedToCurrentCoach ? '1.5px solid #99F6E4' : '1px solid #E2E8F0',
                     padding: '4px 12px',
                     borderRadius: '20px',
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                    boxShadow: student.has_password ? 'none' : '0 2px 8px rgba(245, 158, 11, 0.25)'
-                  }}
-                  title={student.has_password ? 'Change Password' : 'Action Required: Set Your Permanent Password'}
-                >
-                  <span>{student.has_password ? '🔑' : '🔐'}</span>
-                  <span>{student.has_password ? 'Change Password' : 'Set Permanent Password'}</span>
-                </button>
+                    fontWeight: 600
+                  }}>
+                    <span>🏄‍♂️</span>
+                    {isAssignedToCurrentCoach ? (
+                      <span style={{ color: '#0F766E', fontWeight: 700 }}>Your Student</span>
+                    ) : (
+                      <>
+                        <span>Assigned Coach:</span>
+                        <span style={{ color: '#0F172A', fontWeight: 700 }}>
+                          {(student.instructor && student.instructor !== 'Assigned Surf Coach') ? student.instructor : 'Unassigned'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleAssignToMe}
+                          style={{
+                            background: '#0D9488',
+                            color: '#FFFFFF',
+                            border: 'none',
+                            borderRadius: '10px',
+                            padding: '2px 8px',
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            marginLeft: '4px'
+                          }}
+                        >
+                          Assign to Me
+                        </button>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '12px',
+                    color: '#475569',
+                    background: '#F1F5F9',
+                    padding: '4px 12px',
+                    borderRadius: '20px',
+                    fontWeight: 600
+                  }}>
+                    <span>🏄‍♂️ Coach:</span>
+                    <span style={{ color: '#0F172A', fontWeight: 700 }}>
+                      {(student.instructor && student.instructor !== 'Assigned Surf Coach') ? student.instructor : (nextSession?.instructor || 'Not Assigned Yet')}
+                    </span>
+                  </div>
+                )}
+                {isStudentSelf && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPassError('');
+                      setPassSuccess('');
+                      setShowPasswordModal(true);
+                    }}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      fontSize: '12px',
+                      color: student.has_password ? '#475569' : '#B45309',
+                      background: student.has_password ? '#F1F5F9' : '#FEF3C7',
+                      border: student.has_password ? '1px solid #CBD5E1' : '1.5px solid #F59E0B',
+                      padding: '4px 12px',
+                      borderRadius: '20px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      boxShadow: student.has_password ? 'none' : '0 2px 8px rgba(245, 158, 11, 0.25)'
+                    }}
+                    title={student.has_password ? 'Change Password' : 'Action Required: Set Your Permanent Password'}
+                  >
+                    <span>{student.has_password ? '🔑' : '🔐'}</span>
+                    <span>{student.has_password ? 'Change Password' : 'Set Permanent Password'}</span>
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -911,6 +1024,7 @@ const StudentProfile = () => {
         </section>
 
         {(() => {
+          if (!isStudentSelf) return null;
           const emailLower = (student?.email || currentUser?.email || '').toLowerCase().trim();
           let updatedEmails = [];
           try {
@@ -1330,16 +1444,25 @@ const StudentProfile = () => {
                     </div>
                   </div>
 
-                  {/* Course Duration */}
-                  <div className="sp-form-field">
-                    <label>Course Duration</label>
-                    <select value={editForm.course_duration} onChange={(e) => setEditForm({ ...editForm, course_duration: e.target.value })}>
-                      <option value="3 Days Course">3 Days Course</option>
-                      <option value="5 Days Course">5 Days Course</option>
-                      <option value="7 Days Course">7 Days Course</option>
-                      <option value="10 Days Course">10 Days Course</option>
-                      <option value="1 Day Crash Course">1 Day Crash Course</option>
-                    </select>
+                  {/* Course Duration & Swimming Ability */}
+                  <div className="sp-form-row">
+                    <div className="sp-form-field">
+                      <label>Course Duration</label>
+                      <select value={editForm.course_duration} onChange={(e) => setEditForm({ ...editForm, course_duration: e.target.value })}>
+                        <option value="3 Days Course">3 Days Course</option>
+                        <option value="5 Days Course">5 Days Course</option>
+                        <option value="7 Days Course">7 Days Course</option>
+                        <option value="10 Days Course">10 Days Course</option>
+                        <option value="1 Day Crash Course">1 Day Crash Course</option>
+                      </select>
+                    </div>
+                    <div className="sp-form-field">
+                      <label>Swimming Ability</label>
+                      <select value={editForm.swimming_ability || 'Swimmer'} onChange={(e) => setEditForm({ ...editForm, swimming_ability: e.target.value })}>
+                        <option value="Swimmer">🏊 Swimmer</option>
+                        <option value="Non-Swimmer">🤿 Non-Swimmer</option>
+                      </select>
+                    </div>
                   </div>
                 </div>
                 <div className="sp-modal-footer">
@@ -1472,7 +1595,7 @@ const StudentProfile = () => {
           </div>
         )}
         {/* Password Setup Modal */}
-        {showPasswordModal && (
+        {showPasswordModal && isStudentSelf && (
           <div className="sp-modal-overlay" onClick={() => {
             if (student?.password_updated || student?.has_password) {
               setShowPasswordModal(false);

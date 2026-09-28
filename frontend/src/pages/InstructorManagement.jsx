@@ -22,6 +22,35 @@ const formatExperience = (exp) => {
   return str;
 };
 
+const calculateAge = (dobString) => {
+  if (!dobString) return '';
+  try {
+    const birthDate = new Date(dobString);
+    if (isNaN(birthDate.getTime())) {
+      const parts = String(dobString).split(/[-/]/);
+      if (parts.length === 3) {
+        if (parts[0].length === 4) {
+          const d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+          if (!isNaN(d.getTime())) return Math.floor((new Date() - d) / (365.25 * 24 * 60 * 60 * 1000));
+        } else if (parts[2].length === 4) {
+          const d = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+          if (!isNaN(d.getTime())) return Math.floor((new Date() - d) / (365.25 * 24 * 60 * 60 * 1000));
+        }
+      }
+      return '';
+    }
+    const today = new Date();
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const m = today.getMonth() - birthDate.getMonth();
+    if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+      age--;
+    }
+    return age >= 0 && age < 120 ? age : '';
+  } catch (e) {
+    return '';
+  }
+};
+
 const InstructorManagement = () => {
   const navigate = useNavigate();
   const [instructors, setInstructors] = useState([]);
@@ -104,7 +133,7 @@ const InstructorManagement = () => {
   };
 
   const [form, setForm] = useState({
-    name: '', email: '', password: '', dob: '', age: 28, gender: 'Male', fitness_level: 'Elite',
+    name: '', email: '', password: '', dob: '', age: '', gender: 'Male', fitness_level: 'Elite',
     experience: '', certifications: '', languages: '', biography: '', image: '',
     school: getActiveSchoolName()
   });
@@ -308,7 +337,7 @@ const InstructorManagement = () => {
           email: form.email || '',
           password: form.password || '',
           dob: form.dob || '',
-          age: parseInt(form.age) || 28,
+          age: form.age ? parseInt(form.age) : (form.dob ? (calculateAge(form.dob) || null) : null),
           gender: form.gender,
           fitness_level: form.fitness_level,
           experience: form.experience,
@@ -321,7 +350,7 @@ const InstructorManagement = () => {
       if (res.ok) {
         setShowAddModal(false);
         setPhotoPreview('');
-        setForm({ name: '', email: '', password: '', dob: '', age: 28, gender: 'Male', fitness_level: 'Elite', experience: '', certifications: '', languages: [], biography: '', image: '', school: getActiveSchoolName() });
+        setForm({ name: '', email: '', password: '', dob: '', age: '', gender: 'Male', fitness_level: 'Elite', experience: '', certifications: '', languages: [], biography: '', image: '', school: getActiveSchoolName() });
         fetchInstructors();
       }
     } catch (err) {}
@@ -346,7 +375,7 @@ const InstructorManagement = () => {
           name: form.name,
           email: form.email || '',
           dob: form.dob || '',
-          age: parseInt(form.age) || 28,
+          age: form.age ? parseInt(form.age) : (form.dob ? (calculateAge(form.dob) || null) : null),
           gender: form.gender,
           fitness_level: form.fitness_level,
           experience: form.experience,
@@ -359,7 +388,7 @@ const InstructorManagement = () => {
         setShowAddModal(false);
         setSelected(null);
         setPhotoPreview('');
-        setForm({ name: '', email: '', dob: '', age: 28, gender: 'Male', fitness_level: 'Elite', experience: '', certifications: '', languages: '', biography: '', image: '', school: getActiveSchoolName() });
+        setForm({ name: '', email: '', dob: '', age: '', gender: 'Male', fitness_level: 'Elite', experience: '', certifications: '', languages: '', biography: '', image: '', school: getActiveSchoolName() });
         fetchInstructors();
       }
     } catch (err) {}
@@ -412,7 +441,7 @@ const InstructorManagement = () => {
               setSelected(null);
               setPhotoPreview('');
               setForm({
-                name: '', email: '', password: '', dob: '', age: 28, gender: 'Male', fitness_level: 'Elite',
+                name: '', email: '', password: '', dob: '', age: '', gender: 'Male', fitness_level: 'Elite',
                 experience: '', certifications: '', languages: '', biography: '', image: '',
                 school: getActiveSchoolName()
               });
@@ -603,7 +632,11 @@ const InstructorManagement = () => {
                 </button>
               </div>
 
-              <form onSubmit={selected ? handleUpdate : handleAdd} className="im-sidebar-form">
+              <form onSubmit={selected ? handleUpdate : handleAdd} className="im-sidebar-form" autoComplete="off">
+                {/* Browser password manager autofill absorbers */}
+                <input type="text" style={{ position: 'absolute', opacity: 0, height: 0, width: 0, zIndex: -1, pointerEvents: 'none' }} tabIndex="-1" autoComplete="username" />
+                <input type="password" style={{ position: 'absolute', opacity: 0, height: 0, width: 0, zIndex: -1, pointerEvents: 'none' }} tabIndex="-1" autoComplete="new-password" />
+
                 {/* Profile photo upload block */}
                 <input
                   type="file"
@@ -659,16 +692,28 @@ const InstructorManagement = () => {
 
                 <div className="form-group">
                   <label>Full Name *</label>
-                  <input type="text" placeholder="e.g. Gabriel Medina" value={form.name} onChange={e => setForm({...form, name: e.target.value})} required />
+                  <input
+                    type="text"
+                    name="instructor_full_name"
+                    autoComplete="off"
+                    placeholder="e.g. Gabriel Medina"
+                    value={form.name}
+                    onChange={e => setForm({...form, name: e.target.value})}
+                    required
+                  />
                 </div>
 
                 <div className="form-group">
                   <label>Email Address</label>
                   <input
                     type="email"
+                    name="coach_registration_email"
+                    autoComplete="new-coach-email-field"
                     placeholder="e.g. coach@surfclub.com"
                     value={form.email || ''}
                     onChange={e => setForm({...form, email: e.target.value})}
+                    readOnly
+                    onFocus={e => e.target.removeAttribute('readOnly')}
                   />
                 </div>
 
@@ -678,10 +723,14 @@ const InstructorManagement = () => {
                     <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                       <input
                         type={showFormPass ? 'text' : 'password'}
+                        name="coach_registration_password"
+                        autoComplete="new-password"
                         placeholder="Set password (min 6 chars) for coach login"
                         value={form.password || ''}
                         onChange={e => setForm({...form, password: e.target.value})}
                         style={{ width: '100%', paddingRight: '40px' }}
+                        readOnly
+                        onFocus={e => e.target.removeAttribute('readOnly')}
                       />
                       <button
                         type="button"
@@ -708,23 +757,22 @@ const InstructorManagement = () => {
                     <input
                       type="date"
                       value={form.dob || ''}
+                      max={new Date().toISOString().split('T')[0]}
                       onChange={e => {
                         const dobVal = e.target.value;
-                        let calculatedAge = form.age;
-                        if (dobVal) {
-                          const birthYear = new Date(dobVal).getFullYear();
-                          const currentYear = new Date().getFullYear();
-                          if (birthYear && birthYear > 1920 && birthYear <= currentYear) {
-                            calculatedAge = currentYear - birthYear;
-                          }
-                        }
-                        setForm({ ...form, dob: dobVal, age: calculatedAge });
+                        const calculatedAge = calculateAge(dobVal);
+                        setForm({ ...form, dob: dobVal, age: calculatedAge || '' });
                       }}
                     />
                   </div>
                   <div className="form-group">
                     <label>Age</label>
-                    <input type="number" placeholder="28" value={form.age} onChange={e => setForm({...form, age: e.target.value})} required />
+                    <input
+                      type="number"
+                      placeholder="e.g. 28"
+                      value={form.age !== undefined && form.age !== null ? form.age : ''}
+                      onChange={e => setForm({...form, age: e.target.value})}
+                    />
                   </div>
                 </div>
 
