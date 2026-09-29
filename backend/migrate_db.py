@@ -102,9 +102,14 @@ CREATE TABLE IF NOT EXISTS school_invite_links (
     school VARCHAR(150) NOT NULL,
     max_count INTEGER DEFAULT 1,
     used_count INTEGER DEFAULT 0,
+    course_duration VARCHAR(100) DEFAULT '3 Days Course',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     is_active BOOLEAN DEFAULT TRUE
 );
+""")
+
+run_sql("""
+ALTER TABLE school_invite_links ADD COLUMN IF NOT EXISTS course_duration VARCHAR(100) DEFAULT '3 Days Course';
 """)
 
 print("MIGRATION_SUCCESS")

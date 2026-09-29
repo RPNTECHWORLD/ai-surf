@@ -27,6 +27,7 @@ const StudentsManagement = () => {
   // School Batch Registration Invite states
   const [showSchoolInviteModal, setShowSchoolInviteModal] = useState(false);
   const [inviteCapacityCount, setInviteCapacityCount] = useState(3);
+  const [inviteCourseDuration, setInviteCourseDuration] = useState('3 Days Course');
   const [createdSchoolInvite, setCreatedSchoolInvite] = useState(null);
   const [schoolInviteLoading, setSchoolInviteLoading] = useState(false);
   const [copiedSchoolInviteCode, setCopiedSchoolInviteCode] = useState(null);
@@ -188,14 +189,23 @@ const StudentsManagement = () => {
   const defaultStartDate = new Date().toISOString().split('T')[0];
   const defaultEndDate = addDaysToDate(defaultStartDate, 3);
 
-  const getStudentGuestCount = (studentObj) => {
-    if (!studentObj) return 0;
-    if (studentObj.guests_details && Array.isArray(studentObj.guests_details) && studentObj.guests_details.length > 0) {
-      return studentObj.guests_details.length;
+  const parseGuestsArray = (val) => {
+    if (!val) return [];
+    if (Array.isArray(val)) return val;
+    if (typeof val === 'string') {
+      try {
+        const parsed = JSON.parse(val);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) {}
     }
-    if (studentObj.guests_count && parseInt(studentObj.guests_count) > 1) {
-      return parseInt(studentObj.guests_count) - 1;
-    }
+    return [];
+  };
+
+  const getStudentGuestsDetails = (studentObj) => {
+    if (!studentObj) return [];
+    const directList = parseGuestsArray(studentObj.guests_details);
+    if (directList.length > 0) return directList;
+
     try {
       const emailLower = (studentObj.email || '').toLowerCase().trim();
       const nameLower = (studentObj.name || '').toLowerCase().trim();
@@ -203,12 +213,8 @@ const StudentsManagement = () => {
       const savedUser = JSON.parse(sessionStorage.getItem('user') || '{}');
       if ((emailLower && (savedUser.email || '').toLowerCase().trim() === emailLower) ||
           (nameLower && (savedUser.name || '').toLowerCase().trim() === nameLower)) {
-        if (savedUser.guests_details && savedUser.guests_details.length > 0) {
-          return savedUser.guests_details.length;
-        }
-        if (savedUser.guests_count && parseInt(savedUser.guests_count) > 1) {
-          return parseInt(savedUser.guests_count) - 1;
-        }
+        const userGuests = parseGuestsArray(savedUser.guests_details);
+        if (userGuests.length > 0) return userGuests;
       }
 
       const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
@@ -217,12 +223,8 @@ const StudentsManagement = () => {
         (nameLower && (r.student_name || r.name || '').toLowerCase().trim() === nameLower)
       );
       if (req) {
-        if (req.guests_details && req.guests_details.length > 0) {
-          return req.guests_details.length;
-        }
-        if (req.guests_count && parseInt(req.guests_count) > 1) {
-          return parseInt(req.guests_count) - 1;
-        }
+        const reqGuests = parseGuestsArray(req.guests_details);
+        if (reqGuests.length > 0) return reqGuests;
       }
 
       const mockStudents = JSON.parse(localStorage.getItem('mock_students_data') || '[]');
@@ -231,61 +233,35 @@ const StudentsManagement = () => {
         (nameLower && (m.name || '').toLowerCase().trim() === nameLower)
       );
       if (mock) {
-        if (mock.guests_details && mock.guests_details.length > 0) {
-          return mock.guests_details.length;
-        }
-        if (mock.guests_count && parseInt(mock.guests_count) > 1) {
-          return parseInt(mock.guests_count) - 1;
-        }
-      }
-    } catch (e) {}
-
-    return 0;
-  };
-
-  const getStudentGuestsDetails = (studentObj) => {
-    if (!studentObj) return [];
-    if (studentObj.guests_details && Array.isArray(studentObj.guests_details) && studentObj.guests_details.length > 0) {
-      return studentObj.guests_details;
-    }
-    try {
-      const emailLower = (studentObj.email || '').toLowerCase().trim();
-      const nameLower = (studentObj.name || '').toLowerCase().trim();
-
-      const savedUser = JSON.parse(sessionStorage.getItem('user') || '{}');
-      if ((emailLower && (savedUser.email || '').toLowerCase().trim() === emailLower) ||
-          (nameLower && (savedUser.name || '').toLowerCase().trim() === nameLower)) {
-        if (savedUser.guests_details && savedUser.guests_details.length > 0) {
-          return savedUser.guests_details;
-        }
+        const mockGuests = parseGuestsArray(mock.guests_details);
+        if (mockGuests.length > 0) return mockGuests;
       }
 
-      const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-      const req = reqs.find(r => 
-        (emailLower && (r.student_email || r.email || '').toLowerCase().trim() === emailLower) ||
-        (nameLower && (r.student_name || r.name || '').toLowerCase().trim() === nameLower)
+      const savedAccs = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
+      const acc = savedAccs.find(a => 
+        (emailLower && (a.email || '').toLowerCase().trim() === emailLower) ||
+        (nameLower && (a.name || '').toLowerCase().trim() === nameLower)
       );
-      if (req && req.guests_details && req.guests_details.length > 0) {
-        return req.guests_details;
-      }
-
-      const mockStudents = JSON.parse(localStorage.getItem('mock_students_data') || '[]');
-      const mock = mockStudents.find(m => 
-        (emailLower && (m.email || '').toLowerCase().trim() === emailLower) ||
-        (nameLower && (m.name || '').toLowerCase().trim() === nameLower)
-      );
-      if (mock && mock.guests_details && mock.guests_details.length > 0) {
-        return mock.guests_details;
+      if (acc) {
+        const accGuests = parseGuestsArray(acc.guests_details);
+        if (accGuests.length > 0) return accGuests;
       }
     } catch (e) {}
 
     return [];
   };
 
+  const getStudentGuestCount = (studentObj) => {
+    if (!studentObj) return 0;
+    const details = getStudentGuestsDetails(studentObj);
+    if (details && Array.isArray(details) && details.length > 0) return details.length;
+    return 0;
+  };
+
   const [form, setForm] = useState({
     name: '', email: '', password: '', level: 'Beginner', instructor_id: '',
     swimming_ability: 'Swimmer',
-    whatsapp_number: '', dob: '', age: '', course_duration: '3 Days Course', session_time: '08:30 AM',
+    whatsapp_number: '', dob: '', age: '', course_duration: '3 Days Course', session_time: '',
     start_date: defaultStartDate, end_date: defaultEndDate, staying_at_school: 'Yes'
   });
 
@@ -344,7 +320,7 @@ const StudentsManagement = () => {
     setForm({
       name: '', email: '', password: '', level: 'Beginner', instructor_id: '',
       swimming_ability: 'Swimmer',
-      whatsapp_number: '', dob: '', age: '', course_duration: '3 Days Course', session_time: '08:30 AM',
+      whatsapp_number: '', dob: '', age: '', course_duration: '3 Days Course', session_time: '',
       start_date: new Date().toISOString().split('T')[0], end_date: addDaysToDate(new Date().toISOString().split('T')[0], 3), staying_at_school: 'Yes'
     });
   };
@@ -392,6 +368,7 @@ const StudentsManagement = () => {
   const isAdminOrSchoolAdmin = isSuperAdmin || userRole === 'admin' || userRole === 'school' || userRole === 'school_admin' || userRole === 'schooladmin';
   const canManagePendingRequests = isAdminOrSchoolAdmin && !isCoach;
   const canDeleteStudent = isAdminOrSchoolAdmin && !isCoach;
+  const canCreateInviteLink = isAdminOrSchoolAdmin && !isCoach;
 
   const effectiveSchool = (activeSchoolName && schoolLower !== 'school admin' && schoolLower !== 'super admin')
     ? activeSchoolName
@@ -400,6 +377,11 @@ const StudentsManagement = () => {
   const isDefaultSchool = !activeSchoolName || (typeof activeSchoolName === 'string' && (activeSchoolName.toLowerCase() === 'aquatic indica surf school' || activeSchoolName.toLowerCase() === 'school admin'));
 
   const [allSessions, setAllSessions] = useState([]);
+  const [expandedGuestStudentId, setExpandedGuestStudentId] = useState(null);
+
+  const toggleGuestDropdown = (studentId) => {
+    setExpandedGuestStudentId(prev => (prev === studentId ? null : studentId));
+  };
 
   const fetchStudents = () => {
     setLoading(true);
@@ -664,8 +646,7 @@ const StudentsManagement = () => {
           level: form.level,
           swimming_ability: form.swimming_ability || 'Swimmer',
           dob: form.dob || '',
-          age: studentAge,
-          instructor_id: form.instructor_id ? parseInt(form.instructor_id) : (isCoach && currentCoachId ? parseInt(currentCoachId) : null),
+          instructor_id: null,
           whatsapp_number: form.whatsapp_number,
           course_duration: form.course_duration,
           session_time: form.session_time,
@@ -707,8 +688,7 @@ const StudentsManagement = () => {
           session_time: newStudent.session_time || form.session_time,
           start_date: newStudent.start_date || form.start_date,
           end_date: newStudent.end_date || form.end_date,
-          staying_at_school: newStudent.staying_at_school || form.staying_at_school,
-          instructor: instructors.find(i => i.id === parseInt(form.instructor_id))?.name || 'Auto-Assigned Coach',
+          instructor: 'Not Assigned Yet',
           inviteLink: studentInviteLink
         };
 
@@ -824,10 +804,9 @@ const StudentsManagement = () => {
         level: r.level || 'Beginner',
         swimming_ability: r.swimming_ability || 'Swimmer',
         start_date: r.start_date || new Date().toISOString().split('T')[0],
-        end_date: r.end_date || '',
-        instructor_id: r.instructor_id ? parseInt(r.instructor_id) : (isCoach && currentCoachId ? parseInt(currentCoachId) : null),
+        instructor_id: null,
         course_duration: '3 Days Course',
-        session_time: 'Morning 6:00 AM',
+        session_time: '',
         staying_at_school: 'Yes',
         school: activeSchoolName || 'Aquatic Indica Surf School'
       }));
@@ -975,7 +954,7 @@ const StudentsManagement = () => {
   };
 
   const downloadCSVSample = () => {
-    const csvContent = "data:text/csv;charset=utf-8,Full Name,Email Address,Phone Number,Date of Birth,Swimming Ability,Surf Level,Start Date,End Date,Assign Instructor\nLiam Torres,liam.torres@gmail.com,(555) 123-4567,1998-05-22,Swimmer,Intermediate,2026-10-01,2026-10-03,Bethany Hamilton\nMaya Chen,maya.chen@yahoo.com,(555) 987-6543,2001-11-08,Non-Swimmer,Beginner,2026-10-05,2026-10-07,Kelly Slater";
+    const csvContent = "data:text/csv;charset=utf-8,Full Name,Email Address,Phone Number,Date of Birth,Swimming Ability,Surf Level,Start Date,End Date\nLiam Torres,liam.torres@gmail.com,(555) 123-4567,1998-05-22,Swimmer,Intermediate,2026-10-01,2026-10-03\nMaya Chen,maya.chen@yahoo.com,(555) 987-6543,2001-11-08,Non-Swimmer,Beginner,2026-10-05,2026-10-07";
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
@@ -1106,7 +1085,7 @@ const StudentsManagement = () => {
           student_email: emailLower,
           school_name: targetSchool,
           start_date: startDate || req?.start_date || new Date().toISOString().split('T')[0],
-          session_time: sessionTime || req?.session_time || '08:30 AM',
+          session_time: sessionTime || req?.session_time || '',
           whatsapp_number: phone || req?.whatsapp_number || req?.phone || 'N/A',
           course_duration: courseDuration || req?.course_duration || '3 Days Course',
           staying_at_school: stayingAtSchool || req?.staying_at_school || 'Yes',
@@ -1213,7 +1192,7 @@ const StudentsManagement = () => {
               level: targetReq.level || 'Beginner',
               whatsapp_number: targetReq.whatsapp_number || '',
               course_duration: targetReq.course_duration || '3 Days Course',
-              session_time: targetReq.session_time || '08:30 AM',
+              session_time: targetReq.session_time || '',
               start_date: targetReq.start_date || new Date().toISOString().split('T')[0],
               staying_at_school: targetReq.staying_at_school || 'Yes',
               school: targetReq.school_name || activeSchoolName || 'Aquatic Indica Surf School',
@@ -1365,6 +1344,11 @@ const StudentsManagement = () => {
       showToast('Please enter a capacity count of at least 1');
       return;
     }
+    if (!canCreateInviteLink) {
+      showToast('Only School Admins can create invite links');
+      return;
+    }
+    const chosenDuration = inviteCourseDuration || '3 Days Course';
     setSchoolInviteLoading(true);
     try {
       const res = await fetch(`${API}/api/school-invites`, {
@@ -1372,14 +1356,16 @@ const StudentsManagement = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           school: effectiveSchool,
-          max_count: count
+          max_count: count,
+          course_duration: chosenDuration
         })
       });
       if (res.ok) {
         const data = await res.json();
         const origin = window.location.origin;
-        const fullUrl = `${origin}/auth?mode=signup&invite_code=${data.code}&school=${encodeURIComponent(data.school)}`;
-        const newInviteObj = { ...data, fullUrl };
+        const dur = data.course_duration || chosenDuration;
+        const fullUrl = `${origin}/auth?mode=signup&invite_code=${data.code}&school=${encodeURIComponent(data.school)}&course_duration=${encodeURIComponent(dur)}`;
+        const newInviteObj = { ...data, course_duration: dur, fullUrl };
         setCreatedSchoolInvite(newInviteObj);
         setSchoolInvitesList(prev => [newInviteObj, ...prev]);
 
@@ -1387,7 +1373,7 @@ const StudentsManagement = () => {
           await navigator.clipboard.writeText(fullUrl);
         }
         setCopiedSchoolInviteCode(data.code);
-        showToast(`✓ Invite link for ${count} students copied to clipboard!`);
+        showToast(`✓ Invite link for ${count} student(s) (${dur}) copied to clipboard!`);
       } else {
         const err = await res.json();
         showToast(err.detail || 'Failed to generate invite link');
@@ -1396,12 +1382,13 @@ const StudentsManagement = () => {
       // Local fallback
       const mockCode = `inv_${Date.now().toString(36)}`;
       const origin = window.location.origin;
-      const fullUrl = `${origin}/auth?mode=signup&invite_code=${mockCode}&school=${encodeURIComponent(effectiveSchool)}`;
+      const fullUrl = `${origin}/auth?mode=signup&invite_code=${mockCode}&school=${encodeURIComponent(effectiveSchool)}&course_duration=${encodeURIComponent(chosenDuration)}`;
       const newInviteObj = {
         id: Date.now(),
         code: mockCode,
         school: effectiveSchool,
         max_count: count,
+        course_duration: chosenDuration,
         used_count: 0,
         remaining: count,
         is_active: true,
@@ -1419,7 +1406,7 @@ const StudentsManagement = () => {
         await navigator.clipboard.writeText(fullUrl);
       }
       setCopiedSchoolInviteCode(mockCode);
-      showToast(`✓ Invite link for ${count} students copied to clipboard!`);
+      showToast(`✓ Invite link for ${count} student(s) (${chosenDuration}) copied to clipboard!`);
     } finally {
       setSchoolInviteLoading(false);
     }
@@ -1427,7 +1414,8 @@ const StudentsManagement = () => {
 
   const copySchoolInviteLink = async (inv) => {
     const origin = window.location.origin;
-    const link = inv.fullUrl || `${origin}/auth?mode=signup&invite_code=${inv.code}&school=${encodeURIComponent(inv.school || effectiveSchool)}`;
+    const durParam = inv.course_duration ? `&course_duration=${encodeURIComponent(inv.course_duration)}` : '';
+    const link = inv.fullUrl || `${origin}/auth?mode=signup&invite_code=${inv.code}&school=${encodeURIComponent(inv.school || effectiveSchool)}${durParam}`;
     if (navigator.clipboard) {
       await navigator.clipboard.writeText(link);
     }
@@ -1479,27 +1467,29 @@ const StudentsManagement = () => {
             )}
 
 
-            <button
-              className="sm-btn-secondary"
-              onClick={() => {
-                fetchSchoolInvites();
-                setShowSchoolInviteModal(true);
-              }}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                background: '#F0FDF4',
-                color: '#15803D',
-                border: '1.5px solid #BBF7D0',
-                fontWeight: 700,
-                cursor: 'pointer'
-              }}
-              title="Create and share student registration link with capacity limit"
-            >
-              <span style={{ fontSize: '15px' }}>🔗</span>
-              <span>Invite Link</span>
-            </button>
+            {canCreateInviteLink && (
+              <button
+                className="sm-btn-secondary"
+                onClick={() => {
+                  fetchSchoolInvites();
+                  setShowSchoolInviteModal(true);
+                }}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  background: '#F0FDF4',
+                  color: '#15803D',
+                  border: '1.5px solid #BBF7D0',
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+                title="Create and share student registration link with capacity limit"
+              >
+                <span style={{ fontSize: '15px' }}>🔗</span>
+                <span>Invite Link</span>
+              </button>
+            )}
             <button className="sm-btn-secondary" onClick={downloadCSVSample}>Export CSV</button>
             <button className="sm-btn-primary" onClick={() => { setShowModal(true); setAddMode('single'); }}>+ Add Student</button>
           </div>
@@ -1539,7 +1529,7 @@ const StudentsManagement = () => {
                         <div style={{ fontSize: '13px', color: '#475569', marginTop: '4px', display: 'flex', gap: '14px', flexWrap: 'wrap' }}>
                           <span>✉️ {req.student_email || req.email}</span>
                           <span>📱 {req.whatsapp_number || 'N/A'}</span>
-                          <span>🗓️ {req.start_date || '2026-08-26'} ({req.session_time || 'Dawn Patrol'})</span>
+                          <span>🗓️ {req.start_date || 'N/A'}{req.session_time ? ` (${req.session_time})` : ''}</span>
                         </div>
                         <div style={{ fontSize: '12.5px', color: '#D97706', marginTop: '6px', fontWeight: 700 }}>
                           🏫 Requested Surf School: {req.school_name || req.school || 'Aquatic Indica Surf School'}
@@ -1785,42 +1775,174 @@ const StudentsManagement = () => {
                             {s.whatsapp_number ? `📱 +91 ${s.whatsapp_number}` : s.email}
                           </div>
                           {(() => {
-                            const gCount = getStudentGuestCount(s);
                             const guestList = getStudentGuestsDetails(s);
-                            if (gCount > 0) {
-                              return (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', marginTop: '4px' }}>
-                                  <div style={{
+                            // Inga guest illathavangalukku ethuvume kaatta koodathu
+                            if (!guestList || guestList.length === 0) {
+                              return null;
+                            }
+
+                            const isExpanded = expandedGuestStudentId === s.id;
+
+                            return (
+                              <div style={{ marginTop: '5px' }}>
+                                {/* Dropdown Toggle Button */}
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleGuestDropdown(s.id);
+                                  }}
+                                  title={isExpanded ? "Click to hide guest details" : "Click to view guest details"}
+                                  style={{
                                     display: 'inline-flex',
                                     alignItems: 'center',
-                                    gap: '4px',
+                                    gap: '6px',
                                     fontSize: '11px',
                                     fontWeight: '700',
-                                    color: '#0284C7',
-                                    background: '#F0F9FF',
-                                    border: '1px solid #BAE6FD',
-                                    padding: '2px 8px',
+                                    color: isExpanded ? '#0369A1' : '#0284C7',
+                                    background: isExpanded ? '#E0F2FE' : '#F0F9FF',
+                                    border: `1px solid ${isExpanded ? '#38BDF8' : '#BAE6FD'}`,
+                                    padding: '2.5px 8px',
                                     borderRadius: '6px',
-                                    width: 'fit-content'
+                                    cursor: 'pointer',
+                                    outline: 'none',
+                                    transition: 'all 0.15s ease',
+                                    boxShadow: isExpanded ? '0 1px 4px rgba(2, 132, 199, 0.15)' : 'none'
+                                  }}
+                                >
+                                  <span>👥</span>
+                                  <span>{guestList.length} {guestList.length === 1 ? 'Guest' : 'Guests'}</span>
+                                  <span style={{
+                                    fontSize: '9px',
+                                    transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                                    transition: 'transform 0.2s ease',
+                                    display: 'inline-block',
+                                    color: isExpanded ? '#0369A1' : '#0284C7'
                                   }}>
-                                    👥 {gCount} {gCount === 1 ? 'Guest' : 'Guests'}
-                                  </div>
-                                  
-                                  {guestList.length > 0 && (
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '1px' }}>
-                                      {guestList.map((g, gIdx) => (
-                                        <div key={gIdx} style={{ fontSize: '11px', color: '#475569', display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
-                                          <span style={{ fontWeight: '700', color: '#0F172A' }}>• {g.name || `Guest #${gIdx + 1}`}</span>
-                                          {(g.whatsapp_number || g.phone) && <span style={{ color: '#64748B' }}>(📱 {g.whatsapp_number || g.phone})</span>}
-                                          {g.email && <span style={{ color: '#64748B' }}>({g.email})</span>}
+                                    ▼
+                                  </span>
+                                </button>
+
+                                {/* Perfectly Aligned Straight-Line Grid (Shown on Dropdown) */}
+                                {isExpanded && (
+                                  <div
+                                    onClick={e => e.stopPropagation()}
+                                    style={{
+                                      marginTop: '6px',
+                                      padding: '8px 12px',
+                                      background: '#F8FAFC',
+                                      border: '1px solid #E2E8F0',
+                                      borderLeft: '3.5px solid #0284C7',
+                                      borderRadius: '6px',
+                                      display: 'inline-grid',
+                                      gridTemplateColumns: 'max-content max-content max-content max-content max-content',
+                                      columnGap: '14px',
+                                      rowGap: '6px',
+                                      alignItems: 'center',
+                                      maxWidth: '100%',
+                                      overflowX: 'auto'
+                                    }}
+                                  >
+                                    {guestList.map((g, gIdx) => {
+                                      const gName = g.name || `Guest #${gIdx + 1}`;
+                                      const gPhone = g.whatsapp_number || g.phone;
+                                      const gAge = g.age || calculateAge(g.dob);
+
+                                      return (
+                                        <div key={gIdx} style={{ display: 'contents' }}>
+                                          {/* Col 1: Fixed Badge */}
+                                          <span style={{
+                                            fontWeight: 700,
+                                            color: '#0284C7',
+                                            background: '#F0F9FF',
+                                            border: '1px solid #BAE6FD',
+                                            padding: '1px 6px',
+                                            borderRadius: '4px',
+                                            fontSize: '10.5px',
+                                            whiteSpace: 'nowrap'
+                                          }}>
+                                            👥 Guest {gIdx + 1}:
+                                          </span>
+
+                                          {/* Col 2: Name */}
+                                          <span style={{
+                                            fontWeight: 700,
+                                            color: '#0F172A',
+                                            fontSize: '11.5px',
+                                            whiteSpace: 'nowrap'
+                                          }}>
+                                            {gName}
+                                          </span>
+
+                                          {/* Col 3: Gender & Age & Level */}
+                                          <div style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '5px',
+                                            fontSize: '11px',
+                                            color: '#64748B',
+                                            whiteSpace: 'nowrap'
+                                          }}>
+                                            {g.gender && <span>{g.gender}</span>}
+                                            {gAge ? <span>• {gAge} yrs</span> : null}
+                                            {g.level && (
+                                              <span style={{
+                                                fontSize: '9.5px',
+                                                fontWeight: 700,
+                                                background: '#ECFDF5',
+                                                color: '#065F46',
+                                                border: '1px solid #A7F3D0',
+                                                padding: '1px 5px',
+                                                borderRadius: '3px'
+                                              }}>
+                                                {g.level}
+                                              </span>
+                                            )}
+                                          </div>
+
+                                          {/* Col 4: WhatsApp / Phone */}
+                                          <div style={{ fontSize: '11px', whiteSpace: 'nowrap' }}>
+                                            {gPhone ? (
+                                              <a
+                                                href={`https://wa.me/${String(gPhone).replace(/\D/g, '')}`}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                onClick={e => e.stopPropagation()}
+                                                style={{
+                                                  color: '#0D9488',
+                                                  textDecoration: 'none',
+                                                  fontWeight: 600,
+                                                  display: 'inline-flex',
+                                                  alignItems: 'center',
+                                                  gap: '3px'
+                                                }}
+                                              >
+                                                📱 +91 {gPhone}
+                                              </a>
+                                            ) : (
+                                              <span style={{ color: '#94A3B8' }}>-</span>
+                                            )}
+                                          </div>
+
+                                          {/* Col 5: Email */}
+                                          <div style={{ fontSize: '11px', whiteSpace: 'nowrap' }}>
+                                            {g.email ? (
+                                              <a
+                                                href={`mailto:${g.email}`}
+                                                onClick={e => e.stopPropagation()}
+                                                style={{ color: '#64748B', textDecoration: 'none' }}
+                                              >
+                                                ✉️ {g.email}
+                                              </a>
+                                            ) : null}
+                                          </div>
                                         </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            }
-                            return null;
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
                           })()}
                         </div>
                       </div>
@@ -2063,37 +2185,26 @@ const StudentsManagement = () => {
                     </div>
                   </div>
 
-                  <div className="sm-grid-2">
-                    <div className="sm-field">
-                      <label>Course Duration</label>
-                      <select
-                        value={
-                          ['3 Days Course', '5 Days Course', '7 Days Course', '10 Days Course'].includes(form.course_duration)
-                            ? form.course_duration
-                            : 'custom'
-                        }
-                        onChange={e => handleCourseDurationChange(e.target.value)}
-                      >
-                        <option value="3 Days Course">3 Days Course</option>
-                        <option value="5 Days Course">5 Days Course</option>
-                        <option value="7 Days Course">7 Days Course</option>
-                        <option value="10 Days Course">10 Days Course</option>
-                        <option value="custom">
-                          {['3 Days Course', '5 Days Course', '7 Days Course', '10 Days Course'].includes(form.course_duration)
-                            ? 'Custom (> 10 Days)'
-                            : `Custom (${form.course_duration})`}
-                        </option>
-                      </select>
-                    </div>
-                    <div className="sm-field">
-                      <label>Assign Instructor</label>
-                      <select value={form.instructor_id} onChange={e => setForm({...form, instructor_id: e.target.value})}>
-                        <option value="">Auto-Assign / Default</option>
-                        {instructors.map(i => (
-                          <option key={i.id} value={i.id}>{i.name}</option>
-                        ))}
-                      </select>
-                    </div>
+                  <div className="sm-field">
+                    <label>Course Duration</label>
+                    <select
+                      value={
+                        ['3 Days Course', '5 Days Course', '7 Days Course', '10 Days Course'].includes(form.course_duration)
+                          ? form.course_duration
+                          : 'custom'
+                      }
+                      onChange={e => handleCourseDurationChange(e.target.value)}
+                    >
+                      <option value="3 Days Course">3 Days Course</option>
+                      <option value="5 Days Course">5 Days Course</option>
+                      <option value="7 Days Course">7 Days Course</option>
+                      <option value="10 Days Course">10 Days Course</option>
+                      <option value="custom">
+                        {['3 Days Course', '5 Days Course', '7 Days Course', '10 Days Course'].includes(form.course_duration)
+                          ? 'Custom (> 10 Days)'
+                          : `Custom (${form.course_duration})`}
+                      </option>
+                    </select>
                   </div>
 
 
@@ -2153,16 +2264,15 @@ const StudentsManagement = () => {
                   <table className="sm-bulk-table">
                     <thead>
                       <tr>
-                        <th>Full Name *</th>
-                        <th>Email Address *</th>
-                        <th>Phone Number</th>
-                        <th>Date of Birth *</th>
-                        <th>Swimming Ability *</th>
-                        <th>Surf Level *</th>
-                        <th>Start Date</th>
-                        <th>End Date</th>
-                        <th>Assign Instructor</th>
-                        <th style={{ width: '48px', textAlign: 'center' }}>Action</th>
+                        <th style={{ minWidth: '190px' }}>Full Name *</th>
+                        <th style={{ minWidth: '220px' }}>Email Address *</th>
+                        <th style={{ minWidth: '150px' }}>Phone Number</th>
+                        <th style={{ minWidth: '165px' }}>Date of Birth *</th>
+                        <th style={{ minWidth: '155px' }}>Swimming Ability *</th>
+                        <th style={{ minWidth: '155px' }}>Surf Level *</th>
+                        <th style={{ minWidth: '155px' }}>Start Date</th>
+                        <th style={{ minWidth: '155px' }}>End Date</th>
+                        <th style={{ width: '56px', textAlign: 'center' }}>Action</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2174,6 +2284,7 @@ const StudentsManagement = () => {
                               placeholder="e.g. Connor Coffin"
                               value={row.name}
                               onChange={e => handleBulkChange(rIdx, 'name', e.target.value)}
+                              style={{ minWidth: '180px' }}
                             />
                           </td>
                           <td>
@@ -2182,6 +2293,7 @@ const StudentsManagement = () => {
                               placeholder="email@address.com"
                               value={row.email}
                               onChange={e => handleBulkChange(rIdx, 'email', e.target.value)}
+                              style={{ minWidth: '210px' }}
                             />
                           </td>
                           <td>
@@ -2190,6 +2302,7 @@ const StudentsManagement = () => {
                               placeholder="(555) 000-0000"
                               value={row.phone}
                               onChange={e => handleBulkChange(rIdx, 'phone', e.target.value)}
+                              style={{ minWidth: '140px' }}
                             />
                           </td>
                           <td>
@@ -2199,11 +2312,11 @@ const StudentsManagement = () => {
                                 value={row.dob || ''}
                                 max={new Date().toISOString().split('T')[0]}
                                 onChange={e => handleBulkChange(rIdx, 'dob', e.target.value)}
-                                style={{ minWidth: '135px', padding: '6px 8px', fontSize: '12px' }}
+                                style={{ minWidth: '150px', padding: '6px 10px', fontSize: '13px' }}
                                 required
                               />
                               {row.dob && calculateAge(row.dob) && (
-                                <span style={{ fontSize: '11px', color: '#0D9488', fontWeight: 700, paddingLeft: '2px' }}>
+                                <span style={{ fontSize: '11px', color: '#0D9488', fontWeight: 700, paddingLeft: '4px' }}>
                                   Age: {calculateAge(row.dob)} yrs
                                 </span>
                               )}
@@ -2213,7 +2326,7 @@ const StudentsManagement = () => {
                             <select
                               value={row.swimming_ability || 'Swimmer'}
                               onChange={e => handleBulkChange(rIdx, 'swimming_ability', e.target.value)}
-                              style={{ minWidth: '115px' }}
+                              style={{ minWidth: '145px' }}
                             >
                               <option value="Swimmer">🏊 Swimmer</option>
                               <option value="Non-Swimmer">🤿 Non-Swimmer</option>
@@ -2223,11 +2336,12 @@ const StudentsManagement = () => {
                             <select
                               value={row.level}
                               onChange={e => handleBulkChange(rIdx, 'level', e.target.value)}
+                              style={{ minWidth: '145px' }}
                             >
-                              <option value="Beginner">Beginner</option>
-                              <option value="Intermediate">Intermediate</option>
-                              <option value="Advanced">Advanced</option>
-                              <option value="Master">Master</option>
+                              <option value="Beginner">🏄 Beginner</option>
+                              <option value="Intermediate">🌊 Intermediate</option>
+                              <option value="Advanced">⚡ Advanced</option>
+                              <option value="Master">🏆 Master</option>
                             </select>
                           </td>
                           <td>
@@ -2235,6 +2349,7 @@ const StudentsManagement = () => {
                               type="date"
                               value={row.start_date}
                               onChange={e => handleBulkChange(rIdx, 'start_date', e.target.value)}
+                              style={{ minWidth: '145px' }}
                             />
                           </td>
                           <td>
@@ -2242,16 +2357,8 @@ const StudentsManagement = () => {
                               type="date"
                               value={row.end_date}
                               onChange={e => handleBulkChange(rIdx, 'end_date', e.target.value)}
+                              style={{ minWidth: '145px' }}
                             />
-                          </td>
-                          <td>
-                            <select
-                              value={row.instructor_id}
-                              onChange={e => handleBulkChange(rIdx, 'instructor_id', e.target.value)}
-                            >
-                              <option value="">Auto-Assign</option>
-                              {instructors.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
-                            </select>
                           </td>
                           <td style={{ textAlign: 'center' }}>
                             <button
@@ -2299,7 +2406,6 @@ const StudentsManagement = () => {
                     <div className="sm-req-item"><span className="sm-req-check">✓</span><span>Tab between cells to move across columns quickly.</span></div>
                     <div className="sm-req-item"><span className="sm-req-check">✓</span><span>Paste data directly from a spreadsheet to auto-fill rows.</span></div>
                     <div className="sm-req-item"><span className="sm-req-check">✓</span><span>Surf Level options: Beginner, Intermediate, Advanced, Master.</span></div>
-                    <div className="sm-req-item sm-req-warn"><span className="sm-req-warn-icon">⚠️</span><span>Leave Instructor blank for auto-assignment.</span></div>
                     <div className="sm-req-item"><span className="sm-req-check">✓</span><span>Start Date and End Date define the guest booking session period.</span></div>
                   </div>
                 </div>
@@ -2415,7 +2521,6 @@ const StudentsManagement = () => {
                               <th>DOB / Level</th>
                               <th>Swimming</th>
                               <th>Start / End Date</th>
-                              <th>Assigned Coach</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -2459,7 +2564,6 @@ const StudentsManagement = () => {
                                     )}
                                   </div>
                                 </td>
-                                <td>{row.instructor_name || (instructors.find(i => String(i.id) === String(row.instructor_id))?.name) || 'None'}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -2519,11 +2623,6 @@ const StudentsManagement = () => {
                           <td><strong>End Date</strong></td>
                           <td><span className="sm-badge-opt">Optional</span></td>
                           <td>Session end date in YYYY-MM-DD (defaults to 3 days if left blank)</td>
-                        </tr>
-                        <tr>
-                          <td><strong>Assign Instructor</strong></td>
-                          <td><span className="sm-badge-opt">Optional</span></td>
-                          <td>Full name of active coach, or left blank</td>
                         </tr>
                       </tbody>
                     </table>
@@ -2975,7 +3074,7 @@ const StudentsManagement = () => {
       )}
 
       {/* School Registration Invite Modal */}
-      {showSchoolInviteModal && (
+      {showSchoolInviteModal && canCreateInviteLink && (
         <div 
           className="sm-modal-overlay" 
           onClick={() => { setShowSchoolInviteModal(false); setCreatedSchoolInvite(null); }}
@@ -3104,6 +3203,86 @@ const StudentsManagement = () => {
               </div>
             </div>
 
+            {/* Course Duration / Allowed Days Block */}
+            <div style={{ background: '#FFFFFF', border: '1.5px solid #E2E8F0', borderRadius: '16px', padding: '20px', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                <label style={{ fontSize: '13px', fontWeight: '800', color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span>🏄</span>
+                  <span>Course Duration / Allowed Days</span>
+                </label>
+                <span style={{ fontSize: '11px', fontWeight: '800', background: '#F0FDFA', color: '#0D9488', padding: '3px 8px', borderRadius: '10px', border: '1px solid #CCFBF1' }}>
+                  🔒 Locks Registration Days
+                </span>
+              </div>
+              <p style={{ margin: '0 0 12px 0', fontSize: '12px', color: '#64748B', lineHeight: '1.4' }}>
+                Select how many training days the invited students can attend. Students registering via this link will be strictly locked to this course length.
+              </p>
+
+              {/* Quick Preset Buttons for Days */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(105px, 1fr))', gap: '8px', marginBottom: '12px' }}>
+                {[
+                  { value: '1 Day Crash Course', label: '1 Day', sub: 'Crash Course' },
+                  { value: '3 Days Course', label: '3 Days', sub: 'Intro Course' },
+                  { value: '5 Days Course', label: '5 Days', sub: 'Standard' },
+                  { value: '7 Days Course', label: '7 Days', sub: 'Week Long' },
+                  { value: '10 Days Course', label: '10 Days', sub: 'Intensive' }
+                ].map((dur) => {
+                  const isSelected = inviteCourseDuration === dur.value;
+                  return (
+                    <button
+                      key={dur.value}
+                      type="button"
+                      onClick={() => setInviteCourseDuration(dur.value)}
+                      style={{
+                        padding: '8px 10px',
+                        borderRadius: '10px',
+                        border: isSelected ? '2px solid #0D9488' : '1.5px solid #E2E8F0',
+                        background: isSelected ? '#F0FDFA' : '#F8FAFC',
+                        cursor: 'pointer',
+                        textAlign: 'center',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      <div style={{ fontWeight: '800', fontSize: '13px', color: isSelected ? '#0D9488' : '#0F172A' }}>
+                        {dur.label}
+                      </div>
+                      <div style={{ fontSize: '10px', fontWeight: '600', color: isSelected ? '#0F766E' : '#94A3B8' }}>
+                        {dur.sub}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Custom Course Duration Input */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', background: '#F8FAFC', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
+                <span style={{ fontSize: '12px', fontWeight: '700', color: '#475569', whiteSpace: 'nowrap' }}>Custom Days:</span>
+                <select
+                  value={inviteCourseDuration}
+                  onChange={e => setInviteCourseDuration(e.target.value)}
+                  style={{ flex: 1, padding: '6px 10px', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '12px', fontWeight: '700', color: '#0F172A', background: '#FFF' }}
+                >
+                  <option value="1 Day Crash Course">1 Day Crash Course</option>
+                  <option value="2 Days Course">2 Days Course</option>
+                  <option value="3 Days Course">3 Days Course</option>
+                  <option value="4 Days Course">4 Days Course</option>
+                  <option value="5 Days Course">5 Days Course</option>
+                  <option value="6 Days Course">6 Days Course</option>
+                  <option value="7 Days Course">7 Days Course</option>
+                  <option value="8 Days Course">8 Days Course</option>
+                  <option value="9 Days Course">9 Days Course</option>
+                  <option value="10 Days Course">10 Days Course</option>
+                  <option value="12 Days Course">12 Days Course</option>
+                  <option value="14 Days Course">14 Days Course</option>
+                </select>
+              </div>
+
+              <div style={{ marginTop: '10px', fontSize: '12px', color: '#0D9488', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span>🎯</span>
+                <span>Allowed Days: <strong>{inviteCourseDuration}</strong> (Students can only come for these days)</span>
+              </div>
+            </div>
+
             {/* Generate Button */}
             <button
               type="button"
@@ -3172,7 +3351,7 @@ const StudentsManagement = () => {
                   <button
                     type="button"
                     onClick={() => {
-                      const shareMsg = `Hi! Here is your registration invite link for ${effectiveSchool}: ${createdSchoolInvite.fullUrl}\n\nUp to ${createdSchoolInvite.max_count} student/guest slots are available. Please register soon!`;
+                      const shareMsg = `Hi! Here is your registration invite link for ${effectiveSchool}: ${createdSchoolInvite.fullUrl}\n\nCourse Duration: ${createdSchoolInvite.course_duration || inviteCourseDuration} (Allowed training days)\nCapacity: Up to ${createdSchoolInvite.max_count} student/guest slots available. Please register soon!`;
                       window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(shareMsg)}`, '_blank');
                     }}
                     style={{ flex: 1, padding: '9px', borderRadius: '8px', background: '#25D366', color: '#FFF', border: 'none', fontWeight: 700, fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
@@ -3196,7 +3375,7 @@ const StudentsManagement = () => {
                 <h4 style={{ margin: '0 0 10px 0', fontSize: '13px', fontWeight: 800, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                   Previous Invite Links for {effectiveSchool} ({schoolInvitesList.length})
                 </h4>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '180px', overflowY: 'auto' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto' }}>
                   {schoolInvitesList.map((inv, idx) => {
                     const rem = inv.remaining !== undefined ? inv.remaining : Math.max(0, inv.max_count - (inv.used_count || 0));
                     const isFull = rem <= 0 || !inv.is_active;
@@ -3215,12 +3394,15 @@ const StudentsManagement = () => {
                         }}
                       >
                         <div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                             <code style={{ fontSize: '11px', fontWeight: 700, color: '#0D9488', background: '#F0FDFA', padding: '2px 6px', borderRadius: '4px' }}>
                               {inv.code}
                             </code>
                             <span style={{ fontSize: '11px', color: '#64748B' }}>
                               Capacity: <strong>{inv.max_count}</strong>
+                            </span>
+                            <span style={{ fontSize: '11px', color: '#0D9488', fontWeight: 700, background: '#F0FDFA', padding: '1px 6px', borderRadius: '4px', border: '1px solid #CCFBF1' }}>
+                              🗓️ {inv.course_duration || '3 Days Course'}
                             </span>
                           </div>
                           <div style={{ fontSize: '11px', color: isFull ? '#EF4444' : '#15803D', fontWeight: 700, marginTop: '2px' }}>
@@ -3569,7 +3751,7 @@ const StudentsManagement = () => {
         .invite-done:hover { background: #e8374f; }
 
         /* Add Students Modal (Multi-Mode) */
-        .sm-add-student-modal { max-width: 1040px; width: 95%; max-height: 90vh; overflow-y: auto; }
+        .sm-add-student-modal { max-width: 1320px; width: 96%; max-height: 92vh; overflow-y: auto; }
         
         .sm-tab-cards-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
         .sm-tab-card {
@@ -3602,15 +3784,19 @@ const StudentsManagement = () => {
 
         /* Bulk Grid Entry */
         .sm-bulk-grid-layout { display: flex; flex-direction: column; gap: 20px; }
-        .sm-bulk-table-wrap { overflow-x: auto; border: 1px solid #E2E8F0; border-radius: 12px; background: #FFF; }
-        .sm-bulk-table { width: 100%; border-collapse: collapse; min-width: 900px; }
-        .sm-bulk-table th { font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748B; background: #F8FAFC; padding: 12px 10px; border-bottom: 1px solid #E2E8F0; text-align: left; }
-        .sm-bulk-table td { padding: 8px 10px; border-bottom: 1px solid #F1F5F9; }
+        .sm-bulk-table-wrap { overflow-x: auto; border: 1px solid #CBD5E1; border-radius: 12px; background: #FFF; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        .sm-bulk-table { width: 100%; border-collapse: collapse; min-width: 1280px; }
+        .sm-bulk-table th { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #475569; background: #F1F5F9; padding: 14px 12px; border-bottom: 2px solid #CBD5E1; text-align: left; white-space: nowrap; }
+        .sm-bulk-table td { padding: 10px 10px; border-bottom: 1px solid #F1F5F9; vertical-align: middle; }
         .sm-bulk-table input, .sm-bulk-table select {
-          width: 100%; height: 36px; border: 1px solid #E2E8F0; border-radius: 6px;
-          padding: 0 8px; font-size: 12px; color: #0F172A; background: #FFF; outline: none;
+          width: 100%; height: 42px; border: 1.5px solid #CBD5E1; border-radius: 8px;
+          padding: 0 12px; font-size: 13px; font-weight: 500; color: #0F172A; background: #FFF; outline: none;
+          box-sizing: border-box; transition: all 0.15s ease;
         }
-        .sm-bulk-table input:focus, .sm-bulk-table select:focus { border-color: #0D9488; }
+        .sm-bulk-table input:focus, .sm-bulk-table select:focus {
+          border-color: #0D9488;
+          box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.15);
+        }
         .sm-bulk-actions-bar { display: flex; justify-content: space-between; align-items: center; }
         .sm-bulk-tips-box { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 14px; padding: 18px; }
         .sm-tips-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }

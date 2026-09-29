@@ -139,13 +139,29 @@ const formatCalendarLongDate = (isoStr) => {
   return isoStr;
 };
 
-const formatSessionStatus = (s, dateStr) => {
+const parseTimeStrToMinutes = (t) => {
+  if (!t) return null;
+  const match = String(t).match(/(\d{1,2}):(\d{2})(?:\s*(AM|PM))?/i);
+  if (!match) return null;
+  let hours = parseInt(match[1], 10);
+  const mins = parseInt(match[2], 10);
+  const ampm = match[3] ? match[3].toUpperCase() : null;
+  if (ampm === 'PM' && hours < 12) hours += 12;
+  if (ampm === 'AM' && hours === 12) hours = 0;
+  return hours * 60 + mins;
+};
+
+const formatSessionStatus = (s, dateStr, timeStr, durationMins) => {
   let rawStatus = s;
   let rawDate = dateStr;
+  let rawTime = timeStr;
+  let rawDuration = durationMins;
 
   if (typeof s === 'object' && s !== null) {
     rawStatus = s.status;
     rawDate = s.date || dateStr;
+    rawTime = s.time || timeStr;
+    rawDuration = s.duration_mins !== undefined ? s.duration_mins : durationMins;
   }
 
   const str = String(rawStatus || '').trim();
@@ -153,20 +169,59 @@ const formatSessionStatus = (s, dateStr) => {
   
   // Explicitly completed stays Completed
   if (lower === 'completed') return 'Completed';
-  // Explicitly in progress stays In Progress
-  if (lower === 'in progress' || lower === 'in_progress') return 'In Progress';
-  
-  // If date is provided, check if date has arrived (today or past date)
+  // Explicitly cancelled stays Cancelled
+  if (lower === 'cancelled') return 'Cancelled';
+  // Explicitly pending for review
+  if (lower === 'pending for review' || lower === 'pending review' || lower === 'pending_review') {
+    return 'Pending for Review';
+  }
+
+  // Check if session scheduled date & time has ended
   if (rawDate) {
     const sessionISO = normalizeToYYYYMMDD(rawDate);
     const todayISO = getTodayYYYYMMDD();
     if (sessionISO) {
-      if (sessionISO <= todayISO) {
-        // Date has arrived or passed -> automatically In Progress!
-        return 'In Progress';
-      } else {
+      if (sessionISO < todayISO) {
+        // Scheduled date has already passed -> Session time finished, auto Pending for Review!
+        return 'Pending for Review';
+      } else if (sessionISO > todayISO) {
         // Future date -> Upcoming!
         return 'Upcoming';
+      } else {
+        // Session date is TODAY! Check time vs current clock:
+        if (rawTime) {
+          const timeParts = String(rawTime).split(/\s*(?:[-–—]|to)\s*/i);
+          const startMins = parseTimeStrToMinutes(timeParts[0]);
+
+          if (startMins !== null) {
+            let endMins = null;
+            if (timeParts.length >= 2) {
+              endMins = parseTimeStrToMinutes(timeParts[1]);
+            }
+            if (endMins === null || endMins <= startMins) {
+              const dur = Number(rawDuration) || 60;
+              endMins = startMins + dur;
+            }
+
+            const now = new Date();
+            const nowMins = now.getHours() * 60 + now.getMinutes();
+
+            if (nowMins < startMins) {
+              // Session start time is in future today -> Upcoming
+              return 'Upcoming';
+            } else if (nowMins >= endMins) {
+              // Scheduled session time is finished -> Automatically Pending for Review!
+              return 'Pending for Review';
+            } else {
+              // Right now in the middle of active session!
+              return 'In Progress';
+            }
+          }
+        }
+
+        // Today with no parseable time
+        if (lower === 'in progress' || lower === 'in_progress') return 'In Progress';
+        return 'In Progress';
       }
     }
   }
@@ -175,18 +230,20 @@ const formatSessionStatus = (s, dateStr) => {
   return 'Upcoming';
 };
 
-const statusColor = (s, dateStr) => {
-  const norm = formatSessionStatus(s, dateStr);
+const statusColor = (s, dateStr, timeStr, durationMins) => {
+  const norm = formatSessionStatus(s, dateStr, timeStr, durationMins);
   if (norm === 'Upcoming') return '#0284C7';
   if (norm === 'Completed') return '#0D9488';
+  if (norm === 'Pending for Review' || norm === 'Pending Review') return '#D97706';
   if (norm === 'IN PROGRESS' || norm === 'In Progress') return '#00D1B2';
   return '#00D1B2';
 };
 
-const statusBg = (s, dateStr) => {
-  const norm = formatSessionStatus(s, dateStr);
+const statusBg = (s, dateStr, timeStr, durationMins) => {
+  const norm = formatSessionStatus(s, dateStr, timeStr, durationMins);
   if (norm === 'Upcoming') return 'rgba(2, 132, 199, 0.12)';
   if (norm === 'Completed') return 'rgba(13, 148, 136, 0.12)';
+  if (norm === 'Pending for Review' || norm === 'Pending Review') return 'rgba(217, 119, 6, 0.12)';
   if (norm === 'IN PROGRESS' || norm === 'In Progress') return 'rgba(0, 209, 178, 0.15)';
   return 'rgba(0, 209, 178, 0.15)';
 };
@@ -265,6 +322,13 @@ const Sessions = () => {
   const [instructorFilter, setInstructorFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Live clock tick to automatically transition expired sessions to 'Pending for Review' every 30s
+  const [clockTick, setClockTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setClockTick(t => t + 1), 30000);
+    return () => clearInterval(timer);
+  }, []);
   
   // Schedule Session Popup Modal State
   const [showScheduleModal, setShowScheduleModal] = useState(() => {
@@ -896,7 +960,7 @@ const Sessions = () => {
 
       // Status filter
       if (statusFilter !== 'All') {
-        const normStatus = formatSessionStatus(s.status, s.date);
+        const normStatus = formatSessionStatus(s);
         if (normStatus !== statusFilter) {
           return false;
         }
@@ -918,7 +982,7 @@ const Sessions = () => {
 
       return true;
     });
-  }, [roleScopedSessions, dateFilter, slotFilter, instructorFilter, statusFilter, searchQuery]);
+  }, [roleScopedSessions, dateFilter, slotFilter, instructorFilter, statusFilter, searchQuery, clockTick]);
 
   // Helper function to group sessions by explicit group_name OR by Date + Time + Instructor
   const buildSessionGrouping = (sessionList) => {
@@ -971,7 +1035,7 @@ const Sessions = () => {
           location: session.location,
           condition: session.condition,
           type: session.type,
-          status: session.status,
+          status: formatSessionStatus(session),
           sessions: []
         });
       }
@@ -1182,23 +1246,30 @@ const Sessions = () => {
     ? Math.round(roleScopedSessions.reduce((sum, s) => sum + (s.duration_mins || 60), 0) / roleScopedSessions.length)
     : 0;
 
-  // Status Metrics (Upcoming / In Progress / Completed)
-  const upcomingSessionsList = roleScopedSessions.filter(s => formatSessionStatus(s.status, s.date) === 'Upcoming');
+  // Status Metrics (Upcoming / In Progress / Pending for Review / Completed)
+  const upcomingSessionsList = roleScopedSessions.filter(s => formatSessionStatus(s) === 'Upcoming');
   const upcomingCount = getGroupSessionCount(upcomingSessionsList);
   const upcomingDays = new Set(upcomingSessionsList.map(s => s.date).filter(Boolean)).size;
 
   const inProgressSessionsList = roleScopedSessions.filter(s => {
-    const norm = formatSessionStatus(s.status, s.date);
-    return norm === 'In Progress' || norm === 'IN PROGRESS' || norm === 'Pending';
+    const norm = formatSessionStatus(s);
+    return norm === 'In Progress' || norm === 'IN PROGRESS';
   });
   const inProgressCount = getGroupSessionCount(inProgressSessionsList);
   const inProgressDays = new Set(inProgressSessionsList.map(s => s.date).filter(Boolean)).size;
+
+  const pendingReviewSessionsList = roleScopedSessions.filter(s => {
+    const norm = formatSessionStatus(s);
+    return norm === 'Pending for Review' || norm === 'Pending Review';
+  });
+  const pendingReviewCount = getGroupSessionCount(pendingReviewSessionsList);
+  const pendingReviewDays = new Set(pendingReviewSessionsList.map(s => s.date).filter(Boolean)).size;
 
   const bookedSessionsList = roleScopedSessions;
   const bookedCount = getGroupSessionCount(bookedSessionsList);
   const bookedDays = new Set(bookedSessionsList.map(s => s.date).filter(Boolean)).size;
 
-  const completedSessionsList = roleScopedSessions.filter(s => formatSessionStatus(s.status, s.date) === 'Completed');
+  const completedSessionsList = roleScopedSessions.filter(s => formatSessionStatus(s) === 'Completed');
   const completedCount = getGroupSessionCount(completedSessionsList);
   const completedDays = new Set(completedSessionsList.map(s => s.date).filter(Boolean)).size;
 
@@ -1232,6 +1303,16 @@ const Sessions = () => {
     return set;
   }, [inProgressSessionsList]);
   const inProgressStudentsCount = inProgressStudentKeys.size;
+
+  const pendingReviewStudentKeys = useMemo(() => {
+    const set = new Set();
+    pendingReviewSessionsList.forEach(s => {
+      const key = s.student_id ? String(s.student_id) : (s.student || '').trim().toLowerCase();
+      if (key) set.add(key);
+    });
+    return set;
+  }, [pendingReviewSessionsList]);
+  const pendingReviewStudentsCount = pendingReviewStudentKeys.size;
 
   const completedStudentKeys = useMemo(() => {
     const set = new Set();
@@ -1483,6 +1564,7 @@ const Sessions = () => {
                 <option value="All">All Statuses</option>
                 <option value="Upcoming">Upcoming</option>
                 <option value="In Progress">In Progress</option>
+                <option value="Pending for Review">Pending for Review</option>
                 <option value="Completed">Completed</option>
               </select>
             </div>
@@ -1717,6 +1799,24 @@ const Sessions = () => {
               <button
                 type="button"
                 className="ses-bulk-btn-complete"
+                onClick={() => handleBulkStatusChange('Pending for Review')}
+                title="Mark all selected sessions as Pending for Review"
+                style={{
+                  background: '#D97706',
+                  color: '#FFFFFF',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '7px 14px',
+                  fontSize: '12.5px',
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+              >
+                📋 Mark Pending Review
+              </button>
+              <button
+                type="button"
+                className="ses-bulk-btn-complete"
                 onClick={() => handleBulkStatusChange('Completed')}
                 title="Mark all selected sessions as Completed"
               >
@@ -1763,6 +1863,17 @@ const Sessions = () => {
           </div>
 
           <div
+            className={`ses-status-metric-card pending-review-card ${statusFilter === 'Pending for Review' ? 'active-filter' : ''}`}
+            onClick={() => setStatusFilter(prev => prev === 'Pending for Review' ? 'All' : 'Pending for Review')}
+            style={{ cursor: 'pointer' }}
+            title="Click to filter by Pending for Review sessions (Assigned sessions whose scheduled time has finished)"
+          >
+            <div className="ses-smc-label">PENDING FOR REVIEW</div>
+            <div className="ses-smc-value">{loading ? '…' : pendingReviewCount}</div>
+            <div className="ses-smc-sub">Days Pending: {loading ? '…' : pendingReviewDays}</div>
+          </div>
+
+          <div
             className={`ses-status-metric-card completed-card ${statusFilter === 'Completed' ? 'active-filter' : ''}`}
             onClick={() => setStatusFilter(prev => prev === 'Completed' ? 'All' : 'Completed')}
             style={{ cursor: 'pointer' }}
@@ -1781,7 +1892,9 @@ const Sessions = () => {
           >
             <div className="ses-smc-label">NUMBER OF STUDENTS</div>
             <div className="ses-smc-value">{loading ? '…' : totalStudentsCount}</div>
-            <div className="ses-smc-sub">Upcoming: {loading ? '…' : upcomingStudentsCount} &bull; In Progress: {loading ? '…' : inProgressStudentsCount} &bull; Completed: {loading ? '…' : completedStudentsCount}</div>
+            <div className="ses-smc-sub">
+              Upcoming: {loading ? '…' : upcomingStudentsCount} &bull; In Progress: {loading ? '…' : inProgressStudentsCount} &bull; Pending: {loading ? '…' : pendingReviewStudentsCount} &bull; Completed: {loading ? '…' : completedStudentsCount}
+            </div>
           </div>
         </div>
 
@@ -1949,13 +2062,13 @@ const Sessions = () => {
                           <span
                             className="ses-status-pill"
                             style={{
-                              backgroundColor: statusBg(groupObj.status, groupObj.date),
-                              color: statusColor(groupObj.status, groupObj.date),
+                              backgroundColor: statusBg(groupObj),
+                              color: statusColor(groupObj),
                               whiteSpace: 'nowrap'
                             }}
                           >
-                            <span className="ses-status-dot" style={{ backgroundColor: statusColor(groupObj.status, groupObj.date) }}></span>
-                            {formatSessionStatus(groupObj.status, groupObj.date)}
+                            <span className="ses-status-dot" style={{ backgroundColor: statusColor(groupObj) }}></span>
+                            {formatSessionStatus(groupObj)}
                           </span>
                         </td>
                         <td style={{ textAlign: 'right' }}>
@@ -2164,13 +2277,13 @@ const Sessions = () => {
                               <span
                                 className="ses-status-pill"
                                 style={{
-                                  backgroundColor: statusBg(session.status, session.date),
-                                  color: statusColor(session.status, session.date),
+                                  backgroundColor: statusBg(session),
+                                  color: statusColor(session),
                                   whiteSpace: 'nowrap'
                                 }}
                               >
-                                <span className="ses-status-dot" style={{ backgroundColor: statusColor(session.status, session.date) }}></span>
-                                {formatSessionStatus(session.status, session.date)}
+                                <span className="ses-status-dot" style={{ backgroundColor: statusColor(session) }}></span>
+                                {formatSessionStatus(session)}
                               </span>
                             </td>
                             <td style={{ textAlign: 'right' }}>
@@ -2385,13 +2498,13 @@ const Sessions = () => {
                         <span
                           className="ses-status-pill"
                           style={{
-                            backgroundColor: statusBg(session.status, session.date),
-                            color: statusColor(session.status, session.date),
+                            backgroundColor: statusBg(session),
+                            color: statusColor(session),
                             whiteSpace: 'nowrap'
                           }}
                         >
-                          <span className="ses-status-dot" style={{ backgroundColor: statusColor(session.status, session.date) }}></span>
-                          {formatSessionStatus(session.status, session.date)}
+                          <span className="ses-status-dot" style={{ backgroundColor: statusColor(session) }}></span>
+                          {formatSessionStatus(session)}
                         </span>
                       </td>
                       <td style={{ textAlign: 'right' }}>
@@ -2619,7 +2732,8 @@ const Sessions = () => {
                       }}
                     >
                       <option value="Upcoming">Upcoming</option>
-                      <option value="IN PROGRESS">In Progress</option>
+                      <option value="In Progress">In Progress</option>
+                      <option value="Pending for Review">Pending for Review</option>
                       <option value="Completed">Completed</option>
                     </select>
                   )}
@@ -3909,13 +4023,13 @@ const Sessions = () => {
                               <span
                                 className="ses-status-pill"
                                 style={{
-                                  backgroundColor: statusBg(grp.status, grp.date),
-                                  color: statusColor(grp.status, grp.date),
+                                  backgroundColor: statusBg(grp),
+                                  color: statusColor(grp),
                                   fontSize: '11px',
                                   padding: '2px 8px'
                                 }}
                               >
-                                {formatSessionStatus(grp.status, grp.date)}
+                                {formatSessionStatus(grp)}
                               </span>
                             </div>
 
@@ -3988,13 +4102,13 @@ const Sessions = () => {
                               <span
                                 className="ses-status-pill"
                                 style={{
-                                  backgroundColor: statusBg(sess.status, sess.date),
-                                  color: statusColor(sess.status, sess.date),
+                                  backgroundColor: statusBg(sess),
+                                  color: statusColor(sess),
                                   fontSize: '11px',
                                   padding: '2px 8px'
                                 }}
                               >
-                                {formatSessionStatus(sess.status, sess.date)}
+                                {formatSessionStatus(sess)}
                               </span>
                             </div>
 
@@ -4097,8 +4211,8 @@ const Sessions = () => {
                         <>
                           {/* Groups list */}
                           {modalGroups.map(grp => {
-                            const statusColorCode = statusColor(grp.status, grp.date);
-                            const statusBgCode = statusBg(grp.status, grp.date);
+                            const statusColorCode = statusColor(grp);
+                            const statusBgCode = statusBg(grp);
                             return (
                               <div
                                 key={grp.key || grp.groupName}
@@ -4131,7 +4245,7 @@ const Sessions = () => {
                                     }}
                                   >
                                     <span className="ses-status-dot" style={{ backgroundColor: statusColorCode }}></span>
-                                    {formatSessionStatus(grp.status, grp.date)}
+                                    {formatSessionStatus(grp)}
                                   </span>
                                 </div>
 
@@ -4833,22 +4947,27 @@ const Sessions = () => {
         /* Metrics Row - Placed Horizontally Between Filters & Table */
         .ses-metrics-row {
           display: grid;
-          grid-template-columns: repeat(4, 1fr);
-          gap: 16px;
+          grid-template-columns: repeat(5, 1fr);
+          gap: 14px;
         }
-        @media (max-width: 1024px) {
+        @media (max-width: 1200px) {
+          .ses-metrics-row {
+            grid-template-columns: repeat(3, 1fr);
+          }
+        }
+        @media (max-width: 768px) {
           .ses-metrics-row {
             grid-template-columns: repeat(2, 1fr);
           }
         }
-        @media (max-width: 600px) {
+        @media (max-width: 500px) {
           .ses-metrics-row {
             grid-template-columns: 1fr;
           }
         }
         
         .ses-status-metric-card {
-          background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 14px; padding: 18px 22px;
+          background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 14px; padding: 18px 20px;
           display: flex; flex-direction: column; gap: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.02);
           transition: all 0.2s ease;
         }
@@ -4858,13 +4977,19 @@ const Sessions = () => {
         .ses-status-metric-card.upcoming-card .ses-smc-label {
           color: #0369A1;
         }
-        .ses-status-metric-card.inprogress-card,
-        .ses-status-metric-card.pending-card {
+        .ses-status-metric-card.inprogress-card {
           background: #F0FDFA; border: 1.5px solid #99F6E4;
         }
-        .ses-status-metric-card.inprogress-card .ses-smc-label,
-        .ses-status-metric-card.pending-card .ses-smc-label {
+        .ses-status-metric-card.inprogress-card .ses-smc-label {
           color: #0F766E;
+        }
+        .ses-status-metric-card.pending-review-card,
+        .ses-status-metric-card.pending-card {
+          background: #FFFBEB; border: 1.5px solid #FDE68A;
+        }
+        .ses-status-metric-card.pending-review-card .ses-smc-label,
+        .ses-status-metric-card.pending-card .ses-smc-label {
+          color: #B45309;
         }
         .ses-status-metric-card.booked-card {
           background: #F8FAFC; border: 1.5px solid #E2E8F0;

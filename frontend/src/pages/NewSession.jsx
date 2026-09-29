@@ -510,9 +510,11 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       .then(r => r.json())
       .then(data => {
         if (Array.isArray(data)) {
-          const mapped = data.map((s, idx) => {
+          const mapped = [];
+          data.forEach((s, idx) => {
             const dayInfo = getStudentCourseDayInfo(s, idx);
-            return {
+            // 1. Primary Student
+            mapped.push({
               id: s.id,
               name: s.name,
               gender: s.gender || (s.division && s.division.toLowerCase().includes('women') ? 'Female' : 'Male'),
@@ -524,8 +526,50 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
               waitlistGroup: s.course_duration || `${dayInfo.totalDays} Days Course`,
               avatar: (s.image && !s.image.includes('unsplash.com') && !s.image.includes('1500648767791')) ? s.image : '',
               swimming_ability: s.swimming_ability || 'Swimmer',
-              isReal: true
-            };
+              whatsapp_number: s.whatsapp_number || '',
+              email: s.email || '',
+              isReal: true,
+              isGuest: false,
+              parentStudentId: null,
+              parentStudentName: null
+            });
+
+            // 2. Accompanying Guests registered with this student
+            let guestList = [];
+            if (Array.isArray(s.guests_details)) {
+              guestList = s.guests_details;
+            } else if (typeof s.guests_details === 'string') {
+              try {
+                guestList = JSON.parse(s.guests_details || '[]');
+              } catch (e) {
+                guestList = [];
+              }
+            }
+            if (Array.isArray(guestList) && guestList.length > 0) {
+              guestList.forEach((g, gIdx) => {
+                const guestName = g.name && g.name.trim() ? g.name.trim() : `Guest #${gIdx + 1}`;
+                mapped.push({
+                  id: `guest-${s.id}-${gIdx}`,
+                  name: guestName,
+                  gender: g.gender || s.gender || 'Male',
+                  level: g.level || s.level || 'Beginner',
+                  day: idx % 2 === 0 ? 'day1' : 'day2',
+                  whichDay: s.which_day || s.whichDay || dayInfo.whichDay,
+                  totalDays: s.total_days || s.totalDays || dayInfo.totalDays,
+                  courseDuration: s.course_duration || dayInfo.courseDuration,
+                  waitlistGroup: s.course_duration || `${dayInfo.totalDays} Days Course`,
+                  avatar: '',
+                  swimming_ability: g.swimming_ability || s.swimming_ability || 'Swimmer',
+                  whatsapp_number: g.whatsapp_number || g.phone || s.whatsapp_number || '',
+                  email: g.email || s.email || '',
+                  isReal: true,
+                  isGuest: true,
+                  guestIndex: gIdx + 1,
+                  parentStudentId: s.id,
+                  parentStudentName: s.name
+                });
+              });
+            }
           });
           setDbStudents(mapped);
         }
@@ -996,6 +1040,13 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       return 2;                                    // Bottom: Assigned in another slot
     };
 
+    const getFamilyPriority = (student) => {
+      const familyId = student.parentStudentId || student.id;
+      const related = allPoolStudents.filter(s => (s.parentStudentId || s.id) === familyId);
+      if (related.length === 0) return getStudentPriority(student.id);
+      return Math.min(...related.map(s => getStudentPriority(s.id)));
+    };
+
     return allPoolStudents
       .filter(s => levelFilter === 'all' || s.level.toLowerCase() === levelFilter.toLowerCase())
       .filter(s => genderFilterStep2 === 'all' || (s.gender || 'male').toLowerCase() === genderFilterStep2.toLowerCase())
@@ -1006,29 +1057,42 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         if (swimmingFilterStep2 === 'non-swimmer') return sSwim.includes('non') || sSwim === 'no';
         return true;
       })
-      .filter(s => !studentSearchStep2 || s.name.toLowerCase().includes(studentSearchStep2.toLowerCase()))
+      .filter(s => !studentSearchStep2 || s.name.toLowerCase().includes(studentSearchStep2.toLowerCase()) || (s.parentStudentName && s.parentStudentName.toLowerCase().includes(studentSearchStep2.toLowerCase())))
       .slice()
       .sort((a, b) => {
-        // 1. Priority sort: active slot students on TOP, unassigned in MIDDLE, other slots at BOTTOM
-        const prioA = getStudentPriority(a.id);
-        const prioB = getStudentPriority(b.id);
-        if (prioA !== prioB) return prioA - prioB;
+        // Keep parent student and their guests grouped together
+        const familyIdA = a.parentStudentId || a.id;
+        const familyIdB = b.parentStudentId || b.id;
 
-        // 2. If day filter is active
-        if (courseDayFilter !== 'all') {
-          const aMatch = String(a.whichDay) === String(courseDayFilter);
-          const bMatch = String(b.whichDay) === String(courseDayFilter);
-          if (aMatch && !bMatch) return -1;
-          if (!aMatch && bMatch) return 1;
+        if (String(familyIdA) !== String(familyIdB)) {
+          // 1. Priority sort: active slot students on TOP, unassigned in MIDDLE, other slots at BOTTOM
+          const prioA = getFamilyPriority(a);
+          const prioB = getFamilyPriority(b);
+          if (prioA !== prioB) return prioA - prioB;
+
+          // 2. If day filter is active
+          if (courseDayFilter !== 'all') {
+            const aMatch = String(a.whichDay) === String(courseDayFilter);
+            const bMatch = String(b.whichDay) === String(courseDayFilter);
+            if (aMatch && !bMatch) return -1;
+            if (!aMatch && bMatch) return 1;
+          }
+
+          // 3. Natural day order
+          const dayA = parseInt(a.whichDay, 10) || 1;
+          const dayB = parseInt(b.whichDay, 10) || 1;
+          if (dayA !== dayB) return dayA - dayB;
+
+          // 4. Alphabetical by parent name
+          const parentNameA = a.parentStudentName || a.name;
+          const parentNameB = b.parentStudentName || b.name;
+          return parentNameA.localeCompare(parentNameB);
         }
 
-        // 3. Natural day order
-        const dayA = parseInt(a.whichDay, 10) || 1;
-        const dayB = parseInt(b.whichDay, 10) || 1;
-        if (dayA !== dayB) return dayA - dayB;
-
-        // 4. Alphabetical name
-        return a.name.localeCompare(b.name);
+        // Within the same family / booking: Parent student FIRST (0), then Guest 1, Guest 2...
+        const subA = a.isGuest ? (a.guestIndex || 1) : 0;
+        const subB = b.isGuest ? (b.guestIndex || 1) : 0;
+        return subA - subB;
       });
   }, [allPoolStudents, levelFilter, courseDayFilter, genderFilterStep2, swimmingFilterStep2, studentSearchStep2, allSelectedStudentIds, slotStudentMap, selectedSlotId, activeSlotsForDay, slots]);
 
@@ -1197,7 +1261,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
         return true;
       })
-      .filter(s => !studentSearch || s.name.toLowerCase().includes(studentSearch.toLowerCase()))
+      .filter(s => !studentSearch || s.name.toLowerCase().includes(studentSearch.toLowerCase()) || (s.parentStudentName && s.parentStudentName.toLowerCase().includes(studentSearch.toLowerCase())))
       .slice()
       .sort((a, b) => {
         // Unassigned on top, assigned to groups at bottom
@@ -1206,10 +1270,19 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         if (!aAssigned && bAssigned) return -1;
         if (aAssigned && !bAssigned) return 1;
 
-        const dayA = parseInt(a.whichDay, 10) || 1;
-        const dayB = parseInt(b.whichDay, 10) || 1;
-        if (dayA !== dayB) return dayA - dayB;
-        return a.name.localeCompare(b.name);
+        const familyIdA = a.parentStudentId || a.id;
+        const familyIdB = b.parentStudentId || b.id;
+        if (String(familyIdA) !== String(familyIdB)) {
+          const dayA = parseInt(a.whichDay, 10) || 1;
+          const dayB = parseInt(b.whichDay, 10) || 1;
+          if (dayA !== dayB) return dayA - dayB;
+          const parentNameA = a.parentStudentName || a.name;
+          const parentNameB = b.parentStudentName || b.name;
+          return parentNameA.localeCompare(parentNameB);
+        }
+        const subA = a.isGuest ? (a.guestIndex || 1) : 0;
+        const subB = b.isGuest ? (b.guestIndex || 1) : 0;
+        return subA - subB;
       });
   }, [importedStudents, step3DayFilter, step3StatusFilter, step3LevelFilter, step3GenderFilter, step3SwimmingFilter, step3SlotFilter, slotStudentMap, studentSearch, trainingGroups, editSession]);
 
@@ -1489,7 +1562,15 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     try {
       for (const grp of validGroups) {
         const numericStudentIds = grp.studentIds
-          .map(sid => typeof sid === 'number' ? sid : parseInt(String(sid).replace(/\D/g, ''), 10))
+          .map(sid => {
+            if (typeof sid === 'number') return sid;
+            const str = String(sid);
+            if (str.startsWith('guest-')) {
+              const parts = str.split('-');
+              return parseInt(parts[1], 10);
+            }
+            return parseInt(str.replace(/\D/g, ''), 10);
+          })
           .filter(id => !isNaN(id) && id > 0);
 
         if (numericStudentIds.length === 0) continue;
@@ -2347,19 +2428,27 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
                     const cardStyle = () => {
                       return {
-                        background: isCurrentSlotStudent ? '#FFFFFF' : isOtherSlotStudent ? '#F8FAFC' : '#FFFFFF',
+                        background: student.isGuest
+                          ? (isCurrentSlotStudent ? '#F0F9FF' : isOtherSlotStudent ? '#F8FAFC' : '#F8FAFC')
+                          : (isCurrentSlotStudent ? '#FFFFFF' : isOtherSlotStudent ? '#F8FAFC' : '#FFFFFF'),
                         border: isCurrentSlotStudent
-                          ? '1.5px solid #0F172A'
+                          ? (student.isGuest ? '1.5px solid #0284C7' : '1.5px solid #0F172A')
                           : isOtherSlotStudent
                           ? '1.5px dashed #CBD5E1'
+                          : student.isGuest
+                          ? '1.5px solid #BAE6FD'
                           : '1.5px solid #E2E8F0',
+                        borderLeft: student.isGuest
+                          ? (isCurrentSlotStudent ? '4px solid #0284C7' : '4px solid #38BDF8')
+                          : undefined,
+                        marginLeft: student.isGuest ? '28px' : '0px',
                         boxShadow: isCurrentSlotStudent ? '0 1px 4px rgba(15, 23, 42, 0.08)' : '0 1px 2px rgba(0, 0, 0, 0.02)',
                         opacity: isOtherSlotStudent ? 0.72 : 1,
                         transition: 'all 0.15s ease',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
-                        padding: '12px 18px',
+                        padding: student.isGuest ? '10px 16px' : '12px 18px',
                         borderRadius: '12px',
                         gap: '16px',
                         cursor: 'pointer'
@@ -2375,6 +2464,23 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                       >
                         {/* Left Side: Checkbox + Avatar + Student Name + Target Badge */}
                         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
+                          {student.isGuest && (
+                            <span
+                              style={{
+                                fontSize: '13px',
+                                color: '#0284C7',
+                                fontWeight: 800,
+                                lineHeight: 1,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                marginRight: '-4px'
+                              }}
+                              title={`Accompanying Guest of ${student.parentStudentName}`}
+                            >
+                              ↳
+                            </span>
+                          )}
+
                           {/* Checkbox Icon */}
                           <div
                             style={{
@@ -2382,14 +2488,16 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                               height: '22px',
                               borderRadius: '50%',
                               border: isCurrentSlotStudent
-                                ? '2px solid #0F172A'
+                                ? (student.isGuest ? '2px solid #0284C7' : '2px solid #0F172A')
                                 : isOtherSlotStudent
                                 ? '2px solid #94A3B8'
                                 : isScheduledInDb
                                 ? '2px solid #D97706'
+                                : student.isGuest
+                                ? '2px solid #7DD3FC'
                                 : '2px solid #CBD5E1',
                               background: isCurrentSlotStudent
-                                ? '#0F172A'
+                                ? (student.isGuest ? '#0284C7' : '#0F172A')
                                 : isOtherSlotStudent
                                 ? '#E2E8F0'
                                 : isScheduledInDb
@@ -2419,18 +2527,39 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                             )}
                           </div>
 
-                          <UserAvatar src={student.avatar} name={student.name} size={32} className="ns-student-avatar" />
+                          <UserAvatar src={student.avatar} name={student.name} size={student.isGuest ? 28 : 32} className="ns-student-avatar" />
 
                           <span className="ns-student-name" style={{
                             fontWeight: (isChecked || isScheduledInDb) ? 800 : 600,
                             color: '#0F172A',
-                            fontSize: '14.5px',
+                            fontSize: student.isGuest ? '14px' : '14.5px',
                             whiteSpace: 'nowrap',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis'
                           }}>
                             {student.name}
                           </span>
+
+                          {student.isGuest && (
+                            <span
+                              style={{
+                                fontSize: '11px',
+                                fontWeight: 700,
+                                color: '#0369A1',
+                                background: '#E0F2FE',
+                                border: '1px solid #BAE6FD',
+                                padding: '2px 8px',
+                                borderRadius: '6px',
+                                flexShrink: 0,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                              }}
+                              title={`Accompanying Guest of ${student.parentStudentName}`}
+                            >
+                              👥 Guest {student.guestIndex} ({student.parentStudentName})
+                            </span>
+                          )}
 
                           {student.swimming_ability?.toLowerCase() === 'non-swimmer' ? (
                             <span style={{ fontSize: '10.5px', fontWeight: 700, color: '#D97706', background: '#FEF3C7', border: '1px solid #FDE68A', padding: '1px 6px', borderRadius: '4px', flexShrink: 0 }}>
@@ -3091,6 +3220,21 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                           <div className="ns-ws-student-body">
                             <div className="ns-ws-student-top">
                               <span className="ns-ws-name" title={student.name}>{student.name}</span>
+                              {student.isGuest && (
+                                <span style={{
+                                  fontSize: '9.5px',
+                                  fontWeight: 700,
+                                  color: '#0369A1',
+                                  background: '#E0F2FE',
+                                  border: '1px solid #BAE6FD',
+                                  padding: '1px 5px',
+                                  borderRadius: '4px',
+                                  whiteSpace: 'nowrap',
+                                  flexShrink: 0
+                                }} title={`Accompanying Guest of ${student.parentStudentName}`}>
+                                  👥 Guest of {student.parentStudentName}
+                                </span>
+                              )}
                               <span
                                 className="ns-level-badge"
                                 style={{
@@ -3398,6 +3542,20 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                     >
                                       <UserAvatar src={s.avatar} name={s.name} size={20} className="ns-chip-avatar" />
                                       <span className="ns-chip-name">{s.name}</span>
+                                      {s.isGuest && (
+                                        <span style={{
+                                          fontSize: '9px',
+                                          fontWeight: 700,
+                                          color: '#0369A1',
+                                          background: '#E0F2FE',
+                                          border: '1px solid #BAE6FD',
+                                          padding: '1px 5px',
+                                          borderRadius: '3px',
+                                          flexShrink: 0
+                                        }} title={`Accompanying Guest of ${s.parentStudentName}`}>
+                                          Guest
+                                        </span>
+                                      )}
 
                                       {grpSlot && (
                                         <span style={{

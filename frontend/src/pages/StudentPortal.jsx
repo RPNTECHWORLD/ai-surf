@@ -129,7 +129,7 @@ export default function StudentPortal() {
           <div style={styles.infoGrid}>
             {[
               { icon: '📅', label: 'Course',     value: student.course_duration },
-              { icon: '🕐', label: 'Session',    value: student.session_time },
+              ...(student.session_time ? [{ icon: '🕐', label: 'Session', value: student.session_time }] : []),
               { icon: '🏫', label: 'Stay',       value: student.staying_at_school || '—' },
               { icon: '🏄', label: 'Instructor', value: student.instructor_name || 'TBD' },
             ].map(item => (

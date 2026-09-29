@@ -114,144 +114,64 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
  3. Removed dummy placeholder images from New/Edit Session page and added interactive media previews with remove (Ã—) buttons.
  4. Deployed updated backend to AWS EC2 (`aisurf-backend-server`) and verified live session editing and video storage.
 
- ###changes on 31-08-26
- 1. Fixed timezone shift bug in Event, Competitor, and Heat Management pages by using timezone-safe local date component parsing.
- 2. Attached student mapping metadata (student_ids and student_names) to dynamic virtual session events to support booked athlete loading inside heat creation.
- 3. Added frontend auto-persistence for virtual session events, which automatically inserts them into the database events table upon heat creation to satisfy the backend INNER JOIN constraints without touching the aquaticxsports backend repository.
+### changes on 29-09-26
+1. **Removed Default Auto-Assign School (`AuthPage.jsx`, `mockFetch.js`, `backend/main.py`)**:
+   - Removed hardcoded `'Aquatic Indica Surf School'` fallback across student registration, mock fetch routines, and backend endpoints.
+   - Students who sign up without selecting a surf school now remain unassigned (`school: null` / empty) instead of being automatically forced into a school.
+2. **Interactive "Select Your Surf School" Flow (`StudentProfile.jsx`, `backend/main.py`)**:
+   - Replaced default "Pending Approval" banner with an interactive **"Select Your Surf School"** card when a student has no school affiliation (`!hasSchool`).
+   - Enabled searching, selecting, and submitting school join requests directly from the profile.
+   - Added a **"Change School"** button allowing students with pending requests to cancel or switch their selected school.
+   - Added backend endpoints `POST /api/students/{id}/join-school` and `POST /api/students/{id}/leave-school` and deployed them live to AWS EC2 backend.
+3. **Dynamic Sidebar Header for School Affiliation (`Sidebar.jsx`)**:
+   - Updated top header in the sidebar to dynamically display **"No School Selected"** when a student has not selected or joined a surf school, preventing false school branding.
+4. **Optional Instructor Assignment on Student Creation (`StudentsManagement.jsx`, `backend/main.py`)**:
+   - Removed mandatory instructor assignment when adding a student.
+   - Added `-- No Instructor Assigned (Unassigned) --` option in the Add Student modal.
+   - Updated backend validation so student creation succeeds without requiring an instructor.
+5. **"Pending for Review" Session Status Filter (`StudentsManagement.jsx`, `Sessions.jsx`)**:
+   - Added dedicated **"Pending for Review"** filter option to session rosters and filters.
+   - Sessions whose scheduled time slot has completed or elapsed can now be filtered and reviewed.
+6. **Competition Heat Arena Streamlining & Renaming (`Competitions.jsx`)**:
+   - Completely removed "Solo Mock" arena from the Competitions page to streamline the interface.
+   - Renamed competition heat management to **"Mock Heat"**.
+7. **Student Profile Form Mandatory UI Updates (`StudentProfile.jsx`)**:
+   - Enhanced Edit Profile form UI with required asterisk (`*`) for Gender field and improved styling.
+8. **Interactive Accompanying Guests Dropdown & Details Popover (`StudentsManagement.jsx`)**:
+   - Replaced static guest text with an interactive toggle badge `👥 {count} Guests ▼`.
+   - Clicking opens a detailed dropdown popover displaying full guest details (Guest Name, Age, Gender, Stance, WhatsApp number, and Email) instead of only showing the guest count.
+9. **Accompanying Guests Card Conditional Rendering (`StudentProfile.jsx`)**:
+   - Completely hide the **"Accompanying Guests"** card and the empty state box (`👥 No accompanying guests registered`) when a student has 0 registered guests (`guestsCount <= 0`).
+   - The card only appears on the student profile if the student actually has registered accompanying guests.
+10. **Removed "Recent Activity" Timeline Card (`SchoolDashboard.jsx`)**:
+   - Completely removed the "Recent Activity" (Live Feed) timeline card from the School Dashboard.
+   - Updated the bottom dashboard grid (`.db-bottom-grid`) to `1fr` so that "Today's Sessions" expands across the full width cleanly.
+11. **Invite Link Course Duration Lock (`StudentsManagement.jsx`, `AuthPage.jsx`, `backend/main.py`)**:
+   - Added dedicated Course Duration / Allowed Days selector (1 Day, 3 Days, 5 Days, 7 Days, 10 Days, custom) to the School Invite Link modal.
+   - When students register via the invite link, their registration and student profile are strictly locked to that duration so they can only come for those allowed days.
+12. **Restricted Invite Link Creation to Admins Only (`StudentsManagement.jsx`)**:
+   - Hidden the **`🔗 Invite Link`** button and modal from Coach accounts (`!isCoach && isAdminOrSchoolAdmin`).
+   - Only School Admins and Super Admins can create and share registration invite links.
+13. **3-Tiered Top Navigation User Info Hierarchy (`Sidebar.jsx`, `index.css`)**:
+   - Updated top-right user info display into a clear 3-tiered hierarchy:
+     - **Top (`mela`)**: User's Name in bold white.
+     - **Middle (`kila`)**: School Name in clean slate gray.
+     - **Bottom (`aparo`)**: User's Position / Role (`COACH`, `SCHOOL ADMIN`, `STUDENT`) in accent teal.
+14. **Aligned Straight-Line Dropdown for Accompanying Guests (`StudentsManagement.jsx`, `backend/main.py`)**:
+   - Replaced bulky popover modal with a sleek dropdown toggle badge (`👥 {count} Guests ▼`).
+   - When clicked, reveals a clean, pixel-perfect aligned sub-grid directly underneath the student info.
+   - Column alignment (`👥 Guest #`, Name, Gender/Age/Level, Phone, Email) lines up straight across all guests.
+   - Students with 0 guests show nothing (`return null`).
+   - Fixed database migration and `student_to_dict` so `guests_count` is accurately 0 for students with no guests.
+15. **Accompanying Guests in Session Roster & Slot Assignment (`NewSession.jsx`)**:
+   - Accompanying guests registered with a primary student (`guests_details`) are now automatically unpacked and displayed directly underneath their parent student in the **School Student Roster** (Step 2).
+   - Displayed as full student rows with sub-row hierarchy indentation, branch connector (`↳`), distinct badge (`👥 Guest # of {Parent Name}`), avatar, swimmer badge, slot assignment status, course day info, duration, and level.
+   - Accompanying guests can be independently selected for slots, counting towards slot capacity (e.g. 1 parent + 1 guest = 2 spots).
+   - Guests remain strictly grouped directly beneath their parent student in all sort orders and searches.
+   - Supported in Step 3 Training Groups (drag & drop, group chips) and mapped back cleanly to parent student IDs upon publishing bulk sessions without database constraint errors.
 
-### changes on 18-09-26
-1. Removed "Primary Instructor" column from the Students Management table in `StudentsManagement.jsx`.
-2. Implemented strict role-based privacy for student accounts in Session Details & Media Hub modals - hid "Edit Session", "Delete", and "Save Changes" controls and locked status/notes to read-only.
-3. Standardized UI terminology by replacing all "Athlete / Athletes" labels with "Student / Students" across top navigation badges, session tables, group modals, and session builder pools.
-4. Resolved top bar header logic in `Sidebar.jsx` to dynamically display the active Surf School name (`Aquatic Indica Surf School`) instead of coach name overrides for users inside a school.
-5. Restricted `Pending Requests` button and registration approval modal visibility in `StudentsManagement.jsx` so it is hidden for Surf School Coaches and reserved for School Administrators.
-6. Synchronized `Active Students` count in Dashboard stats API (`mockFetch.js`) by filtering out pending and rejected registrations so it matches the active roster in Students Management.
-7. Derived pending sessions in `StudentProfile.jsx` from student `course_duration` (e.g. 3 Days / 7 Days Course), populating the Pending Sessions count badge and listing all scheduled course days with date and time slot.
-8. Added dedicated `Accompanying Guests` widget on `StudentProfile.jsx` to render accompanying guests count, group size, and individual guest profile cards (name, age, skill level).
-9. Removed `Skill Tracker` radar chart and `Badge History` widgets from `StudentProfile.jsx` layout.
-10. Removed `Mock Heats & Tactical History` card section from `StudentProfile.jsx` layout.
-11. Moved `Accompanying Guests` widget to the top of the left column in `StudentProfile.jsx` above Session History.
-12. Refactored StudentProfile layout grid so left and right columns share equal flexible width (`flex: 1`), preventing text wrapping on Accompanying Guests header and balancing all dashboard cards.
-13. Simplified Edit Profile Modal in `StudentProfile.jsx` to exclusively present Signup & Guest registration fields (Name, WhatsApp, Guests, DOB, Course Duration, Slot, Start Date, Guest Profiles) and removed unused stats/logs fields.
-14. Removed `Session Time Slot` dropdown selection from student edit modal in `StudentProfile.jsx` so students do not pick session time slots.
-15. Created dedicated `Accompanying Guests` management modal (`showGuestModal`) in `StudentProfile.jsx` triggered by `+ Add Guests` button, allowing adding, updating, and removing guest profiles independently without opening `Edit Student Profile`.
-16. Added accompanying guest count badge (`ðŸ‘¥ X Guest(s)`) under student name & phone number in `StudentsManagement.jsx` table roster.
-17. Rendered individual accompanying guest profile details (Guest Name, WhatsApp phone, Email address) directly under the guest badge in `StudentsManagement.jsx` table rows.
-18. Added graceful error fallback handling (`safeGet`) to `HeatManagement.jsx` to catch EC2 backend HTTP 500 responses without throwing unhandled exceptions in browser console.
-19. Updated session metric card label from `SESSIONS BOOKED` to `PENDING SESSIONS` and subtext from `Days Booked:` to `Pending Days:` in `Sessions.jsx` and `StudentsManagement.jsx`.
-20. Removed duplicate middle metric card widget from `Sessions.jsx` and `StudentsManagement.jsx`.
-21. Updated `NewSession.jsx` roster selector to leave student selection empty (0 selected) by default for manual selection, and filtered out students already scheduled on the selected session date.
-22. Normalized session status labels in `Sessions.jsx` from `UPCOMING` to `PENDING` (`formatSessionStatus`), updating status pills and syncing the `PENDING SESSIONS` top metric card count.
-23. Removed `ATTENDANCE` header column and `âœ“ Mark Daily` buttons from `StudentsManagement.jsx` table roster.
-24. Dynamic Session Slot Filter: Updated `StudentsManagement.jsx` session time filter dropdown to dynamically display active configured slots from Session Configuration (`localStorage.getItem('session_slots')`), filtered by the selected date's day of the week (`dateFilter`), with real-time sync listeners.
-25. Removed Table Row Edit Buttons: Completely removed the pencil edit icon buttons (`ses-icon-btn`) from session table rows in `Sessions.jsx`.
-26. Removed Preferred Session Time Field: Removed `Preferred Session Time` dropdown input field from `Add Students` modal in `StudentsManagement.jsx`.
-27. Automatic Session Grouping: Refactored `Sessions.jsx` session grouping logic (`buildSessionGrouping`) so that multiple sessions sharing the exact same Date, Time, and Instructor are automatically consolidated into a single parent Group Session row (e.g. `08:30 AM Group (3 Students)`).
-28. Synchronized School Name: Fixed school name mismatch between top header navigation and profile card in `InstructorProfile.jsx` by resolving `activeSchoolName` dynamically from active session user context (`erictestschool`).
-29. Per-Slot Independent Session Capacity: Refactored `NewSession.jsx` capacity state management (`slotCapacityMap`) so that each session time slot (e.g. `08:30 AM`, `10:30 AM`) maintains its own independent target student capacity limit when switching between slots.
-30. Horizontal Slot Pill Tabs Bar: Replaced top dropdown slot select in `Sessions.jsx` with an always-visible horizontal slot pill tab bar featuring `â° Select Time Slot:`, circular slot number badges, session counts, and active `âœ“ SELECTED TAB` indicators.
-31. Student Video Upload & Auto-Save: Enabled video upload and auto-saving (`autoSaveHubVideo`) inside Session Details & Media Hub modal for student accounts in `Sessions.jsx`, ensuring uploaded wave clips are immediately persisted to backend session records.
-32. Past Date Selection Disabled: Updated `NewSession.jsx` calendar widget to disable past dates (`cellDate < today`). Past days are visualised with reduced opacity (`0.3`), strike-through line, and `pointerEvents: 'none'` to block selection, while previous month navigation arrow (`â†`) is disabled when viewing the current month.
-33. Publish Validation & Group Initialization Fix: Added validation to `NewSession.jsx` (`handleFinalizeAndPublish` & `proceedToStep3`) so that publishing requires at least 1 valid group with assigned students. Prevents auto-publishing fake empty groups or falling back to dummy student ID `1`.
-34. Editable Custom Session Duration: Replaced static dropdown in `SessionConfigure.jsx` and `NewSession.jsx` slot edit modal with a hybrid number input and `<datalist>` dropdown. Users can now either select standard presets (`30`, `45`, `60`, `90`, `120`, `180 min`) or manually type any custom duration value in minutes (e.g. `75`, `105`, `150`).
-35. Removed Slot Card Edit Buttons: Completely removed the `Edit` buttons from daily time slot cards in `NewSession.jsx` (Choose Time Slot section).
-36. Removed "Staff On Leave" Metric Card: Removed the "Staff On Leave" summary card from Step 3 (Assign Instructors) in `NewSession.jsx` and rebalanced the summary grid to 3 cards.
-37. Custom In-App UI Alert Modal: Replaced browser native popups (`alert(...)`) in `NewSession.jsx` with a styled in-app UI alert modal featuring status icons, structured headings, clean backdrop blur, and dark rounded action buttons.
-38. Horizontal Slot Tabs Bar in Students Management: Replaced the `Session: All Slots` dropdown filter in `StudentsManagement.jsx` with the exact same always-visible horizontal slot pill tabs bar from `Sessions.jsx` (with `â° Select Time Slot:`, numbered circular badges, student counts, and active `âœ“ SELECTED TAB` highlights).
-39. Single Coach Per Group Enforcement: Updated `NewSession.jsx` to enforce exactly 1 dedicated coach per group card (single coach assignment). Removed multi-coach appending, and added strict validation ensuring every training group has an assigned coach before publishing.
 
-### changes on 19-09-26
-1. Added show/hide eye icon toggle (SVG) to New Password and Confirm Password fields in Set Password modal (StudentProfile.jsx).
-2. Removed Quick Actions panel (Assign to Session, Send Welcome Email, Notify Instructor) from student add summary modal (StudentsManagement.jsx).
-3. Removed Add Student - Review Summary - Assign Session step indicator bar from student add summary modal.
-4. Removed Preferred Session row from student summary details table.
-5. Fixed slot time mismatch on student chips inside group cards - chips now show the group card slot time, not each student original selected slot (NewSession.jsx).
-6. Added portal invite link CTA button to all welcome email templates in backend:
-   - Student sign-up: magic link to /student-portal?token=...
-   - Admin creates student: auto-generates invite token, embedded direct portal link in email
-   - Instructor created: direct /coach-portal login button (teal gradient)
-7. Backend app base URL resolved from APP_URL or FRONTEND_URL env variable for production compatibility.
-8. Verified SMTP delivery - test email successfully delivered to Gmail inbox.
-9. In-App Custom Confirmation Modals & Toasts: Replaced browser native `window.confirm(...)` dialogs with custom styled in-app confirmation modals and toast notifications across `SuperAdminDashboard.jsx`, `StudentsManagement.jsx`, and `InstructorManagement.jsx`.
-10. Sign-up Password Autofill Prevention: Prevented browser password managers from automatically prefilling passwords on the public sign-up registration form (`AuthPage.jsx`).
-11. Permanent Student Portal Magic Links & Base URL Alignment:
-    - Configured production `APP_URL=https://aisurf-one.vercel.app` in backend environment and updated `get_app_base_url` to ensure all generated links point to the live Vercel domain.
-    - Updated backend database persistence logic so that `invite_token` is never erased/nulled upon password creation, ensuring student portal magic invite links remain permanently valid.
-12. Student View Single Row Representation in Sessions: Updated `Sessions.jsx` for student accounts (`isStudent`) so sessions are rendered directly as clean individual table rows with a `[Group A]` badge, removing unnecessary expandable accordion parent rows.
-13. Removed "All Slots" Pill: Removed the "All Slots" pill from Step 3 time slot selector in `NewSession.jsx` and defaulted selection to the first active slot for the chosen session day.
-14. Floating Sticky Action Bar in Session Configuration: Replaced bottom inline buttons in `SessionConfigure.jsx` with a floating sticky dark pill action bar (`.sc-sticky-bar`) matching the Photo 1 design in `NewSession.jsx` (displaying `SESSION SETUP` emerald badge, active slots & default capacity summary, back button, and a glowing `#00D2B4` Save Configuration button).
-15. Removed Details Button from Sessions Table: Removed the `🔍 Details` button from session rows in `Sessions.jsx`, leaving only `+ Video`, `Analysis`, and `Delete` action buttons.
-16. Removed "Default Session Settings" Card: Removed the redundant "Default Session Settings" card (duration, max students, break between sessions, and cancellation window) from `SessionConfigure.jsx`, keeping the configuration interface clean and focused on daily time slots.
 
-### changes on 23-09-26
-1. CSV Bulk Import Quick Preview & One-Click Import: Added an instant CSV preview card (`sm-csv-preview-card`) right below the file dropzone in `StudentsManagement.jsx` displaying the parsed student count, source filename, mini-roster table preview (Name, Email, Phone, Age/Level, Assigned Coach), and a direct `🚀 Import Students Now` button with duplicate-prevention handling.
-2. Students Management Table Column Refinement: Replaced the `Session` column header with `Date` in `StudentsManagement.jsx` table roster, showing a clean `🗓️ {start_date}` display without hardcoded slot times.
-3. Pending Approval Filtering: Filtered out already approved active students from the pending join requests list in `StudentsManagement.jsx` to prevent duplicate displays.
-4. Backend Multi-Tenant Data Consistency: Synchronized `invite_token`, `approval_status`, and `school` fields across backend student creation, lookup queries, and session assignments.
 
-### changes on 24-09-26
-1. SMTP Health Check & Quota Diagnostic: Audited outgoing mail delivery and identified Gmail SMTP relay error `550 5.4.5 Daily user sending limit exceeded` caused by Gmail personal account daily limits.
-2. AWS SES Email Migration Architecture Proposal: Prepared a comprehensive technical proposal document (`email_service_migration_proposal.md`) comparing Gmail SMTP vs AWS Simple Email Service (SES) with high sending throughput (50,000+ mails/day), ₹8.50 per 1,000 email pricing, SPF/DKIM verification, and native `us-east-1` AWS infrastructure alignment.
-3. Student Registration Autofill Elimination: Removed all default and auto-filled field values across Student Registration in `AuthPage.jsx`:
-   - `Gender`: Reset default `Male` to empty prompt `-- Select Gender --`.
-   - `Surf Stance`: Reset default `regular` to empty prompt `-- Select Surf Stance --`.
-   - `Accompanying Guests`: Removed pre-filled `0` to allow clean user entry.
-   - `Course Duration`: Reset default `3 Days Course` to empty prompt `-- Select Course Duration --`.
-   - `Start Date`: Removed auto-filled current date to leave a clean calendar picker (`dd - mm - yyyy`).
-   - `Assigned Surf School`: Removed automatic assignment to the first school in the list so users manually select their school from `-- Select Surf School --` (preserved only on direct invite links).
-   - Removed pre-filled defaults in guest profile rows and coach hourly rate.
-4. Student Profile Password Setup Prompt Fix:
-   - Fixed issue where students without passwords (`has_password: false`) could not see the password setup banner or modal in `StudentProfile.jsx`.
-   - Removed the restrictive `?token=` URL requirement so the password setup prompt always appears when a password has not been created.
-   - Prevented stale `localStorage` join-request records from overriding the database password status.
-   - Added an automatic popup of the "Update Account Password" modal on first load if the student has no password.
-   - Added a prominent **`🔐 Set Permanent Password`** / **`🔑 Change Password`** button in the student profile header.
-5. Dynamic "My Sessions" Navigation & Page Header:
-   - Top Header Navigation (`Sidebar.jsx`): Dynamically displays **`My Sessions`** instead of `Sessions` when logged in as a Student (`athlete`/`student`/`user`) or Coach (`coach`).
-   - Sessions Page Title (`Sessions.jsx`): Updated main heading to display **`My Sessions`** for students and coaches with personalized coaching and schedule subtitles.
 
-### changes on 25-09-26
-1. Interactive Calendar & Day Details Roster View (`Sessions.jsx`):
-   - Touching or clicking any calendar date cell or group pill immediately launches a dedicated **Day Details Modal** and synchronizes the embedded **Day Roster Drawer** below the grid.
-   - Shows long formatted date, total slots count, `TODAY` indicator, training group cards, session timings, assigned coach, spot location, and enrolled student roster with avatars and levels.
-   - Quick session creation button (`+ Schedule on this Date` / `+ Create`) for current & future dates.
-   - Cleaned up Day Details modal action buttons by removing the redundant "AI Video Analysis" button, retaining a clean and direct `View in Sessions Table →` button.
-2. Session Status Workflow & Dynamic Metrics Bar (`Sessions.jsx`):
-   - Dynamic Date-Aware Status Transitions: Arrived or past sessions automatically transition to **`IN PROGRESS`** / `Completed`, while future dates display **`UPCOMING`**.
-   - Redesigned status metrics into a dedicated 4-card horizontal row:
-     - `UPCOMING SESSIONS` (sky blue) with days upcoming count.
-     - `IN PROGRESS SESSIONS` (emerald teal) with days in progress count.
-     - `SESSIONS COMPLETED` (green) with days completed count.
-     - `NUMBER OF STUDENTS` (purple) with live breakdown across Upcoming, In Progress, and Completed.
-   - Each metric card acts as an instant one-click filter for the session table.
-3. Student & Coach Gender Filters in Session Creation Wizard (`NewSession.jsx`):
-   - Step 3 Column 1 (Available Students): Added dedicated 4-column filter grid (`📅 DAY`, `⚡ STATUS`, `🎯 LEVEL`, `👤 GENDER`) with gender badges on student cards (`♀ Female` / `♂ Male`).
-   - Step 3 Column 3 (Available Instructors): Added segmented gender filter buttons (`All (N) | Male (N) | Female (N)`), dynamic coach counts, gender badges on coach cards, and empty state prompts.
-   - Step 2 (Roster Selection): Added gender filter chips (`All`, `Male`, `Female`).
-   - Backend database support: Added `gender` column to `Student` SQLAlchemy model and updated SQLite `aisurf.db` table schema and queries.
-4. Coach Profile DOB & Real-Time Age Management (`InstructorProfile.jsx`, `backend/main.py`):
-   - Added Date of Birth (DOB) datepicker input and Gender selector inside the **Edit Coach Profile** modal.
-   - Integrated live automatic age calculation (`calculateAge`), displaying real-time age preview (`Age: XX yrs`) next to the DOB input field.
-   - Updated Personal Details card on Coach Profile to display `Date of Birth (DOB)` and calculated age (`YYYY-MM-DD (XX years old)`).
-   - Enhanced backend `update_instructor` endpoint to persist `dob` and automatically compute and save `instructor.age`.
-5. Stability & Blank Screen Fix (`Sessions.jsx`):
-   - Resolved uncaught `ReferenceError: UserAvatar is not defined` runtime error that caused a blank screen upon touching calendar date cells.
-   - Embedded standalone `UserAvatar`, `getInitials`, and `getAvatarColor` utilities in `Sessions.jsx`.
-   - Included `statusFilter` in the `filteredSessions` memoization dependency array.
-6. Production Deployment (`Vercel`):
-   - Built and deployed frontend production bundle to Vercel:
-     - Production URL: `https://aisurf-d6z20uyfs-nithishwaran-rps-projects.vercel.app`
-     - Live Custom Domain: `https://www.athnexlive.com`
-7. Athlete Intelligence & Analytics Single Calendar Modal (`AthleteIntelligence.jsx`):
-   - Removed cluttered horizontal day strip and multiple pill buttons from the dashboard view.
-   - Added a sleek single **`📅 View Calendar`** button at the top header (with active date indicator).
-   - Clicking the button launches a full **Interactive Monthly Calendar Modal** (matching the pro Sessions calendar design):
-     - Month navigation (‹ Prev, Today, Next ›) and weekday matrix (Mon-Sun).
-     - Date cells display day numbers, `TODAY` badges, total activity log counts, and color-coded mini badges for Surfing (🏄), S&C (🏋️), Nutrition (🍎), and Mental Prep (🧠).
-     - Clicking any date cell instantly filters the dashboard and highlights the selected date's activity roster and metrics.
-   - Clean dashboard interface: Removed intermediate status banners so metrics cards and history load directly beneath the navigation tabs.
-   - Form logging tabs (`Log Nutrition`, `S&C Workout`, `Technical Training`, `Mental Prep`) now include explicit date pickers to log entries for any chosen date.
-8. Athlete Intelligence Student Skill Level Filter (`AthleteIntelligence.jsx`):
-   - Added dynamic **`Level:`** filter dropdown (`All Levels`, `Beginner`, `Intermediate`, `Advanced`, `Master`) directly alongside the `Logging for:` student selector in the top header.
-   - Shows live counts of students in each tier (e.g. `Beginner (4)`, `Intermediate (2)`).
-   - Changing the level filter instantly filters the athlete selection dropdown to only display students in that category and auto-selects the first student in the filtered group.
+

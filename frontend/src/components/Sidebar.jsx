@@ -54,19 +54,18 @@ const Sidebar = () => {
       const userSch = resolveSchoolName(parsedUser?.school_name) || resolveSchoolName(parsedUser?.school);
       const activeSch = resolveSchoolName(parsedSchool?.name);
 
-      let displayName = userSch || activeSch;
-
-      if (!displayName) {
-        if (parsedUser?.role === 'coach') {
-          const cName = parsedUser.name || parsedUser.instructor_name;
-          displayName = cName ? `Coach: ${cName}` : 'Individual Surf Coach';
-        } else {
-          displayName = 'Aquatic Indica Surf School';
-        }
+      let displayName = '';
+      if (parsedUser?.role === 'athlete' || parsedUser?.role === 'student' || parsedUser?.role === 'user') {
+        displayName = userSch || 'No School Selected';
+      } else if (parsedUser?.role === 'coach') {
+        const cName = parsedUser.name || parsedUser.instructor_name;
+        displayName = userSch || activeSch || (cName ? `Coach: ${cName}` : 'Individual Surf Coach');
+      } else {
+        displayName = activeSch || userSch || 'Aquatic Indica Surf School';
       }
 
       setSchool({
-        name: resolveSchoolName(displayName) || 'Aquatic Indica Surf School',
+        name: resolveSchoolName(displayName) || ((parsedUser?.role === 'athlete' || parsedUser?.role === 'student' || parsedUser?.role === 'user') ? 'No School Selected' : 'Aquatic Indica Surf School'),
         owner: typeof parsedUser?.name === 'string' ? parsedUser.name : (typeof parsedSchool?.owner === 'string' ? parsedSchool.owner : '')
       });
     };
@@ -174,7 +173,12 @@ const Sidebar = () => {
         <div className="db-header-right">
           <div className="db-header-userinfo">
             <div className="db-header-usertext">
-              <div className="db-header-school-name">{typeof school?.name === 'string' ? school.name : (school?.name?.name || 'Aquatic Indica Surf School')}</div>
+              <div className="db-header-user-name">
+                {user?.name || user?.username || (typeof school?.owner === 'string' ? school.owner : '') || (user?.email ? user.email.split('@')[0] : 'User')}
+              </div>
+              <div className="db-header-school-name">
+                {typeof school?.name === 'string' ? school.name : (school?.name?.name || (user?.role === 'athlete' ? 'No School Selected' : 'Aquatic Indica Surf School'))}
+              </div>
               <div className="db-header-user-role" style={{ textTransform: 'capitalize' }}>
                 {user ? (user.role === 'admin' ? 'School Admin' : (user.role === 'athlete' ? 'Student' : (user.role === 'coach' ? 'Coach' : user.role))) : 'School Admin'}
               </div>
@@ -207,7 +211,7 @@ const Sidebar = () => {
         <div className="db-mobile-menu">
           <div style={{ padding: '10px 14px', borderBottom: '1px solid #F1F5F9', marginBottom: '6px' }}>
             <div style={{ fontSize: '13.5px', fontWeight: 800, color: '#0F172A' }}>
-              {typeof school?.name === 'string' ? school.name : (school?.name?.name || 'Aquatic Indica Surf School')}
+              {typeof school?.name === 'string' ? school.name : (school?.name?.name || (user?.role === 'athlete' ? 'No School Selected' : 'Aquatic Indica Surf School'))}
             </div>
             <div style={{ fontSize: '11.5px', color: '#64748B', fontWeight: 600, textTransform: 'capitalize', marginTop: '2px' }}>
               {user?.name || 'User'} • {user ? (user.role === 'admin' ? 'School Admin' : (user.role === 'athlete' ? 'Student' : (user.role === 'coach' ? 'Coach' : user.role))) : 'Student'}

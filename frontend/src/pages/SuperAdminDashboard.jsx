@@ -1043,7 +1043,7 @@ const SuperAdminDashboard = () => {
                               </div>
                             </td>
                             <td className="sa-email-cell">{st.email || 'No Email'}</td>
-                            <td>{st.course_duration || '3 Days'} • {st.session_time || 'Morning'}</td>
+                            <td>{st.course_duration || '3 Days'}{st.session_time ? ` • ${st.session_time}` : ''}</td>
                             <td>
                               {st.staying_at_school === 'Yes' ? '🏨 Lodge' : '🚗 Off-site'}<br />
                               <span style={{ fontSize: '11px', color: '#94A3B8' }}>{st.whatsapp_number ? `+91 ${st.whatsapp_number}` : ''}</span>

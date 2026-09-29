@@ -94,11 +94,13 @@ window.fetch = async function (input, init) {
 
     // ─── 1. Stats and Features for Landing Page ───
     if (path === '/api/stats') {
+      const schoolCount = state.schools?.length || 1;
+      const studentCount = state.students?.length || 10;
       return jsonResponse([
-        { value: `${max(500, state.schools.length)}+`, label: "SURF SCHOOLS" },
-        { value: `${max(12000, state.students.length * 100).toLocaleString()}+`, label: "STUDENTS" },
+        { value: `${schoolCount}`, label: "SURF SCHOOLS" },
+        { value: `${studentCount}+`, label: "STUDENTS" },
         { value: "98%", label: "SATISFACTION RATE" },
-        { value: "45", label: "COUNTRIES" }
+        { value: "2", label: "COUNTRIES" }
       ]);
     }
     if (path === '/api/features') {
@@ -217,8 +219,8 @@ window.fetch = async function (input, init) {
 
       if (role === 'athlete') {
         const isInvited = !!body.invite_token;
-        const approvalStatus = isInvited ? 'approved' : 'pending';
-        const selectedSchool = body.school || 'Aquatic Indica Surf School';
+        const selectedSchool = (body.school || '').trim();
+        const approvalStatus = isInvited ? 'approved' : (selectedSchool ? 'pending' : 'approved');
 
         const newStudent = {
           id: state.students.length + 1,
@@ -230,7 +232,7 @@ window.fetch = async function (input, init) {
           school: selectedSchool,
           approval_status: approvalStatus,
           start_date: body.start_date || '2026-08-26',
-          session_time: body.session_time || 'Morning 6:00 AM',
+          session_time: body.session_time || '',
           image: newUser.image,
           last_active: "Today",
           bio: "",
@@ -248,8 +250,8 @@ window.fetch = async function (input, init) {
         newUser.approval_status = approvalStatus;
         newUser.school = selectedSchool;
 
-        // If direct signup without invite link, record a pending join request for the school dashboard
-        if (!isInvited) {
+        // If direct signup without invite link, record a pending join request for the school dashboard only if school chosen
+        if (!isInvited && selectedSchool) {
           try {
             const existingReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
             existingReqs.unshift({
@@ -259,7 +261,7 @@ window.fetch = async function (input, init) {
               student_email: email,
               school_name: selectedSchool,
               start_date: body.start_date || '2026-08-26',
-              session_time: body.session_time || 'Morning 6:00 AM',
+              session_time: body.session_time || '',
               status: 'pending',
               request_date: new Date().toLocaleDateString(),
               time: new Date().toLocaleTimeString()
@@ -268,7 +270,9 @@ window.fetch = async function (input, init) {
           } catch (e) {}
         }
 
-        state.activityLogs.unshift({ id: Date.now(), text: `${body.name} requested to join ${selectedSchool} (${approvalStatus})`, type: "group", time: "Just now" });
+        if (selectedSchool) {
+          state.activityLogs.unshift({ id: Date.now(), text: `${body.name} requested to join ${selectedSchool} (${approvalStatus})`, type: "group", time: "Just now" });
+        }
       } else if (role === 'coach') {
         const newInstructor = {
           id: state.instructors.length + 1,

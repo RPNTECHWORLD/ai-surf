@@ -202,7 +202,7 @@ const Competitions = () => {
     const slotGroups = {};
     slotFilteredStudents.forEach((st) => {
       const dateKey = st.start_date || '2026-08-26';
-      const timeKey = st.session_time || 'Morning 6:00 AM';
+      const timeKey = st.session_time || 'General Slot';
       const groupKey = `${dateKey} · ${timeKey}`;
 
       if (!slotGroups[groupKey]) {
@@ -283,7 +283,7 @@ const Competitions = () => {
           heatName: `Heat ${heatNum}`,
           division: groupKey,
           start_date: chunk[0]?.start_date || '2026-08-26',
-          session_time: chunk[0]?.session_time || 'Morning 6:00 AM',
+          session_time: chunk[0]?.session_time || 'General Slot',
           surfers: surfersInHeat,
           status: heatNum === 1 ? 'completed' : 'scheduled'
         });
@@ -368,7 +368,7 @@ const Competitions = () => {
       type: 'Student',
       email: st.email || '',
       start_date: st.start_date || '2026-08-26',
-      session_time: st.session_time || 'Morning 6:00 AM',
+      session_time: st.session_time || 'General Slot',
       jersey: JERSEY_COLORS[idx % JERSEY_COLORS.length],
       waves: [],
       top2Total: 0
@@ -748,17 +748,14 @@ const Competitions = () => {
         <header className="cmp-header">
           <div className="cmp-header-text">
             <h1 className="cmp-title">Competitions Hub</h1>
-            <p className="cmp-subtitle">Track live WSL heats or run mock heat scoring simulations for athletes.</p>
+            <p className="cmp-subtitle">Track live WSL heats and manage Mock Heat competitions.</p>
           </div>
           <div className="cmp-tab-switcher">
             <button className={`cmp-tab-btn ${activeTab === 'live' ? 'active' : ''}`} onClick={() => setActiveTab('live')}>
               🏆 Live Events
             </button>
             <button className={`cmp-tab-btn ${activeTab === 'aquaticx' ? 'active' : ''}`} onClick={() => setActiveTab('aquaticx')}>
-              🏄 AquaticX Multi-Surfer Heats
-            </button>
-            <button className={`cmp-tab-btn ${activeTab === 'mock-heat' ? 'active' : ''}`} onClick={() => setActiveTab('mock-heat')}>
-              ⏱️ Solo Mock Heat
+              🏄 Mock Heat
             </button>
           </div>
         </header>
@@ -986,259 +983,6 @@ const Competitions = () => {
           </div>
         )}
 
-        {/* Tab 3: Solo Mock Heat Engine */}
-        {activeTab === 'mock-heat' && (
-          <div className="mock-heat-container">
-            {/* Mode A: Setup Mock Heat Form */}
-            {!activeHeat && !aiAnalysis && (
-              <div className="mock-setup-card glass">
-                <h2 className="mock-card-title">Setup Mock Heat</h2>
-                <p className="mock-card-sub">Simulate official heat parameters to train priority positioning and wave logging tactical reflexes.</p>
-                
-                <form onSubmit={handleStartMockHeat} className="mock-form">
-                  <div className="form-field">
-                    <label>Select Surfer (Athlete)</label>
-                    <select value={selectedStudentId} onChange={(e) => setSelectedStudentId(e.target.value)} required>
-                      {currentUser?.role === 'athlete' ? (
-                        <option value={currentUser.student_id}>{currentUser.name}</option>
-                      ) : (
-                        students.map(s => <option key={s.id} value={s.id}>{s.name} ({s.level})</option>)
-                      )}
-                    </select>
-                  </div>
-
-                  <div className="form-row">
-                    <div className="form-field" style={{ flex: 1 }}>
-                      <label>Heat Duration (minutes)</label>
-                      <select value={heatDuration} onChange={(e) => setHeatDuration(parseInt(e.target.value))} required>
-                        <option value={10}>10 Minutes</option>
-                        <option value={15}>15 Minutes</option>
-                        <option value={20}>20 Minutes</option>
-                        <option value={25}>25 Minutes</option>
-                      </select>
-                    </div>
-
-                    <div className="form-field" style={{ flex: 1 }}>
-                      <label>Priority Setting</label>
-                      <select disabled value="Athlete">
-                        <option value="Athlete">Athlete holds priority first</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="form-field">
-                    <label>Heat Strategy Focus / Notes</label>
-                    <input 
-                      type="text" 
-                      value={strategyFocus} 
-                      onChange={(e) => setStrategyFocus(e.target.value)}
-                      placeholder="e.g. Wait for outside set waves; hold priority; target quick wave backups"
-                      required
-                    />
-                  </div>
-
-                  <button type="submit" className="btn-start-heat">
-                    🚀 Initialize & Start Live Heat
-                  </button>
-                </form>
-              </div>
-            )}
-
-            {/* Mode B: Live Mock Heat Simulation Arena */}
-            {activeHeat && !aiAnalysis && (
-              <div className="live-arena-grid">
-                {/* Scoreboard Vitals Header */}
-                <div className="live-arena-header card-dark full-width">
-                  <div className="live-arena-top-row">
-                    <div className="live-arena-info">
-                      <span className="live-badge-glow">HEAT ACTIVE</span>
-                      <h2 className="live-athlete-name">
-                        Surfer: {students.find(s => s.id.toString() === selectedStudentId.toString())?.name || 'Athlete'}
-                      </h2>
-                      <p className="live-strategy-tag">Strategy Focus: <strong>{activeHeat.strategy_focus || 'Open'}</strong></p>
-                    </div>
-
-                    {/* Heat Timer */}
-                    <div className="live-timer-container">
-                      <span className="timer-label">TIME REMAINING</span>
-                      <div className="timer-digits digital-font">
-                        {formatTime(timeRemaining)}
-                      </div>
-                      <div className="timer-controls">
-                        <button className="btn-timer-toggle" onClick={() => setIsTimerPaused(!isTimerPaused)}>
-                          {isTimerPaused ? '▶ Resume' : '⏸ Pause'}
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Live Heat Total (Top 2 waves) */}
-                    <div className="live-total-score-card">
-                      <span className="score-card-label">HEAT TOTAL (TOP 2)</span>
-                      <div className="score-card-val">{activeHeat.heat_total} <span style={{ fontSize: '14px', color: '#94A3B8' }}>/ 20</span></div>
-                      <span className="score-card-desc">{wavesList.length} waves logged</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Left Column: Judge Scoring Interface */}
-                <div className="live-panel live-scoring-panel glass">
-                  <h3 className="panel-title">👨‍⚖️ Judge Scoring & Wave Logger</h3>
-                  <p className="panel-sub">Score rides on a 1.0 - 10.0 scale in real-time. Comments automatically sync to athlete history.</p>
-
-                  <form onSubmit={handleLogWave} className="live-scoring-form">
-                    <div className="form-field">
-                      <label style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span>Wave Score</span>
-                        <strong style={{ fontSize: '18px', color: '#0D9488' }}>{judgeScore.toFixed(1)}</strong>
-                      </label>
-                      <input 
-                        type="range" 
-                        min="1.0" 
-                        max="10.0" 
-                        step="0.1" 
-                        value={judgeScore}
-                        onChange={(e) => setJudgeScore(parseFloat(e.target.value))}
-                        className="scoring-slider"
-                      />
-                      <div className="slider-ticks">
-                        <span>1.0 (Poor)</span>
-                        <span>5.0 (Average)</span>
-                        <span>8.0 (Good)</span>
-                        <span>10.0 (Excellent)</span>
-                      </div>
-                    </div>
-
-                    <div className="form-field">
-                      <label>Wave Technical Notes</label>
-                      <input 
-                        type="text" 
-                        value={judgeNotes} 
-                        onChange={(e) => setJudgeNotes(e.target.value)}
-                        placeholder="e.g. Sharp snap on open face, failed popup, clean bottom turn"
-                        required
-                      />
-                    </div>
-
-                    <button type="submit" className="btn-log-wave" disabled={submittingWave || timeRemaining === 0}>
-                      {submittingWave ? 'Logging Wave...' : '🌊 Record Wave Score'}
-                    </button>
-                  </form>
-
-                  <div className="priority-control-card">
-                    <div className="priority-info">
-                      <span className="priority-label">CURRENT PRIORITY</span>
-                      <div className={`priority-value-tag ${priorityStatus.toLowerCase()}`}>
-                        {priorityStatus === 'Athlete' ? 'Athlete Holds Priority 🥇' : 'Opponent Holds Priority 🥈'}
-                      </div>
-                    </div>
-                    <button className="btn-toggle-priority" onClick={handleTogglePriority}>
-                      Toggle Priority Status
-                    </button>
-                  </div>
-                </div>
-
-                {/* Right Column: Live Wave Feed */}
-                <div className="live-panel live-feed-panel glass">
-                  <h3 className="panel-title">📝 Live Wave & Heat Event Log</h3>
-                  <p className="panel-sub">Chronological event stream synced from the scoring dashboard.</p>
-
-                  <div className="live-events-feed">
-                    {waveProgression.length === 0 ? (
-                      <p className="empty-feed">No events logged yet. Catch a wave or adjust priority to start logging feed.</p>
-                    ) : (
-                      waveProgression.slice().reverse().map((item, idx) => (
-                        <div key={idx} className="feed-item">
-                          <span className="feed-timestamp">{item.time}</span>
-                          <div className="feed-content">
-                            <span className="feed-action">{item.action}</span>
-                            {item.notes && <p className="feed-notes">"{item.notes}"</p>}
-                          </div>
-                        </div>
-                      ))
-                    )}
-                  </div>
-
-                  <div className="arena-footer-controls">
-                    <h4 style={{ margin: '0 0 8px 0', fontSize: '13px', color: '#64748B' }}>Complete Simulation</h4>
-                    <textarea 
-                      rows="2" 
-                      value={strategyExecution} 
-                      onChange={(e) => setStrategyExecution(e.target.value)} 
-                      placeholder="Evaluate strategy execution (e.g. Waited for sets successfully, but lost priority in second half)."
-                      style={{ width: '100%', marginBottom: '12px' }}
-                    />
-                    <button 
-                      className="btn-complete-heat" 
-                      onClick={handleCompleteMockHeat} 
-                      disabled={completingHeat}
-                    >
-                      {completingHeat ? 'Ending heat...' : '🏁 End Heat & Run AI Analysis'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Mode C: AI Post-Heat Tactical Analysis Report */}
-            {aiAnalysis && (
-              <div className="mock-ai-report glass">
-                <div className="report-header">
-                  <span className="ai-report-badge">🤖 AI TACTICAL REPORT</span>
-                  <h2 className="report-title">Mock Heat Tactical Evaluation</h2>
-                  <p className="report-sub">Combined evaluation of strategy metrics, priority logs, and wave score progression.</p>
-                </div>
-
-                <div className="report-summary-vitals">
-                  <div className="vital-metric">
-                    <span className="vital-label">FINAL SCORE</span>
-                    <span className="vital-val">{activeHeat?.heat_total || '0.0'}</span>
-                  </div>
-                  <div className="vital-metric">
-                    <span className="vital-label">WAVES RIDDEN</span>
-                    <span className="vital-val">{wavesList.length}</span>
-                  </div>
-                  <div className="vital-metric">
-                    <span className="vital-label">BEST WAVE</span>
-                    <span className="vital-val">
-                      {wavesList.length > 0 ? Math.max(...wavesList.map(w => w.score)).toFixed(2) : '0.00'}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="report-findings-grid">
-                  <div className="findings-col findings-strengths">
-                    <h3>✅ Tactical Strengths</h3>
-                    <ul>
-                      {aiAnalysis.tactical_strengths.map((str, idx) => (
-                        <li key={idx}>{str}</li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  <div className="findings-col findings-weaknesses">
-                    <h3>⚠️ Tactical Weaknesses</h3>
-                    <ul>
-                      {aiAnalysis.tactical_weaknesses.map((weak, idx) => (
-                        <li key={idx}>{weak}</li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-
-                <div className="coaching-advice-card">
-                  <h4>💡 Coach Prescription & AI Target Drill</h4>
-                  <p>{aiAnalysis.coaching_advice}</p>
-                </div>
-
-                <div className="report-actions">
-                  <button className="btn-primary" onClick={handleResetArena}>
-                    Reset Arena & Log Next Heat
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
       </main>
 
       <style>{`

@@ -166,9 +166,11 @@ const AuthPage = () => {
         if (data.valid || data.remaining !== undefined) {
           setSchoolInviteData(data);
           const lockedSchool = data.school || urlSchool || 'Aquatic Indica Surf School';
+          const lockedCourse = data.course_duration || searchParams.get('course_duration');
           setFormData(prev => ({
             ...prev,
             school: lockedSchool,
+            course_duration: lockedCourse || prev.course_duration,
             password: '',
             confirmPassword: '',
           }));
@@ -194,12 +196,18 @@ const AuthPage = () => {
               code: match.code,
               school: match.school,
               max_count: match.max_count,
+              course_duration: match.course_duration,
               used_count: match.used_count || 0,
               remaining: rem,
               is_active: match.is_active
             };
             setSchoolInviteData(mockData);
-            setFormData(prev => ({ ...prev, school: match.school }));
+            const lockedCourse = match.course_duration || searchParams.get('course_duration');
+            setFormData(prev => ({
+              ...prev,
+              school: match.school,
+              course_duration: lockedCourse || prev.course_duration
+            }));
             setSchoolsList(prev => Array.from(new Set([match.school, ...prev])));
             if (!isValid) {
               setSchoolInviteError('This invite link has reached its maximum registration limit.');
@@ -387,12 +395,12 @@ const AuthPage = () => {
         name: user.name && user.name !== 'System Admin' ? user.name : 'School Admin',
         email: user.email.toLowerCase(),
         role: user.role === 'admin' ? 'School Admin' : (user.role || 'athlete'),
-        school: user.school || formData.school || 'Aquatic Indica Surf School',
+        school: user.school || formData.school || '',
         image: user.image || '',
-        approval_status: user.approval_status || (inviteToken ? 'approved' : 'pending'),
+        approval_status: user.approval_status || (inviteToken ? 'approved' : ((user.school || formData.school) ? 'pending' : 'approved')),
         whatsapp_number: formData.whatsapp_number || '',
         start_date: formData.start_date || new Date().toISOString().split('T')[0],
-        session_time: formData.session_time || 'Morning 6:00 AM',
+        session_time: formData.session_time || '',
         lastLogin: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
       }, ...filtered];
       localStorage.setItem('savedAccounts', JSON.stringify(updatedAccounts));
@@ -406,11 +414,11 @@ const AuthPage = () => {
           name: user.name,
           email: user.email.toLowerCase(),
           role: 'athlete',
-          school: user.school || formData.school || 'Aquatic Indica Surf School',
-          approval_status: user.approval_status || (inviteToken ? 'approved' : 'pending'),
+          school: user.school || formData.school || '',
+          approval_status: user.approval_status || (inviteToken ? 'approved' : ((user.school || formData.school) ? 'pending' : 'approved')),
           whatsapp_number: formData.whatsapp_number || '',
           start_date: formData.start_date || new Date().toISOString().split('T')[0],
-          session_time: formData.session_time || 'Morning 6:00 AM',
+          session_time: formData.session_time || '',
         });
         localStorage.setItem('mock_students_data', JSON.stringify(filteredMock));
       }
@@ -437,7 +445,7 @@ const AuthPage = () => {
     const activeSchoolName = (typeof user.school_name === 'string' ? user.school_name : user.school_name?.name)
       || (typeof user.school === 'string' ? user.school : user.school?.name)
       || formData.school
-      || (user.role === 'admin' ? 'School Admin' : user.role === 'coach' ? 'Coach Portal' : 'Student Portal');
+      || (user.role === 'admin' ? 'School Admin' : user.role === 'coach' ? 'Coach Portal' : (user.school ? user.school : 'No School Selected'));
 
     sessionStorage.setItem('activeSchool', JSON.stringify({
       name: activeSchoolName,
@@ -495,13 +503,8 @@ const AuthPage = () => {
       if (res.ok) {
         setResendCooldown(60);
         if (!isResend) setOtpSent(true);
-        const fallbackOtp = data.otp || data.message?.match(/\b\d{6}\b/)?.[0];
-        if (fallbackOtp) {
-          setOtpCode(fallbackOtp);
-          setSuccessMsg(`Verification code: ${fallbackOtp}`);
-        } else {
-          setSuccessMsg(data.message || `Verification code sent to ${formData.email}`);
-        }
+        setOtpCode('');
+        setSuccessMsg(data.message || `Verification code sent to ${formData.email}. Please check your inbox.`);
       } else {
         setOtpSent(false);
         setErrorMsg(data.detail || `Failed to send OTP (${res.status}). Please try again.`);
@@ -543,6 +546,9 @@ const AuthPage = () => {
     if (pwd.length < 6) {
       setErrorMsg('Password must be at least 6 characters.'); return;
     }
+    if (role === 'athlete' && !formData.gender) {
+      setErrorMsg('Please select your gender.'); return;
+    }
     setLoading(true);
     try {
       const res = await fetch(`${API}/api/auth/signup`, {
@@ -577,15 +583,16 @@ const AuthPage = () => {
       });
       const data = await safeJson(res);
       if (res.ok) {
+        const chosenSchool = (schoolInviteData?.school) || (formData.school || '').trim();
         const userObj = data.user || {
           id: Date.now(),
           name: formData.name.trim(),
           email: formData.email.toLowerCase().trim(),
           role: role,
-          school: (schoolInviteData?.school) || formData.school || 'Aquatic Indica Surf School',
-          approval_status: (inviteToken || inviteCode) ? 'approved' : 'pending'
+          school: chosenSchool,
+          approval_status: (inviteToken || inviteCode) ? 'approved' : (chosenSchool ? 'pending' : 'approved')
         };
-        userObj.approval_status = (inviteToken || inviteCode) ? 'approved' : 'pending';
+        userObj.approval_status = (inviteToken || inviteCode) ? 'approved' : (chosenSchool ? 'pending' : 'approved');
 
         // Update local school invite tracking if inviteCode used
         if (inviteCode) {
@@ -608,33 +615,37 @@ const AuthPage = () => {
           } catch (e) {}
         }
 
-        // If direct signup without invite token/code, record pending join request for school admin
+        // If direct signup without invite token/code, record pending join request for school admin ONLY if school chosen
         if (!inviteToken && !inviteCode && (role === 'athlete' || role === 'student' || role === 'user')) {
-          try {
-            const existingReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-            const studentEmail = formData.email.toLowerCase().trim();
-            const existingIdx = existingReqs.findIndex(r => (r.student_email || r.email || '').toLowerCase().trim() === studentEmail);
-            const newReq = {
-              id: `req_${Date.now()}`,
-              student_id: userObj.student_id || userObj.id || Date.now(),
-              student_name: formData.name.trim(),
-              student_email: studentEmail,
-              school_name: formData.school || 'Aquatic Indica Surf School',
-              start_date: formData.start_date || new Date().toISOString().split('T')[0],
-              session_time: formData.session_time || 'Morning 6:00 AM',
-              whatsapp_number: formData.whatsapp_number || 'N/A',
-              status: 'pending',
-              request_date: new Date().toLocaleDateString(),
-              time: new Date().toLocaleTimeString()
-            };
-            if (existingIdx >= 0) {
-              existingReqs[existingIdx] = { ...existingReqs[existingIdx], ...newReq, status: 'pending' };
-            } else {
-              existingReqs.unshift(newReq);
-            }
-            localStorage.setItem('school_join_requests', JSON.stringify(existingReqs));
-          } catch (e) {}
-          userObj.approval_status = 'pending';
+          if (chosenSchool) {
+            try {
+              const existingReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+              const studentEmail = formData.email.toLowerCase().trim();
+              const existingIdx = existingReqs.findIndex(r => (r.student_email || r.email || '').toLowerCase().trim() === studentEmail);
+              const newReq = {
+                id: `req_${Date.now()}`,
+                student_id: userObj.student_id || userObj.id || Date.now(),
+                student_name: formData.name.trim(),
+                student_email: studentEmail,
+                school_name: chosenSchool,
+                start_date: formData.start_date || new Date().toISOString().split('T')[0],
+                session_time: formData.session_time || '',
+                whatsapp_number: formData.whatsapp_number || 'N/A',
+                status: 'pending',
+                request_date: new Date().toLocaleDateString(),
+                time: new Date().toLocaleTimeString()
+              };
+              if (existingIdx >= 0) {
+                existingReqs[existingIdx] = { ...existingReqs[existingIdx], ...newReq, status: 'pending' };
+              } else {
+                existingReqs.unshift(newReq);
+              }
+              localStorage.setItem('school_join_requests', JSON.stringify(existingReqs));
+            } catch (e) {}
+            userObj.approval_status = 'pending';
+          } else {
+            userObj.approval_status = 'approved';
+          }
         }
 
         handleAuthSuccess(data.token || 'session_token', userObj);
@@ -643,16 +654,17 @@ const AuthPage = () => {
       }
     } catch (err) {
       console.warn('Backend offline, completing registration in local store:', err);
+      const chosenSchool = (schoolInviteData?.school) || (formData.school || '').trim();
       const userObj = {
         id: Date.now(),
         name: formData.name.trim(),
         email: formData.email.toLowerCase().trim(),
         role: role,
-        school: formData.school || 'Aquatic Indica Surf School',
-        approval_status: inviteToken ? 'approved' : 'pending'
+        school: chosenSchool,
+        approval_status: (inviteToken || inviteCode) ? 'approved' : (chosenSchool ? 'pending' : 'approved')
       };
 
-      if (!inviteToken && (role === 'athlete' || role === 'student' || role === 'user')) {
+      if (!inviteToken && !inviteCode && chosenSchool && (role === 'athlete' || role === 'student' || role === 'user')) {
         try {
           const existingReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
           const studentEmail = formData.email.toLowerCase().trim();
@@ -662,9 +674,9 @@ const AuthPage = () => {
             student_id: userObj.id,
             student_name: formData.name.trim(),
             student_email: studentEmail,
-            school_name: formData.school || 'Aquatic Indica Surf School',
+            school_name: chosenSchool,
             start_date: formData.start_date || new Date().toISOString().split('T')[0],
-            session_time: formData.session_time || 'Morning 6:00 AM',
+            session_time: formData.session_time || '',
             whatsapp_number: formData.whatsapp_number || 'N/A',
             status: 'pending',
             request_date: new Date().toLocaleDateString(),
@@ -1082,19 +1094,6 @@ const AuthPage = () => {
                     {loading ? <span className="auth-spinner" /> : 'Log In'}
                   </button>
 
-                  {/* Google SSO */}
-                  <div className="auth-divider"><span>or</span></div>
-                  <div className="auth-sso-buttons">
-                    <button type="button" className="sso-btn" onClick={() => handleSSOLogin('google')}>
-                      <svg width="18" height="18" viewBox="0 0 24 24">
-                        <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-                        <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                        <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05"/>
-                        <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335"/>
-                      </svg>
-                      Continue with Google
-                    </button>
-                  </div>
                 </form>
               </>
             )}
@@ -1392,15 +1391,34 @@ const AuthPage = () => {
                     {role === 'athlete' && (
                       <div className="auth-role-subfields">
                         <h4 className="subfields-title">Student Profile Details</h4>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr 1.5fr', gap: '12px' }}>
+                        <div className="student-profile-grid">
+                          {/* Row 1: DOB & Gender */}
                           <div className="auth-field">
-                            <label style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                               <span>DOB</span>
                               {formData.dob && <span style={{ color: '#00F2FE', fontSize: '11px', fontWeight: 700 }}>Age: {calculateAge(formData.dob)} yrs</span>}
                             </label>
-                            <input type="date" name="dob" value={formData.dob || ''} onChange={handleChange}
-                              max={new Date().toISOString().split('T')[0]} style={{ colorScheme: 'dark' }} />
+                            <input 
+                              type="date" 
+                              name="dob" 
+                              value={formData.dob || ''} 
+                              onChange={handleChange}
+                              max={new Date().toISOString().split('T')[0]} 
+                              style={{ colorScheme: 'dark' }} 
+                            />
                           </div>
+
+                          <div className="auth-field">
+                            <label>Gender <span style={{ color: '#FF4D6D', fontWeight: 700 }}>*</span></label>
+                            <select name="gender" value={formData.gender || ''} onChange={handleChange} required>
+                              <option value="">-- Select Gender --</option>
+                              <option value="Male">Male</option>
+                              <option value="Female">Female</option>
+                              <option value="Other">Other</option>
+                            </select>
+                          </div>
+
+                          {/* Row 2: Surf Stance & Swimming Ability */}
                           <div className="auth-field">
                             <label>Surf Stance</label>
                             <select name="stance" value={formData.stance || ''} onChange={handleChange}>
@@ -1409,31 +1427,28 @@ const AuthPage = () => {
                               <option value="goofy">Goofy</option>
                             </select>
                           </div>
+
                           <div className="auth-field">
-                            <label>Gender</label>
-                            <select name="gender" value={formData.gender || ''} onChange={handleChange}>
-                              <option value="">-- Select Gender --</option>
-                              <option value="Male">Male</option>
-                              <option value="Female">Female</option>
-                              <option value="Other">Other</option>
-                            </select>
-                          </div>
-                          <div className="auth-field">
-                            <label>🏊 Swimming Ability *</label>
-                            <select name="swimming_ability" value={formData.swimming_ability || 'Swimmer'} onChange={handleChange}>
+                            <label>🏊 Swimming Ability <span style={{ color: '#FF4D6D', fontWeight: 700 }}>*</span></label>
+                            <select name="swimming_ability" value={formData.swimming_ability || 'Swimmer'} onChange={handleChange} required>
                               <option value="Swimmer">🏊 Swimmer</option>
                               <option value="Non-Swimmer">🤿 Non-Swimmer</option>
                             </select>
                           </div>
-                        </div>
 
-                        <div className="auth-fields-row" style={{ marginTop: '10px' }}>
-                          <div className="auth-field" style={{ flex: 1.4 }}>
+                          {/* Row 3: WhatsApp Number & Accompanying Guests */}
+                          <div className="auth-field">
                             <label>📱 WhatsApp Number</label>
-                            <input type="tel" name="whatsapp_number" placeholder="9876543210 (+91 auto)"
-                              value={formData.whatsapp_number} onChange={handleChange} />
+                            <input 
+                              type="tel" 
+                              name="whatsapp_number" 
+                              placeholder="9876543210 (+91 auto)"
+                              value={formData.whatsapp_number} 
+                              onChange={handleChange} 
+                            />
                           </div>
-                          <div className="auth-field" style={{ flex: 1 }}>
+
+                          <div className="auth-field">
                             <label>👥 Accompanying Guests</label>
                             <input 
                               type="number" 
@@ -1461,6 +1476,57 @@ const AuthPage = () => {
                                   : `Max ${Math.max(0, schoolInviteData.remaining - 1)} guest(s) allowed (${schoolInviteData.remaining} slots remaining on invite)`}
                               </small>
                             )}
+                          </div>
+
+                          {/* Row 4: Course Duration & Start Date */}
+                          <div className="auth-field">
+                            <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span>🏄 Course Duration</span>
+                              {(schoolInviteData?.course_duration || searchParams.get('course_duration')) && (
+                                <span style={{ fontSize: '11px', color: '#10B981', fontWeight: 800 }}>
+                                  🔒 Locked by Invite ({schoolInviteData?.course_duration || searchParams.get('course_duration')})
+                                </span>
+                              )}
+                            </label>
+                            <select 
+                              name="course_duration" 
+                              value={formData.course_duration || ''} 
+                              onChange={handleChange}
+                              disabled={Boolean(schoolInviteData?.course_duration || searchParams.get('course_duration'))}
+                              style={(schoolInviteData?.course_duration || searchParams.get('course_duration')) ? { opacity: 0.9, cursor: 'not-allowed', borderColor: '#10B981', background: 'rgba(16, 185, 129, 0.08)' } : {}}
+                            >
+                              <option value="">-- Select Course Duration --</option>
+                              <option value="1 Day Crash Course">1 Day Crash Course</option>
+                              <option value="2 Days Course">2 Days Course</option>
+                              <option value="3 Days Course">3 Days Course</option>
+                              <option value="4 Days Course">4 Days Course</option>
+                              <option value="5 Days Course">5 Days Course</option>
+                              <option value="6 Days Course">6 Days Course</option>
+                              <option value="7 Days Course">7 Days Course</option>
+                              <option value="8 Days Course">8 Days Course</option>
+                              <option value="9 Days Course">9 Days Course</option>
+                              <option value="10 Days Course">10 Days Course</option>
+                              <option value="12 Days Course">12 Days Course</option>
+                              <option value="14 Days Course">14 Days Course</option>
+                              {formData.course_duration && ![
+                                '1 Day Crash Course', '2 Days Course', '3 Days Course', '4 Days Course',
+                                '5 Days Course', '6 Days Course', '7 Days Course', '8 Days Course',
+                                '9 Days Course', '10 Days Course', '12 Days Course', '14 Days Course'
+                              ].includes(formData.course_duration) && (
+                                <option value={formData.course_duration}>{formData.course_duration}</option>
+                              )}
+                            </select>
+                          </div>
+
+                          <div className="auth-field">
+                            <label>🗓️ Start Date</label>
+                            <input 
+                              type="date" 
+                              name="start_date" 
+                              value={formData.start_date || ''} 
+                              onChange={handleChange} 
+                              style={{ colorScheme: 'dark' }} 
+                            />
                           </div>
                         </div>
 
@@ -1518,9 +1584,9 @@ const AuthPage = () => {
                                       style={{ colorScheme: 'dark' }} />
                                   </div>
                                   <div className="auth-field" style={{ minWidth: 0 }}>
-                                    <label style={{ fontSize: '11px', color: '#94A3B8' }}>Gender</label>
+                                    <label style={{ fontSize: '11px', color: '#94A3B8' }}>Gender <span style={{ color: '#FF4D6D', fontWeight: 700 }}>*</span></label>
                                     <select value={formData.guests_details?.[gIdx]?.gender || ''}
-                                      onChange={e => handleGuestChange(gIdx, 'gender', e.target.value)}>
+                                      onChange={e => handleGuestChange(gIdx, 'gender', e.target.value)} required>
                                       <option value="">-- Select Gender --</option>
                                       <option value="Male">Male</option>
                                       <option value="Female">Female</option>
@@ -1549,25 +1615,6 @@ const AuthPage = () => {
                             ))}
                           </div>
                         )}
-
-                        <div className="auth-fields-row" style={{ marginTop: '10px' }}>
-                          <div className="auth-field">
-                            <label>🏄 Course Duration</label>
-                            <select name="course_duration" value={formData.course_duration || ''} onChange={handleChange}>
-                              <option value="">-- Select Course Duration --</option>
-                              <option value="3 Days Course">3 Days Course</option>
-                              <option value="5 Days Course">5 Days Course</option>
-                              <option value="7 Days Course">7 Days Course</option>
-                              <option value="10 Days Course">10 Days Course</option>
-                            </select>
-                          </div>
-                          <div className="auth-field">
-                            <label>🗓️ Start Date</label>
-                            <input type="date" name="start_date" value={formData.start_date || ''} onChange={handleChange} style={{ colorScheme: 'dark' }} />
-                          </div>
-                        </div>
-
-
 
                         <div className="auth-field" style={{ marginTop: '12px' }}>
                           <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -2127,6 +2174,12 @@ input:-webkit-autofill:focus, input:-webkit-autofill:active {
   text-transform: uppercase; letter-spacing: 0.5px; margin: 0;
 }
 
+.student-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+}
+
 .checkbox-label {
   display: flex; align-items: center; gap: 8px;
   font-size: 13px; color: #E2E8F0; cursor: pointer;
@@ -2197,6 +2250,10 @@ input:-webkit-autofill:focus, input:-webkit-autofill:active {
   }
   .guest-fields-grid {
     grid-template-columns: 1fr !important;
+  }
+  .student-profile-grid {
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
   }
   .auth-role-subfields {
     padding: 14px 12px !important;

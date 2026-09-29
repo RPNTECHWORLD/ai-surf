@@ -144,7 +144,7 @@ const StudentProfile = () => {
     course_duration: '3 Days Course',
     start_date: '',
     end_date: '',
-    session_time: 'Morning 6:00 AM',
+    session_time: '',
     staying_at_school: 'Yes',
     reminder_preference: 'WhatsApp Text',
     guests_details: [],
@@ -297,6 +297,138 @@ const StudentProfile = () => {
     }
   };
 
+  // Available schools for joining
+  const [schoolsList, setSchoolsList] = useState([]);
+  const [selectedSchoolToJoin, setSelectedSchoolToJoin] = useState('');
+  const [joiningSchool, setJoiningSchool] = useState(false);
+
+  useEffect(() => {
+    fetch(`${API}/api/schools`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => {
+        let names = [];
+        if (Array.isArray(data)) {
+          names = data.map(s => (typeof s === 'string' ? s : s?.name)).filter(Boolean);
+        }
+        try {
+          const savedSchools = JSON.parse(localStorage.getItem('saved_schools_list') || '[]');
+          names = [...names, ...savedSchools];
+        } catch (e) {}
+        if (!names.some(n => n && n.toLowerCase().includes('aquatic indica'))) {
+          names.push('Aquatic Indica Surf School');
+        }
+        setSchoolsList(Array.from(new Set(names)));
+      })
+      .catch(() => {
+        setSchoolsList(['Aquatic Indica Surf School']);
+      });
+  }, []);
+
+  const handleJoinSchoolSubmit = async () => {
+    if (!selectedSchoolToJoin) return;
+    setJoiningSchool(true);
+    try {
+      const emailLower = (student?.email || currentUser?.email || '').toLowerCase().trim();
+      const studentName = student?.name || currentUser?.name || 'Registered Surfer';
+
+      // 1. Save join request in localStorage for school admin approval
+      const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+      const existingIdx = reqs.findIndex(r => (r.student_email || r.email || '').toLowerCase().trim() === emailLower);
+      const newReq = {
+        id: `req_${Date.now()}`,
+        student_id: student?.id || currentUser?.id || Date.now(),
+        student_name: studentName,
+        student_email: emailLower,
+        school_name: selectedSchoolToJoin,
+        start_date: student?.start_date || new Date().toISOString().split('T')[0],
+        session_time: student?.session_time || '',
+        whatsapp_number: student?.whatsapp_number || 'N/A',
+        status: 'pending',
+        request_date: new Date().toLocaleDateString(),
+        time: new Date().toLocaleTimeString()
+      };
+      if (existingIdx >= 0) {
+        reqs[existingIdx] = { ...reqs[existingIdx], ...newReq, status: 'pending' };
+      } else {
+        reqs.unshift(newReq);
+      }
+      localStorage.setItem('school_join_requests', JSON.stringify(reqs));
+
+      // 2. Call backend join-school API
+      if (id && API) {
+        const token = sessionStorage.getItem('token');
+        await fetch(`${API}/api/students/${id}/join-school`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+          },
+          body: JSON.stringify({ school: selectedSchoolToJoin })
+        }).catch(() => {});
+      }
+
+      // 3. Update student state
+      setStudent(prev => ({
+        ...prev,
+        school: selectedSchoolToJoin,
+        approval_status: 'pending'
+      }));
+
+      // 4. Update session storage and notify sidebar
+      const savedUser = JSON.parse(sessionStorage.getItem('user') || '{}');
+      savedUser.school = selectedSchoolToJoin;
+      savedUser.approval_status = 'pending';
+      sessionStorage.setItem('user', JSON.stringify(savedUser));
+      sessionStorage.setItem('activeSchool', JSON.stringify({ name: selectedSchoolToJoin }));
+      window.dispatchEvent(new Event('user_updated'));
+    } catch (e) {
+      console.error(e);
+      alert('Failed to submit join request. Please try again.');
+    } finally {
+      setJoiningSchool(false);
+    }
+  };
+
+  const handleCancelSchoolJoin = async () => {
+    if (!window.confirm('Do you want to cancel your join request and choose a different surf school?')) return;
+    try {
+      const emailLower = (student?.email || currentUser?.email || '').toLowerCase().trim();
+      // Remove from school_join_requests
+      const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+      const updatedReqs = reqs.filter(r => (r.student_email || r.email || '').toLowerCase().trim() !== emailLower);
+      localStorage.setItem('school_join_requests', JSON.stringify(updatedReqs));
+
+      // Call backend leave API
+      if (id && API) {
+        const token = sessionStorage.getItem('token');
+        await fetch(`${API}/api/students/${id}/leave-school`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+          }
+        }).catch(() => {});
+      }
+
+      // Reset student state
+      setStudent(prev => ({
+        ...prev,
+        school: '',
+        approval_status: 'approved'
+      }));
+
+      // Update session storage
+      const savedUser = JSON.parse(sessionStorage.getItem('user') || '{}');
+      savedUser.school = '';
+      savedUser.approval_status = 'approved';
+      sessionStorage.setItem('user', JSON.stringify(savedUser));
+      sessionStorage.setItem('activeSchool', JSON.stringify({ name: 'No School Selected' }));
+      window.dispatchEvent(new Event('user_updated'));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   // Dynamic fallback for registered surfer (never hardcoded Chloe Kim)
   const getFallbackStudent = () => {
     const savedUser = JSON.parse(sessionStorage.getItem('user') || '{}');
@@ -357,13 +489,13 @@ const StudentProfile = () => {
       division: "Men's Open",
       stance: 'regular',
       approval_status: approvalStatus,
-      school: savedUser.school || req?.school_name || req?.school || (savedUser.instructor ? `${savedUser.instructor} Surf Coaching` : 'Surf Academy'),
+      school: savedUser.school || req?.school_name || req?.school || '',
       surf_stats: { waves_ridden: 0, max_speed: '0 mph', avg_session_mins: 0 },
       performance_logs: [],
       whatsapp_number: savedUser.whatsapp_number || req?.whatsapp_number || '',
       guests_count: (savedUser.guests_details && savedUser.guests_details.length) || (req?.guests_details && req.guests_details.length) || (typeof savedUser.guests_count === 'number' ? savedUser.guests_count : (req?.guests_count || 0)),
       course_duration: savedUser.course_duration || req?.course_duration || '3 Days Course',
-      session_time: savedUser.session_time || req?.session_time || 'Morning 6:00 AM',
+      session_time: savedUser.session_time || req?.session_time || '',
       staying_at_school: savedUser.staying_at_school || req?.staying_at_school || 'Yes',
       reminder_preference: 'WhatsApp Text',
       guests_details: savedUser.guests_details || req?.guests_details || [],
@@ -625,7 +757,7 @@ const StudentProfile = () => {
       course_duration: student.course_duration || '3 Days Course',
       start_date: student.start_date || '',
       end_date: student.end_date || '',
-      session_time: student.session_time || 'Morning 6:00 AM',
+      session_time: student.session_time || '',
       staying_at_school: student.staying_at_school || 'Yes',
       reminder_preference: student.reminder_preference || 'WhatsApp Text',
       guests_details: student.guests_details || [],
@@ -738,7 +870,17 @@ const StudentProfile = () => {
     }
   };
 
+  const hasSchool = Boolean(
+    student?.school &&
+    typeof student.school === 'string' &&
+    student.school.trim() !== '' &&
+    student.school.trim().toLowerCase() !== 'no school selected' &&
+    student.school.trim().toLowerCase() !== 'surf academy' &&
+    student.school.trim().toLowerCase() !== 'your selected surf school'
+  );
+
   const isPendingApproval = (() => {
+    if (!hasSchool) return false;
     if (student?.approval_status === 'approved') return false;
     if (currentUser?.approval_status === 'approved') return false;
 
@@ -780,7 +922,7 @@ const StudentProfile = () => {
   const nextSession = upcomingSessions.length > 0 ? upcomingSessions[0] : null;
 
   const nextSessionTime = nextSession
-    ? `${nextSession.date ? nextSession.date + ', ' : ''}${nextSession.time || '08:30 AM'}`
+    ? `${nextSession.date ? nextSession.date + ', ' : ''}${nextSession.time || ''}`
     : null;
   const nextSessionSub = nextSession
     ? `${nextSession.location || student.school || 'Surf Spot'}${nextSession.group_name ? ` • ${nextSession.group_name}` : (nextSession.title ? ` • ${nextSession.title}` : '')}`
@@ -790,21 +932,146 @@ const StudentProfile = () => {
     <div className="sp-page">
       <Sidebar />
       <main className="sp-main">
-        {/* Pending Approval Warning Banner */}
-        {isPendingApproval && (
-          <div style={{ background: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: '14px', padding: '16px 20px', marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', boxShadow: '0 4px 12px rgba(245,158,11,0.08)' }}>
+        {/* Case 1: Student has no school affiliated yet -> Show "Select Your Surf School" card */}
+        {!hasSchool && (
+          <div style={{
+            background: 'linear-gradient(135deg, #FFFFFF 0%, #F0F9FF 100%)',
+            border: '2px dashed #0284C7',
+            borderRadius: '16px',
+            padding: '22px 24px',
+            marginBottom: '24px',
+            boxShadow: '0 8px 24px rgba(2, 132, 199, 0.08)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                <div style={{
+                  width: '46px',
+                  height: '46px',
+                  borderRadius: '12px',
+                  background: 'linear-gradient(135deg, #0284C7 0%, #0D9488 100%)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '24px',
+                  color: '#FFFFFF',
+                  flexShrink: 0,
+                  boxShadow: '0 4px 12px rgba(2, 132, 199, 0.25)'
+                }}>
+                  🏫
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, color: '#0F172A', fontSize: '17px', fontWeight: 800 }}>
+                    Select Your Surf School
+                  </h3>
+                  <p style={{ margin: '4px 0 0 0', color: '#64748B', fontSize: '13.5px' }}>
+                    You have not joined any surf school yet. Select your surf school below to access training sessions, wave analytics, and connect with your coach.
+                  </p>
+                </div>
+              </div>
+              <span style={{
+                background: '#E0F2FE',
+                color: '#0369A1',
+                padding: '6px 14px',
+                borderRadius: '20px',
+                fontSize: '12px',
+                fontWeight: 800,
+                border: '1px solid #BAE6FD'
+              }}>
+                SELECT SCHOOL
+              </span>
+            </div>
+
+            {/* School Selector Dropdown + Submit */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              flexWrap: 'wrap',
+              background: '#FFFFFF',
+              padding: '14px 16px',
+              borderRadius: '12px',
+              border: '1px solid #E2E8F0',
+              boxShadow: '0 2px 6px rgba(0,0,0,0.02)'
+            }}>
+              <select
+                value={selectedSchoolToJoin}
+                onChange={(e) => setSelectedSchoolToJoin(e.target.value)}
+                style={{
+                  flex: 1,
+                  minWidth: '260px',
+                  padding: '10px 14px',
+                  borderRadius: '8px',
+                  border: '1.5px solid #CBD5E1',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  color: '#1E293B',
+                  outline: 'none',
+                  background: '#F8FAFC',
+                  cursor: 'pointer'
+                }}
+              >
+                <option value="">-- Select Surf School --</option>
+                {schoolsList.map(sch => (
+                  <option key={sch} value={sch}>{sch}</option>
+                ))}
+              </select>
+              <button
+                onClick={handleJoinSchoolSubmit}
+                disabled={!selectedSchoolToJoin || joiningSchool}
+                style={{
+                  padding: '10px 24px',
+                  borderRadius: '8px',
+                  background: selectedSchoolToJoin ? 'linear-gradient(135deg, #0284C7 0%, #0D9488 100%)' : '#94A3B8',
+                  color: '#FFFFFF',
+                  fontSize: '14px',
+                  fontWeight: 700,
+                  border: 'none',
+                  cursor: selectedSchoolToJoin ? 'pointer' : 'not-allowed',
+                  boxShadow: selectedSchoolToJoin ? '0 4px 14px rgba(2, 132, 199, 0.35)' : 'none',
+                  transition: 'all 0.2s',
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                {joiningSchool ? 'Submitting...' : 'Join Surf School'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Case 2: Student has selected a school and request is pending approval */}
+        {hasSchool && isPendingApproval && (
+          <div style={{ background: '#FFFBEB', border: '1px solid #FCD34D', borderRadius: '14px', padding: '16px 20px', marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', boxShadow: '0 4px 12px rgba(245,158,11,0.08)', flexWrap: 'wrap', gap: '12px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <span style={{ fontSize: '26px' }}>⏳</span>
               <div>
                 <h3 style={{ margin: 0, color: '#92400E', fontSize: '15px', fontWeight: 800 }}>Join Request Pending Approval</h3>
                 <p style={{ margin: '2px 0 0 0', color: '#B45309', fontSize: '13px' }}>
-                  Your join request to <strong>{student?.school || 'your selected Surf School'}</strong> is waiting for School Admin approval.
+                  Your join request to <strong>{student?.school}</strong> is waiting for School Admin approval.
                 </p>
               </div>
             </div>
-            <span style={{ background: '#FEF3C7', color: '#D97706', padding: '6px 14px', borderRadius: '20px', fontSize: '12px', fontWeight: 800, border: '1px solid #FDE68A' }}>
-              PENDING APPROVAL
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <button
+                onClick={handleCancelSchoolJoin}
+                style={{
+                  background: '#FFFFFF',
+                  border: '1px solid #F59E0B',
+                  color: '#B45309',
+                  padding: '6px 14px',
+                  borderRadius: '20px',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+                title="Cancel request to choose another school"
+              >
+                Change School
+              </button>
+              <span style={{ background: '#FEF3C7', color: '#D97706', padding: '6px 14px', borderRadius: '20px', fontSize: '12px', fontWeight: 800, border: '1px solid #FDE68A' }}>
+                PENDING APPROVAL
+              </span>
+            </div>
           </div>
         )}
 
@@ -1119,13 +1386,18 @@ const StudentProfile = () => {
               if (!Array.isArray(guestsList)) guestsList = [];
               const guestsCount = guestsList.length;
 
+              // If student has no accompanying guests, hide this card completely
+              if (guestsCount <= 0) {
+                return null;
+              }
+
               return (
                 <div className="sp-card">
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <h2 className="sp-card-title" style={{ whiteSpace: 'nowrap' }}>Accompanying Guests</h2>
                       <span style={{
-                        background: guestsCount > 0 ? '#0284C7' : '#94A3B8',
+                        background: '#0284C7',
                         color: '#FFFFFF',
                         fontSize: '11px',
                         fontWeight: 800,
@@ -1140,46 +1412,36 @@ const StudentProfile = () => {
                         {guestsCount}
                       </span>
                     </div>
-                    {/* After sign up, guests cannot be added - no + Add Guests button */}
                   </div>
 
-                  {guestsCount > 0 ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                      {guestsList.map((g, gIdx) => (
-                        <div key={gIdx} style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px', background: '#F8FAFC', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
-                          <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'linear-gradient(135deg, #0EA5E9, #2563EB)', color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '15px', flexShrink: 0 }}>
-                            {g.name ? g.name.charAt(0).toUpperCase() : `G${gIdx + 1}`}
-                          </div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                              <span style={{ fontSize: '14.5px', fontWeight: 800, color: '#0F172A' }}>
-                                {g.name || `Guest #${gIdx + 1}`}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {guestsList.map((g, gIdx) => (
+                      <div key={gIdx} style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px', background: '#F8FAFC', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
+                        <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'linear-gradient(135deg, #0EA5E9, #2563EB)', color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '15px', flexShrink: 0 }}>
+                          {g.name ? g.name.charAt(0).toUpperCase() : `G${gIdx + 1}`}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '14.5px', fontWeight: 800, color: '#0F172A' }}>
+                              {g.name || `Guest #${gIdx + 1}`}
+                            </span>
+                            {g.level && (
+                              <span style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '10px', background: '#E0F2FE', color: '#0369A1' }}>
+                                {g.level}
                               </span>
-                              {g.level && (
-                                <span style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '10px', background: '#E0F2FE', color: '#0369A1' }}>
-                                  {g.level}
-                                </span>
-                              )}
-                            </div>
-                            <div style={{ fontSize: '12px', color: '#64748B', display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '4px' }}>
-                              {g.age && <span>🎂 Age: {g.age} yrs</span>}
-                              {g.gender && <span>• {g.gender}</span>}
-                              {g.stance && <span>• Stance: {g.stance}</span>}
-                              {g.whatsapp_number && <span>📱 {g.whatsapp_number}</span>}
-                              {g.email && <span>✉️ {g.email}</span>}
-                            </div>
+                            )}
+                          </div>
+                          <div style={{ fontSize: '12px', color: '#64748B', display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '4px' }}>
+                            {g.age && <span>🎂 Age: {g.age} yrs</span>}
+                            {g.gender && <span>• {g.gender}</span>}
+                            {g.stance && <span>• Stance: {g.stance}</span>}
+                            {g.whatsapp_number && <span>📱 {g.whatsapp_number}</span>}
+                            {g.email && <span>✉️ {g.email}</span>}
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="sp-empty-box" style={{ padding: '14px 12px', textAlign: 'center', background: '#F8FAFC', borderRadius: '10px', border: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                      <span style={{ fontSize: '18px' }}>👥</span>
-                      <span style={{ fontWeight: 600, color: '#64748B', fontSize: '13px' }}>
-                        No accompanying guests registered
-                      </span>
-                    </div>
-                  )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               );
             })()}
@@ -1300,7 +1562,7 @@ const StudentProfile = () => {
                           {session.title || session.group_name || session.location || 'Scheduled Session'}
                         </strong>
                         <span style={{ fontSize: '13px', color: '#64748B' }}>
-                          {session.instructor || 'Coach'} • {session.time || 'Morning Slot'}
+                          {session.instructor || 'Coach'}{session.time ? ` • ${session.time}` : ''}
                         </span>
                       </div>
                     </div>

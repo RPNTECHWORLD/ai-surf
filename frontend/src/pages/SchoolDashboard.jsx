@@ -440,32 +440,6 @@ const SchoolDashboard = () => {
                   </div>
                 )}
               </div>
-
-              {/* Recent Activity Timeline Card */}
-              <div className="db-card">
-                <div className="db-card-header">
-                  <h3 className="db-card-title">Recent Activity</h3>
-                  <span className="db-card-badge">Live Feed</span>
-                </div>
-                
-                {activity.length === 0 ? (
-                  <div style={{ padding: '36px 16px', textAlign: 'center', color: '#94A3B8', fontSize: '13px' }}>
-                    No recent activity logged yet.
-                  </div>
-                ) : (
-                  <ul className="db-activity-list">
-                    {activity.map((a) => (
-                      <li key={a.id} className="db-activity-item">
-                        <div className="db-activity-icon">{activityIcon(a.type)}</div>
-                        <div className="db-activity-text">
-                          <p>{a.text}</p>
-                          <span className="db-activity-time">{a.time}</span>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
             </div>
           </>
         )}
@@ -664,7 +638,7 @@ const SchoolDashboard = () => {
         /* Bottom Grid */
         .db-bottom-grid {
           display: grid;
-          grid-template-columns: 1.6fr 1fr;
+          grid-template-columns: 1fr;
           gap: 24px;
           width: 100%;
           align-items: start;
