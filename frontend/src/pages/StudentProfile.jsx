@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
+import CoachProfileModal from '../components/CoachProfileModal';
 
 const API = import.meta.env.VITE_API_URL || '';
 
@@ -32,6 +33,12 @@ const StudentProfile = () => {
   
   // Auth state
   const [currentUser, setCurrentUser] = useState(null);
+  const [selectedCoachForModal, setSelectedCoachForModal] = useState(null);
+
+  const handleOpenCoachModal = (instName, instId) => {
+    if (!instName || instName.includes('Not Assigned')) return;
+    setSelectedCoachForModal({ id: instId || null, name: instName });
+  };
   const [showEditModal, setShowEditModal] = useState(false);
   const [showGuestModal, setShowGuestModal] = useState(false);
   const [guestFormList, setGuestFormList] = useState([]);
@@ -547,6 +554,19 @@ const StudentProfile = () => {
         }
       } catch (e) {}
 
+      // If not found by ID, search by email from all students list
+      if (!data && emailLower) {
+        try {
+          const listRes = await fetch(`${API}/api/students`);
+          if (listRes.ok) {
+            const list = await listRes.json();
+            if (Array.isArray(list)) {
+              data = list.find(s => (s.email || '').toLowerCase().trim() === emailLower);
+            }
+          }
+        } catch (e) {}
+      }
+
       // Also check remote approval status if user has email
       if (emailLower) {
         try {
@@ -565,6 +585,35 @@ const StudentProfile = () => {
         if (isApprovedLocally) {
           fallback.approval_status = 'approved';
         }
+        // Fetch sessions and sync coach even for fallback
+        try {
+          const sessRes = await fetch(`${API}/api/sessions`);
+          if (sessRes.ok) {
+            const allSess = await sessRes.json();
+            if (Array.isArray(allSess)) {
+              const sNameLower = (fallback.name || '').toLowerCase().trim();
+              const mySess = allSess.filter(s => {
+                return (
+                  s.student_id === fallback.id ||
+                  (sNameLower && (
+                    (s.student || '').toLowerCase().trim() === sNameLower ||
+                    (s.student_name || '').toLowerCase().trim() === sNameLower ||
+                    (s.guest_name || '').toLowerCase().trim() === sNameLower
+                  ))
+                );
+              });
+              if (mySess.length > 0) {
+                fallback.sessions = mySess;
+                const coachSess = mySess.find(s => s.instructor && s.instructor !== '—' && s.instructor !== 'Coach');
+                if (coachSess) {
+                  fallback.instructor = coachSess.instructor;
+                  fallback.instructor_id = coachSess.instructor_id;
+                }
+              }
+            }
+          }
+        } catch (e) {}
+
         setStudent(fallback);
         if (isApprovedLocally && savedUser && savedUser.approval_status !== 'approved') {
           savedUser.approval_status = 'approved';
@@ -610,15 +659,48 @@ const StudentProfile = () => {
       }
       if (!Array.isArray(parsedGuests)) parsedGuests = [];
 
+      // Ensure student sessions and coach are synced if missing from student response
+      let stSessions = Array.isArray(data.sessions) ? data.sessions : [];
+      let resolvedInstructor = data.instructor || '';
+      let resolvedInstructorId = data.instructor_id || null;
+
+      try {
+        const sessRes = await fetch(`${API}/api/sessions`);
+        if (sessRes.ok) {
+          const allSess = await sessRes.json();
+          if (Array.isArray(allSess)) {
+            const mySess = allSess.filter(s => 
+              s.student_id === data.id || 
+              (data.user_id && s.student_id === data.user_id) ||
+              (stName && (
+                (s.student || '').toLowerCase().trim() === stName ||
+                (s.student_name || '').toLowerCase().trim() === stName ||
+                (s.guest_name || '').toLowerCase().trim() === stName
+              ))
+            );
+            if (mySess.length > 0) {
+              stSessions = mySess;
+              const coachSess = mySess.find(s => s.instructor && s.instructor !== '—' && s.instructor !== 'Coach');
+              if (coachSess && (!resolvedInstructor || resolvedInstructor === 'Assigned Surf Coach')) {
+                resolvedInstructor = coachSess.instructor;
+                resolvedInstructorId = coachSess.instructor_id;
+              }
+            }
+          }
+        }
+      } catch (e) {}
+
       const cleanStudent = {
         ...data,
+        sessions: stSessions,
         guests_details: parsedGuests,
         guests_count: parsedGuests.length,
         surf_stats: data.surf_stats && Object.keys(data.surf_stats).length > 0
           ? data.surf_stats
           : { waves_ridden: 0, max_speed: '0 mph', avg_session_mins: 0 },
         performance_logs: data.performance_logs || [],
-        instructor: data.instructor || '',
+        instructor: resolvedInstructor,
+        instructor_id: resolvedInstructorId,
         bio: data.bio || 'Registered athlete & surf trainee.',
         division: data.division || (data.gender === 'Female' ? "Women's Open" : "Men's Open"),
         approval_status: isApproved ? 'approved' : (data.approval_status || 'pending'),
@@ -827,9 +909,10 @@ const StudentProfile = () => {
   if (loading) return <div className="db-page"><Sidebar /><main className="db-main"><div className="db-loading"><div className="db-spinner" /></div></main></div>;
   if (!student) return <div className="db-page"><Sidebar /><main className="db-main">Student not found</main></div>;
 
-  const isOwnProfile = currentUser && (
-    (currentUser.role === 'athlete' && currentUser.student_id === parseInt(id)) ||
-    (currentUser.role === 'admin')
+  const isOwnProfile = Boolean(
+    currentUser &&
+    currentUser.role === 'athlete' &&
+    (currentUser.student_id === parseInt(id) || currentUser.id === parseInt(id) || (currentUser.email && student?.email && currentUser.email.toLowerCase().trim() === student.email.toLowerCase().trim()))
   );
 
   const isStudentSelf = Boolean(
@@ -918,8 +1001,17 @@ const StudentProfile = () => {
   const badgeDotColor = currentBadge.color || '#F59E0B';
 
   const effectiveSessions = (student?.sessions && Array.isArray(student.sessions)) ? student.sessions : [];
-  const upcomingSessions = effectiveSessions.filter(s => s.status === 'Upcoming' || s.status === 'Scheduled');
-  const nextSession = upcomingSessions.length > 0 ? upcomingSessions[0] : null;
+  const upcomingSessions = effectiveSessions.filter(s => {
+    const st = (s.status || '').toLowerCase().trim();
+    return st !== 'completed' && st !== 'cancelled' && st !== 'canceled';
+  });
+  const nextSession = upcomingSessions.length > 0 ? upcomingSessions[0] : (effectiveSessions.length > 0 ? effectiveSessions[0] : null);
+
+  const assignedCoachName = (student?.instructor && student.instructor.trim() !== '' && student.instructor !== 'Assigned Surf Coach' && student.instructor !== 'Not Assigned Yet')
+    ? student.instructor
+    : (nextSession?.instructor || (effectiveSessions.find(s => s.instructor && s.instructor !== '—' && s.instructor !== 'Coach' && s.instructor !== 'Not Assigned Yet')?.instructor) || 'Not Assigned Yet');
+
+  const assignedCoachId = student?.instructor_id || nextSession?.instructor_id || (effectiveSessions.find(s => s.instructor_id)?.instructor_id) || null;
 
   const nextSessionTime = nextSession
     ? `${nextSession.date ? nextSession.date + ', ' : ''}${nextSession.time || ''}`
@@ -1217,21 +1309,33 @@ const StudentProfile = () => {
                     )}
                   </div>
                 ) : (
-                  <div style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    fontSize: '12px',
-                    color: '#475569',
-                    background: '#F1F5F9',
-                    padding: '4px 12px',
-                    borderRadius: '20px',
-                    fontWeight: 600
-                  }}>
+                  <div 
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      fontSize: '12px',
+                      color: '#0F766E',
+                      background: '#CCFBF1',
+                      border: '1px solid #99F6E4',
+                      padding: '4px 12px',
+                      borderRadius: '20px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease'
+                    }}
+                    onClick={() => {
+                      handleOpenCoachModal(assignedCoachName, assignedCoachId);
+                    }}
+                    title="Click to view coach profile & submit a review"
+                  >
                     <span>🏄‍♂️ Coach:</span>
-                    <span style={{ color: '#0F172A', fontWeight: 700 }}>
-                      {(student.instructor && student.instructor !== 'Assigned Surf Coach') ? student.instructor : (nextSession?.instructor || 'Not Assigned Yet')}
+                    <span style={{ color: '#0F172A', fontWeight: 800, textDecoration: 'underline' }}>
+                      {assignedCoachName}
                     </span>
+                    {assignedCoachName !== 'Not Assigned Yet' && (
+                      <span style={{ fontSize: '11px', color: '#0D9488', fontWeight: 800 }}>★ Review</span>
+                    )}
                   </div>
                 )}
                 {isStudentSelf && (
@@ -1554,16 +1658,70 @@ const StudentProfile = () => {
                         marginTop: '5px',
                         flexShrink: 0
                       }} />
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                         <span style={{ fontSize: '11px', fontWeight: 700, color: '#F59E0B', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
                           {session.date}
                         </span>
-                        <strong style={{ fontSize: '14px', fontWeight: 800, color: '#0F172A' }}>
-                          {session.title || session.group_name || session.location || 'Scheduled Session'}
-                        </strong>
-                        <span style={{ fontSize: '13px', color: '#64748B' }}>
-                          {session.instructor || 'Coach'}{session.time ? ` • ${session.time}` : ''}
-                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                          <strong style={{ fontSize: '14px', fontWeight: 800, color: '#0F172A' }}>
+                            {session.title || session.group_name || session.location || 'Scheduled Session'}
+                          </strong>
+                          {(session.is_guest || session.guest_name) ? (
+                            <span style={{
+                              fontSize: '11px',
+                              background: '#FEF3C7',
+                              color: '#92400E',
+                              border: '1px solid #FDE68A',
+                              padding: '1px 6px',
+                              borderRadius: '4px',
+                              fontWeight: 700,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '3px'
+                            }}>
+                              👥 Guest: {session.student || session.guest_name}
+                            </span>
+                          ) : (
+                            <span style={{
+                              fontSize: '11px',
+                              background: '#E0F2FE',
+                              color: '#0369A1',
+                              border: '1px solid #BAE6FD',
+                              padding: '1px 6px',
+                              borderRadius: '4px',
+                              fontWeight: 700,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '3px'
+                            }}>
+                              👤 {session.student || 'You'}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
+                          <span 
+                            style={{ 
+                              color: '#0F766E', 
+                              fontWeight: 700, 
+                              cursor: session.instructor ? 'pointer' : 'default',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                            onClick={() => handleOpenCoachModal(session.instructor, session.instructor_id)}
+                            title="Click to view coach profile & submit a review"
+                          >
+                            <span style={{ textDecoration: session.instructor ? 'underline' : 'none' }}>
+                              🏄‍♂️ Coach: {session.instructor || 'Coach'}
+                            </span>
+                            <span style={{ fontSize: '10px', background: '#CCFBF1', color: '#0F766E', padding: '1px 5px', borderRadius: '4px', fontWeight: 700 }}>
+                              ★ Review
+                            </span>
+                          </span>
+                          {session.time && (
+                            <span style={{ color: '#64748B' }}>• {session.time}</span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -1709,14 +1867,62 @@ const StudentProfile = () => {
                   {/* Course Duration & Swimming Ability */}
                   <div className="sp-form-row">
                     <div className="sp-form-field">
-                      <label>Course Duration</label>
-                      <select value={editForm.course_duration} onChange={(e) => setEditForm({ ...editForm, course_duration: e.target.value })}>
-                        <option value="3 Days Course">3 Days Course</option>
-                        <option value="5 Days Course">5 Days Course</option>
-                        <option value="7 Days Course">7 Days Course</option>
-                        <option value="10 Days Course">10 Days Course</option>
-                        <option value="1 Day Crash Course">1 Day Crash Course</option>
-                      </select>
+                      <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>Course Duration</span>
+                        <span style={{ fontSize: '11px', color: '#0D9488', fontWeight: '700' }}>
+                          {editForm.course_duration || '3 Days Course'}
+                        </span>
+                      </label>
+                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                        <div style={{ position: 'relative', flex: 1, display: 'flex', alignItems: 'center' }}>
+                          <input
+                            type="number"
+                            min="1"
+                            max="365"
+                            placeholder="e.g. 3"
+                            value={
+                              (() => {
+                                const match = (editForm.course_duration || '').match(/^(\d+)/);
+                                return match ? match[1] : '';
+                              })()
+                            }
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              const num = parseInt(val, 10);
+                              if (!isNaN(num) && num > 0) {
+                                setEditForm({ ...editForm, course_duration: `${num} ${num === 1 ? 'Day' : 'Days'} Course` });
+                              } else {
+                                setEditForm({ ...editForm, course_duration: val });
+                              }
+                            }}
+                            style={{ width: '100%', paddingRight: '50px' }}
+                          />
+                          <span style={{ position: 'absolute', right: '10px', fontSize: '12px', fontWeight: 600, color: '#64748B', pointerEvents: 'none' }}>
+                            Days
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', gap: '3px' }}>
+                          {[3, 5, 7, 10].map(d => (
+                            <button
+                              key={d}
+                              type="button"
+                              onClick={() => setEditForm({ ...editForm, course_duration: `${d} Days Course` })}
+                              style={{
+                                padding: '6px 8px',
+                                borderRadius: '6px',
+                                border: editForm.course_duration === `${d} Days Course` ? '1.5px solid #0D9488' : '1px solid #CBD5E1',
+                                background: editForm.course_duration === `${d} Days Course` ? '#0D9488' : '#F8FAFC',
+                                color: editForm.course_duration === `${d} Days Course` ? '#FFFFFF' : '#334155',
+                                fontWeight: 700,
+                                fontSize: '11px',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              {d}D
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                     </div>
                     <div className="sp-form-field">
                       <label>Swimming Ability</label>
@@ -1984,6 +2190,15 @@ const StudentProfile = () => {
             </div>
           </div>
         )}
+
+        {/* Coach Profile & Student Review Modal */}
+        <CoachProfileModal
+          isOpen={Boolean(selectedCoachForModal)}
+          onClose={() => setSelectedCoachForModal(null)}
+          coachId={selectedCoachForModal?.id}
+          coachName={selectedCoachForModal?.name}
+          currentUser={currentUser}
+        />
       </main>
 
       <style>{`

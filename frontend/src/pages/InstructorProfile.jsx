@@ -176,10 +176,18 @@ const InstructorProfile = () => {
     const currentCoach = coachObj || instructor;
     const coachId = id || currentCoach?.id;
     const coachName = currentCoach?.name || '';
+    const coachSchool = (currentCoach?.school || '').trim();
+    const isFreelance = coachSchool.toLowerCase() === 'individual / freelance coach';
 
     // If coachObj has assigned_students directly from backend API
     if (Array.isArray(coachObj?.assigned_students) && coachObj.assigned_students.length > 0) {
-      setAssignedStudents(coachObj.assigned_students);
+      if (isFreelance) {
+        setAssignedStudents(coachObj.assigned_students.filter(s => (s.school || '').toLowerCase().trim() === 'individual / freelance coach'));
+      } else if (coachSchool) {
+        setAssignedStudents(coachObj.assigned_students.filter(s => (s.school || '').toLowerCase().trim() === coachSchool.toLowerCase()));
+      } else {
+        setAssignedStudents(coachObj.assigned_students);
+      }
     }
 
     Promise.all([
@@ -189,14 +197,20 @@ const InstructorProfile = () => {
       const allStudents = Array.isArray(studentsData) ? studentsData : [];
       const allSessions = Array.isArray(sessionsData) ? sessionsData : [];
 
-      // 1. Sessions for this coach
-      const coachSessions = allSessions.filter(s => matchesCoach(s, coachId, coachName));
+      // 1. Sessions for this coach isolated by affiliation
+      const coachSessions = allSessions.filter(s => {
+        if (!matchesCoach(s, coachId, coachName)) return false;
+        const sSchool = (s.school || '').toLowerCase().trim();
+        if (isFreelance) {
+          return !sSchool || sSchool === 'individual / freelance coach';
+        } else if (coachSchool) {
+          return sSchool === coachSchool.toLowerCase();
+        }
+        return true;
+      });
       setInstructorSessions(coachSessions);
 
-      // 2. Identify students associated with this coach
-      // A student belongs to this coach if:
-      // a) Directly assigned: s.instructor_id matches coachId or s.instructor matches coachName
-      // b) Assigned via any session: session belongs to this coach and links to student_id or student name
+      // 2. Identify students associated with this coach isolated by affiliation
       const sessionStudentIds = new Set(coachSessions.map(sess => String(sess.student_id)).filter(Boolean));
       const sessionStudentNames = new Set(coachSessions.map(sess => (sess.student || '').toLowerCase().trim()).filter(Boolean));
 
@@ -206,6 +220,14 @@ const InstructorProfile = () => {
 
       // Check allStudents
       allStudents.forEach(s => {
+        const sSchool = (s.school || s.school_name || '').toLowerCase().trim();
+        if (isFreelance) {
+          const isFreelanceSt = sSchool === 'individual / freelance coach' || (!sSchool && String(s.created_by_user_id) === String(coachId));
+          if (!isFreelanceSt) return;
+        } else if (coachSchool) {
+          if (sSchool !== coachSchool.toLowerCase()) return;
+        }
+
         const sIdStr = s.id ? String(s.id) : '';
         const sNameLower = (s.name || '').toLowerCase().trim();
 
@@ -444,15 +466,41 @@ const InstructorProfile = () => {
       });
 
       if (res.ok) {
-        if (currentUser && currentUser.instructor_id === parseInt(id)) {
-          const updatedUser = { ...currentUser, name: editForm.name, image: safeImage || currentUser.image };
+        const newSchool = editForm.school || 'Individual / Freelance Coach';
+        if (currentUser && (
+          currentUser.instructor_id === parseInt(id) ||
+          currentUser.id === parseInt(id) ||
+          (currentUser.email && instructor?.email && currentUser.email.toLowerCase().trim() === instructor.email.toLowerCase().trim())
+        )) {
+          const updatedUser = {
+            ...currentUser,
+            name: editForm.name,
+            image: safeImage || currentUser.image,
+            school: newSchool,
+            school_name: newSchool
+          };
           sessionStorage.setItem('user', JSON.stringify(updatedUser));
           setCurrentUser(updatedUser);
         }
+        
+        const activeSch = typeof sessionStorage.getItem('activeSchool') === 'string' && sessionStorage.getItem('activeSchool')?.startsWith('{')
+          ? JSON.stringify({ name: newSchool })
+          : newSchool;
+        sessionStorage.setItem('activeSchool', activeSch);
+
+        window.dispatchEvent(new Event('storage'));
+        window.dispatchEvent(new Event('user_updated'));
+
         setShowEditModal(false);
         setPhotoPreview('');
+        const updatedInst = {
+          ...instructor,
+          ...payload,
+          school: newSchool
+        };
+        setInstructor(updatedInst);
+        fetchDynamicData(updatedInst);
         fetchInstructor();
-        fetchDynamicData();
       } else {
         alert('Failed to save profile changes.');
       }

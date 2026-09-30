@@ -19,7 +19,7 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 # ─── SQLAlchemy Setup ────────────────────────────────────────────────────────
 from sqlalchemy import (
     create_engine, Column, Integer, String, Text,
-    DateTime, Date, ForeignKey, func, Float, Boolean
+    DateTime, Date, ForeignKey, func, Float, Boolean, or_, and_
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, Session as OrmSession
@@ -231,6 +231,8 @@ class SurfSession(Base):
     video_url = Column(String, default="")
     image_url = Column(String, default="")
     group_name = Column(String, nullable=True, default="")  # e.g. "Group A (Beginner)"
+    student_name = Column(String, nullable=True, default="")
+    guest_name = Column(String, nullable=True, default="")
     student_rel = relationship("Student", back_populates="sessions")
     instructor_rel = relationship("Instructor", back_populates="sessions")
 
@@ -1424,6 +1426,7 @@ class SessionBulkCreate(BaseModel):
     time: str
     duration_mins: Optional[int] = 60
     student_ids: List[int]
+    students_data: Optional[List[dict]] = None
     instructor_id: int
     location: str
     condition: str
@@ -1545,6 +1548,14 @@ class InstructorUpdate(BaseModel):
     certifications: Optional[List[str]] = None
     image: Optional[str] = None
     school: Optional[str] = None
+
+
+class InstructorReviewCreate(BaseModel):
+    student_name: str
+    student_id: Optional[int] = None
+    rating: int = 5
+    comment: str
+    date: Optional[str] = None
 
 
 class NutritionLogCreate(BaseModel):
@@ -1764,14 +1775,21 @@ def student_to_dict(s: Student):
 
 
 def session_to_dict(s: SurfSession):
+    disp_student = getattr(s, 'student_name', None)
+    if not disp_student or not disp_student.strip():
+        disp_student = s.student_rel.name if s.student_rel else ""
+    g_name = getattr(s, 'guest_name', None) or ""
     return {
         "id": s.id,
         "date": s.date,
         "time": s.time,
         "duration_mins": s.duration_mins,
         "student_id": s.student_id,
-        "student": s.student_rel.name if s.student_rel else "",
-        "school": s.student_rel.school if s.student_rel else "",
+        "student": disp_student,
+        "student_name": disp_student,
+        "guest_name": g_name,
+        "is_guest": bool(g_name and g_name.strip()),
+        "school": s.student_rel.school if (s.student_rel and s.student_rel.school) else (s.instructor_rel.school if (s.instructor_rel and s.instructor_rel.school) else ""),
         "instructor_id": s.instructor_id,
         "instructor": s.instructor_rel.name if s.instructor_rel else "",
         "location": s.location,
@@ -1811,6 +1829,7 @@ def get_current_user(authorization: Optional[str] = Header(None), db: OrmSession
 
 
 def make_user_response(user: User, db_session: Optional[OrmSession] = None):
+    from sqlalchemy import inspect
     res = {
         "id": user.id,
         "email": user.email,
@@ -1818,22 +1837,72 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
         "auth_provider": user.auth_provider,
         "created_by_school": user.created_by_school,
     }
-    if user.student:
-        res["student_id"] = user.student.id
-        res["name"] = user.student.name
-        res["image"] = user.student.image
-    elif user.instructor:
-        res["instructor_id"] = user.instructor.id
-        res["name"] = user.instructor.name
-        res["image"] = user.instructor.image
-        res["school"] = user.instructor.school or "Individual / Freelance Coach"
+    session = db_session
+    if not session:
+        try:
+            session = inspect(user).session
+        except Exception:
+            session = None
+
+    student_obj = user.student
+    if not student_obj and user.role == "athlete" and session:
+        if user.email:
+            student_obj = session.query(Student).filter(func.lower(Student.email) == user.email.lower().strip()).first()
+        if not student_obj and user.id:
+            student_obj = session.query(Student).filter(Student.user_id == user.id).first()
+        if not student_obj:
+            st_name = getattr(user, "name", None) or (user.email.split("@")[0].replace(".", " ").title() if user.email else "Registered Surfer")
+            student_obj = Student(
+                user_id=user.id,
+                name=st_name,
+                email=user.email or "",
+                level="Beginner",
+                school="Aquatic Indica Surf School",
+                approval_status="approved",
+                swimming_ability="Swimmer"
+            )
+            session.add(student_obj)
+            try:
+                session.commit()
+                session.refresh(student_obj)
+            except Exception:
+                session.rollback()
+
+    instructor_obj = user.instructor
+    if not instructor_obj and user.role == "coach" and user.email and session:
+        instructor_obj = session.query(Instructor).filter(func.lower(Instructor.email) == user.email.lower().strip()).first()
+
+    if student_obj:
+        res["student_id"] = student_obj.id
+        res["name"] = student_obj.name
+        res["image"] = student_obj.image
+        # If student has no instructor directly, check their sessions
+        inst_id = student_obj.instructor_id
+        inst_name = student_obj.instructor_rel.name if student_obj.instructor_rel else ""
+        if (not inst_name or inst_name == "Assigned Surf Coach") and session:
+            sess = session.query(SurfSession).filter(
+                or_(
+                    SurfSession.student_id == student_obj.id,
+                    and_(SurfSession.student_name != None, func.lower(SurfSession.student_name) == student_obj.name.lower().strip()),
+                    and_(SurfSession.guest_name != None, func.lower(SurfSession.guest_name) == student_obj.name.lower().strip())
+                )
+            ).order_by(SurfSession.id.desc()).first()
+            if sess and sess.instructor_rel and sess.instructor_rel.name:
+                inst_id = sess.instructor_id
+                inst_name = sess.instructor_rel.name
+        res["instructor_id"] = inst_id
+        res["instructor"] = inst_name
+    elif instructor_obj:
+        res["instructor_id"] = instructor_obj.id
+        res["name"] = instructor_obj.name
+        res["image"] = instructor_obj.image
+        res["school"] = instructor_obj.school or "Individual / Freelance Coach"
     else:
         res["name"] = "School Admin"
         res["image"] = ""
 
     # Check matching school by email
     try:
-        from sqlalchemy import inspect, func
         session = db_session or inspect(user).session
         if session:
             sch = session.query(School).filter(func.lower(School.email) == user.email.lower()).first()
@@ -1865,11 +1934,11 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
 
     email_clean = data.email.lower().strip()
     existing = db.query(User).filter(
-        func.lower(User.email) == email_clean,
-        User.role == role
+        func.lower(User.email) == email_clean
     ).first()
     if existing:
-        raise HTTPException(status_code=400, detail=f"This email is already registered as {role}. Please log in instead.")
+        role_label = "Student" if existing.role == "athlete" else ("Coach" if existing.role == "coach" else "School Admin")
+        raise HTTPException(status_code=400, detail=f"This email is already registered as {role_label}. Please log in instead.")
 
     selected_school = (data.school or "").strip()
     initial_approval = "approved" if (data.invite_token or data.invite_code or role != "athlete" or not selected_school) else "pending"
@@ -2127,18 +2196,16 @@ def send_otp_endpoint(data: SendOtpRequest, db: OrmSession = Depends(get_db)):
     if not email:
         raise HTTPException(status_code=400, detail="Email is required")
 
-    # If purpose is signup, check if email is already registered FOR THIS ROLE BEFORE sending OTP
+    # If purpose is signup, check if email is already registered before sending OTP
     if data.purpose == "signup":
-        target_role = (data.role or "athlete").lower().strip()
         existing = db.query(User).filter(
-            func.lower(User.email) == email,
-            User.role == target_role
+            func.lower(User.email) == email
         ).first()
         if existing:
-            role_display = "Student (Athlete)" if target_role == "athlete" else ("Coach (Instructor)" if target_role == "coach" else "School Admin")
+            role_display = "Student" if existing.role == "athlete" else ("Coach" if existing.role == "coach" else "School Admin")
             raise HTTPException(
                 status_code=400,
-                detail=f"This email address is already registered as {role_display}. Please log in instead, or change 'Register As' to another role."
+                detail=f"This email address is already registered as {role_display}. Please log in instead."
             )
     
     # Invalidate previous unused OTPs
@@ -3149,6 +3216,77 @@ def get_instructor(instructor_id: int, db: OrmSession = Depends(get_db)):
     return d
 
 
+@app.post("/api/instructors/{instructor_id}/reviews")
+def add_instructor_review(instructor_id: int, data: InstructorReviewCreate, db: OrmSession = Depends(get_db)):
+    i = db.query(Instructor).filter(Instructor.id == instructor_id).first()
+    if not i:
+        raise HTTPException(status_code=404, detail="Instructor not found")
+    
+    reviewer_name = (data.student_name or "").strip()
+    coach_name = (i.name or "").strip()
+
+    # 1. Prevent coach self-review
+    if reviewer_name.lower() == coach_name.lower() or (data.student_id and data.student_id == i.id):
+        raise HTTPException(status_code=403, detail="Coaches cannot submit reviews for themselves.")
+
+    # 2. Prevent any coach from reviewing any coach
+    matched_coach = db.query(Instructor).filter(func.lower(Instructor.name) == reviewer_name.lower()).first()
+    if matched_coach:
+        raise HTTPException(status_code=403, detail="Coaches cannot submit reviews for coaches. Only students can review coaches.")
+
+    if data.student_id:
+        inst_match = db.query(Instructor).filter(
+            or_(Instructor.id == data.student_id, Instructor.user_id == data.student_id)
+        ).first()
+        if inst_match:
+            raise HTTPException(status_code=403, detail="Coaches cannot submit reviews for coaches. Only students can review coaches.")
+
+        user_match = db.query(User).filter(User.id == data.student_id).first()
+        if user_match and user_match.role and user_match.role.lower() in ["coach", "instructor", "admin", "school"]:
+            raise HTTPException(status_code=403, detail="Only students can submit reviews.")
+    
+    current_reviews = []
+    if i.reviews:
+        try:
+            current_reviews = json.loads(i.reviews)
+            if not isinstance(current_reviews, list):
+                current_reviews = []
+        except Exception:
+            current_reviews = []
+            
+    review_date = data.date or datetime.now().strftime("%d %b %Y")
+    new_entry = {
+        "id": len(current_reviews) + 1,
+        "student_id": data.student_id,
+        "student_name": data.student_name,
+        "student": data.student_name,
+        "rating": max(1, min(5, data.rating)),
+        "comment": data.comment.strip(),
+        "date": review_date,
+        "status": "Approved"
+    }
+    current_reviews.insert(0, new_entry)
+    i.reviews = json.dumps(current_reviews)
+    db.commit()
+    db.refresh(i)
+    
+    # Log activity
+    db.add(ActivityLog(
+        text=f"Review added for Coach {i.name} by {data.student_name} ({data.rating} Stars)",
+        type="review",
+        school=i.school or "Aquatic Indica Surf School"
+    ))
+    db.commit()
+    
+    return {
+        "message": "Review submitted successfully",
+        "review": new_entry,
+        "reviews": current_reviews,
+        "total_reviews": len(current_reviews),
+        "instructor": instructor_to_dict(i)
+    }
+
+
 @app.post("/api/instructors")
 def create_instructor(data: InstructorCreate, request: Request, db: OrmSession = Depends(get_db)):
     user_id = None
@@ -3287,19 +3425,65 @@ def delete_instructor(instructor_id: int, db: OrmSession = Depends(get_db)):
 def get_students(school: Optional[str] = None, db: OrmSession = Depends(get_db)):
     query = db.query(Student)
     if school and school.lower().strip() not in ["all", "super admin", "school admin"]:
-        query = query.filter(func.lower(Student.school) == school.lower().strip())
+        sch_clean = school.lower().strip()
+        query = query.filter(func.trim(func.lower(Student.school)) == sch_clean)
     return [student_to_dict(s) for s in query.all()]
 
 
 @app.get("/api/students/{student_id}")
 def get_student(student_id: int, db: OrmSession = Depends(get_db)):
-    s = db.query(Student).filter(Student.id == student_id).first()
+    s = db.query(Student).filter((Student.id == student_id) | (Student.user_id == student_id)).first()
+    if not s:
+        # Check if student_id is a User ID with athlete role
+        u = db.query(User).filter(User.id == student_id).first()
+        if u and u.role == "athlete":
+            st_name = getattr(u, "name", None) or (u.email.split("@")[0].replace(".", " ").title() if u.email else "Registered Surfer")
+            s = Student(
+                user_id=u.id,
+                name=st_name,
+                email=u.email or "",
+                level="Beginner",
+                school="Aquatic Indica Surf School",
+                approval_status="approved",
+                swimming_ability="Swimmer"
+            )
+            db.add(s)
+            try:
+                db.commit()
+                db.refresh(s)
+            except Exception:
+                db.rollback()
     if not s:
         raise HTTPException(status_code=404, detail="Student not found")
     d = student_to_dict(s)
     d["badges"] = [b.badge_level for b in s.badges]
-    d["session_count"] = len(s.sessions)
-    d["sessions"] = [session_to_dict(sess) for sess in s.sessions]
+    
+    # Query all sessions matching this student by id, user_id, or name/guest_name
+    all_sess = db.query(SurfSession).filter(
+        or_(
+            SurfSession.student_id == s.id,
+            (SurfSession.student_id == s.user_id) if s.user_id else False,
+            and_(SurfSession.student_name != None, func.lower(SurfSession.student_name) == s.name.lower().strip()),
+            and_(SurfSession.guest_name != None, func.lower(SurfSession.guest_name) == s.name.lower().strip())
+        )
+    ).order_by(SurfSession.id.desc()).all()
+    
+    d["session_count"] = len(all_sess)
+    d["sessions"] = [session_to_dict(sess) for sess in all_sess]
+    
+    # If student has no assigned instructor but sessions have an instructor, resolve it
+    if (not d.get("instructor") or d.get("instructor") == "Assigned Surf Coach") and all_sess:
+        for sess in all_sess:
+            if sess.instructor_rel and sess.instructor_rel.name:
+                d["instructor"] = sess.instructor_rel.name
+                d["instructor_id"] = sess.instructor_id
+                if not s.instructor_id:
+                    try:
+                        s.instructor_id = sess.instructor_id
+                        db.commit()
+                    except Exception:
+                        db.rollback()
+                break
     return d
 
 
@@ -4142,7 +4326,10 @@ def delete_student(student_id: int, db: OrmSession = Depends(get_db)):
 def get_sessions(school: Optional[str] = None, db: OrmSession = Depends(get_db)):
     query = db.query(SurfSession).order_by(SurfSession.id.desc())
     if school and school.lower().strip() not in ["all", "super admin", "school admin"]:
-        query = query.join(Student, SurfSession.student_id == Student.id).filter(func.lower(Student.school) == school.lower().strip())
+        clean_sch = school.lower().strip()
+        query = query.outerjoin(Student, SurfSession.student_id == Student.id)\
+                     .outerjoin(Instructor, SurfSession.instructor_id == Instructor.id)\
+                     .filter(or_(func.lower(Student.school) == clean_sch, func.lower(Instructor.school) == clean_sch))
     sessions = query.all()
     return [session_to_dict(s) for s in sessions]
 
@@ -4195,26 +4382,59 @@ def create_sessions_bulk(data: SessionBulkCreate, db: OrmSession = Depends(get_d
     instructor_name = instructor.name if instructor else "Coach"
     created = []
     student_names = []
-    for sid in data.student_ids:
-        st = db.query(Student).filter(Student.id == sid).first()
-        if st:
-            student_names.append(st.name)
-            if not st.instructor_id:
-                st.instructor_id = data.instructor_id
-            if data.time:
-                st.session_time = data.time
-        session = SurfSession(
-            date=data.date, time=data.time, duration_mins=data.duration_mins,
-            student_id=sid, instructor_id=data.instructor_id,
-            location=data.location, condition=data.condition,
-            type=data.type, status=data.status or "Upcoming",
-            notes=data.notes or "",
-            video_url=data.video_url or "",
-            image_url=data.image_url or "",
-            group_name=data.group_name or "",
-        )
-        db.add(session)
-        created.append(session)
+    
+    if data.students_data and len(data.students_data) > 0:
+        for item in data.students_data:
+            sid = item.get("student_id")
+            s_name = item.get("student_name")
+            g_name = item.get("guest_name")
+            is_guest = bool(item.get("is_guest") or g_name)
+            st = db.query(Student).filter(Student.id == sid).first() if sid else None
+            resolved_name = s_name or (st.name if st else "Student")
+            student_names.append(resolved_name)
+            if st:
+                if not st.instructor_id:
+                    st.instructor_id = data.instructor_id
+                if data.time:
+                    st.session_time = data.time
+            session = SurfSession(
+                date=data.date, time=data.time, duration_mins=data.duration_mins,
+                student_id=sid, instructor_id=data.instructor_id,
+                student_name=resolved_name,
+                guest_name=g_name or (resolved_name if is_guest else ""),
+                location=data.location, condition=data.condition,
+                type=data.type, status=data.status or "Upcoming",
+                notes=data.notes or "",
+                video_url=data.video_url or "",
+                image_url=data.image_url or "",
+                group_name=data.group_name or "",
+            )
+            db.add(session)
+            created.append(session)
+    else:
+        for sid in data.student_ids:
+            st = db.query(Student).filter(Student.id == sid).first()
+            resolved_name = st.name if st else "Student"
+            if st:
+                student_names.append(st.name)
+                if not st.instructor_id:
+                    st.instructor_id = data.instructor_id
+                if data.time:
+                    st.session_time = data.time
+            session = SurfSession(
+                date=data.date, time=data.time, duration_mins=data.duration_mins,
+                student_id=sid, instructor_id=data.instructor_id,
+                student_name=resolved_name,
+                guest_name="",
+                location=data.location, condition=data.condition,
+                type=data.type, status=data.status or "Upcoming",
+                notes=data.notes or "",
+                video_url=data.video_url or "",
+                image_url=data.image_url or "",
+                group_name=data.group_name or "",
+            )
+            db.add(session)
+            created.append(session)
     db.commit()
     for s in created:
         db.refresh(s)
@@ -4295,22 +4515,58 @@ def delete_session(session_id: int, db: OrmSession = Depends(get_db)):
 BADGE_ORDER = ["WHITE", "YELLOW", "GREEN", "BLUE", "RED"]
 
 @app.get("/api/analytics/badges")
-def analytics_badges(db: OrmSession = Depends(get_db)):
+def analytics_badges(
+    school: Optional[str] = None,
+    instructor_id: Optional[int] = None,
+    db: OrmSession = Depends(get_db)
+):
+    query = db.query(Student).filter(
+        Student.approval_status != "pending",
+        Student.approval_status != "rejected"
+    )
+    if school and school.lower().strip() not in ["all", "super admin"]:
+        clean_sch = school.lower().strip()
+        query = query.filter(func.lower(Student.school) == clean_sch)
+    if instructor_id:
+        query = query.filter(Student.instructor_id == instructor_id)
+        
+    students = query.all()
+    
+    badge_counts = {"WHITE": 0, "YELLOW": 0, "GREEN": 0, "BLUE": 0, "RED": 0}
+    for s in students:
+        badges_earned = [b.badge_level for b in s.badges]
+        if badges_earned:
+            highest = badges_earned[-1]
+            if highest in badge_counts:
+                badge_counts[highest] += 1
+
     result = []
     for level in BADGE_ORDER:
-        count = db.query(Badge).filter(Badge.badge_level == level).count()
-        result.append({"label": level, "count": count})
+        result.append({"label": level, "count": badge_counts[level]})
     return result
 
 
 @app.get("/api/analytics/students")
-def analytics_students(db: OrmSession = Depends(get_db)):
-    students = db.query(Student).all()
+def analytics_students(
+    school: Optional[str] = None,
+    instructor_id: Optional[int] = None,
+    db: OrmSession = Depends(get_db)
+):
+    query = db.query(Student).filter(
+        Student.approval_status != "pending",
+        Student.approval_status != "rejected"
+    )
+    if school and school.lower().strip() not in ["all", "super admin"]:
+        clean_sch = school.lower().strip()
+        query = query.filter(func.lower(Student.school) == clean_sch)
+    if instructor_id:
+        query = query.filter(Student.instructor_id == instructor_id)
+
+    students = query.all()
     result = []
     for s in students:
         badges_earned = [b.badge_level for b in s.badges]
         badge_count = len(badges_earned)
-        # estimate next badge time
         if badge_count >= 5:
             next_time, next_color = "Max Level", "#0D9488"
         elif badge_count == 4:
@@ -4322,14 +4578,25 @@ def analytics_students(db: OrmSession = Depends(get_db)):
         elif badge_count == 1:
             next_time, next_color = "3 weeks", "#64748B"
         else:
-            next_time, next_color = "2 months", "#64748B"
+            next_time, next_color = "—", "#94A3B8"
+            
+        inst_name = s.instructor_rel.name if s.instructor_rel else ""
+        if not inst_name or inst_name == "Assigned Surf Coach":
+            if s.sessions:
+                for sess in s.sessions:
+                    if sess.instructor_rel and sess.instructor_rel.name:
+                        inst_name = sess.instructor_rel.name
+                        break
         result.append({
+            "id": s.id,
             "name": s.name,
+            "school": s.school,
+            "instructor_id": s.instructor_id,
             "badges": badge_count,
             "badge_levels": badges_earned,
             "nextTime": next_time,
             "nextColor": next_color,
-            "instructor": s.instructor_rel.name if s.instructor_rel else "",
+            "instructor": inst_name,
         })
     return result
 

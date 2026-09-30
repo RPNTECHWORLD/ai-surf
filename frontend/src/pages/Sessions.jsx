@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import NewSession from './NewSession';
+import CoachProfileModal from '../components/CoachProfileModal';
 
 const API = import.meta.env.VITE_API_URL || '';
 
@@ -281,9 +282,15 @@ const Sessions = () => {
     try {
       const savedSchool = sessionStorage.getItem('activeSchool');
       if (savedSchool) {
-        const parsed = JSON.parse(savedSchool);
-        if (parsed.name) {
-          return typeof parsed.name === 'string' ? parsed.name : (parsed.name?.name || null);
+        try {
+          const parsed = JSON.parse(savedSchool);
+          if (parsed && typeof parsed === 'object') {
+            if (parsed.name) return typeof parsed.name === 'string' ? parsed.name : (parsed.name?.name || null);
+          } else if (typeof parsed === 'string') {
+            return parsed;
+          }
+        } catch (e) {
+          return savedSchool;
         }
       }
       const savedUser = sessionStorage.getItem('user');
@@ -300,6 +307,9 @@ const Sessions = () => {
     return null;
   })();
 
+  const [allInstructorsList, setAllInstructorsList] = useState([]);
+  const [allStudentsList, setAllStudentsList] = useState([]);
+
   const schoolLower = (activeSchoolName || '').toLowerCase().trim();
   const isSuperAdmin = currentUser?.role === 'superadmin' || schoolLower === 'super admin';
   const isAdminOrSuperAdmin = isSuperAdmin || currentUser?.role === 'admin' || currentUser?.role === 'school_admin' || currentUser?.role === 'schooladmin' || schoolLower === 'school admin';
@@ -312,9 +322,24 @@ const Sessions = () => {
     schoolLower.includes('freelance')
   );
 
+  const loggedInCoach = useMemo(() => {
+    if (!allInstructorsList || allInstructorsList.length === 0) return null;
+    return allInstructorsList.find(i => 
+      (currentCoachId && (String(i.id) === String(currentCoachId) || parseInt(i.id) === parseInt(currentCoachId))) ||
+      (currentCoachName && i.name && i.name.toLowerCase().trim() === currentCoachName.toLowerCase().trim())
+    );
+  }, [allInstructorsList, currentCoachId, currentCoachName]);
+
+  const coachAffiliatedSchool = (loggedInCoach?.school || currentUser?.school || currentUser?.school_name || activeSchoolName || '').trim();
+  const isCoachFreelance = isCoach && (
+    coachAffiliatedSchool.toLowerCase() === 'individual / freelance coach' ||
+    (currentUser?.school || '').toLowerCase().trim() === 'individual / freelance coach' ||
+    isIndividualSurfer
+  );
+
   // Only Individual/Freelance Surfers/Coaches and Admins can Schedule, Configure & Delete sessions.
   // School Coaches & School Students cannot schedule/configure/delete school sessions.
-  const canManageSessions = Boolean(isAdminOrSuperAdmin || isIndividualSurfer);
+  const canManageSessions = Boolean(isAdminOrSuperAdmin || isIndividualSurfer || isCoachFreelance);
 
   // Filter States
   const [dateFilter, setDateFilter] = useState('');
@@ -399,6 +424,96 @@ const Sessions = () => {
     return () => clearTimeout(timer);
   }, [toast]);
 
+  // Coach Profile & Review Modal State
+  const [selectedCoachForModal, setSelectedCoachForModal] = useState(null); // { id, name }
+
+  const handleOpenCoachModal = (instName, instId, e) => {
+    if (e) e.stopPropagation();
+    if (!instName || instName === '—') return;
+    setSelectedCoachForModal({
+      id: instId || null,
+      name: instName
+    });
+  };
+
+  const renderCoachBadge = (instName, instId) => {
+    if (!instName || instName === '—' || instName.trim() === '') {
+      return <span style={{ color: '#94A3B8', fontSize: '13px', fontStyle: 'italic' }}>—</span>;
+    }
+    const initial = instName.charAt(0).toUpperCase();
+    return (
+      <button
+        type="button"
+        onClick={(e) => handleOpenCoachModal(instName, instId, e)}
+        title={`Click to view coach ${instName}'s profile & submit a review`}
+        style={{
+          background: 'linear-gradient(135deg, #F0FDFA 0%, #E6FFFA 100%)',
+          border: '1px solid #99F6E4',
+          borderRadius: '20px',
+          padding: '4px 10px 4px 5px',
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '6px',
+          cursor: 'pointer',
+          transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+          boxShadow: '0 1px 3px rgba(13, 148, 136, 0.08)',
+          outline: 'none'
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.transform = 'translateY(-1px)';
+          e.currentTarget.style.boxShadow = '0 4px 12px rgba(13, 148, 136, 0.22)';
+          e.currentTarget.style.borderColor = '#0D9488';
+          e.currentTarget.style.background = '#CCFBF1';
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.transform = 'none';
+          e.currentTarget.style.boxShadow = '0 1px 3px rgba(13, 148, 136, 0.08)';
+          e.currentTarget.style.borderColor = '#99F6E4';
+          e.currentTarget.style.background = 'linear-gradient(135deg, #F0FDFA 0%, #E6FFFA 100%)';
+        }}
+      >
+        <div style={{
+          width: '22px',
+          height: '22px',
+          borderRadius: '50%',
+          background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
+          color: '#FFFFFF',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: '11px',
+          fontWeight: 800,
+          flexShrink: 0,
+          boxShadow: '0 2px 5px rgba(13, 148, 136, 0.3)'
+        }}>
+          {initial}
+        </div>
+        <span style={{
+          color: '#0F766E',
+          fontWeight: 700,
+          fontSize: '13px',
+          letterSpacing: '-0.2px'
+        }}>
+          {instName}
+        </span>
+        <span style={{
+          fontSize: '10px',
+          background: '#0D9488',
+          color: '#FFFFFF',
+          padding: '1px 6px',
+          borderRadius: '10px',
+          fontWeight: 800,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '2px',
+          letterSpacing: '0.2px'
+        }}>
+          ★ Coach
+        </span>
+      </button>
+    );
+  };
+
   const handleGroupFileSelect = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -473,12 +588,41 @@ const Sessions = () => {
     return [];
   };
 
+  // Helper to parse multiple image URLs from session
+  const parseSessionImages = (imageUrlData, fallbackUrl = '') => {
+    if (!imageUrlData && !fallbackUrl) return [];
+    const raw = imageUrlData || fallbackUrl;
+    if (Array.isArray(raw)) {
+      return raw.map((v, i) => typeof v === 'string' ? { id: `img-${i+1}`, url: v, title: `Photo ${i+1}` } : { id: v.id || `img-${i+1}`, url: v.url, title: v.title || `Photo ${i+1}` });
+    }
+    if (typeof raw === 'string') {
+      const trimmed = raw.trim();
+      if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (Array.isArray(parsed)) {
+            return parsed.map((v, i) => typeof v === 'string' ? { id: `img-${i+1}`, url: v, title: `Photo ${i+1}` } : { id: v.id || `img-${i+1}`, url: v.url, title: v.title || `Photo ${i+1}` });
+          }
+        } catch (e) {}
+      }
+      if (trimmed.includes('|||')) {
+        return trimmed.split('|||').filter(Boolean).map((u, i) => ({ id: `img-${i+1}`, url: u.trim(), title: `Photo ${i+1}` }));
+      }
+      if (trimmed) {
+        return [{ id: 'img-1', url: trimmed, title: 'Photo 1' }];
+      }
+    }
+    return [];
+  };
+
   // Detailed Session & Group Media Hub State
   const [selectedHubSession, setSelectedHubSession] = useState(null);
   const [hubActiveTab, setHubActiveTab] = useState('overview'); // 'overview' | 'video' | 'photos' | 'notes'
   const [hubVideos, setHubVideos] = useState([]); // Array of { id, url, title, uploadedAt }
   const [hubActiveVideoId, setHubActiveVideoId] = useState(null);
   const [hubNewVideoUrl, setHubNewVideoUrl] = useState('');
+  const [hubImages, setHubImages] = useState([]); // Array of { id, url, title, uploadedAt }
+  const [hubActiveImageId, setHubActiveImageId] = useState(null);
   const [hubImageUrl, setHubImageUrl] = useState('');
   const [hubNotes, setHubNotes] = useState('');
   const [hubStatus, setHubStatus] = useState('Upcoming');
@@ -501,57 +645,19 @@ const Sessions = () => {
     setHubVideos(parsedVideos);
     setHubActiveVideoId(parsedVideos.length > 0 ? parsedVideos[0].id : null);
     setHubNewVideoUrl('');
-    setHubImageUrl(data.image_url || '');
+    
+    const imageSource = data.isGroup
+      ? (data.image_urls || data.image_url || (data.sessions && data.sessions.find(s => s.image_url)?.image_url) || '')
+      : (data.image_urls || data.image_url || '');
+    const parsedImages = parseSessionImages(imageSource);
+    setHubImages(parsedImages);
+    setHubActiveImageId(parsedImages.length > 0 ? parsedImages[0].id : null);
+    setHubImageUrl(parsedImages[0]?.url || data.image_url || '');
+
     setHubNotes(data.notes || '');
     setHubStatus(data.status || 'Upcoming');
     setHubSaveSuccess(false);
     setHubHasChanges(false);
-  };
-
-  const autoSaveHubVideo = async (videosList) => {
-    if (!selectedHubSession) return;
-    try {
-      const isGroupSession = Boolean(selectedHubSession.isGroup);
-      const sessionIds = (isGroupSession && selectedHubSession.sessions)
-        ? selectedHubSession.sessions.map(s => s.id)
-        : [selectedHubSession.id];
-      const serializedVideoUrl = videosList.length === 1
-        ? videosList[0].url
-        : (videosList.length > 1 ? JSON.stringify(videosList) : '');
-      const primaryVideoUrl = videosList[0]?.url || '';
-
-      const payload = {
-        video_url: serializedVideoUrl || primaryVideoUrl,
-      };
-
-      await Promise.all(
-        sessionIds.map(id =>
-          fetch(`${API}/api/sessions/${id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          }).catch(err => console.error('Failed updating session video', id, err))
-        )
-      );
-
-      // Update local sessions state
-      setSessions(prev =>
-        prev.map(s => {
-          if (sessionIds.includes(s.id)) {
-            return {
-              ...s,
-              video_url: serializedVideoUrl || primaryVideoUrl,
-              video_urls: videosList,
-            };
-          }
-          return s;
-        })
-      );
-      setHubSaveSuccess(true);
-      setTimeout(() => setHubSaveSuccess(false), 3000);
-    } catch (e) {
-      console.error('Auto save video error:', e);
-    }
   };
 
   const handleHubVideoUpload = async (files) => {
@@ -595,8 +701,9 @@ const Sessions = () => {
         setHubActiveVideoId(combined[0].id);
       }
 
-      // Auto-save uploaded video to backend session record so students & coaches see it immediately
-      autoSaveHubVideo(combined);
+      // Do NOT auto save: mark as modified so user explicitly clicks "Save Changes"
+      setHubHasChanges(true);
+      setHubSaveSuccess(false);
     } catch (err) {
       console.error('Video upload error:', err);
     } finally {
@@ -605,61 +712,76 @@ const Sessions = () => {
     }
   };
 
-  const handleAddVideoUrl = () => {
-    if (!hubNewVideoUrl || !hubNewVideoUrl.trim()) return;
-    const url = hubNewVideoUrl.trim();
-    const clipNum = hubVideos.length + 1;
-    const newVideo = {
-      id: `vid-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-      url: url,
-      title: `Wave Clip ${clipNum}`,
-      uploadedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    };
-    const combined = [...hubVideos, newVideo];
-    setHubVideos(combined);
-    if (!hubActiveVideoId) setHubActiveVideoId(newVideo.id);
-    setHubNewVideoUrl('');
-    autoSaveHubVideo(combined);
-  };
-
   const handleDeleteHubVideo = (vidId) => {
     const remaining = hubVideos.filter(v => v.id !== vidId);
     setHubVideos(remaining);
     if (hubActiveVideoId === vidId) {
       setHubActiveVideoId(remaining.length > 0 ? remaining[0].id : null);
     }
-    autoSaveHubVideo(remaining);
+    setHubHasChanges(true);
+    setHubSaveSuccess(false);
   };
 
-  const handleHubImageUpload = async (file) => {
-    if (!file) return;
+  const handleHubImageUpload = async (files) => {
+    if (!files || files.length === 0) return;
+    const fileList = Array.from(files);
     setHubIsUploadingImage(true);
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      const res = await fetch(`${API}/api/upload-image`, {
-        method: 'POST',
-        body: formData,
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const uploadedUrl = data.image_url || data.url || URL.createObjectURL(file);
-        setHubImageUrl(uploadedUrl);
-        setHubHasChanges(true);
-        setHubSaveSuccess(false);
-      } else {
-        setHubImageUrl(URL.createObjectURL(file));
-        setHubHasChanges(true);
-        setHubSaveSuccess(false);
+      const newUploadedImages = [];
+      for (let i = 0; i < fileList.length; i++) {
+        const file = fileList[i];
+        const formData = new FormData();
+        formData.append('file', file);
+        let uploadedUrl = '';
+        try {
+          const res = await fetch(`${API}/api/upload-image`, {
+            method: 'POST',
+            body: formData,
+          });
+          if (res.ok) {
+            const data = await res.json();
+            uploadedUrl = data.image_url || data.url || URL.createObjectURL(file);
+          } else {
+            uploadedUrl = URL.createObjectURL(file);
+          }
+        } catch (e) {
+          uploadedUrl = URL.createObjectURL(file);
+        }
+
+        const photoNum = hubImages.length + i + 1;
+        newUploadedImages.push({
+          id: `img-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 4)}`,
+          url: uploadedUrl,
+          title: file.name ? file.name.replace(/\.[^/.]+$/, "") : `Photo ${photoNum}`,
+          uploadedAt: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        });
       }
-    } catch (err) {
-      console.error('Image upload error:', err);
-      setHubImageUrl(URL.createObjectURL(file));
+
+      const combined = [...hubImages, ...newUploadedImages];
+      setHubImages(combined);
+      if (!hubActiveImageId && combined.length > 0) {
+        setHubActiveImageId(combined[0].id);
+      }
+      setHubImageUrl(combined[0]?.url || '');
       setHubHasChanges(true);
       setHubSaveSuccess(false);
+    } catch (err) {
+      console.error('Image upload error:', err);
     } finally {
       setHubIsUploadingImage(false);
+      if (hubImageFileRef.current) hubImageFileRef.current.value = '';
     }
+  };
+
+  const handleDeleteHubImage = (imgId) => {
+    const remaining = hubImages.filter(img => img.id !== imgId);
+    setHubImages(remaining);
+    if (hubActiveImageId === imgId) {
+      setHubActiveImageId(remaining.length > 0 ? remaining[0].id : null);
+    }
+    setHubImageUrl(remaining.length > 0 ? remaining[0].url : '');
+    setHubHasChanges(true);
+    setHubSaveSuccess(false);
   };
 
   const handleSaveHubChanges = async () => {
@@ -675,11 +797,16 @@ const Sessions = () => {
         : (hubVideos.length > 1 ? JSON.stringify(hubVideos) : '');
       const primaryVideoUrl = hubVideos[0]?.url || '';
 
+      const serializedImageUrl = hubImages.length === 1
+        ? hubImages[0].url
+        : (hubImages.length > 1 ? JSON.stringify(hubImages.map(img => img.url)) : (hubImageUrl || ''));
+      const primaryImageUrl = hubImages[0]?.url || hubImageUrl || '';
+
       const payload = {
         status: hubStatus,
         notes: hubNotes,
         video_url: serializedVideoUrl || primaryVideoUrl,
-        image_url: hubImageUrl,
+        image_url: serializedImageUrl || primaryImageUrl,
       };
 
       await Promise.all(
@@ -702,7 +829,8 @@ const Sessions = () => {
               notes: hubNotes,
               video_url: serializedVideoUrl || primaryVideoUrl,
               video_urls: hubVideos,
-              image_url: hubImageUrl,
+              image_url: serializedImageUrl || primaryImageUrl,
+              image_urls: hubImages,
             };
           }
           return s;
@@ -716,26 +844,30 @@ const Sessions = () => {
         notes: hubNotes,
         video_url: serializedVideoUrl || primaryVideoUrl,
         video_urls: hubVideos,
-        image_url: hubImageUrl,
+        image_url: serializedImageUrl || primaryImageUrl,
+        image_urls: hubImages,
         sessions: prev.sessions ? prev.sessions.map(s => ({
           ...s,
           status: hubStatus,
           notes: hubNotes,
           video_url: serializedVideoUrl || primaryVideoUrl,
           video_urls: hubVideos,
-          image_url: hubImageUrl,
+          image_url: serializedImageUrl || primaryImageUrl,
+          image_urls: hubImages,
         })) : [{
           ...prev,
           status: hubStatus,
           notes: hubNotes,
           video_url: serializedVideoUrl || primaryVideoUrl,
           video_urls: hubVideos,
-          image_url: hubImageUrl,
+          image_url: serializedImageUrl || primaryImageUrl,
+          image_urls: hubImages,
         }]
       }));
 
       setHubSaveSuccess(true);
       setHubHasChanges(false);
+      setTimeout(() => setHubSaveSuccess(false), 3000);
     } catch (err) {
       console.error('Error saving session updates:', err);
     } finally {
@@ -805,18 +937,20 @@ const Sessions = () => {
   const [selectedSessionDetail, setSelectedSessionDetail] = useState(null);
   const [selectedDayDetailsModal, setSelectedDayDetailsModal] = useState(null);
 
-  const effectiveSchool = (activeSchoolName && schoolLower !== 'school admin' && schoolLower !== 'super admin')
-    ? activeSchoolName
-    : 'Aquatic Indica Surf School';
+  const effectiveSchool = (isCoach && isCoachFreelance)
+    ? 'Individual / Freelance Coach'
+    : (activeSchoolName && schoolLower !== 'school admin' && schoolLower !== 'super admin')
+      ? activeSchoolName
+      : 'Aquatic Indica Surf School';
   const effectiveSchoolLower = effectiveSchool.toLowerCase().trim();
-
-  const [allInstructorsList, setAllInstructorsList] = useState([]);
-  const [allStudentsList, setAllStudentsList] = useState([]);
 
   const fetchSessions = () => {
     setLoading(true);
-    const url = (effectiveSchool && !isSuperAdmin)
-      ? `${API}/api/sessions?school=${encodeURIComponent(effectiveSchool)}`
+    const targetSchool = (isCoach && isCoachFreelance)
+      ? 'Individual / Freelance Coach'
+      : (effectiveSchool && !isSuperAdmin ? effectiveSchool : '');
+    const url = targetSchool
+      ? `${API}/api/sessions?school=${encodeURIComponent(targetSchool)}`
       : `${API}/api/sessions`;
     fetch(url)
       .then(r => r.json())
@@ -842,13 +976,24 @@ const Sessions = () => {
       .then(r => r.json())
       .then(data => { if (Array.isArray(data)) setAllStudentsList(data); })
       .catch(() => {});
-  }, [activeSchoolName, isSuperAdmin]);
+  }, [activeSchoolName, isSuperAdmin, isCoachFreelance]);
 
   // Role-Scoped Base Sessions List
   const roleScopedSessions = useMemo(() => {
     // Coach Role: Only show sessions where THIS coach is the instructor
     if (isCoach && (currentCoachName || currentCoachId)) {
       return sessions.filter(s => {
+        const sSchool = (s.school || '').toLowerCase().trim();
+
+        if (isCoachFreelance) {
+          if (sSchool && sSchool !== 'individual / freelance coach') return false;
+        } else if (coachAffiliatedSchool) {
+          if (sSchool && sSchool !== coachAffiliatedSchool.toLowerCase() && sSchool !== effectiveSchoolLower) {
+            return false;
+          }
+          if (sSchool === 'individual / freelance coach') return false;
+        }
+
         const cNameLower = (currentCoachName || '').toLowerCase().trim();
         const sInstLower = (s.instructor || s.instructor_name || '').toLowerCase().trim();
         const nameMatch = cNameLower && sInstLower && (sInstLower === cNameLower || sInstLower.includes(cNameLower) || cNameLower.includes(sInstLower));
@@ -1048,8 +1193,8 @@ const Sessions = () => {
     buckets.forEach(bucket => {
       // Sort students inside each group alphabetically by student name
       bucket.sessions.sort((s1, s2) => (s1.student || '').localeCompare(s2.student || ''));
-      // In student view or when a group has only 1 session, display directly as a single individual row with the group badge attached
-      if (!isStudent && bucket.sessions.length > 1) {
+      // If a group has multiple sessions/participants, always display as a collapsible group row
+      if (bucket.sessions.length > 1) {
         groups.push(bucket);
       } else {
         bucket.sessions.forEach(sess => {
@@ -2053,7 +2198,7 @@ const Sessions = () => {
                           </div>
                         </td>
                         <td>
-                          <div className="ses-td-primary" style={{ color: '#0F766E', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{groupObj.instructor || '—'}</div>
+                          {renderCoachBadge(groupObj.instructor, groupObj.sessions[0]?.instructor_id)}
                         </td>
                         <td>
                           <span className="ses-badge-type">{groupObj.type || 'Beginner'}</span>
@@ -2264,11 +2409,28 @@ const Sessions = () => {
                             <td>
                               <div className="ses-td-primary" style={{ fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#0D9488" strokeWidth="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-                                {session.student || '—'}
+                                <span>{session.student || '—'}</span>
+                                {(session.is_guest || session.guest_name) && (
+                                  <span style={{
+                                    fontSize: '11px',
+                                    background: '#FEF3C7',
+                                    color: '#92400E',
+                                    border: '1px solid #FDE68A',
+                                    borderRadius: '4px',
+                                    padding: '1px 5px',
+                                    fontWeight: 700,
+                                    letterSpacing: '0.02em',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '2px'
+                                  }}>
+                                    👥 Guest
+                                  </span>
+                                )}
                               </div>
                             </td>
                             <td>
-                              <div className="ses-td-primary" style={{ color: '#0F766E', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{session.instructor || '—'}</div>
+                              {renderCoachBadge(session.instructor, session.instructor_id)}
                             </td>
                             <td>
                               <span className="ses-badge-type">{session.type || 'Beginner'}</span>
@@ -2484,12 +2646,29 @@ const Sessions = () => {
                           )}
                           <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#0D9488" strokeWidth="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-                            {session.student || '—'}
+                            <span>{session.student || '—'}</span>
+                            {(session.is_guest || session.guest_name) && (
+                              <span style={{
+                                fontSize: '11px',
+                                background: '#FEF3C7',
+                                color: '#92400E',
+                                border: '1px solid #FDE68A',
+                                borderRadius: '4px',
+                                padding: '1px 5px',
+                                fontWeight: 700,
+                                letterSpacing: '0.02em',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '2px'
+                              }}>
+                                👥 Guest
+                              </span>
+                            )}
                           </span>
                         </div>
                       </td>
                       <td>
-                        <div className="ses-td-primary" style={{ color: '#0F766E', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{session.instructor || '—'}</div>
+                        {renderCoachBadge(session.instructor, session.instructor_id)}
                       </td>
                       <td>
                         <span className="ses-badge-type">{session.type || 'Beginner'}</span>
@@ -2775,7 +2954,7 @@ const Sessions = () => {
                   className={`ses-modal-tab ${hubActiveTab === 'photos' ? 'active' : ''}`}
                   onClick={() => setHubActiveTab('photos')}
                 >
-                  Photos {hubImageUrl ? '✓' : ''}
+                  Photos {hubImages.length > 0 ? `(${hubImages.length}) ✓` : (hubImageUrl ? '✓' : '')}
                 </button>
 
                 <button
@@ -2811,8 +2990,25 @@ const Sessions = () => {
                                   <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#0284C7', color: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '12px' }}>
                                     {(s.student || 'A').charAt(0).toUpperCase()}
                                   </div>
-                                  <div style={{ fontWeight: 600, color: '#0F172A', fontSize: '14px' }}>
-                                    {s.student || 'Student'}
+                                  <div style={{ fontWeight: 600, color: '#0F172A', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <span>{s.student || 'Student'}</span>
+                                    {(s.is_guest || s.guest_name) && (
+                                      <span style={{
+                                        fontSize: '11px',
+                                        background: '#FEF3C7',
+                                        color: '#92400E',
+                                        border: '1px solid #FDE68A',
+                                        borderRadius: '4px',
+                                        padding: '1px 5px',
+                                        fontWeight: 700,
+                                        letterSpacing: '0.02em',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '2px'
+                                      }}>
+                                        👥 Guest
+                                      </span>
+                                    )}
                                   </div>
                                 </div>
                               </td>
@@ -2942,19 +3138,6 @@ const Sessions = () => {
                         <span style={{ fontSize: '12px', fontWeight: 700, background: '#CCFBF1', color: '#0F766E', padding: '2px 8px', borderRadius: '12px', border: '1px solid #99F6E4' }}>
                           {hubVideos.length} {hubVideos.length === 1 ? 'Video' : 'Videos'} Attached
                         </span>
-                      </div>
-
-                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                        <button
-                          type="button"
-                          className="ses-btn-primary"
-                          style={{ padding: '7px 14px', fontSize: '12.5px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-                          onClick={() => hubVideoFileRef.current?.click()}
-                          disabled={hubIsUploadingVideo}
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 5v14M5 12h14"/></svg>
-                          <span>{hubIsUploadingVideo ? 'Uploading…' : '+ Upload Video'}</span>
-                        </button>
                       </div>
                     </div>
 
@@ -3165,37 +3348,6 @@ const Sessions = () => {
                                 </div>
                               )}
                             </div>
-
-                            {/* Paste Video URL option */}
-                            <div style={{ marginTop: '16px', display: 'flex', gap: '8px' }}>
-                              <input
-                                type="text"
-                                placeholder="Or paste external video link (e.g. S3 link, MP4 URL)..."
-                                value={hubNewVideoUrl}
-                                onChange={(e) => {
-                                  setHubNewVideoUrl(e.target.value);
-                                  setHubHasChanges(true);
-                                  setHubSaveSuccess(false);
-                                }}
-                                style={{
-                                  flex: 1,
-                                  padding: '10px 14px',
-                                  border: '1.5px solid #CBD5E1',
-                                  borderRadius: '8px',
-                                  fontSize: '13px',
-                                  outline: 'none'
-                                }}
-                                onKeyDown={(e) => { if (e.key === 'Enter') handleAddVideoUrl(); }}
-                              />
-                              <button
-                                type="button"
-                                className="ses-btn-secondary"
-                                onClick={handleAddVideoUrl}
-                                style={{ padding: '10px 16px', fontSize: '13px', fontWeight: 600, whiteSpace: 'nowrap' }}
-                              >
-                                + Add Video URL
-                              </button>
-                            </div>
                           </div>
                         );
                       }
@@ -3260,114 +3412,226 @@ const Sessions = () => {
                               Launch AI Video Analysis ↗
                             </button>
                           </div>
-
-                          {/* Add URL for additional video */}
-                          {!isStudent && (
-                            <div style={{ marginTop: '14px', display: 'flex', gap: '8px' }}>
-                              <input
-                                type="text"
-                                placeholder="Add another video by external link / S3 URL..."
-                                value={hubNewVideoUrl}
-                                onChange={(e) => {
-                                  setHubNewVideoUrl(e.target.value);
-                                  setHubHasChanges(true);
-                                  setHubSaveSuccess(false);
-                                }}
-                                style={{
-                                  flex: 1,
-                                  padding: '8px 12px',
-                                  border: '1.5px solid #CBD5E1',
-                                  borderRadius: '8px',
-                                  fontSize: '12.5px',
-                                  outline: 'none'
-                                }}
-                                onKeyDown={(e) => { if (e.key === 'Enter') handleAddVideoUrl(); }}
-                              />
-                              <button
-                                type="button"
-                                className="ses-btn-secondary"
-                                onClick={handleAddVideoUrl}
-                                style={{ padding: '8px 14px', fontSize: '12.5px', fontWeight: 600, whiteSpace: 'nowrap' }}
-                              >
-                                + Add Link
-                              </button>
-                            </div>
-                          )}
                         </div>
                       );
                     })()}
                   </div>
                 )}
 
-                {/* ─── TAB 3: ACTION PHOTOS & IMAGES ─── */}
+                {/* ─── TAB 3: ACTION PHOTOS & IMAGES (MULTIPLE GALLERY) ─── */}
                 {hubActiveTab === 'photos' && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
                     <input
                       ref={hubImageFileRef}
                       type="file"
                       accept="image/*"
+                      multiple
                       style={{ display: 'none' }}
                       onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) handleHubImageUpload(file);
+                        if (e.target.files && e.target.files.length > 0) {
+                          handleHubImageUpload(e.target.files);
+                        }
                       }}
                     />
 
-                    {/* Image Preview if image exists */}
-                    {hubImageUrl ? (
+                    {hubImages.length > 0 ? (
                       <div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                          <span style={{ fontSize: '14px', fontWeight: 700, color: '#0F172A' }}>
-                            📸 Session Action Shot
-                          </span>
+                        {/* Gallery Header */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontSize: '15px', fontWeight: 800, color: '#0F172A', fontFamily: 'Outfit, sans-serif' }}>
+                              📸 Session Photos ({hubImages.length})
+                            </span>
+                            <span style={{ fontSize: '12px', color: '#64748B' }}>
+                              • Click photo to view fullscreen
+                            </span>
+                          </div>
                           {!isStudent && (
                             <div style={{ display: 'flex', gap: '8px' }}>
                               <button
                                 type="button"
                                 className="ses-btn-secondary"
-                                style={{ padding: '6px 12px', fontSize: '12px' }}
+                                style={{ padding: '6px 14px', fontSize: '12px', display: 'inline-flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}
                                 onClick={() => hubImageFileRef.current?.click()}
                                 disabled={hubIsUploadingImage}
                               >
-                                🔄 Change Photo
+                                <span>+</span> Upload More Photos
                               </button>
                               <button
                                 type="button"
-                                style={{ background: '#FEE2E2', color: '#DC2626', border: '1px solid #FCA5A5', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}
+                                style={{ background: '#FEE2E2', color: '#DC2626', border: '1px solid #FCA5A5', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
                                 onClick={() => {
-                                  setHubImageUrl('');
-                                  setHubHasChanges(true);
-                                  setHubSaveSuccess(false);
+                                  const targetId = hubActiveImageId || hubImages[0]?.id;
+                                  if (targetId) handleDeleteHubImage(targetId);
                                 }}
                               >
-                                🗑️ Remove
+                                🗑️ Remove Photo
                               </button>
                             </div>
                           )}
                         </div>
 
-                        <div
-                          style={{
-                            borderRadius: '12px',
-                            overflow: 'hidden',
-                            border: '1.5px solid #E2E8F0',
-                            background: '#0F172A',
-                            maxHeight: '340px',
-                            display: 'flex',
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                            cursor: 'pointer'
-                          }}
-                          onClick={() => setHubZoomImage(hubImageUrl)}
-                        >
-                          <img src={hubImageUrl} alt="Session Action" style={{ maxWidth: '100%', maxHeight: '340px', objectFit: 'contain' }} />
-                        </div>
-                        <div style={{ fontSize: '11px', color: '#64748B', textAlign: 'center', marginTop: '6px' }}>
-                          Click photo to view full size
-                        </div>
+                        {/* Active Hero Image */}
+                        {(() => {
+                          const activePhoto = hubImages.find(img => img.id === hubActiveImageId) || hubImages[0];
+                          if (!activePhoto) return null;
+                          const activeIdx = hubImages.findIndex(img => img.id === activePhoto.id);
+                          return (
+                            <div>
+                              <div
+                                style={{
+                                  borderRadius: '14px',
+                                  overflow: 'hidden',
+                                  border: '2px solid #334155',
+                                  background: '#0F172A',
+                                  height: '380px',
+                                  display: 'flex',
+                                  justifyContent: 'center',
+                                  alignItems: 'center',
+                                  cursor: 'pointer',
+                                  position: 'relative',
+                                  boxShadow: '0 8px 24px rgba(0,0,0,0.15)'
+                                }}
+                                onClick={() => setHubZoomImage(activePhoto.url)}
+                                title="Click to view full screen"
+                              >
+                                <img
+                                  src={activePhoto.url}
+                                  alt={activePhoto.title || 'Session Action Shot'}
+                                  style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                                />
+                                <div style={{
+                                  position: 'absolute',
+                                  bottom: '12px',
+                                  left: '14px',
+                                  background: 'rgba(15, 23, 42, 0.75)',
+                                  backdropFilter: 'blur(6px)',
+                                  color: '#FFFFFF',
+                                  padding: '4px 10px',
+                                  borderRadius: '6px',
+                                  fontSize: '12px',
+                                  fontWeight: 600
+                                }}>
+                                  Photo {activeIdx + 1} of {hubImages.length} • {activePhoto.title}
+                                </div>
+                                <div style={{
+                                  position: 'absolute',
+                                  top: '12px',
+                                  right: '12px',
+                                  background: 'rgba(15, 23, 42, 0.75)',
+                                  backdropFilter: 'blur(6px)',
+                                  color: '#FFFFFF',
+                                  padding: '4px 8px',
+                                  borderRadius: '6px',
+                                  fontSize: '11px',
+                                  fontWeight: 600,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px'
+                                }}>
+                                  🔍 Click to Zoom
+                                </div>
+                              </div>
+
+                              {/* Multiple Photos Thumbnails Strip */}
+                              <div style={{ marginTop: '14px' }}>
+                                <div style={{ fontSize: '12px', fontWeight: 700, color: '#475569', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                  Gallery Thumbnails ({hubImages.length})
+                                </div>
+                                <div style={{ display: 'flex', gap: '10px', overflowX: 'auto', paddingBottom: '6px' }}>
+                                  {hubImages.map((img, idx) => {
+                                    const isSelected = (hubActiveImageId === img.id) || (!hubActiveImageId && idx === 0);
+                                    return (
+                                      <div
+                                        key={img.id || idx}
+                                        style={{
+                                          width: '76px',
+                                          height: '58px',
+                                          flexShrink: 0,
+                                          borderRadius: '8px',
+                                          overflow: 'hidden',
+                                          cursor: 'pointer',
+                                          border: isSelected ? '2.5px solid #0D9488' : '1.5px solid #CBD5E1',
+                                          position: 'relative',
+                                          background: '#0F172A',
+                                          boxShadow: isSelected ? '0 0 0 2px rgba(13, 148, 136, 0.3)' : 'none',
+                                          transition: 'all 0.15s ease'
+                                        }}
+                                        onClick={() => {
+                                          setHubActiveImageId(img.id);
+                                          setHubImageUrl(img.url);
+                                        }}
+                                      >
+                                        <img src={img.url} alt={img.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                        {!isStudent && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleDeleteHubImage(img.id);
+                                            }}
+                                            style={{
+                                              position: 'absolute',
+                                              top: '2px',
+                                              right: '2px',
+                                              background: 'rgba(239, 68, 68, 0.9)',
+                                              color: '#FFFFFF',
+                                              border: 'none',
+                                              borderRadius: '50%',
+                                              width: '18px',
+                                              height: '18px',
+                                              fontSize: '11px',
+                                              fontWeight: 800,
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              justifyContent: 'center',
+                                              cursor: 'pointer',
+                                              padding: 0
+                                            }}
+                                            title="Delete this photo"
+                                          >
+                                            ×
+                                          </button>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+
+                                  {/* Quick Add Thumbnail Card */}
+                                  {!isStudent && (
+                                    <div
+                                      style={{
+                                        width: '76px',
+                                        height: '58px',
+                                        flexShrink: 0,
+                                        borderRadius: '8px',
+                                        border: '1.5px dashed #0D9488',
+                                        background: '#F0FDFA',
+                                        color: '#0D9488',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        cursor: 'pointer',
+                                        fontSize: '11px',
+                                        fontWeight: 700,
+                                        gap: '2px'
+                                      }}
+                                      onClick={() => hubImageFileRef.current?.click()}
+                                      title="Add more photos"
+                                    >
+                                      <span style={{ fontSize: '16px', lineHeight: 1 }}>+</span>
+                                      <span>Add</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </div>
                     ) : (
-                      /* Clean Dropzone for Uploading Image */
+                      /* Clean Dropzone for Uploading Multiple Images */
                       <div>
                         <div
                           style={{
@@ -3403,37 +3667,16 @@ const Sessions = () => {
                           </div>
 
                           <div style={{ fontSize: '17px', fontWeight: 700, color: '#0F172A', marginBottom: '6px', fontFamily: 'Outfit, sans-serif' }}>
-                            {hubIsUploadingImage ? 'Uploading Image to AWS Cloud…' : 'Click to Upload Session Photo / Action Shot'}
+                            {hubIsUploadingImage ? 'Uploading Photos to AWS Cloud…' : 'Click to Upload Multiple Session Photos'}
                           </div>
                           <p style={{ margin: 0, fontSize: '13px', color: '#64748B' }}>
-                            {hubIsUploadingImage ? 'Processing photo file...' : 'Select JPG, PNG, WebP photo taken during session'}
+                            {hubIsUploadingImage ? 'Processing photo files...' : 'Select multiple JPG, PNG, WebP photos taken during the session'}
                           </p>
                           {hubIsUploadingImage && (
                             <div style={{ marginTop: '12px' }}>
                               <div className="ses-spinner" style={{ width: '26px', height: '26px', margin: '0 auto' }} />
                             </div>
                           )}
-                        </div>
-
-                        {/* Paste Image URL option */}
-                        <div style={{ marginTop: '16px', display: 'flex', gap: '8px' }}>
-                          <input
-                            type="text"
-                            placeholder="Or paste external image URL (e.g. S3 link, photo URL)..."
-                            value={hubImageUrl}
-                            onChange={(e) => {
-                              setHubImageUrl(e.target.value);
-                              setHubHasChanges(true);
-                              setHubSaveSuccess(false);
-                            }}
-                            style={{
-                              flex: 1,
-                              padding: '10px 14px',
-                              border: '1.5px solid #CBD5E1',
-                              borderRadius: '8px',
-                              fontSize: '13px'
-                            }}
-                          />
                         </div>
                       </div>
                     )}
@@ -3488,7 +3731,7 @@ const Sessions = () => {
               >
                 <div>
                   {hubSaveSuccess ? (
-                    <span style={{ color: '#0D9488', fontWeight: 600, fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ color: '#0D9488', fontWeight: 600, fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#F0FDFA', border: '1px solid #99F6E4', padding: '6px 12px', borderRadius: '8px' }}>
                       ✓ All changes saved successfully!
                     </span>
                   ) : canManageSessions ? (
@@ -3537,11 +3780,11 @@ const Sessions = () => {
                   <button
                     type="button"
                     style={{
-                      padding: '7px 18px',
+                      padding: '7px 20px',
                       borderRadius: '8px',
-                      border: hubHasChanges ? 'none' : '1px solid rgba(13, 148, 136, 0.3)',
-                      background: hubHasChanges ? '#0D9488' : 'rgba(13, 148, 136, 0.1)',
-                      color: hubHasChanges ? '#FFFFFF' : '#0D9488',
+                      border: 'none',
+                      background: hubHasChanges ? '#0D9488' : '#CBD5E1',
+                      color: hubHasChanges ? '#FFFFFF' : '#64748B',
                       fontWeight: 700,
                       fontSize: '13px',
                       cursor: hubHasChanges ? 'pointer' : 'default',
@@ -3549,20 +3792,18 @@ const Sessions = () => {
                       alignItems: 'center',
                       gap: '6px',
                       transition: 'all 0.2s ease',
-                      boxShadow: hubHasChanges ? '0 2px 10px rgba(13, 148, 136, 0.25)' : 'none'
+                      boxShadow: hubHasChanges ? '0 2px 10px rgba(13, 148, 136, 0.3)' : 'none'
                     }}
                     onClick={hubHasChanges ? handleSaveHubChanges : undefined}
-                    disabled={hubIsSaving}
+                    disabled={hubIsSaving || !hubHasChanges}
                   >
                     {hubIsSaving ? (
-                      'Saving…'
-                    ) : hubHasChanges ? (
-                      'Save Changes'
-                    ) : (
                       <>
-                        <span style={{ fontSize: '14px' }}>✓</span>
-                        Saved
+                        <span className="ses-spinner" style={{ width: '13px', height: '13px', borderWidth: '2px', display: 'inline-block' }} />
+                        Saving…
                       </>
+                    ) : (
+                      'Save Changes'
                     )}
                   </button>
                 </div>
@@ -4687,6 +4928,15 @@ const Sessions = () => {
             </button>
           </div>
         )}
+
+        {/* Coach Profile & Student Review Modal */}
+        <CoachProfileModal
+          isOpen={Boolean(selectedCoachForModal)}
+          onClose={() => setSelectedCoachForModal(null)}
+          coachId={selectedCoachForModal?.id}
+          coachName={selectedCoachForModal?.name}
+          currentUser={currentUser}
+        />
       </main>
 
       <style>{`

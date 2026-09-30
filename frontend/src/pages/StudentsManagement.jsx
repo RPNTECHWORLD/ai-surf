@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 
 const API = import.meta.env.VITE_API_URL || '';
@@ -7,6 +7,18 @@ const API = import.meta.env.VITE_API_URL || '';
 
 const StudentsManagement = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (location.state?.openAddModal || params.get('action') === 'add' || params.get('add') === 'true') {
+      setShowModal(true);
+      setAddMode('single');
+      if (window.history.replaceState) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    }
+  }, [location]);
   const [students, setStudents] = useState([]);
   const [instructors, setInstructors] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -123,14 +135,34 @@ const StudentsManagement = () => {
   const [saving, setSaving] = useState(false);
   const addDaysToDate = (startDateStr, days) => {
     if (!startDateStr) return '';
+    const numDays = parseInt(days, 10);
+    if (isNaN(numDays) || numDays <= 0) return startDateStr;
+    const parts = String(startDateStr).split('-');
+    if (parts.length === 3) {
+      const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+      d.setDate(d.getDate() + (numDays - 1));
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
     const d = new Date(startDateStr);
     if (isNaN(d.getTime())) return '';
-    d.setDate(d.getDate() + (days - 1));
+    d.setDate(d.getDate() + (numDays - 1));
     return d.toISOString().split('T')[0];
   };
 
   const calculateDaysBetween = (startStr, endStr) => {
     if (!startStr || !endStr) return null;
+    const sParts = String(startStr).split('-');
+    const eParts = String(endStr).split('-');
+    if (sParts.length === 3 && eParts.length === 3) {
+      const s = new Date(parseInt(sParts[0], 10), parseInt(sParts[1], 10) - 1, parseInt(sParts[2], 10));
+      const e = new Date(parseInt(eParts[0], 10), parseInt(eParts[1], 10) - 1, parseInt(eParts[2], 10));
+      const diffTime = e.getTime() - s.getTime();
+      const diffDays = Math.round(diffTime / (1000 * 3600 * 24)) + 1;
+      return diffDays > 0 ? diffDays : 1;
+    }
     const s = new Date(startStr);
     const e = new Date(endStr);
     if (isNaN(s.getTime()) || isNaN(e.getTime())) return null;
@@ -262,33 +294,32 @@ const StudentsManagement = () => {
     name: '', email: '', password: '', level: 'Beginner', instructor_id: '',
     swimming_ability: 'Swimmer',
     whatsapp_number: '', dob: '', age: '', course_duration: '3 Days Course', session_time: '',
-    start_date: defaultStartDate, end_date: defaultEndDate, staying_at_school: 'Yes'
+    start_date: defaultStartDate, end_date: defaultEndDate, staying_at_school: 'Yes',
+    guests: []
   });
 
   const handleCourseDurationChange = (val) => {
-    if (val === 'custom') {
-      const currentDays = calculateDaysBetween(form.start_date, form.end_date) || 14;
-      const targetDays = currentDays > 10 ? currentDays : 14;
-      const newEnd = addDaysToDate(form.start_date, targetDays);
+    const match = String(val).match(/^(\d+)/);
+    const num = match ? parseInt(match[1], 10) : parseInt(val, 10);
+    if (!isNaN(num) && num > 0) {
+      const durLabel = `${num} ${num === 1 ? 'Day' : 'Days'} Course`;
+      const newEnd = form.start_date ? addDaysToDate(form.start_date, num) : form.end_date;
       setForm(prev => ({
         ...prev,
-        course_duration: `${targetDays} Days Course`,
+        course_duration: durLabel,
         end_date: newEnd
       }));
     } else {
-      const match = val.match(/^(\d+)\s*Days/i);
-      const days = match ? parseInt(match[1]) : 3;
-      const newEnd = addDaysToDate(form.start_date, days);
       setForm(prev => ({
         ...prev,
-        course_duration: val,
-        end_date: newEnd
+        course_duration: val
       }));
     }
   };
 
   const handleStartDateChange = (newStart) => {
-    const currentDays = calculateDaysBetween(form.start_date, form.end_date) || 3;
+    const match = (form.course_duration || '').match(/^(\d+)/);
+    const currentDays = match ? parseInt(match[1], 10) : (calculateDaysBetween(form.start_date, form.end_date) || 3);
     const newEnd = addDaysToDate(newStart, currentDays);
     setForm(prev => ({
       ...prev,
@@ -307,6 +338,34 @@ const StudentsManagement = () => {
     }));
   };
 
+  const handleAddSingleGuest = () => {
+    setForm(prev => ({
+      ...prev,
+      guests: [...(prev.guests || []), { name: '', dob: '', age: '', swimming_ability: 'Swimmer', level: 'Beginner', phone: '' }]
+    }));
+  };
+
+  const handleSingleGuestChange = (gIdx, field, value) => {
+    setForm(prev => {
+      const cur = [...(prev.guests || [])];
+      if (!cur[gIdx]) return prev;
+      const updated = { ...cur[gIdx], [field]: value };
+      if (field === 'dob') {
+        const computed = calculateAge(value);
+        updated.age = computed ? String(computed) : '';
+      }
+      cur[gIdx] = updated;
+      return { ...prev, guests: cur };
+    });
+  };
+
+  const handleDeleteSingleGuest = (gIdx) => {
+    setForm(prev => ({
+      ...prev,
+      guests: (prev.guests || []).filter((_, i) => i !== gIdx)
+    }));
+  };
+
   const closeModal = () => {
     setShowModal(false);
     setModalInvite(null);
@@ -315,13 +374,14 @@ const StudentsManagement = () => {
     setCopied(false);
     setCsvFileName('');
     setBulkRows([
-      { name: '', email: '', phone: '', dob: '', age: '', level: 'Beginner', swimming_ability: 'Swimmer', start_date: '', end_date: '', instructor_id: '' }
+      { name: '', email: '', phone: '', dob: '', age: '', level: 'Beginner', swimming_ability: 'Swimmer', days: 3, course_duration: '3 Days Course', start_date: '', end_date: '', instructor_id: '', guests: [] }
     ]);
     setForm({
       name: '', email: '', password: '', level: 'Beginner', instructor_id: '',
       swimming_ability: 'Swimmer',
       whatsapp_number: '', dob: '', age: '', course_duration: '3 Days Course', session_time: '',
-      start_date: new Date().toISOString().split('T')[0], end_date: addDaysToDate(new Date().toISOString().split('T')[0], 3), staying_at_school: 'Yes'
+      start_date: new Date().toISOString().split('T')[0], end_date: addDaysToDate(new Date().toISOString().split('T')[0], 3), staying_at_school: 'Yes',
+      guests: []
     });
   };
 
@@ -344,9 +404,15 @@ const StudentsManagement = () => {
     try {
       const savedSchool = sessionStorage.getItem('activeSchool');
       if (savedSchool) {
-        const parsed = JSON.parse(savedSchool);
-        if (parsed.name) {
-          return typeof parsed.name === 'string' ? parsed.name : (parsed.name?.name || null);
+        try {
+          const parsed = JSON.parse(savedSchool);
+          if (parsed && typeof parsed === 'object') {
+            if (parsed.name) return typeof parsed.name === 'string' ? parsed.name : (parsed.name?.name || null);
+          } else if (typeof parsed === 'string') {
+            return parsed;
+          }
+        } catch (e) {
+          return savedSchool;
         }
       }
       const savedUser = sessionStorage.getItem('user');
@@ -370,9 +436,29 @@ const StudentsManagement = () => {
   const canDeleteStudent = isAdminOrSchoolAdmin && !isCoach;
   const canCreateInviteLink = isAdminOrSchoolAdmin && !isCoach;
 
-  const effectiveSchool = (activeSchoolName && schoolLower !== 'school admin' && schoolLower !== 'super admin')
-    ? activeSchoolName
-    : 'Aquatic Indica Surf School';
+  const loggedInCoach = useMemo(() => {
+    if (!instructors || instructors.length === 0) return null;
+    return instructors.find(i => 
+      (currentCoachId && (String(i.id) === String(currentCoachId) || parseInt(i.id) === parseInt(currentCoachId))) ||
+      (currentCoachName && i.name && i.name.toLowerCase().trim() === currentCoachName.toLowerCase().trim())
+    );
+  }, [instructors, currentCoachId, currentCoachName]);
+
+  const coachAffiliatedSchool = (loggedInCoach?.school || currentUser?.school || currentUser?.school_name || activeSchoolName || '').trim();
+  const isCoachFreelance = isCoach && (
+    coachAffiliatedSchool.toLowerCase() === 'individual / freelance coach' ||
+    (currentUser?.school || '').toLowerCase().trim() === 'individual / freelance coach'
+  );
+
+  // If coach belongs to a school ("oru schoola irutha"), they cannot add students.
+  // Only Admins and Individual / Freelance Coaches can add students.
+  const canAddStudent = isAdminOrSchoolAdmin || (isCoach && isCoachFreelance);
+
+  const effectiveSchool = (isCoach && isCoachFreelance)
+    ? 'Individual / Freelance Coach'
+    : (activeSchoolName && schoolLower !== 'school admin' && schoolLower !== 'super admin')
+      ? activeSchoolName
+      : 'Aquatic Indica Surf School';
   const effectiveSchoolLower = effectiveSchool.toLowerCase().trim();
   const isDefaultSchool = !activeSchoolName || (typeof activeSchoolName === 'string' && (activeSchoolName.toLowerCase() === 'aquatic indica surf school' || activeSchoolName.toLowerCase() === 'school admin'));
 
@@ -474,6 +560,13 @@ const StudentsManagement = () => {
       const coachStudentNamesFromSessions = new Set();
 
       allSessions.forEach(sess => {
+        const sSchool = (sess.school || '').toLowerCase().trim();
+        if (isCoachFreelance) {
+          if (sSchool && sSchool !== 'individual / freelance coach') return;
+        } else if (coachAffiliatedSchool) {
+          if (sSchool && sSchool !== coachAffiliatedSchool.toLowerCase() && sSchool !== effectiveSchoolLower) return;
+        }
+
         const sInstLower = (sess.instructor || sess.instructor_name || '').toLowerCase().trim();
         const instMatch = 
           (cNameLower && sInstLower && (sInstLower === cNameLower || sInstLower.includes(cNameLower) || cNameLower.includes(sInstLower))) ||
@@ -486,6 +579,21 @@ const StudentsManagement = () => {
       });
 
       return valid.filter(s => {
+        const studentSchool = (s.school || s.school_name || '').toLowerCase().trim();
+
+        // Affiliation isolation:
+        if (isCoachFreelance) {
+          // Individual freelance coach: MUST be freelance school or created by this coach
+          const isFreelanceStudent = studentSchool === 'individual / freelance coach' || (!studentSchool && String(s.created_by_user_id) === String(currentCoachId));
+          if (!isFreelanceStudent) return false;
+        } else if (coachAffiliatedSchool) {
+          // School coach: student MUST belong to this coach's school
+          if (studentSchool && studentSchool !== coachAffiliatedSchool.toLowerCase() && studentSchool !== effectiveSchoolLower) {
+            return false;
+          }
+          if (studentSchool === 'individual / freelance coach') return false;
+        }
+
         const sInstLower = (s.instructor || s.instructor_name || '').toLowerCase().trim();
         const sNameLower = (s.name || '').toLowerCase().trim();
 
@@ -504,7 +612,7 @@ const StudentsManagement = () => {
     }
 
     return valid;
-  }, [students, instructors, allSessions, isCoach, currentCoachName, currentCoachId, effectiveSchoolLower, isSuperAdmin]);
+  }, [students, instructors, allSessions, isCoach, isCoachFreelance, coachAffiliatedSchool, currentCoachName, currentCoachId, effectiveSchoolLower, isSuperAdmin]);
 
   const handleStatClick = (label) => {
     setActiveStatFilter(label);
@@ -633,9 +741,21 @@ const StudentsManagement = () => {
     try {
       const selectedInst = instructors.find(i => String(i.id) === String(form.instructor_id));
       const isInstFreelance = (selectedInst?.school || '').toLowerCase().trim() === 'individual / freelance coach';
-      const studentSchool = isInstFreelance ? 'Individual / Freelance Coach' : (effectiveSchool || 'Aquatic Indica Surf School');
+      const studentSchool = (isCoach && isCoachFreelance)
+        ? 'Individual / Freelance Coach'
+        : (isInstFreelance ? 'Individual / Freelance Coach' : (coachAffiliatedSchool || effectiveSchool || 'Aquatic Indica Surf School'));
 
+      const assignedInstId = isCoach ? currentCoachId : (form.instructor_id ? parseInt(form.instructor_id) : null);
       const studentAge = form.dob ? (calculateAge(form.dob) || (form.age ? parseInt(form.age) : undefined)) : (form.age ? parseInt(form.age) : undefined);
+      const cleanedSingleGuests = (form.guests || []).filter(g => g && g.name && g.name.trim()).map(g => ({
+        name: g.name.trim(),
+        dob: g.dob || '',
+        age: g.dob ? (calculateAge(g.dob) || (g.age ? parseInt(g.age) : undefined)) : (g.age ? parseInt(g.age) : undefined),
+        swimming_ability: g.swimming_ability || 'Swimmer',
+        level: g.level || 'Beginner',
+        phone: g.phone || g.whatsapp_number || ''
+      }));
+
       const res = await fetch(`${API}/api/students`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -646,7 +766,8 @@ const StudentsManagement = () => {
           level: form.level,
           swimming_ability: form.swimming_ability || 'Swimmer',
           dob: form.dob || '',
-          instructor_id: null,
+          instructor_id: assignedInstId,
+          created_by_user_id: currentCoachId || currentUser?.id || undefined,
           whatsapp_number: form.whatsapp_number,
           course_duration: form.course_duration,
           session_time: form.session_time,
@@ -654,11 +775,14 @@ const StudentsManagement = () => {
           end_date: form.end_date,
           staying_at_school: form.staying_at_school,
           school: studentSchool,
+          guests_count: cleanedSingleGuests.length,
+          guests_details: cleanedSingleGuests,
         }),
       });
       if (res.ok) {
         const newStudent = await res.json();
         
+
 
 
         fetchStudents();
@@ -689,7 +813,9 @@ const StudentsManagement = () => {
           start_date: newStudent.start_date || form.start_date,
           end_date: newStudent.end_date || form.end_date,
           instructor: 'Not Assigned Yet',
-          inviteLink: studentInviteLink
+          inviteLink: studentInviteLink,
+          guests_count: cleanedSingleGuests.length,
+          guests_details: cleanedSingleGuests
         };
 
         setModalInvite({
@@ -716,7 +842,7 @@ const StudentsManagement = () => {
   
   // Bulk grid rows state (Starts clean for manual data entry)
   const [bulkRows, setBulkRows] = useState([
-    { name: '', email: '', phone: '', dob: '', age: '', level: 'Beginner', swimming_ability: 'Swimmer', start_date: '', end_date: '', instructor_id: '' }
+    { name: '', email: '', phone: '', dob: '', age: '', level: 'Beginner', swimming_ability: 'Swimmer', days: 3, course_duration: '3 Days Course', start_date: '', end_date: '', instructor_id: '', guests: [] }
   ]);
 
   // CSV Drag-drop & parser state
@@ -765,15 +891,64 @@ const StudentsManagement = () => {
   }, [summaryCompletedSessions]);
 
   const handleAddRow = () => {
-    setBulkRows(prev => [...prev, { name: '', email: '', phone: '', dob: '', age: '', level: 'Beginner', swimming_ability: 'Swimmer', start_date: '', end_date: '', instructor_id: '' }]);
+    setBulkRows(prev => [...prev, { name: '', email: '', phone: '', dob: '', age: '', level: 'Beginner', swimming_ability: 'Swimmer', days: 3, course_duration: '3 Days Course', start_date: '', end_date: '', instructor_id: '', guests: [] }]);
   };
 
   const handleDeleteRow = (index) => {
     if (bulkRows.length <= 1) {
-      setBulkRows([{ name: '', email: '', phone: '', dob: '', age: '', level: 'Beginner', swimming_ability: 'Swimmer', start_date: '', end_date: '', instructor_id: '' }]);
+      setBulkRows([{ name: '', email: '', phone: '', dob: '', age: '', level: 'Beginner', swimming_ability: 'Swimmer', days: 3, course_duration: '3 Days Course', start_date: '', end_date: '', instructor_id: '', guests: [] }]);
       return;
     }
     setBulkRows(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleAddGuest = (parentIdx) => {
+    setBulkRows(prev => {
+      const next = [...prev];
+      const parentRow = { ...next[parentIdx] };
+      const currentGuests = Array.isArray(parentRow.guests) ? [...parentRow.guests] : [];
+      currentGuests.push({
+        name: '',
+        dob: '',
+        age: '',
+        swimming_ability: 'Swimmer',
+        level: 'Beginner',
+        phone: ''
+      });
+      parentRow.guests = currentGuests;
+      next[parentIdx] = parentRow;
+      return next;
+    });
+  };
+
+  const handleGuestChange = (parentIdx, guestIdx, field, value) => {
+    setBulkRows(prev => {
+      const next = [...prev];
+      const parentRow = { ...next[parentIdx] };
+      const currentGuests = Array.isArray(parentRow.guests) ? [...parentRow.guests] : [];
+      if (!currentGuests[guestIdx]) return prev;
+
+      const updatedGuest = { ...currentGuests[guestIdx], [field]: value };
+      if (field === 'dob') {
+        const computed = calculateAge(value);
+        updatedGuest.age = computed ? String(computed) : '';
+      }
+      currentGuests[guestIdx] = updatedGuest;
+      parentRow.guests = currentGuests;
+      next[parentIdx] = parentRow;
+      return next;
+    });
+  };
+
+  const handleDeleteGuest = (parentIdx, guestIdx) => {
+    setBulkRows(prev => {
+      const next = [...prev];
+      const parentRow = { ...next[parentIdx] };
+      const currentGuests = Array.isArray(parentRow.guests) ? [...parentRow.guests] : [];
+      parentRow.guests = currentGuests.filter((_, i) => i !== guestIdx);
+      next[parentIdx] = parentRow;
+      return next;
+    });
   };
 
   const handleBulkChange = (index, field, value) => {
@@ -783,6 +958,35 @@ const StudentsManagement = () => {
       if (field === 'dob') {
         const computed = calculateAge(value);
         updated.age = computed ? String(computed) : '';
+      } else if (field === 'days') {
+        const num = parseInt(value, 10);
+        if (!isNaN(num) && num > 0) {
+          updated.course_duration = `${num} ${num === 1 ? 'Day' : 'Days'} Course`;
+          if (updated.start_date) {
+            updated.end_date = addDaysToDate(updated.start_date, num);
+          }
+        } else {
+          updated.course_duration = value ? `${value} Days Course` : '';
+        }
+      } else if (field === 'start_date') {
+        const rowDays = parseInt(updated.days, 10);
+        if (value && !isNaN(rowDays) && rowDays > 0) {
+          updated.end_date = addDaysToDate(value, rowDays);
+        } else if (value && updated.end_date) {
+          const dBetween = calculateDaysBetween(value, updated.end_date);
+          if (dBetween) {
+            updated.days = dBetween;
+            updated.course_duration = `${dBetween} ${dBetween === 1 ? 'Day' : 'Days'} Course`;
+          }
+        }
+      } else if (field === 'end_date') {
+        if (updated.start_date && value) {
+          const dBetween = calculateDaysBetween(updated.start_date, value);
+          if (dBetween) {
+            updated.days = dBetween;
+            updated.course_duration = `${dBetween} ${dBetween === 1 ? 'Day' : 'Days'} Course`;
+          }
+        }
       }
       next[index] = updated;
       return next;
@@ -795,21 +999,53 @@ const StudentsManagement = () => {
     if (validRows.length === 0) return;
     setSaving(true);
     try {
-      const formatted = validRows.map(r => ({
-        name: r.name.trim(),
-        email: r.email.trim().toLowerCase(),
-        whatsapp_number: r.phone || '',
-        dob: r.dob || '',
-        age: r.dob ? (calculateAge(r.dob) || (r.age ? parseInt(r.age) : undefined)) : (r.age ? parseInt(r.age) : undefined),
-        level: r.level || 'Beginner',
-        swimming_ability: r.swimming_ability || 'Swimmer',
-        start_date: r.start_date || new Date().toISOString().split('T')[0],
-        instructor_id: null,
-        course_duration: '3 Days Course',
-        session_time: '',
-        staying_at_school: 'Yes',
-        school: activeSchoolName || 'Aquatic Indica Surf School'
-      }));
+      const formatted = validRows.map(r => {
+        const rowDays = parseInt(r.days, 10);
+        let duration = r.course_duration;
+        if (!duration) {
+          if (!isNaN(rowDays) && rowDays > 0) {
+            duration = `${rowDays} ${rowDays === 1 ? 'Day' : 'Days'} Course`;
+          } else if (r.start_date && r.end_date) {
+            const diff = calculateDaysBetween(r.start_date, r.end_date);
+            duration = diff ? `${diff} ${diff === 1 ? 'Day' : 'Days'} Course` : '3 Days Course';
+          } else {
+            duration = '3 Days Course';
+          }
+        }
+        const sDate = r.start_date || new Date().toISOString().split('T')[0];
+        const eDate = r.end_date || (!isNaN(rowDays) && rowDays > 0 ? addDaysToDate(sDate, rowDays) : addDaysToDate(sDate, 3));
+
+        const cleanedGuests = (r.guests || []).filter(g => g && g.name && g.name.trim()).map(g => ({
+          name: g.name.trim(),
+          dob: g.dob || '',
+          age: g.dob ? (calculateAge(g.dob) || (g.age ? parseInt(g.age) : undefined)) : (g.age ? parseInt(g.age) : undefined),
+          swimming_ability: g.swimming_ability || 'Swimmer',
+          level: g.level || 'Beginner',
+          phone: g.phone || g.whatsapp_number || ''
+        }));
+
+        return {
+          name: r.name.trim(),
+          email: r.email.trim().toLowerCase(),
+          whatsapp_number: r.phone || '',
+          dob: r.dob || '',
+          age: r.dob ? (calculateAge(r.dob) || (r.age ? parseInt(r.age) : undefined)) : (r.age ? parseInt(r.age) : undefined),
+          level: r.level || 'Beginner',
+          swimming_ability: r.swimming_ability || 'Swimmer',
+          start_date: sDate,
+          end_date: eDate,
+          instructor_id: isCoach ? currentCoachId : null,
+          created_by_user_id: currentCoachId || currentUser?.id || undefined,
+          course_duration: duration,
+          session_time: '',
+          staying_at_school: 'Yes',
+          school: (isCoach && isCoachFreelance)
+            ? 'Individual / Freelance Coach'
+            : (coachAffiliatedSchool || activeSchoolName || 'Aquatic Indica Surf School'),
+          guests_count: cleanedGuests.length,
+          guests_details: cleanedGuests
+        };
+      });
       const res = await fetch(`${API}/api/students/bulk`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -822,10 +1058,13 @@ const StudentsManagement = () => {
           const first = result.students[0];
           const baseUrl = window.location.origin;
           const token = first.invite_token || `inv_${Date.now()}`;
+          const matchingOriginalRow = formatted.find(f => f.email === first.email);
           setAddedStudentSummary({
             ...first,
             totalImported: result.students.length,
-            inviteLink: `${baseUrl}/student-portal?token=${token}`
+            inviteLink: `${baseUrl}/student-portal?token=${token}`,
+            guests_count: matchingOriginalRow ? matchingOriginalRow.guests_count : (first.guests_count || 0),
+            guests_details: matchingOriginalRow ? matchingOriginalRow.guests_details : (first.guests_details || [])
           });
           setAddMode('summary');
         } else {
@@ -864,9 +1103,10 @@ const StudentsManagement = () => {
       const dobIdx = findIdx(['birth', 'dob'], 3);
       const swimIdx = findIdx(['swim', 'ability'], -1);
       const levelIdx = findIdx(['level', 'surf'], 4);
-      const startIdx = findIdx(['start', 'checkin', 'from'], headerCols.length >= 8 ? 5 : -1);
-      const endIdx = findIdx(['end', 'checkout', 'to'], headerCols.length >= 8 ? 6 : -1);
-      const coachIdx = findIdx(['instructor', 'coach', 'assign'], headerCols.length >= 8 ? 7 : 5);
+      const daysIdx = findIdx(['days', 'course', 'duration'], -1);
+      const startIdx = findIdx(['start', 'checkin', 'from'], -1);
+      const endIdx = findIdx(['end', 'checkout', 'to'], -1);
+      const coachIdx = findIdx(['instructor', 'coach', 'assign'], -1);
 
       const rows = [];
       const seenEmails = new Set();
@@ -905,13 +1145,33 @@ const StudentsManagement = () => {
             }
           }
 
+          // Parse Course Days / Duration
+          let parsedDays = 3;
+          let parsedCourseDuration = '3 Days Course';
+          if (daysIdx !== -1 && cols[daysIdx]) {
+            const rawDays = cols[daysIdx].trim();
+            const match = rawDays.match(/^(\d+)/);
+            if (match) {
+              parsedDays = parseInt(match[1], 10);
+              parsedCourseDuration = `${parsedDays} ${parsedDays === 1 ? 'Day' : 'Days'} Course`;
+            } else if (rawDays) {
+              parsedCourseDuration = rawDays;
+            }
+          }
+
           // Parse Start Date and End Date
           let startDate = startIdx !== -1 && cols[startIdx] ? parseDateString(cols[startIdx]) : '';
           if (!startDate) startDate = todayISO;
 
           let endDate = endIdx !== -1 && cols[endIdx] ? parseDateString(cols[endIdx]) : '';
           if (!endDate) {
-            endDate = addDaysToDate(startDate, 3);
+            endDate = addDaysToDate(startDate, parsedDays);
+          } else if (daysIdx === -1) {
+            const diff = calculateDaysBetween(startDate, endDate);
+            if (diff) {
+              parsedDays = diff;
+              parsedCourseDuration = `${diff} ${diff === 1 ? 'Day' : 'Days'} Course`;
+            }
           }
 
           // Match instructor by name if provided
@@ -939,10 +1199,13 @@ const StudentsManagement = () => {
             age: computedAge,
             level: levelIdx !== -1 && cols[levelIdx] ? cols[levelIdx] : 'Beginner',
             swimming_ability: swimVal,
+            days: parsedDays,
+            course_duration: parsedCourseDuration,
             start_date: startDate,
             end_date: endDate,
             instructor_id: instructor_id,
-            instructor_name: instructor_name
+            instructor_name: instructor_name,
+            guests: []
           });
         }
       }
@@ -954,7 +1217,7 @@ const StudentsManagement = () => {
   };
 
   const downloadCSVSample = () => {
-    const csvContent = "data:text/csv;charset=utf-8,Full Name,Email Address,Phone Number,Date of Birth,Swimming Ability,Surf Level,Start Date,End Date\nLiam Torres,liam.torres@gmail.com,(555) 123-4567,1998-05-22,Swimmer,Intermediate,2026-10-01,2026-10-03\nMaya Chen,maya.chen@yahoo.com,(555) 987-6543,2001-11-08,Non-Swimmer,Beginner,2026-10-05,2026-10-07";
+    const csvContent = "data:text/csv;charset=utf-8,Full Name,Email Address,Phone Number,Date of Birth,Swimming Ability,Surf Level,Course Days,Start Date,End Date\\nLiam Torres,liam.torres@gmail.com,(555) 123-4567,1998-05-22,Swimmer,Intermediate,3,2026-10-01,2026-10-03\\nMaya Chen,maya.chen@yahoo.com,(555) 987-6543,2001-11-08,Non-Swimmer,Beginner,5,2026-10-05,2026-10-09";
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
@@ -1055,7 +1318,7 @@ const StudentsManagement = () => {
       const seenEmails = new Set();
       const pending = [];
 
-      const addIfPending = (email, name, schoolName, startDate, sessionTime, phone, id, courseDuration, stayingAtSchool) => {
+      const addIfPending = (email, name, schoolName, startDate, sessionTime, phone, id, courseDuration, stayingAtSchool, extra = {}) => {
         const emailLower = (email || '').toLowerCase().trim();
         if (!emailLower || seenEmails.has(emailLower)) return;
 
@@ -1089,6 +1352,11 @@ const StudentsManagement = () => {
           whatsapp_number: phone || req?.whatsapp_number || req?.phone || 'N/A',
           course_duration: courseDuration || req?.course_duration || '3 Days Course',
           staying_at_school: stayingAtSchool || req?.staying_at_school || 'Yes',
+          level: extra.level || req?.level || 'Beginner',
+          swimming_ability: extra.swimming_ability || req?.swimming_ability || 'Swimmer',
+          dob: extra.dob || req?.dob || '',
+          guests_count: extra.guests_count || req?.guests_count || 0,
+          guests_details: extra.guests_details || req?.guests_details || [],
           status: 'pending'
         });
       };
@@ -1099,7 +1367,8 @@ const StudentsManagement = () => {
         if (s.approval_status === 'pending') {
           addIfPending(
             s.email, s.name, s.school, s.start_date, s.session_time,
-            s.whatsapp_number, s.id, s.course_duration, s.staying_at_school
+            s.whatsapp_number, s.id, s.course_duration, s.staying_at_school,
+            { level: s.level, swimming_ability: s.swimming_ability, dob: s.dob, guests_count: s.guests_count, guests_details: s.guests_details }
           );
         }
       });
@@ -1117,7 +1386,8 @@ const StudentsManagement = () => {
             r.whatsapp_number,
             r.student_id || r.id,
             r.course_duration,
-            r.staying_at_school
+            r.staying_at_school,
+            { level: r.level, swimming_ability: r.swimming_ability, dob: r.dob, guests_count: r.guests_count, guests_details: r.guests_details }
           );
         }
       });
@@ -1131,7 +1401,8 @@ const StudentsManagement = () => {
           addIfPending(
             u.email, u.name, u.school, u.start_date, u.session_time,
             u.whatsapp_number || u.phone, u.student_id || u.id,
-            u.course_duration, u.staying_at_school
+            u.course_duration, u.staying_at_school,
+            { level: u.level, swimming_ability: u.swimming_ability, dob: u.dob, guests_count: u.guests_count, guests_details: u.guests_details }
           );
         }
       });
@@ -1144,7 +1415,8 @@ const StudentsManagement = () => {
           addIfPending(
             u.email, u.name, u.school, u.start_date, u.session_time,
             u.whatsapp_number || u.phone, u.student_id || u.id,
-            u.course_duration, u.staying_at_school
+            u.course_duration, u.staying_at_school,
+            { level: u.level, swimming_ability: u.swimming_ability, dob: u.dob, guests_count: u.guests_count, guests_details: u.guests_details }
           );
         }
       });
@@ -1157,7 +1429,8 @@ const StudentsManagement = () => {
             addIfPending(
               sessionUser.email, sessionUser.name, sessionUser.school, sessionUser.start_date, sessionUser.session_time,
               sessionUser.whatsapp_number || sessionUser.phone, sessionUser.student_id || sessionUser.id,
-              sessionUser.course_duration, sessionUser.staying_at_school
+              sessionUser.course_duration, sessionUser.staying_at_school,
+              { level: sessionUser.level, swimming_ability: sessionUser.swimming_ability, dob: sessionUser.dob, guests_count: sessionUser.guests_count, guests_details: sessionUser.guests_details }
             );
           }
         }
@@ -1348,7 +1621,12 @@ const StudentsManagement = () => {
       showToast('Only School Admins can create invite links');
       return;
     }
-    const chosenDuration = inviteCourseDuration || '3 Days Course';
+    let chosenDuration = inviteCourseDuration || '3 Days Course';
+    const matchNum = String(chosenDuration).match(/^(\d+)/);
+    if (matchNum) {
+      const n = parseInt(matchNum[1], 10);
+      chosenDuration = n === 1 ? '1 Day Crash Course' : `${n} Days Course`;
+    }
     setSchoolInviteLoading(true);
     try {
       const res = await fetch(`${API}/api/school-invites`, {
@@ -1491,73 +1769,327 @@ const StudentsManagement = () => {
               </button>
             )}
             <button className="sm-btn-secondary" onClick={downloadCSVSample}>Export CSV</button>
-            <button className="sm-btn-primary" onClick={() => { setShowModal(true); setAddMode('single'); }}>+ Add Student</button>
+            {canAddStudent && (
+              <button className="sm-btn-primary" onClick={() => { setShowModal(true); setAddMode('single'); }}>+ Add Student</button>
+            )}
           </div>
         </header>
 
-        {/* Pending Requests Modal */}
+        {/* Pending Requests Modal — Spacious, Enlarged Table Row UI */}
         {showPendingModal && canManagePendingRequests && (
-          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(15,23,42,0.65)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '20px' }}>
-            <div style={{ background: '#FFFFFF', borderRadius: '16px', maxWidth: '680px', width: '100%', maxHeight: '85vh', overflowY: 'auto', padding: '24px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px', borderBottom: '1px solid #E2E8F0', paddingBottom: '14px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <span style={{ fontSize: '24px' }}>📩</span>
-                  <div>
-                    <h2 style={{ margin: 0, fontSize: '19px', fontWeight: 800, color: '#0F172A' }}>
-                      Pending Registration Requests ({allPendingRequests.length})
-                    </h2>
-                    <p style={{ margin: '2px 0 0 0', fontSize: '13px', color: '#64748B' }}>
-                      Students requesting to join your Surf School directly.
-                    </p>
+          <div className="sm-modal-overlay" onClick={() => setShowPendingModal(false)}>
+            <div
+              className="sm-modal sm-add-student-modal"
+              style={{ maxWidth: '1400px', width: '96%', maxHeight: '92vh', overflowY: 'auto', padding: '28px 32px' }}
+              onClick={e => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className="sm-modal-header" style={{ marginBottom: '22px' }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <h3 className="sm-modal-title" style={{ fontSize: '22px', fontWeight: 800, color: '#0F172A', margin: 0 }}>
+                      Pending Registration Requests
+                    </h3>
+                    <span style={{
+                      background: '#FEF3C7',
+                      color: '#B45309',
+                      border: '1px solid #FCD34D',
+                      fontSize: '12px',
+                      fontWeight: 800,
+                      padding: '3px 12px',
+                      borderRadius: '20px',
+                      letterSpacing: '0.4px'
+                    }}>
+                      {allPendingRequests.length} PENDING
+                    </span>
                   </div>
+                  <p className="sm-modal-sub" style={{ color: '#64748B', fontSize: '14px', margin: '6px 0 0 0' }}>
+                    Review online student registrations and approve them directly into your active roster.
+                  </p>
                 </div>
-                <button onClick={() => setShowPendingModal(false)} style={{ background: '#F1F5F9', border: 'none', width: '32px', height: '32px', borderRadius: '50%', fontSize: '16px', color: '#64748B', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+                <button className="sm-modal-close" onClick={() => setShowPendingModal(false)} style={{ width: '38px', height: '38px' }}>
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
               </div>
 
+              {/* List of Requests in Table Rows or Empty State */}
               {allPendingRequests.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '40px 20px', color: '#94A3B8' }}>
-                  <div style={{ fontSize: '40px', marginBottom: '10px' }}>🎉</div>
-                  <div style={{ fontWeight: 700, fontSize: '16px', color: '#475569' }}>No pending requests!</div>
-                  <p style={{ fontSize: '13px', margin: '4px 0 0 0' }}>All student join requests have been reviewed.</p>
+                <div style={{
+                  textAlign: 'center',
+                  padding: '70px 20px',
+                  background: '#F8FAFC',
+                  borderRadius: '16px',
+                  border: '1.5px dashed #CBD5E1',
+                  marginTop: '10px'
+                }}>
+                  <div style={{ fontSize: '48px', marginBottom: '14px' }}>🎉</div>
+                  <h4 style={{ margin: 0, fontSize: '20px', fontWeight: 800, color: '#0F172A' }}>
+                    All Caught Up!
+                  </h4>
+                  <p style={{ margin: '8px 0 0', fontSize: '14px', color: '#64748B' }}>
+                    No pending registration requests waiting for review at this moment.
+                  </p>
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                  {allPendingRequests.map((req) => (
-                    <div key={req.id || req.student_email} style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '12px', padding: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '14px' }}>
-                      <div>
-                        <div style={{ fontWeight: 800, color: '#0F172A', fontSize: '16px' }}>{req.student_name || req.name}</div>
-                        <div style={{ fontSize: '13px', color: '#475569', marginTop: '4px', display: 'flex', gap: '14px', flexWrap: 'wrap' }}>
-                          <span>✉️ {req.student_email || req.email}</span>
-                          <span>📱 {req.whatsapp_number || 'N/A'}</span>
-                          <span>🗓️ {req.start_date || 'N/A'}{req.session_time ? ` (${req.session_time})` : ''}</span>
-                        </div>
-                        <div style={{ fontSize: '12.5px', color: '#D97706', marginTop: '6px', fontWeight: 700 }}>
-                          🏫 Requested Surf School: {req.school_name || req.school || 'Aquatic Indica Surf School'}
-                        </div>
-                      </div>
-                      
-                      <div style={{ display: 'flex', gap: '10px' }}>
-                        <button 
-                          onClick={() => {
-                            handleApproveStudentRequest(req.student_id || req.id, req.student_email || req.email);
-                            if (allPendingRequests.length <= 1) setShowPendingModal(false);
-                          }}
-                          style={{ background: '#10B981', color: '#FFF', border: 'none', borderRadius: '8px', padding: '9px 18px', fontWeight: 800, fontSize: '13px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 6px rgba(16,185,129,0.2)' }}
-                        >
-                          ✅ Accept Student
-                        </button>
-                        <button 
-                          onClick={() => {
-                            handleRejectStudentRequest(req.student_id || req.id, req.student_email || req.email);
-                            if (allPendingRequests.length <= 1) setShowPendingModal(false);
-                          }}
-                          style={{ background: '#EF4444', color: '#FFF', border: 'none', borderRadius: '8px', padding: '9px 14px', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}
-                        >
-                          ❌ Decline
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                <div style={{
+                  overflowX: 'auto',
+                  borderRadius: '14px',
+                  border: '1.5px solid #CBD5E1',
+                  background: '#FFFFFF',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
+                }}>
+                  <table style={{ width: '100%', minWidth: '960px', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ background: '#F8FAFC', borderBottom: '2px solid #CBD5E1' }}>
+                        <th style={{ padding: '16px 16px', fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#475569', textAlign: 'left', minWidth: '220px' }}>Student</th>
+                        <th style={{ padding: '16px 14px', fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#475569', textAlign: 'left', minWidth: '220px' }}>Contact</th>
+                        <th style={{ padding: '16px 14px', fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#475569', textAlign: 'left', minWidth: '120px' }}>DOB / Age</th>
+                        <th style={{ padding: '16px 14px', fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#475569', textAlign: 'left', minWidth: '120px' }}>Surf Level</th>
+                        <th style={{ padding: '16px 14px', fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#475569', textAlign: 'left', minWidth: '135px' }}>Swimming</th>
+                        <th style={{ padding: '16px 14px', fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#475569', textAlign: 'left', minWidth: '140px' }}>Course Duration</th>
+                        <th style={{ padding: '16px 14px', fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#475569', textAlign: 'left', minWidth: '130px' }}>Start Date</th>
+                        <th style={{ padding: '16px 14px', fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#475569', textAlign: 'left', minWidth: '110px' }}>Guests</th>
+                        <th style={{ padding: '16px 16px', fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#475569', textAlign: 'center', minWidth: '210px' }}>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {allPendingRequests.map((req, rIdx) => {
+                        const studentName = req.student_name || req.name || 'Student';
+                        const initials = studentName.split(' ').map(n => n[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || 'ST';
+                        const guestList = parseGuestsArray(req.guests_details);
+                        const guestCount = req.guests_count || guestList.length;
+
+                        return (
+                          <React.Fragment key={req.id || req.student_email || rIdx}>
+                            <tr style={{ background: '#FFFFFF', borderBottom: '1px solid #F1F5F9', transition: 'background 0.15s ease' }}>
+                              {/* 1. Student Name & School */}
+                              <td style={{ padding: '18px 16px', verticalAlign: 'middle' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                                  <div style={{
+                                    width: '46px',
+                                    height: '46px',
+                                    borderRadius: '50%',
+                                    background: 'linear-gradient(135deg, #0D9488 0%, #059669 100%)',
+                                    color: '#FFFFFF',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: '16px',
+                                    fontWeight: 800,
+                                    boxShadow: '0 3px 8px rgba(13,148,136,0.28)',
+                                    flexShrink: 0
+                                  }}>
+                                    {initials}
+                                  </div>
+                                  <div>
+                                    <div style={{ fontSize: '15.5px', fontWeight: 800, color: '#0F172A', lineHeight: 1.3 }}>
+                                      {studentName}
+                                    </div>
+                                    <div style={{ fontSize: '12px', color: '#D97706', fontWeight: 600, marginTop: '3px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                      <span>🏫</span>
+                                      <span>{req.school_name || req.school || 'Aquatic Indica Surf School'}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </td>
+
+                              {/* 2. Contact */}
+                              <td style={{ padding: '18px 14px', verticalAlign: 'middle' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                                  <span style={{ fontSize: '13.5px', fontWeight: 600, color: '#0F172A', wordBreak: 'break-all' }}>
+                                    ✉️ {req.student_email || req.email || '—'}
+                                  </span>
+                                  <span style={{ fontSize: '12.5px', color: '#64748B', fontWeight: 500 }}>
+                                    📱 {req.whatsapp_number && req.whatsapp_number !== 'N/A' ? `+91 ${req.whatsapp_number}` : 'N/A'}
+                                  </span>
+                                </div>
+                              </td>
+
+                              {/* 3. DOB & Age */}
+                              <td style={{ padding: '18px 14px', verticalAlign: 'middle' }}>
+                                <div style={{ fontSize: '13px', fontWeight: 600, color: '#0F172A' }}>
+                                  {req.dob || '—'}
+                                </div>
+                                {(calculateAge(req.dob) || req.age) && (
+                                  <span style={{
+                                    display: 'inline-block',
+                                    fontSize: '11px',
+                                    color: '#0D9488',
+                                    fontWeight: 700,
+                                    background: 'rgba(13,148,136,0.1)',
+                                    padding: '2px 8px',
+                                    borderRadius: '10px',
+                                    marginTop: '3px'
+                                  }}>
+                                    {calculateAge(req.dob) || req.age} yrs
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* 4. Surf Level */}
+                              <td style={{ padding: '18px 14px', verticalAlign: 'middle' }}>
+                                <span className="sm-summary-teal-badge" style={{ fontSize: '11.5px', padding: '4px 10px', borderRadius: '6px' }}>
+                                  {(req.level || 'Beginner').toUpperCase()}
+                                </span>
+                              </td>
+
+                              {/* 5. Swimming */}
+                              <td style={{ padding: '18px 14px', verticalAlign: 'middle' }}>
+                                {(req.swimming_ability || 'Swimmer').toLowerCase().includes('non') ? (
+                                  <span style={{ fontSize: '12px', fontWeight: 700, color: '#D97706', background: '#FEF3C7', border: '1px solid #FDE68A', padding: '4px 10px', borderRadius: '6px', whiteSpace: 'nowrap' }}>
+                                    🤿 Non-Swimmer
+                                  </span>
+                                ) : (
+                                  <span style={{ fontSize: '12px', fontWeight: 700, color: '#0D9488', background: '#ECFDF5', border: '1px solid #A7F3D0', padding: '4px 10px', borderRadius: '6px', whiteSpace: 'nowrap' }}>
+                                    🏊 Swimmer
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* 6. Course Duration */}
+                              <td style={{ padding: '18px 14px', verticalAlign: 'middle' }}>
+                                <strong style={{ color: '#0D9488', fontSize: '14px', whiteSpace: 'nowrap' }}>
+                                  🏄 {req.course_duration || '3 Days Course'}
+                                </strong>
+                              </td>
+
+                              {/* 7. Start Date */}
+                              <td style={{ padding: '18px 14px', verticalAlign: 'middle' }}>
+                                <div style={{ fontSize: '13px', fontWeight: 600, color: '#0F172A', whiteSpace: 'nowrap' }}>
+                                  🗓️ {req.start_date || 'Flexible'}
+                                </div>
+                                {req.session_time && (
+                                  <div style={{ fontSize: '11.5px', color: '#64748B', marginTop: '2px' }}>
+                                    {req.session_time}
+                                  </div>
+                                )}
+                              </td>
+
+                              {/* 8. Accompanying Guests */}
+                              <td style={{ padding: '18px 14px', verticalAlign: 'middle' }}>
+                                {guestCount > 0 ? (
+                                  <span style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '5px',
+                                    fontSize: '12px',
+                                    fontWeight: 700,
+                                    background: '#E0F2FE',
+                                    color: '#0284C7',
+                                    border: '1px solid #BAE6FD',
+                                    padding: '4px 10px',
+                                    borderRadius: '12px',
+                                    whiteSpace: 'nowrap'
+                                  }}>
+                                    👥 {guestCount} Guest{guestCount > 1 ? 's' : ''}
+                                  </span>
+                                ) : (
+                                  <span style={{ color: '#94A3B8', fontSize: '13px' }}>—</span>
+                                )}
+                              </td>
+
+                              {/* 9. Actions (Decline / Accept buttons side-by-side with full visibility) */}
+                              <td style={{ padding: '18px 16px', verticalAlign: 'middle', textAlign: 'center' }}>
+                                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      handleRejectStudentRequest(req.student_id || req.id, req.student_email || req.email);
+                                      if (allPendingRequests.length <= 1) setShowPendingModal(false);
+                                    }}
+                                    style={{
+                                      background: '#FEF2F2',
+                                      color: '#EF4444',
+                                      border: '1.5px solid #FECACA',
+                                      borderRadius: '9px',
+                                      padding: '8px 16px',
+                                      fontWeight: 700,
+                                      fontSize: '13px',
+                                      cursor: 'pointer',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '5px',
+                                      whiteSpace: 'nowrap',
+                                      transition: 'all 0.15s ease'
+                                    }}
+                                    onMouseEnter={e => { e.currentTarget.style.background = '#FEE2E2'; }}
+                                    onMouseLeave={e => { e.currentTarget.style.background = '#FEF2F2'; }}
+                                    title="Decline request"
+                                  >
+                                    <span>✕</span>
+                                    <span>Decline</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      handleApproveStudentRequest(req.student_id || req.id, req.student_email || req.email);
+                                      if (allPendingRequests.length <= 1) setShowPendingModal(false);
+                                    }}
+                                    className="sm-btn-primary"
+                                    style={{
+                                      background: 'linear-gradient(135deg, #0D9488 0%, #059669 100%)',
+                                      color: '#FFFFFF',
+                                      border: 'none',
+                                      borderRadius: '9px',
+                                      padding: '8px 20px',
+                                      fontWeight: 800,
+                                      fontSize: '13px',
+                                      cursor: 'pointer',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '6px',
+                                      whiteSpace: 'nowrap',
+                                      boxShadow: '0 3px 10px rgba(13, 148, 136, 0.3)',
+                                      transition: 'all 0.15s ease'
+                                    }}
+                                    title="Accept and enroll student"
+                                  >
+                                    <span>✓</span>
+                                    <span>Accept</span>
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+
+                            {/* Sub-row for Accompanying Guests if any */}
+                            {guestCount > 0 && (
+                              <tr key={`guest-row-${rIdx}`} style={{ background: '#F8FAFC' }}>
+                                <td colSpan={9} style={{ padding: '10px 18px 14px 28px', borderBottom: '2px solid #CBD5E1' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                                    <span style={{ fontSize: '12.5px', fontWeight: 800, color: '#0369A1' }}>
+                                      👥 Accompanying Guests ({guestCount}) for {studentName}:
+                                    </span>
+                                    {guestList.length > 0 ? (
+                                      guestList.map((g, gIdx) => (
+                                        <span key={gIdx} style={{
+                                          fontSize: '12px',
+                                          fontWeight: 600,
+                                          background: '#FFFFFF',
+                                          color: '#0369A1',
+                                          border: '1px solid #BAE6FD',
+                                          borderRadius: '6px',
+                                          padding: '3px 10px'
+                                        }}>
+                                          {g.name || `Guest #${gIdx + 1}`} ({g.level || 'Beginner'})
+                                        </span>
+                                      ))
+                                    ) : (
+                                      <span style={{ fontSize: '12px', color: '#64748B' }}>
+                                        {guestCount} Guest(s) attached to this registration
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </div>
@@ -1686,13 +2218,15 @@ const StudentsManagement = () => {
                 {students.length === 0 ? 'Add your first student to get started.' : 'Try changing your search query or clearing filters.'}
               </p>
               {students.length === 0 ? (
-                <button
-                  className="sm-btn-primary"
-                  style={{ margin: '0 auto', height: '36px', padding: '6px 16px', fontSize: '12.5px' }}
-                  onClick={() => { setShowModal(true); setAddMode('single'); }}
-                >
-                  + Add Student
-                </button>
+                canAddStudent ? (
+                  <button
+                    className="sm-btn-primary"
+                    style={{ margin: '0 auto', height: '36px', padding: '6px 16px', fontSize: '12.5px' }}
+                    onClick={() => { setShowModal(true); setAddMode('single'); }}
+                  >
+                    + Add Student
+                  </button>
+                ) : null
               ) : (
                 <button
                   className="sm-btn-secondary"
@@ -2065,7 +2599,7 @@ const StudentsManagement = () => {
       </main>
 
       {/* ── Add Students Modal & Review Summary ── */}
-      {showModal && (
+      {showModal && canAddStudent && (
         <div className="sm-modal-overlay" onClick={closeModal}>
           <div className="sm-modal sm-add-student-modal" onClick={e => e.stopPropagation()}>
             <div className="sm-modal-header">
@@ -2186,25 +2720,59 @@ const StudentsManagement = () => {
                   </div>
 
                   <div className="sm-field">
-                    <label>Course Duration</label>
-                    <select
-                      value={
-                        ['3 Days Course', '5 Days Course', '7 Days Course', '10 Days Course'].includes(form.course_duration)
-                          ? form.course_duration
-                          : 'custom'
-                      }
-                      onChange={e => handleCourseDurationChange(e.target.value)}
-                    >
-                      <option value="3 Days Course">3 Days Course</option>
-                      <option value="5 Days Course">5 Days Course</option>
-                      <option value="7 Days Course">7 Days Course</option>
-                      <option value="10 Days Course">10 Days Course</option>
-                      <option value="custom">
-                        {['3 Days Course', '5 Days Course', '7 Days Course', '10 Days Course'].includes(form.course_duration)
-                          ? 'Custom (> 10 Days)'
-                          : `Custom (${form.course_duration})`}
-                      </option>
-                    </select>
+                    <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>Course Duration (Days) *</span>
+                      <span style={{ fontSize: '11px', color: '#0D9488', fontWeight: '700', background: 'rgba(13,148,136,0.12)', padding: '2px 8px', borderRadius: '12px' }}>
+                        {form.course_duration || '3 Days Course'}
+                      </span>
+                    </label>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <div style={{ position: 'relative', flex: 1, display: 'flex', alignItems: 'center' }}>
+                        <input
+                          type="number"
+                          min="1"
+                          max="365"
+                          placeholder="e.g. 3"
+                          value={
+                            (() => {
+                              const match = (form.course_duration || '').match(/^(\d+)/);
+                              return match ? match[1] : '';
+                            })()
+                          }
+                          onChange={e => handleCourseDurationChange(e.target.value)}
+                          required
+                          style={{ width: '100%', paddingRight: '55px', fontSize: '13px', fontWeight: 600 }}
+                        />
+                        <span style={{ position: 'absolute', right: '12px', fontSize: '12px', fontWeight: 700, color: '#64748B', pointerEvents: 'none' }}>
+                          Days
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', gap: '4px' }}>
+                        {[3, 5, 7, 10].map(d => {
+                          const isActive = form.course_duration === `${d} Days Course`;
+                          return (
+                            <button
+                              key={d}
+                              type="button"
+                              onClick={() => handleCourseDurationChange(String(d))}
+                              style={{
+                                padding: '8px 10px',
+                                borderRadius: '8px',
+                                border: isActive ? '1.5px solid #0D9488' : '1px solid #CBD5E1',
+                                background: isActive ? '#0D9488' : '#F8FAFC',
+                                color: isActive ? '#FFFFFF' : '#334155',
+                                fontWeight: 700,
+                                fontSize: '12px',
+                                cursor: 'pointer',
+                                transition: 'all 0.15s ease'
+                              }}
+                            >
+                              {d}D
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
 
 
@@ -2228,6 +2796,134 @@ const StudentsManagement = () => {
                   </div>
 
 
+
+                  {/* Accompanying Guests Section */}
+                  <div style={{
+                    marginTop: '6px',
+                    padding: '14px 16px',
+                    background: '#F0F9FF',
+                    border: '1.5px solid #BAE6FD',
+                    borderLeft: '4px solid #0284C7',
+                    borderRadius: '10px'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: form.guests && form.guests.length > 0 ? '12px' : 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '13px', fontWeight: 800, color: '#0369A1' }}>👥 Accompanying Guests</span>
+                        {form.guests && form.guests.length > 0 && (
+                          <span style={{ background: '#0284C7', color: '#fff', fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '12px' }}>
+                            {form.guests.length} {form.guests.length === 1 ? 'Guest' : 'Guests'}
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleAddSingleGuest}
+                        style={{
+                          background: '#FFFFFF',
+                          color: '#0284C7',
+                          border: '1.5px solid #38BDF8',
+                          padding: '5px 12px',
+                          borderRadius: '7px',
+                          fontSize: '12px',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '5px',
+                          transition: 'all 0.15s ease'
+                        }}
+                      >
+                        <span>👥</span>
+                        <span>+ Add Guest</span>
+                      </button>
+                    </div>
+
+                    {(!form.guests || form.guests.length === 0) && (
+                      <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: '#64748B' }}>
+                        Click <strong>+ Add Guest</strong> if this student has accompanying friends or family surfing along.
+                      </p>
+                    )}
+
+                    {form.guests && form.guests.length > 0 && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px' }}>
+                        {form.guests.map((g, gIdx) => (
+                          <div key={gIdx} style={{
+                            background: '#FFFFFF',
+                            border: '1px solid #E2E8F0',
+                            borderRadius: '8px',
+                            padding: '10px 12px',
+                            display: 'grid',
+                            gridTemplateColumns: '70px 1.4fr 1.1fr 1fr 1fr 30px',
+                            gap: '8px',
+                            alignItems: 'center'
+                          }}>
+                            <span style={{ fontSize: '11px', fontWeight: 700, color: '#0284C7', background: '#E0F2FE', padding: '4px 6px', borderRadius: '5px', textAlign: 'center' }}>
+                              #{gIdx + 1}
+                            </span>
+                            <input
+                              type="text"
+                              placeholder="Guest Name *"
+                              value={g.name || ''}
+                              onChange={e => handleSingleGuestChange(gIdx, 'name', e.target.value)}
+                              style={{ height: '36px', fontSize: '12.5px', padding: '0 8px', borderRadius: '6px', border: '1px solid #CBD5E1', outline: 'none' }}
+                              required
+                            />
+                            <div>
+                              <input
+                                type="date"
+                                value={g.dob || ''}
+                                max={new Date().toISOString().split('T')[0]}
+                                onChange={e => handleSingleGuestChange(gIdx, 'dob', e.target.value)}
+                                style={{ height: '36px', fontSize: '12px', padding: '0 6px', borderRadius: '6px', border: '1px solid #CBD5E1', outline: 'none', width: '100%' }}
+                              />
+                              {g.dob && calculateAge(g.dob) && (
+                                <span style={{ fontSize: '10px', color: '#0D9488', fontWeight: 700 }}>
+                                  Age: {calculateAge(g.dob)} yrs
+                                </span>
+                              )}
+                            </div>
+                            <select
+                              value={g.swimming_ability || 'Swimmer'}
+                              onChange={e => handleSingleGuestChange(gIdx, 'swimming_ability', e.target.value)}
+                              style={{ height: '36px', fontSize: '12px', padding: '0 6px', borderRadius: '6px', border: '1px solid #CBD5E1', outline: 'none' }}
+                            >
+                              <option value="Swimmer">🏊 Swimmer</option>
+                              <option value="Non-Swimmer">🤿 Non-Swimmer</option>
+                            </select>
+                            <select
+                              value={g.level || 'Beginner'}
+                              onChange={e => handleSingleGuestChange(gIdx, 'level', e.target.value)}
+                              style={{ height: '36px', fontSize: '12px', padding: '0 6px', borderRadius: '6px', border: '1px solid #CBD5E1', outline: 'none' }}
+                            >
+                              <option value="Beginner">🏄 Beginner</option>
+                              <option value="Intermediate">🌊 Intermediate</option>
+                              <option value="Advanced">⚡ Advanced</option>
+                              <option value="Master">🏆 Master</option>
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteSingleGuest(gIdx)}
+                              style={{
+                                width: '28px',
+                                height: '28px',
+                                border: '1px solid #FECACA',
+                                background: '#FEF2F2',
+                                color: '#EF4444',
+                                borderRadius: '6px',
+                                cursor: 'pointer',
+                                fontWeight: 700,
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                              }}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
 
                   <div className="sm-form-actions-row">
                     <button type="submit" className="sm-btn-primary" disabled={saving}>
@@ -2270,122 +2966,464 @@ const StudentsManagement = () => {
                         <th style={{ minWidth: '165px' }}>Date of Birth *</th>
                         <th style={{ minWidth: '155px' }}>Swimming Ability *</th>
                         <th style={{ minWidth: '155px' }}>Surf Level *</th>
+                        <th style={{ minWidth: '135px' }}>Course Days *</th>
                         <th style={{ minWidth: '155px' }}>Start Date</th>
                         <th style={{ minWidth: '155px' }}>End Date</th>
-                        <th style={{ width: '56px', textAlign: 'center' }}>Action</th>
+                        <th style={{ width: '130px', textAlign: 'center' }}>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {bulkRows.map((row, rIdx) => (
-                        <tr key={rIdx}>
-                          <td>
-                            <input
-                              type="text"
-                              placeholder="e.g. Connor Coffin"
-                              value={row.name}
-                              onChange={e => handleBulkChange(rIdx, 'name', e.target.value)}
-                              style={{ minWidth: '180px' }}
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="email"
-                              placeholder="email@address.com"
-                              value={row.email}
-                              onChange={e => handleBulkChange(rIdx, 'email', e.target.value)}
-                              style={{ minWidth: '210px' }}
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="text"
-                              placeholder="(555) 000-0000"
-                              value={row.phone}
-                              onChange={e => handleBulkChange(rIdx, 'phone', e.target.value)}
-                              style={{ minWidth: '140px' }}
-                            />
-                          </td>
-                          <td>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                        <React.Fragment key={rIdx}>
+                          <tr style={{ background: '#FFFFFF' }}>
+                            <td>
+                              <input
+                                type="text"
+                                placeholder="e.g. Connor Coffin"
+                                value={row.name}
+                                onChange={e => handleBulkChange(rIdx, 'name', e.target.value)}
+                                style={{ minWidth: '180px' }}
+                              />
+                            </td>
+                            <td>
+                              <input
+                                type="email"
+                                placeholder="email@address.com"
+                                value={row.email}
+                                onChange={e => handleBulkChange(rIdx, 'email', e.target.value)}
+                                style={{ minWidth: '210px' }}
+                              />
+                            </td>
+                            <td>
+                              <input
+                                type="text"
+                                placeholder="(555) 000-0000"
+                                value={row.phone}
+                                onChange={e => handleBulkChange(rIdx, 'phone', e.target.value)}
+                                style={{ minWidth: '140px' }}
+                              />
+                            </td>
+                            <td>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                                <input
+                                  type="date"
+                                  value={row.dob || ''}
+                                  max={new Date().toISOString().split('T')[0]}
+                                  onChange={e => handleBulkChange(rIdx, 'dob', e.target.value)}
+                                  style={{ minWidth: '150px', padding: '6px 10px', fontSize: '13px' }}
+                                  required
+                                />
+                                {row.dob && calculateAge(row.dob) && (
+                                  <span style={{ fontSize: '11px', color: '#0D9488', fontWeight: 700, paddingLeft: '4px' }}>
+                                    Age: {calculateAge(row.dob)} yrs
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td>
+                              <select
+                                value={row.swimming_ability || 'Swimmer'}
+                                onChange={e => handleBulkChange(rIdx, 'swimming_ability', e.target.value)}
+                                style={{ minWidth: '145px' }}
+                              >
+                                <option value="Swimmer">🏊 Swimmer</option>
+                                <option value="Non-Swimmer">🤿 Non-Swimmer</option>
+                              </select>
+                            </td>
+                            <td>
+                              <select
+                                value={row.level}
+                                onChange={e => handleBulkChange(rIdx, 'level', e.target.value)}
+                                style={{ minWidth: '145px' }}
+                              >
+                                <option value="Beginner">🏄 Beginner</option>
+                                <option value="Intermediate">🌊 Intermediate</option>
+                                <option value="Advanced">⚡ Advanced</option>
+                                <option value="Master">🏆 Master</option>
+                              </select>
+                            </td>
+                            <td>
+                              <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max="365"
+                                  placeholder="e.g. 3"
+                                  value={row.days !== undefined && row.days !== null ? row.days : ''}
+                                  onChange={e => handleBulkChange(rIdx, 'days', e.target.value)}
+                                  style={{
+                                    minWidth: '115px',
+                                    paddingRight: '45px',
+                                    fontWeight: '700',
+                                    color: '#0F172A',
+                                    fontSize: '13px'
+                                  }}
+                                  required
+                                />
+                                <span style={{
+                                  position: 'absolute',
+                                  right: '10px',
+                                  fontSize: '11px',
+                                  fontWeight: '700',
+                                  color: '#64748B',
+                                  pointerEvents: 'none'
+                                }}>
+                                  Days
+                                </span>
+                              </div>
+                            </td>
+                            <td>
                               <input
                                 type="date"
-                                value={row.dob || ''}
-                                max={new Date().toISOString().split('T')[0]}
-                                onChange={e => handleBulkChange(rIdx, 'dob', e.target.value)}
-                                style={{ minWidth: '150px', padding: '6px 10px', fontSize: '13px' }}
-                                required
+                                value={row.start_date}
+                                onChange={e => handleBulkChange(rIdx, 'start_date', e.target.value)}
+                                style={{ minWidth: '145px' }}
                               />
-                              {row.dob && calculateAge(row.dob) && (
-                                <span style={{ fontSize: '11px', color: '#0D9488', fontWeight: 700, paddingLeft: '4px' }}>
-                                  Age: {calculateAge(row.dob)} yrs
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                          <td>
-                            <select
-                              value={row.swimming_ability || 'Swimmer'}
-                              onChange={e => handleBulkChange(rIdx, 'swimming_ability', e.target.value)}
-                              style={{ minWidth: '145px' }}
-                            >
-                              <option value="Swimmer">🏊 Swimmer</option>
-                              <option value="Non-Swimmer">🤿 Non-Swimmer</option>
-                            </select>
-                          </td>
-                          <td>
-                            <select
-                              value={row.level}
-                              onChange={e => handleBulkChange(rIdx, 'level', e.target.value)}
-                              style={{ minWidth: '145px' }}
-                            >
-                              <option value="Beginner">🏄 Beginner</option>
-                              <option value="Intermediate">🌊 Intermediate</option>
-                              <option value="Advanced">⚡ Advanced</option>
-                              <option value="Master">🏆 Master</option>
-                            </select>
-                          </td>
-                          <td>
-                            <input
-                              type="date"
-                              value={row.start_date}
-                              onChange={e => handleBulkChange(rIdx, 'start_date', e.target.value)}
-                              style={{ minWidth: '145px' }}
-                            />
-                          </td>
-                          <td>
-                            <input
-                              type="date"
-                              value={row.end_date}
-                              onChange={e => handleBulkChange(rIdx, 'end_date', e.target.value)}
-                              style={{ minWidth: '145px' }}
-                            />
-                          </td>
-                          <td style={{ textAlign: 'center' }}>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteRow(rIdx)}
-                              title="Delete this row"
-                              style={{
-                                background: '#FEF2F2',
-                                border: '1px solid #FECACA',
-                                color: '#EF4444',
-                                borderRadius: '8px',
-                                width: '32px',
-                                height: '32px',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                cursor: 'pointer',
-                                transition: 'all 0.2s'
-                              }}
-                            >
-                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <polyline points="3 6 5 6 21 6" />
-                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                              </svg>
-                            </button>
-                          </td>
-                        </tr>
+                            </td>
+                            <td>
+                              <input
+                                type="date"
+                                min={row.start_date || undefined}
+                                value={row.end_date}
+                                onChange={e => handleBulkChange(rIdx, 'end_date', e.target.value)}
+                                style={{ minWidth: '145px' }}
+                              />
+                            </td>
+                            <td style={{ textAlign: 'center' }}>
+                              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                                <button
+                                  type="button"
+                                  onClick={() => handleAddGuest(rIdx)}
+                                  title="Add Guest for this student"
+                                  style={{
+                                    background: '#F0F9FF',
+                                    border: '1px solid #BAE6FD',
+                                    color: '#0284C7',
+                                    borderRadius: '8px',
+                                    padding: '6px 8px',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '3px',
+                                    fontSize: '11px',
+                                    fontWeight: '700',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.15s ease',
+                                    whiteSpace: 'nowrap'
+                                  }}
+                                >
+                                  <span>👥</span>
+                                  <span>+ Guest</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteRow(rIdx)}
+                                  title="Delete this row"
+                                  style={{
+                                    background: '#FEF2F2',
+                                    border: '1px solid #FECACA',
+                                    color: '#EF4444',
+                                    borderRadius: '8px',
+                                    width: '32px',
+                                    height: '32px',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s'
+                                  }}
+                                >
+                                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <polyline points="3 6 5 6 21 6" />
+                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                                  </svg>
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+
+                          {/* ── Sub-row directly beneath this student: + Add Guest and Guest Details ── */}
+                          {/* Only show when student has guests, OR when student name/email is entered */}
+                          {(!row.guests || row.guests.length === 0) ? (
+                            ((row.name && row.name.trim()) || (row.email && row.email.trim())) ? (
+                              <tr key={`guest-bar-${rIdx}`} style={{ background: '#F8FAFC' }}>
+                                <td colSpan={10} style={{ padding: '8px 16px 14px 20px', borderBottom: '2px solid #E2E8F0' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleAddGuest(rIdx)}
+                                      style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '6px',
+                                        fontSize: '12px',
+                                        fontWeight: '700',
+                                        color: '#0284C7',
+                                        background: '#FFFFFF',
+                                        border: '1.5px dashed #38BDF8',
+                                        padding: '6px 14px',
+                                        borderRadius: '8px',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.15s ease',
+                                        boxShadow: '0 1px 3px rgba(2, 132, 199, 0.08)'
+                                      }}
+                                      onMouseEnter={e => { e.currentTarget.style.background = '#E0F2FE'; e.currentTarget.style.borderColor = '#0284C7'; }}
+                                      onMouseLeave={e => { e.currentTarget.style.background = '#FFFFFF'; e.currentTarget.style.borderColor = '#38BDF8'; }}
+                                    >
+                                      <span>👥</span>
+                                      <span>+ Add Guest for <strong>{row.name || row.email}</strong></span>
+                                    </button>
+                                    <span style={{ fontSize: '12px', color: '#64748B' }}>
+                                      Click <strong>+ Add Guest</strong> to add accompanying friends or family surfing with <strong>{row.name || row.email}</strong>.
+                                    </span>
+                                  </div>
+                                </td>
+                              </tr>
+                            ) : null
+                          ) : (
+                            <tr key={`guest-panel-${rIdx}`} style={{ background: '#F8FAFC' }}>
+                              <td colSpan={10} style={{ padding: '10px 14px 18px 18px', borderBottom: '2px solid #CBD5E1' }}>
+                                <div style={{
+                                  background: '#FFFFFF',
+                                  border: '1.5px solid #BAE6FD',
+                                  borderLeft: '4px solid #0284C7',
+                                  borderRadius: '10px',
+                                  padding: '14px 18px',
+                                  boxShadow: '0 2px 8px rgba(2, 132, 199, 0.08)'
+                                }}>
+                                  {/* Top header bar */}
+                                  <div style={{
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                    marginBottom: '12px',
+                                    paddingBottom: '8px',
+                                    borderBottom: '1px solid #F1F5F9'
+                                  }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                      <span style={{ fontSize: '13px', fontWeight: 800, color: '#0369A1' }}>
+                                        👥 Accompanying Guests for {row.name ? row.name : `Student #${rIdx + 1}`}
+                                      </span>
+                                      <span style={{
+                                        background: '#E0F2FE',
+                                        color: '#0284C7',
+                                        border: '1px solid #BAE6FD',
+                                        fontSize: '11px',
+                                        fontWeight: 700,
+                                        padding: '2px 8px',
+                                        borderRadius: '12px'
+                                      }}>
+                                        {row.guests.length} {row.guests.length === 1 ? 'Guest' : 'Guests'}
+                                      </span>
+                                      <span style={{ fontSize: '11.5px', color: '#64748B' }}>
+                                        (Shares {row.days ? `${row.days} Days` : '3 Days'} Course & booking dates with {row.name || 'Student'})
+                                      </span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleAddGuest(rIdx)}
+                                      style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '5px',
+                                        fontSize: '12px',
+                                        fontWeight: 700,
+                                        color: '#0284C7',
+                                        background: '#F0F9FF',
+                                        border: '1.5px solid #38BDF8',
+                                        padding: '5px 12px',
+                                        borderRadius: '7px',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.15s ease'
+                                      }}
+                                      onMouseEnter={e => { e.currentTarget.style.background = '#E0F2FE'; }}
+                                      onMouseLeave={e => { e.currentTarget.style.background = '#F0F9FF'; }}
+                                    >
+                                      <span>👥</span>
+                                      <span>+ Add Guest</span>
+                                    </button>
+                                  </div>
+
+                                  {/* Guest Table Column Headers */}
+                                  <div style={{
+                                    display: 'grid',
+                                    gridTemplateColumns: '90px 220px 170px 170px 170px 160px 44px',
+                                    gap: '10px',
+                                    padding: '0 8px 6px 8px',
+                                    fontSize: '10.5px',
+                                    fontWeight: 700,
+                                    color: '#64748B',
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.04em'
+                                  }}>
+                                    <span>Guest #</span>
+                                    <span>Full Name *</span>
+                                    <span>Date of Birth *</span>
+                                    <span>Swimming Ability *</span>
+                                    <span>Surf Level *</span>
+                                    <span>Phone / WhatsApp</span>
+                                    <span style={{ textAlign: 'center' }}>Action</span>
+                                  </div>
+
+                                  {/* Guest Input Rows */}
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                    {row.guests.map((guest, gIdx) => (
+                                      <div
+                                        key={gIdx}
+                                        style={{
+                                          display: 'grid',
+                                          gridTemplateColumns: '90px 220px 170px 170px 170px 160px 44px',
+                                          gap: '10px',
+                                          alignItems: 'center',
+                                          background: '#F8FAFC',
+                                          border: '1px solid #E2E8F0',
+                                          borderRadius: '8px',
+                                          padding: '8px 10px'
+                                        }}
+                                      >
+                                        <span style={{
+                                          fontWeight: 700,
+                                          fontSize: '11px',
+                                          color: '#0284C7',
+                                          background: '#E0F2FE',
+                                          border: '1px solid #BAE6FD',
+                                          padding: '6px 8px',
+                                          borderRadius: '6px',
+                                          textAlign: 'center',
+                                          whiteSpace: 'nowrap'
+                                        }}>
+                                          Guest #{gIdx + 1}
+                                        </span>
+
+                                        <input
+                                          type="text"
+                                          placeholder="Guest Full Name *"
+                                          value={guest.name || ''}
+                                          onChange={e => handleGuestChange(rIdx, gIdx, 'name', e.target.value)}
+                                          style={{
+                                            width: '100%',
+                                            height: '38px',
+                                            padding: '0 10px',
+                                            fontSize: '12.5px',
+                                            fontWeight: 500,
+                                            borderRadius: '6px',
+                                            border: '1.5px solid #CBD5E1',
+                                            background: '#FFFFFF',
+                                            boxSizing: 'border-box'
+                                          }}
+                                          required
+                                        />
+
+                                        <div>
+                                          <input
+                                            type="date"
+                                            value={guest.dob || ''}
+                                            max={new Date().toISOString().split('T')[0]}
+                                            onChange={e => handleGuestChange(rIdx, gIdx, 'dob', e.target.value)}
+                                            style={{
+                                              width: '100%',
+                                              height: '38px',
+                                              padding: '0 8px',
+                                              fontSize: '12px',
+                                              borderRadius: '6px',
+                                              border: '1.5px solid #CBD5E1',
+                                              background: '#FFFFFF',
+                                              boxSizing: 'border-box'
+                                            }}
+                                          />
+                                          {guest.dob && calculateAge(guest.dob) && (
+                                            <span style={{ fontSize: '10.5px', color: '#0D9488', fontWeight: 700, paddingLeft: '4px' }}>
+                                              Age: {calculateAge(guest.dob)} yrs
+                                            </span>
+                                          )}
+                                        </div>
+
+                                        <select
+                                          value={guest.swimming_ability || 'Swimmer'}
+                                          onChange={e => handleGuestChange(rIdx, gIdx, 'swimming_ability', e.target.value)}
+                                          style={{
+                                            width: '100%',
+                                            height: '38px',
+                                            padding: '0 8px',
+                                            fontSize: '12px',
+                                            borderRadius: '6px',
+                                            border: '1.5px solid #CBD5E1',
+                                            background: '#FFFFFF',
+                                            boxSizing: 'border-box'
+                                          }}
+                                        >
+                                          <option value="Swimmer">🏊 Swimmer</option>
+                                          <option value="Non-Swimmer">🤿 Non-Swimmer</option>
+                                        </select>
+
+                                        <select
+                                          value={guest.level || 'Beginner'}
+                                          onChange={e => handleGuestChange(rIdx, gIdx, 'level', e.target.value)}
+                                          style={{
+                                            width: '100%',
+                                            height: '38px',
+                                            padding: '0 8px',
+                                            fontSize: '12px',
+                                            borderRadius: '6px',
+                                            border: '1.5px solid #CBD5E1',
+                                            background: '#FFFFFF',
+                                            boxSizing: 'border-box'
+                                          }}
+                                        >
+                                          <option value="Beginner">🏄 Beginner</option>
+                                          <option value="Intermediate">🌊 Intermediate</option>
+                                          <option value="Advanced">⚡ Advanced</option>
+                                          <option value="Master">🏆 Master</option>
+                                        </select>
+
+                                        <input
+                                          type="text"
+                                          placeholder="(555) 000-0000"
+                                          value={guest.phone || ''}
+                                          onChange={e => handleGuestChange(rIdx, gIdx, 'phone', e.target.value)}
+                                          style={{
+                                            width: '100%',
+                                            height: '38px',
+                                            padding: '0 10px',
+                                            fontSize: '12px',
+                                            borderRadius: '6px',
+                                            border: '1.5px solid #CBD5E1',
+                                            background: '#FFFFFF',
+                                            boxSizing: 'border-box'
+                                          }}
+                                        />
+
+                                        <div style={{ textAlign: 'center' }}>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleDeleteGuest(rIdx, gIdx)}
+                                            title="Remove this guest"
+                                            style={{
+                                              width: '32px',
+                                              height: '32px',
+                                              borderRadius: '6px',
+                                              border: '1px solid #FECACA',
+                                              background: '#FEF2F2',
+                                              color: '#EF4444',
+                                              cursor: 'pointer',
+                                              display: 'inline-flex',
+                                              alignItems: 'center',
+                                              justifyContent: 'center',
+                                              fontSize: '14px',
+                                              fontWeight: '700',
+                                              transition: 'all 0.15s ease'
+                                            }}
+                                          >
+                                            ✕
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
                       ))}
                     </tbody>
                   </table>
@@ -2448,7 +3486,7 @@ const StudentsManagement = () => {
                           type="button"
                           onClick={() => {
                             setCsvFileName('');
-                            setBulkRows([{ name: '', email: '', phone: '', dob: '', age: '', level: 'Beginner', start_date: '', end_date: '', instructor_id: '' }]);
+                            setBulkRows([{ name: '', email: '', phone: '', dob: '', age: '', level: 'Beginner', swimming_ability: 'Swimmer', days: 3, course_duration: '3 Days Course', start_date: '', end_date: '', instructor_id: '' }]);
                           }}
                           style={{
                             background: 'none', border: 'none', color: '#EF4444',
@@ -2615,6 +3653,11 @@ const StudentsManagement = () => {
                           <td>Must match: Beginner, Intermediate, or Advanced</td>
                         </tr>
                         <tr>
+                          <td><strong>Course Days</strong></td>
+                          <td><span className="sm-badge-opt">Optional</span></td>
+                          <td>Number of course training days (e.g. 3, 5, 7, 10, or custom). Defaults to 3 days.</td>
+                        </tr>
+                        <tr>
                           <td><strong>Start Date</strong></td>
                           <td><span className="sm-badge-req">Required</span></td>
                           <td>Session start date in YYYY-MM-DD (e.g., 2026-10-01) or DD-MM-YYYY</td>
@@ -2622,7 +3665,7 @@ const StudentsManagement = () => {
                         <tr>
                           <td><strong>End Date</strong></td>
                           <td><span className="sm-badge-opt">Optional</span></td>
-                          <td>Session end date in YYYY-MM-DD (defaults to 3 days if left blank)</td>
+                          <td>Session end date in YYYY-MM-DD (auto-calculated from Course Days if left blank)</td>
                         </tr>
                       </tbody>
                     </table>
@@ -2805,9 +3848,39 @@ const StudentsManagement = () => {
                             )}
                           </td>
                         </tr>
+                        <tr><td>Course Duration</td><td><strong style={{ color: '#0D9488' }}>{addedStudentSummary.course_duration || '3 Days Course'}</strong></td></tr>
                         <tr><td>Assigned Instructor</td><td>{addedStudentSummary.instructor || 'Auto-Assigned Coach'}</td></tr>
                         <tr><td>Booking Start Date</td><td>{addedStudentSummary.start_date || '—'}</td></tr>
                         <tr><td>Booking End Date</td><td>{addedStudentSummary.end_date || '—'}</td></tr>
+                        {((addedStudentSummary.guests_count > 0) || (addedStudentSummary.guests_details && addedStudentSummary.guests_details.length > 0)) && (
+                          <tr>
+                            <td>Accompanying Guests</td>
+                            <td>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                <span style={{ color: '#0284C7', fontWeight: 700 }}>
+                                  👥 {addedStudentSummary.guests_count || (addedStudentSummary.guests_details?.length)} Guest(s)
+                                </span>
+                                {Array.isArray(addedStudentSummary.guests_details) && addedStudentSummary.guests_details.length > 0 && (
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '2px' }}>
+                                    {addedStudentSummary.guests_details.map((g, idx) => (
+                                      <span key={idx} style={{
+                                        fontSize: '11px',
+                                        background: '#E0F2FE',
+                                        color: '#0369A1',
+                                        border: '1px solid #BAE6FD',
+                                        borderRadius: '4px',
+                                        padding: '1px 6px',
+                                        fontWeight: 600
+                                      }}>
+                                        {g.name} ({g.level || 'Beginner'})
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
                         <tr><td>Medical Considerations</td><td>None reported</td></tr>
                         <tr>
                           <td>Status</td>
@@ -3203,83 +4276,55 @@ const StudentsManagement = () => {
               </div>
             </div>
 
-            {/* Course Duration / Allowed Days Block */}
-            <div style={{ background: '#FFFFFF', border: '1.5px solid #E2E8F0', borderRadius: '16px', padding: '20px', marginBottom: '20px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                <label style={{ fontSize: '13px', fontWeight: '800', color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span>🏄</span>
-                  <span>Course Duration / Allowed Days</span>
+            {/* Course Duration / Allowed Days Block - Manual Entry */}
+            <div style={{ marginBottom: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                <label style={{ fontSize: '12px', fontWeight: '800', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  Course Duration (Allowed Days)
                 </label>
-                <span style={{ fontSize: '11px', fontWeight: '800', background: '#F0FDFA', color: '#0D9488', padding: '3px 8px', borderRadius: '10px', border: '1px solid #CCFBF1' }}>
-                  🔒 Locks Registration Days
+                <span style={{ fontSize: '11px', fontWeight: '800', background: '#F0FDFA', color: '#0D9488', padding: '2px 8px', borderRadius: '6px' }}>
+                  {(() => {
+                    const m = String(inviteCourseDuration || '').match(/^(\d+)/);
+                    const n = m ? parseInt(m[1], 10) : 3;
+                    return n === 1 ? '1 Day Crash Course' : `${n} Days Course`;
+                  })()}
                 </span>
               </div>
-              <p style={{ margin: '0 0 12px 0', fontSize: '12px', color: '#64748B', lineHeight: '1.4' }}>
-                Select how many training days the invited students can attend. Students registering via this link will be strictly locked to this course length.
-              </p>
-
-              {/* Quick Preset Buttons for Days */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(105px, 1fr))', gap: '8px', marginBottom: '12px' }}>
-                {[
-                  { value: '1 Day Crash Course', label: '1 Day', sub: 'Crash Course' },
-                  { value: '3 Days Course', label: '3 Days', sub: 'Intro Course' },
-                  { value: '5 Days Course', label: '5 Days', sub: 'Standard' },
-                  { value: '7 Days Course', label: '7 Days', sub: 'Week Long' },
-                  { value: '10 Days Course', label: '10 Days', sub: 'Intensive' }
-                ].map((dur) => {
-                  const isSelected = inviteCourseDuration === dur.value;
-                  return (
-                    <button
-                      key={dur.value}
-                      type="button"
-                      onClick={() => setInviteCourseDuration(dur.value)}
-                      style={{
-                        padding: '8px 10px',
-                        borderRadius: '10px',
-                        border: isSelected ? '2px solid #0D9488' : '1.5px solid #E2E8F0',
-                        background: isSelected ? '#F0FDFA' : '#F8FAFC',
-                        cursor: 'pointer',
-                        textAlign: 'center',
-                        transition: 'all 0.15s ease'
-                      }}
-                    >
-                      <div style={{ fontWeight: '800', fontSize: '13px', color: isSelected ? '#0D9488' : '#0F172A' }}>
-                        {dur.label}
-                      </div>
-                      <div style={{ fontSize: '10px', fontWeight: '600', color: isSelected ? '#0F766E' : '#94A3B8' }}>
-                        {dur.sub}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Custom Course Duration Input */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', background: '#F8FAFC', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
-                <span style={{ fontSize: '12px', fontWeight: '700', color: '#475569', whiteSpace: 'nowrap' }}>Custom Days:</span>
-                <select
-                  value={inviteCourseDuration}
-                  onChange={e => setInviteCourseDuration(e.target.value)}
-                  style={{ flex: 1, padding: '6px 10px', borderRadius: '6px', border: '1px solid #CBD5E1', fontSize: '12px', fontWeight: '700', color: '#0F172A', background: '#FFF' }}
-                >
-                  <option value="1 Day Crash Course">1 Day Crash Course</option>
-                  <option value="2 Days Course">2 Days Course</option>
-                  <option value="3 Days Course">3 Days Course</option>
-                  <option value="4 Days Course">4 Days Course</option>
-                  <option value="5 Days Course">5 Days Course</option>
-                  <option value="6 Days Course">6 Days Course</option>
-                  <option value="7 Days Course">7 Days Course</option>
-                  <option value="8 Days Course">8 Days Course</option>
-                  <option value="9 Days Course">9 Days Course</option>
-                  <option value="10 Days Course">10 Days Course</option>
-                  <option value="12 Days Course">12 Days Course</option>
-                  <option value="14 Days Course">14 Days Course</option>
-                </select>
-              </div>
-
-              <div style={{ marginTop: '10px', fontSize: '12px', color: '#0D9488', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span>🎯</span>
-                <span>Allowed Days: <strong>{inviteCourseDuration}</strong> (Students can only come for these days)</span>
+              <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                <input
+                  type="number"
+                  min="1"
+                  max="365"
+                  placeholder="Enter days (e.g. 3, 5, 7, 10)"
+                  value={(() => {
+                    const match = String(inviteCourseDuration || '').match(/^(\d+)/);
+                    return match ? match[1] : (inviteCourseDuration || '');
+                  })()}
+                  onChange={e => {
+                    const val = e.target.value;
+                    const num = parseInt(val, 10);
+                    if (!isNaN(num) && num > 0) {
+                      setInviteCourseDuration(num === 1 ? '1 Day Crash Course' : `${num} Days Course`);
+                    } else {
+                      setInviteCourseDuration(val);
+                    }
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '10px 65px 10px 14px',
+                    borderRadius: '10px',
+                    border: '1.5px solid #CBD5E1',
+                    fontSize: '14px',
+                    fontWeight: '700',
+                    color: '#0F172A',
+                    background: '#F8FAFC',
+                    outline: 'none',
+                    boxSizing: 'border-box'
+                  }}
+                />
+                <span style={{ position: 'absolute', right: '14px', fontSize: '13px', fontWeight: '700', color: '#64748B', pointerEvents: 'none' }}>
+                  Days
+                </span>
               </div>
             </div>
 
@@ -3322,7 +4367,7 @@ const StudentsManagement = () => {
                   </span>
                 </div>
 
-                <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                <div style={{ display: 'flex', gap: '8px' }}>
                   <input
                     type="text"
                     readOnly
@@ -3344,26 +4389,6 @@ const StudentsManagement = () => {
                     }}
                   >
                     {copiedSchoolInviteCode === createdSchoolInvite.code ? '✓ Copied!' : 'Copy'}
-                  </button>
-                </div>
-
-                <div style={{ display: 'flex', gap: '10px' }}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const shareMsg = `Hi! Here is your registration invite link for ${effectiveSchool}: ${createdSchoolInvite.fullUrl}\n\nCourse Duration: ${createdSchoolInvite.course_duration || inviteCourseDuration} (Allowed training days)\nCapacity: Up to ${createdSchoolInvite.max_count} student/guest slots available. Please register soon!`;
-                      window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(shareMsg)}`, '_blank');
-                    }}
-                    style={{ flex: 1, padding: '9px', borderRadius: '8px', background: '#25D366', color: '#FFF', border: 'none', fontWeight: 700, fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
-                  >
-                    <span>💬 Share via WhatsApp</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => window.open(createdSchoolInvite.fullUrl, '_blank')}
-                    style={{ padding: '9px 14px', borderRadius: '8px', background: '#FFFFFF', color: '#0F172A', border: '1px solid #CBD5E1', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}
-                  >
-                    🚀 Test Link
                   </button>
                 </div>
               </div>
@@ -3785,7 +4810,7 @@ const StudentsManagement = () => {
         /* Bulk Grid Entry */
         .sm-bulk-grid-layout { display: flex; flex-direction: column; gap: 20px; }
         .sm-bulk-table-wrap { overflow-x: auto; border: 1px solid #CBD5E1; border-radius: 12px; background: #FFF; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
-        .sm-bulk-table { width: 100%; border-collapse: collapse; min-width: 1280px; }
+        .sm-bulk-table { width: 100%; border-collapse: collapse; min-width: 1400px; }
         .sm-bulk-table th { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #475569; background: #F1F5F9; padding: 14px 12px; border-bottom: 2px solid #CBD5E1; text-align: left; white-space: nowrap; }
         .sm-bulk-table td { padding: 10px 10px; border-bottom: 1px solid #F1F5F9; vertical-align: middle; }
         .sm-bulk-table input, .sm-bulk-table select {

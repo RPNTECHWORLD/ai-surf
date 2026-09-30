@@ -103,6 +103,7 @@ const SessionConfigure = () => {
   });
   const [settings, setSettings] = useState({ defaultDuration: "90", maxStudents: "4", breakBetween: "30", cancellationWindow: "24" });
   const [saving, setSaving] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
 
   const toggleDay = (sid, day) => setSlots(p => p.map(s => { if (s.id !== sid) return s; const h = s.days.includes(day); return { ...s, days: h ? s.days.filter(d => d !== day) : [...s.days, day] }; }));
   const updateSlot = (sid, f, v) => setSlots(p => p.map(s => s.id === sid ? { ...s, [f]: v } : s));
@@ -118,12 +119,8 @@ const SessionConfigure = () => {
     window.dispatchEvent(new CustomEvent('session_slots_updated', { detail: slots }));
     setTimeout(() => {
       setSaving(false);
-      if (fromSource === 'new_session' || fromSource === 'schedule') {
-        navigate('/sessions?action=new_session');
-      } else {
-        alert("Session Configuration Saved Successfully!");
-      }
-    }, 400);
+      setShowSuccessModal(true);
+    }, 350);
   };
 
   return (
@@ -236,9 +233,50 @@ const SessionConfigure = () => {
                         );
                       })}
                     </div>
-                    <button onClick={() => updateSlot(slot.id, "active", !slot.active)} style={{ padding: "6px 14px", borderRadius: "20px", border: "none", background: slot.active ? "rgba(13, 148, 136, 0.12)" : "rgba(148, 163, 184, 0.15)", color: slot.active ? "#0D9488" : "#94A3B8", fontSize: "12px", fontWeight: 700, cursor: "pointer" }}>
-                      {slot.active ? "Active" : "Inactive"}
-                    </button>
+                    <div style={{ position: "relative", display: "inline-flex", alignItems: "center", width: "94px" }}>
+                      <select
+                        value={slot.active !== false ? "active" : "inactive"}
+                        onChange={e => updateSlot(slot.id, "active", e.target.value === "active")}
+                        style={{
+                          width: "100%",
+                          padding: "6px 22px 6px 10px",
+                          borderRadius: "8px",
+                          border: slot.active !== false ? "1.5px solid #0D9488" : "1.5px solid #CBD5E1",
+                          backgroundColor: slot.active !== false ? "#F0FDFA" : "#F8FAFC",
+                          color: slot.active !== false ? "#0D9488" : "#64748B",
+                          fontSize: "12px",
+                          fontWeight: 700,
+                          cursor: "pointer",
+                          outline: "none",
+                          appearance: "none",
+                          WebkitAppearance: "none",
+                          MozAppearance: "none",
+                          fontFamily: "inherit",
+                          boxSizing: "border-box",
+                          transition: "all 0.15s ease"
+                        }}
+                      >
+                        <option value="active">Active</option>
+                        <option value="inactive">Inactive</option>
+                      </select>
+                      <svg
+                        width="10"
+                        height="10"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke={slot.active !== false ? "#0D9488" : "#64748B"}
+                        strokeWidth="3"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        style={{
+                          position: "absolute",
+                          right: "8px",
+                          pointerEvents: "none"
+                        }}
+                      >
+                        <polyline points="6 9 12 15 18 9" />
+                      </svg>
+                    </div>
                     <button onClick={() => deleteSlot(slot.id)} style={{ width: "36px", height: "36px", borderRadius: "8px", border: "1px solid #FECACA", background: "#FEF2F2", color: "#EF4444", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
                       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
                     </button>
@@ -287,7 +325,141 @@ const SessionConfigure = () => {
         </div>
       </main>
 
+      {/* Custom In-App Success Modal (Replaces Native Browser Alert) */}
+      {showSuccessModal && (
+        <div
+          onClick={() => setShowSuccessModal(false)}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.65)',
+            backdropFilter: 'blur(8px)',
+            WebkitBackdropFilter: 'blur(8px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10000,
+            padding: '20px',
+            animation: 'scFadeIn 0.2s ease-out'
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: '#FFFFFF',
+              borderRadius: '20px',
+              padding: '32px 28px',
+              width: '100%',
+              maxWidth: '420px',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+              border: '1.5px solid #E2E8F0',
+              textAlign: 'center',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              animation: 'scScaleUp 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
+              boxSizing: 'border-box'
+            }}
+          >
+            {/* Animated Checkmark Circle */}
+            <div style={{
+              width: '64px',
+              height: '64px',
+              borderRadius: '50%',
+              background: 'linear-gradient(135deg, #ECFDF5 0%, #CCFBF1 100%)',
+              border: '2px solid #10B981',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '28px',
+              color: '#059669',
+              marginBottom: '18px',
+              boxShadow: '0 8px 20px -4px rgba(16, 185, 129, 0.3)'
+            }}>
+              ✓
+            </div>
+
+            <h3 style={{
+              fontFamily: "'Outfit', sans-serif",
+              fontSize: '20px',
+              fontWeight: 800,
+              color: '#0F172A',
+              margin: '0 0 8px 0'
+            }}>
+              Configuration Saved!
+            </h3>
+
+            <p style={{
+              fontSize: '14px',
+              color: '#64748B',
+              lineHeight: '1.5',
+              margin: '0 0 24px 0'
+            }}>
+              Session Configuration Saved Successfully! All slot timings and capacity settings are now live across your school.
+            </p>
+
+            <div style={{ display: 'flex', gap: '10px', width: '100%' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSuccessModal(false);
+                  if (fromSource === 'new_session' || fromSource === 'schedule') {
+                    navigate('/sessions?action=new_session');
+                  }
+                }}
+                style={{
+                  flex: 1,
+                  padding: '12px 20px',
+                  borderRadius: '12px',
+                  background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
+                  color: '#FFFFFF',
+                  border: 'none',
+                  fontWeight: 800,
+                  fontSize: '14px',
+                  cursor: 'pointer',
+                  fontFamily: "'Outfit', sans-serif",
+                  transition: 'all 0.15s ease',
+                  boxShadow: '0 4px 12px rgba(13, 148, 136, 0.3)'
+                }}
+              >
+                {fromSource === 'new_session' || fromSource === 'schedule' ? 'Continue Scheduling →' : 'OK'}
+              </button>
+
+              {!(fromSource === 'new_session' || fromSource === 'schedule') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSuccessModal(false);
+                    navigate('/sessions');
+                  }}
+                  style={{
+                    padding: '12px 18px',
+                    borderRadius: '12px',
+                    background: '#F8FAFC',
+                    color: '#475569',
+                    border: '1.5px solid #CBD5E1',
+                    fontWeight: 700,
+                    fontSize: '13px',
+                    cursor: 'pointer',
+                    fontFamily: "'Outfit', sans-serif",
+                    whiteSpace: 'nowrap'
+                  }}
+                >
+                  View Sessions →
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <style>{`
+        @keyframes scFadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes scScaleUp { from { opacity: 0; transform: scale(0.92); } to { opacity: 1; transform: scale(1); } }
+
         .sc-page-wrapper, .sc-page-container {
           display: flex;
           min-height: 100vh;

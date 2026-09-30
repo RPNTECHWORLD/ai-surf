@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 
@@ -20,28 +20,17 @@ const DEFAULT_CLIPS = [
 const ATHLETE_PALETTE = ['#06B6D4', '#10B981', '#F59E0B', '#EC4899', '#8B5CF6', '#3B82F6', '#14B8A6'];
 
 const generateAthleteProfile = (name, index = 0, level = 'Athlete') => {
-  let hash = 0;
-  for (let i = 0; i < name.length; i++) {
-    hash = (hash << 5) - hash + name.charCodeAt(i);
-    hash |= 0;
-  }
-  const baseScore = 72 + Math.abs(hash % 22);
-  const takeoff = Math.min(96, Math.max(68, baseScore + (hash % 6)));
-  const positioning = Math.min(96, Math.max(65, baseScore - ((hash >> 2) % 7)));
-  const balance = Math.min(98, Math.max(70, baseScore + ((hash >> 4) % 8)));
-  const waveReading = Math.min(95, Math.max(64, baseScore - ((hash >> 6) % 9)));
-
   return {
     id: `surfer_${name.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase()}_${index}`,
     name,
     level,
     color: ATHLETE_PALETTE[index % ATHLETE_PALETTE.length],
-    score: baseScore,
+    score: 0,
     skills: {
-      takeoff,
-      positioning,
-      balance,
-      waveReading
+      takeoff: 0,
+      positioning: 0,
+      balance: 0,
+      waveReading: 0
     }
   };
 };
@@ -237,6 +226,28 @@ const VideoAnalysis = () => {
   const [isSurferDropdownOpen, setIsSurferDropdownOpen] = useState(false);
   const surferDropdownRef = useRef(null);
 
+  // Coach Scores state (starts at 0, fully editable by coach per surfer)
+  const [athleteScores, setAthleteScores] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`coach_scores_${studentName}`);
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return {};
+  });
+
+  // Coach Key Moments & Notes (drawings & timestamped notes)
+  const [coachMoments, setCoachMoments] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`coach_moments_${studentName}`);
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return [];
+  });
+
+  const [isAddingNote, setIsAddingNote] = useState(false);
+  const [newNoteText, setNewNoteText] = useState('');
+  const [newNoteColor, setNewNoteColor] = useState('#0D9488');
+
   // Load ONLY real athletes present in this specific group or session
   useEffect(() => {
     let rawNames = [];
@@ -317,10 +328,34 @@ const VideoAnalysis = () => {
     loadRealAthletes();
   }, [studentName, sessionDate, searchParams]);
 
-  // Derive active surfer details for score/skills
+  // Derive active surfer details for score/skills (starts at 0, updated by Coach)
   const currentActiveSurfer = useMemo(() => {
-    return taggedSurfers.find(s => s.id === activeSurferId) || taggedSurfers[0] || (availableSurfers[0] || { name: studentName, score: 78, skills: { takeoff: 82, positioning: 71, balance: 85, waveReading: 68 } });
-  }, [taggedSurfers, activeSurferId, availableSurfers, studentName]);
+    const base = taggedSurfers.find(s => s.id === activeSurferId) || taggedSurfers[0] || (availableSurfers[0] || { id: 'default', name: studentName, score: 0, skills: { takeoff: 0, positioning: 0, balance: 0, waveReading: 0 } });
+    const surferId = base.id || 'default';
+    const custom = athleteScores[surferId];
+    if (custom) {
+      return {
+        ...base,
+        score: custom.overall !== undefined ? custom.overall : 0,
+        skills: {
+          takeoff: custom.takeoff !== undefined ? custom.takeoff : 0,
+          positioning: custom.positioning !== undefined ? custom.positioning : 0,
+          balance: custom.balance !== undefined ? custom.balance : 0,
+          waveReading: custom.waveReading !== undefined ? custom.waveReading : 0
+        }
+      };
+    }
+    return {
+      ...base,
+      score: 0,
+      skills: {
+        takeoff: 0,
+        positioning: 0,
+        balance: 0,
+        waveReading: 0
+      }
+    };
+  }, [taggedSurfers, activeSurferId, availableSurfers, studentName, athleteScores]);
 
   // Handle outside clicks for surfer dropdown
   useEffect(() => {
@@ -364,6 +399,11 @@ const VideoAnalysis = () => {
   const fileInputRef = useRef(null);
   const targetFileInputRef = useRef(null);
   const addClipInputRef = useRef(null);
+  const progressBarRef = useRef(null);
+  const isScrubbingRef = useRef(false);
+  const wasPlayingBeforeScrubRef = useRef(false);
+  const scrubRafRef = useRef(null);
+  const [isScrubbing, setIsScrubbing] = useState(false);
 
   // Video Player Playback State
   const [isPlaying, setIsPlaying] = useState(false);
@@ -371,6 +411,7 @@ const VideoAnalysis = () => {
   const [duration, setDuration] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
   const [volume, setVolume] = useState(1);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
 
   // Drawing Canvas Annotation State
   const [tool, setTool] = useState('select'); // 'select' | 'pen' | 'eraser'
@@ -380,14 +421,97 @@ const VideoAnalysis = () => {
   const [isDrawing, setIsDrawing] = useState(false);
   const [activeMarkerColor, setActiveMarkerColor] = useState(null);
 
-  // Group strokes into clean individual markers for the timeline
+  // Update specific skill score (0-100) and auto compute average overall
+  const updateSurferSkill = (skillKey, val) => {
+    const num = Math.max(0, Math.min(100, parseInt(val, 10) || 0));
+    setAthleteScores(prev => {
+      const current = prev[activeSurferId] || { takeoff: 0, positioning: 0, balance: 0, waveReading: 0, overall: 0 };
+      const nextScores = { ...current, [skillKey]: num };
+      nextScores.overall = Math.round((nextScores.takeoff + nextScores.positioning + nextScores.balance + nextScores.waveReading) / 4);
+      const all = { ...prev, [activeSurferId]: nextScores };
+      try {
+        localStorage.setItem(`coach_scores_${studentName}`, JSON.stringify(all));
+      } catch (e) {}
+      return all;
+    });
+  };
+
+  // Direct update of overall performance score (0-100)
+  const updateSurferOverallScore = (val) => {
+    const num = Math.max(0, Math.min(100, parseInt(val, 10) || 0));
+    setAthleteScores(prev => {
+      const current = prev[activeSurferId] || { takeoff: 0, positioning: 0, balance: 0, waveReading: 0, overall: 0 };
+      const all = { ...prev, [activeSurferId]: { ...current, overall: num } };
+      try {
+        localStorage.setItem(`coach_scores_${studentName}`, JSON.stringify(all));
+      } catch (e) {}
+      return all;
+    });
+  };
+
+  // Save a new coaching note at the current video timeframe
+  const handleSaveNewNote = () => {
+    if (!newNoteText.trim()) return;
+    const timeSec = videoRef.current ? videoRef.current.currentTime : currentTime;
+    const timeFormatted = formatTime(timeSec);
+    const newMoment = {
+      id: `note_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+      clipId: currentClip.id,
+      timestamp: timeSec,
+      timestampFormatted: timeFormatted,
+      title: newNoteText.trim(),
+      note: newNoteText.trim(),
+      color: newNoteColor,
+      type: 'note',
+      thumb: currentClip.bg || 'https://images.unsplash.com/photo-1502680390469-be75c86b636f?auto=format&fit=crop&q=80&w=150'
+    };
+    setCoachMoments(prev => {
+      const updated = [...prev, newMoment].sort((a, b) => a.timestamp - b.timestamp);
+      try {
+        localStorage.setItem(`coach_moments_${studentName}`, JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
+    setNewNoteText('');
+    setIsAddingNote(false);
+  };
+
+  // Delete a moment / note
+  const handleDeleteMoment = (momentId, e) => {
+    if (e) e.stopPropagation();
+    setCoachMoments(prev => {
+      const updated = prev.filter(m => m.id !== momentId);
+      try {
+        localStorage.setItem(`coach_moments_${studentName}`, JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
+  };
+
+  // Seek video and display drawing or frame for moment
+  const handleSelectMoment = (moment) => {
+    if (!videoRef.current) return;
+    videoRef.current.currentTime = moment.timestamp;
+    setCurrentTime(moment.timestamp);
+    videoRef.current.pause();
+    setIsPlaying(false);
+    if (moment.type === 'drawing' && moment.color) {
+      setActiveMarkerColor(moment.color);
+      setColor(moment.color);
+    } else {
+      setActiveMarkerColor(null);
+    }
+    setTimeout(() => redraw(moment.timestamp, moment.type === 'drawing' ? moment.color : null), 40);
+  };
+
+  // Group strokes and coach moments into clean individual markers for the timeline
   const momentMarkers = useMemo(() => {
     const map = new Map();
     strokes
       .filter(s => s.tool !== 'eraser' && (s.clipId === undefined || s.clipId === currentClip.id))
       .forEach(s => {
         const timeKey = Math.round((s.timestamp || 0) * 10) / 10;
-        const key = `${timeKey}_${s.color}`;
+        const key = `stroke_${timeKey}_${s.color}`;
         if (!map.has(key)) {
           map.set(key, {
             timestamp: s.timestamp || 0,
@@ -396,8 +520,21 @@ const VideoAnalysis = () => {
           });
         }
       });
+    coachMoments
+      .filter(m => m.clipId === undefined || m.clipId === currentClip.id)
+      .forEach(m => {
+        const timeKey = Math.round((m.timestamp || 0) * 10) / 10;
+        const key = `moment_${timeKey}_${m.color}`;
+        if (!map.has(key)) {
+          map.set(key, {
+            timestamp: m.timestamp || 0,
+            color: m.color || '#0D9488',
+            key
+          });
+        }
+      });
     return Array.from(map.values());
-  }, [strokes, currentClip]);
+  }, [strokes, currentClip, coachMoments]);
 
   // Parse multiple video URLs from query string or payload
   const parseVideoUrls = (rawUrl) => {
@@ -656,8 +793,8 @@ const VideoAnalysis = () => {
     }
   };
 
-  // Redraw canvas drawings strictly for the clicked color
-  const redraw = (targetColor = null) => {
+  // Redraw canvas drawings strictly for the active timeframe / timestamp
+  const redraw = (targetTimeOrColor = null, maybeColor = null) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -668,13 +805,32 @@ const VideoAnalysis = () => {
       return;
     }
 
-    const colorFilter = targetColor !== null ? targetColor : activeMarkerColor;
+    let targetTime = null;
+    let targetColor = null;
 
-    // Strictly show strokes for this clip matching the selected marker color
+    if (typeof targetTimeOrColor === 'number') {
+      targetTime = targetTimeOrColor;
+      targetColor = maybeColor;
+    } else if (typeof targetTimeOrColor === 'string' && targetTimeOrColor.startsWith('#')) {
+      targetColor = targetTimeOrColor;
+    }
+
+    const activeTime = typeof targetTime === 'number'
+      ? targetTime
+      : (videoRef.current ? videoRef.current.currentTime : currentTime);
+
+    // Strictly show strokes for this clip matching THIS timeframe only (±1.0s window)
     const activeStrokes = strokes.filter(s => {
       if (s.clipId !== undefined && s.clipId !== currentClip.id) return false;
-      if (colorFilter) {
-        return s.color === colorFilter;
+
+      // Timeframe matching: only show drawings that were drawn at this specific timeframe
+      const strokeTime = s.timestamp !== undefined ? s.timestamp : 0;
+      if (Math.abs(strokeTime - activeTime) > 1.0) {
+        return false;
+      }
+
+      if (targetColor) {
+        return s.color === targetColor;
       }
       return true;
     });
@@ -748,15 +904,24 @@ const VideoAnalysis = () => {
       if (canvas) {
         canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
       }
+      videoRef.current.playbackRate = playbackSpeed;
       videoRef.current.play().then(() => {
         setIsPlaying(true);
       }).catch(err => console.error("Playback failed", err));
     }
   };
 
+  const handleSetSpeed = (speed) => {
+    setPlaybackSpeed(speed);
+    if (videoRef.current) {
+      videoRef.current.playbackRate = speed;
+    }
+  };
+
   const handleSeekForward = () => {
     if (!videoRef.current) return;
-    const nextTime = Math.min(duration, videoRef.current.currentTime + 10);
+    const step = playbackSpeed === 0.25 ? 0.25 : playbackSpeed === 0.5 ? 0.5 : 1;
+    const nextTime = Math.min(duration, videoRef.current.currentTime + step);
     videoRef.current.currentTime = nextTime;
     setCurrentTime(nextTime);
     redraw(nextTime);
@@ -764,7 +929,8 @@ const VideoAnalysis = () => {
 
   const handleSeekBackward = () => {
     if (!videoRef.current) return;
-    const prevTime = Math.max(0, videoRef.current.currentTime - 10);
+    const step = playbackSpeed === 0.25 ? 0.25 : playbackSpeed === 0.5 ? 0.5 : 1;
+    const prevTime = Math.max(0, videoRef.current.currentTime - step);
     videoRef.current.currentTime = prevTime;
     setCurrentTime(prevTime);
     redraw(prevTime);
@@ -794,7 +960,7 @@ const VideoAnalysis = () => {
   };
 
   const handleTimeUpdate = () => {
-    if (!videoRef.current) return;
+    if (!videoRef.current || isScrubbingRef.current) return;
     const t = videoRef.current.currentTime;
     setCurrentTime(t);
 
@@ -831,15 +997,107 @@ const VideoAnalysis = () => {
     }
   };
 
-  const handleProgressBarClick = (e) => {
-    if (!videoRef.current || duration === 0) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const clickX = e.clientX - rect.left;
-    const pct = clickX / rect.width;
+  // Real-time draggable scrubbing
+  const updateScrubTime = useCallback((clientX) => {
+    if (!videoRef.current || !progressBarRef.current || !duration || duration <= 0) return;
+    const rect = progressBarRef.current.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const clickX = clientX - rect.left;
+    const pct = Math.max(0, Math.min(1, clickX / rect.width));
     const newTime = pct * duration;
-    videoRef.current.currentTime = newTime;
+
+    // Immediately update UI handle position without lag
     setCurrentTime(newTime);
+
+    // Cancel pending animation frame so video decodes the freshest frame smoothly
+    if (scrubRafRef.current) {
+      cancelAnimationFrame(scrubRafRef.current);
+    }
+
+    scrubRafRef.current = requestAnimationFrame(() => {
+      if (videoRef.current) {
+        videoRef.current.currentTime = newTime;
+      }
+      redraw();
+    });
+  }, [duration, redraw]);
+
+  const handleScrubStart = (e) => {
+    if (!videoRef.current || duration === 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    isScrubbingRef.current = true;
+    setIsScrubbing(true);
+
+    wasPlayingBeforeScrubRef.current = !videoRef.current.paused;
+    if (!videoRef.current.paused) {
+      videoRef.current.pause();
+      setIsPlaying(false);
+    }
+
+    const clientX = e.clientX !== undefined ? e.clientX : e.touches?.[0]?.clientX;
+    if (clientX !== undefined) {
+      updateScrubTime(clientX);
+    }
   };
+
+  useEffect(() => {
+    const handleMove = (e) => {
+      if (!isScrubbingRef.current) return;
+      const clientX = e.clientX !== undefined ? e.clientX : e.touches?.[0]?.clientX;
+      if (clientX !== undefined) {
+        updateScrubTime(clientX);
+      }
+    };
+
+    const handleEnd = (e) => {
+      if (!isScrubbingRef.current) return;
+      isScrubbingRef.current = false;
+      setIsScrubbing(false);
+
+      if (scrubRafRef.current) {
+        cancelAnimationFrame(scrubRafRef.current);
+      }
+
+      const clientX = e.clientX !== undefined ? e.clientX : e.changedTouches?.[0]?.clientX;
+      if (clientX !== undefined && progressBarRef.current && duration > 0) {
+        const rect = progressBarRef.current.getBoundingClientRect();
+        if (rect.width > 0) {
+          const clickX = clientX - rect.left;
+          const pct = Math.max(0, Math.min(1, clickX / rect.width));
+          const finalTime = pct * duration;
+          if (videoRef.current) {
+            videoRef.current.currentTime = finalTime;
+            setCurrentTime(finalTime);
+          }
+        }
+      }
+
+      redraw();
+
+      if (wasPlayingBeforeScrubRef.current && videoRef.current) {
+        videoRef.current.play().then(() => {
+          setIsPlaying(true);
+        }).catch(() => {});
+      }
+    };
+
+    window.addEventListener('mousemove', handleMove, { passive: false });
+    window.addEventListener('mouseup', handleEnd);
+    window.addEventListener('touchmove', handleMove, { passive: false });
+    window.addEventListener('touchend', handleEnd);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleEnd);
+      window.removeEventListener('touchmove', handleMove);
+      window.removeEventListener('touchend', handleEnd);
+      if (scrubRafRef.current) {
+        cancelAnimationFrame(scrubRafRef.current);
+      }
+    };
+  }, [updateScrubTime, duration, redraw]);
 
   // Drawing Canvas coordinates mapper
   const getCoordinates = (e) => {
@@ -919,6 +1177,34 @@ const VideoAnalysis = () => {
     if (isDrawing && currentStrokeRef.current) {
       const strokeToSave = currentStrokeRef.current;
       setStrokes(prev => [...prev, strokeToSave]);
+
+      // When coach draws on the video, automatically add a timestamp moment to Key Moments
+      if (strokeToSave.tool !== 'eraser') {
+        const timeSec = strokeToSave.timestamp || (videoRef.current ? videoRef.current.currentTime : currentTime);
+        const timeFormatted = formatTime(timeSec);
+
+        setCoachMoments(prev => {
+          const alreadyExists = prev.some(m => m.clipId === currentClip.id && Math.abs(m.timestamp - timeSec) < 1.2 && m.type === 'drawing');
+          if (alreadyExists) return prev;
+
+          const newMoment = {
+            id: `draw_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+            clipId: currentClip.id,
+            timestamp: timeSec,
+            timestampFormatted: timeFormatted,
+            title: `Coach Drawing (${timeFormatted})`,
+            note: `Visual annotation`,
+            color: strokeToSave.color || '#F43F5E',
+            type: 'drawing',
+            thumb: currentClip.bg || 'https://images.unsplash.com/photo-1502680390469-be75c86b636f?auto=format&fit=crop&q=80&w=150'
+          };
+          const updated = [...prev, newMoment].sort((a, b) => a.timestamp - b.timestamp);
+          try {
+            localStorage.setItem(`coach_moments_${studentName}`, JSON.stringify(updated));
+          } catch (e) {}
+          return updated;
+        });
+      }
     }
     setIsDrawing(false);
     currentStrokeRef.current = null;
@@ -1188,8 +1474,14 @@ const VideoAnalysis = () => {
               {/* Player Bottom Control Overlay */}
               <div className="va-player-overlay" style={{ zIndex: 10 }}>
                 <div className="va-player-controls-row">
-                  {/* Progress Bar */}
-                  <div className="va-progress-bar-container" onClick={handleProgressBarClick}>
+                  {/* Progress Bar with Real-time Dragging */}
+                  <div
+                    ref={progressBarRef}
+                    className="va-progress-bar-container"
+                    onMouseDown={handleScrubStart}
+                    onTouchStart={handleScrubStart}
+                    title="Click or drag timeline to scrub video in real time"
+                  >
                     <div className="va-progress-bar-bg">
                       {/* Dynamic Drawing Annotation Markers by Color */}
                       {momentMarkers.map((marker) => {
@@ -1207,6 +1499,8 @@ const VideoAnalysis = () => {
                               zIndex: isSelected ? 8 : 6
                             }}
                             title={`Drawing Annotation at ${formatTime(marker.timestamp)} (${marker.color}) - Click to show this drawing only`}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onTouchStart={(e) => e.stopPropagation()}
                             onClick={(e) => {
                               e.stopPropagation();
                               if (videoRef.current) {
@@ -1216,17 +1510,18 @@ const VideoAnalysis = () => {
                                 setIsPlaying(false);
                                 setActiveMarkerColor(marker.color);
                                 setColor(marker.color);
-                                setTimeout(() => redraw(marker.color), 30);
+                                setTimeout(() => redraw(marker.timestamp, marker.color), 30);
                               }
                             }}
                           />
                         );
                       })}
-
-
                       
                       <div className="va-progress-fill" style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }}></div>
-                      <div className="va-progress-handle" style={{ left: `${duration ? (currentTime / duration) * 100 : 0}%` }}></div>
+                      <div
+                        className={`va-progress-handle ${isScrubbing ? 'va-dragging' : ''}`}
+                        style={{ left: `${duration ? (currentTime / duration) * 100 : 0}%` }}
+                      ></div>
                     </div>
                   </div>
 
@@ -1235,7 +1530,7 @@ const VideoAnalysis = () => {
                     <button className="va-control-icon-btn" onClick={handlePrevClip} title="Switch to Previous Video / Clip (⏮)">
                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5"></line></svg>
                     </button>
-                    <button className="va-control-icon-btn" onClick={handleSeekBackward} title="-10s">
+                    <button className="va-control-icon-btn" onClick={handleSeekBackward} title={`-${playbackSpeed === 0.25 ? 0.25 : playbackSpeed === 0.5 ? 0.5 : 1}s`}>
                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="11 17 6 12 11 7"></polyline><polyline points="18 17 13 12 18 7"></polyline></svg>
                     </button>
                     <button className="va-control-icon-btn va-play-btn" onClick={handlePlayPause}>
@@ -1245,13 +1540,41 @@ const VideoAnalysis = () => {
                         <svg width="22" height="22" viewBox="0 0 24 24" fill="#FFFFFF" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
                       )}
                     </button>
-                    <button className="va-control-icon-btn" onClick={handleSeekForward} title="+10s">
+                    <button className="va-control-icon-btn" onClick={handleSeekForward} title={`+${playbackSpeed === 0.25 ? 0.25 : playbackSpeed === 0.5 ? 0.5 : 1}s`}>
                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="13 17 18 12 13 7"></polyline><polyline points="6 17 11 12 6 7"></polyline></svg>
                     </button>
                     <button className="va-control-icon-btn" onClick={handleNextClip} title="Switch to Next Video / Clip (⏭)">
                       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19"></line></svg>
                     </button>
                     <span className="va-time-display">{formatTime(currentTime)} / {formatTime(duration)}</span>
+
+                    {/* Slow Motion Speed Controls (0.25x, 0.5x, 1x) */}
+                    <div className="va-speed-selector" title="Select Video Playback Speed (Slow Motion)">
+                      <button
+                        type="button"
+                        className={`va-speed-btn ${playbackSpeed === 0.25 ? 'active' : ''}`}
+                        onClick={() => handleSetSpeed(0.25)}
+                        title="0.25x Ultra Slow Motion (Skip step: 0.25s)"
+                      >
+                        0.25x
+                      </button>
+                      <button
+                        type="button"
+                        className={`va-speed-btn ${playbackSpeed === 0.5 ? 'active' : ''}`}
+                        onClick={() => handleSetSpeed(0.5)}
+                        title="0.5x Slow Motion (Skip step: 0.5s)"
+                      >
+                        0.5x
+                      </button>
+                      <button
+                        type="button"
+                        className={`va-speed-btn ${playbackSpeed === 1 ? 'active' : ''}`}
+                        onClick={() => handleSetSpeed(1)}
+                        title="1x Normal Speed (Skip step: 1s)"
+                      >
+                        1x
+                      </button>
+                    </div>
 
                     {/* Volume & Audio Controls */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto' }}>
@@ -1404,7 +1727,7 @@ const VideoAnalysis = () => {
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                     <path d="M12 5v14M5 12h14"/>
                   </svg>
-                  {isUploadingClip ? 'Uploading Video…' : '+ Upload Video'}
+                  {isUploadingClip ? 'Uploading Video…' : 'Upload Video'}
                 </button>
               </div>
             </div>
@@ -1473,27 +1796,9 @@ const VideoAnalysis = () => {
                           {clip.name}
                         </div>
 
-                        <div style={{ display: 'flex', gap: '4px' }}>
-                          {/* Quick Replace Video on Hover */}
-                          <button
-                            type="button"
-                            className="va-clip-replace-btn"
-                            title={`Upload and replace Video ${index + 1}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setTargetClipIdForUpload(clip.id);
-                              targetFileInputRef.current?.click();
-                            }}
-                          >
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                              <polyline points="17 8 12 3 7 8"/>
-                              <line x1="12" y1="3" x2="12" y2="15"/>
-                            </svg>
-                          </button>
-
-                          {/* Delete/Remove this video */}
-                          {clips.length > 1 && (
+                        {clips.length > 1 && (
+                          <div style={{ display: 'flex', gap: '4px' }}>
+                            {/* Delete/Remove this video */}
                             <button
                               type="button"
                               className="va-clip-replace-btn"
@@ -1506,8 +1811,8 @@ const VideoAnalysis = () => {
                             >
                               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                             </button>
-                          )}
-                        </div>
+                          </div>
+                        )}
                       </div>
 
                       {/* Center Hover Play Indicator */}
@@ -1567,93 +1872,334 @@ const VideoAnalysis = () => {
               </div>
             )}
 
-            {/* Score panel */}
+            {/* Score panel - Starts at 0, Editable by Coach */}
             <div className="va-section">
-              <div className="va-section-title">
-                PERFORMANCE SCORE {taggedSurfers.length > 1 && `— ${currentActiveSurfer.name.toUpperCase()}`}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div className="va-section-title">
+                  PERFORMANCE SCORE {taggedSurfers.length > 1 && `— ${currentActiveSurfer.name.toUpperCase()}`}
+                </div>
+                <span style={{ fontSize: '11px', color: '#2DD4BF', fontWeight: 700, background: 'rgba(45,212,191,0.15)', padding: '2px 8px', borderRadius: '10px', border: '1px solid rgba(45,212,191,0.3)' }}>
+                  Coach Grading
+                </span>
               </div>
-              <div className="va-score-row">
-                <span className="va-score-big">{currentActiveSurfer.score}</span>
+              <div className="va-score-row" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={currentActiveSurfer.score || 0}
+                  onChange={(e) => updateSurferOverallScore(e.target.value)}
+                  className="va-score-input"
+                  title="Coach Performance Score (0 - 100). Click or type to change."
+                />
                 <span className="va-score-small">/ 100</span>
+                <div style={{ flex: 1, marginLeft: '8px' }}>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={currentActiveSurfer.score || 0}
+                    onChange={(e) => updateSurferOverallScore(e.target.value)}
+                    className="va-skill-slider"
+                    title="Slide to grade overall performance score"
+                  />
+                </div>
               </div>
             </div>
 
-            {/* Skill Breakdown */}
+            {/* Skill Breakdown - Drag sliders or type to score from 0 */}
             <div className="va-section">
-              <div className="va-section-title">SKILL BREAKDOWN</div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div className="va-section-title">SKILL BREAKDOWN (0 - 100%)</div>
+                <span style={{ fontSize: '10.5px', color: 'rgba(255,255,255,0.45)', fontWeight: 600 }}>Drag sliders to score</span>
+              </div>
               
+              {/* Take-off */}
               <div className="va-skill-row">
-                <div className="va-skill-header">
+                <div className="va-skill-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span>Take-off</span>
-                  <span className="va-skill-pct">{currentActiveSurfer.skills?.takeoff || 82}%</span>
+                  <div className="va-skill-input-row">
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={currentActiveSurfer.skills?.takeoff || 0}
+                      onChange={(e) => updateSurferSkill('takeoff', e.target.value)}
+                      className="va-skill-number-input"
+                    />
+                    <span style={{ fontSize: '12px', color: '#2DD4BF', fontWeight: 700 }}>%</span>
+                  </div>
                 </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={currentActiveSurfer.skills?.takeoff || 0}
+                  onChange={(e) => updateSurferSkill('takeoff', e.target.value)}
+                  className="va-skill-slider"
+                />
                 <div className="va-skill-bar-bg">
-                  <div className="va-skill-bar-fill" style={{ width: `${currentActiveSurfer.skills?.takeoff || 82}%` }}></div>
+                  <div className="va-skill-bar-fill" style={{ width: `${currentActiveSurfer.skills?.takeoff || 0}%` }}></div>
                 </div>
               </div>
 
+              {/* Positioning */}
               <div className="va-skill-row">
-                <div className="va-skill-header">
+                <div className="va-skill-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span>Positioning</span>
-                  <span className="va-skill-pct">{currentActiveSurfer.skills?.positioning || 71}%</span>
+                  <div className="va-skill-input-row">
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={currentActiveSurfer.skills?.positioning || 0}
+                      onChange={(e) => updateSurferSkill('positioning', e.target.value)}
+                      className="va-skill-number-input"
+                    />
+                    <span style={{ fontSize: '12px', color: '#2DD4BF', fontWeight: 700 }}>%</span>
+                  </div>
                 </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={currentActiveSurfer.skills?.positioning || 0}
+                  onChange={(e) => updateSurferSkill('positioning', e.target.value)}
+                  className="va-skill-slider"
+                />
                 <div className="va-skill-bar-bg">
-                  <div className="va-skill-bar-fill" style={{ width: `${currentActiveSurfer.skills?.positioning || 71}%` }}></div>
+                  <div className="va-skill-bar-fill" style={{ width: `${currentActiveSurfer.skills?.positioning || 0}%` }}></div>
                 </div>
               </div>
 
+              {/* Balance */}
               <div className="va-skill-row">
-                <div className="va-skill-header">
+                <div className="va-skill-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span>Balance</span>
-                  <span className="va-skill-pct">{currentActiveSurfer.skills?.balance || 85}%</span>
+                  <div className="va-skill-input-row">
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={currentActiveSurfer.skills?.balance || 0}
+                      onChange={(e) => updateSurferSkill('balance', e.target.value)}
+                      className="va-skill-number-input"
+                    />
+                    <span style={{ fontSize: '12px', color: '#2DD4BF', fontWeight: 700 }}>%</span>
+                  </div>
                 </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={currentActiveSurfer.skills?.balance || 0}
+                  onChange={(e) => updateSurferSkill('balance', e.target.value)}
+                  className="va-skill-slider"
+                />
                 <div className="va-skill-bar-bg">
-                  <div className="va-skill-bar-fill" style={{ width: `${currentActiveSurfer.skills?.balance || 85}%` }}></div>
+                  <div className="va-skill-bar-fill" style={{ width: `${currentActiveSurfer.skills?.balance || 0}%` }}></div>
                 </div>
               </div>
 
+              {/* Wave Reading */}
               <div className="va-skill-row">
-                <div className="va-skill-header">
+                <div className="va-skill-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span>Wave Reading</span>
-                  <span className="va-skill-pct">{currentActiveSurfer.skills?.waveReading || 68}%</span>
+                  <div className="va-skill-input-row">
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={currentActiveSurfer.skills?.waveReading || 0}
+                      onChange={(e) => updateSurferSkill('waveReading', e.target.value)}
+                      className="va-skill-number-input"
+                    />
+                    <span style={{ fontSize: '12px', color: '#2DD4BF', fontWeight: 700 }}>%</span>
+                  </div>
                 </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={currentActiveSurfer.skills?.waveReading || 0}
+                  onChange={(e) => updateSurferSkill('waveReading', e.target.value)}
+                  className="va-skill-slider"
+                />
                 <div className="va-skill-bar-bg">
-                  <div className="va-skill-bar-fill" style={{ width: `${currentActiveSurfer.skills?.waveReading || 68}%` }}></div>
+                  <div className="va-skill-bar-fill" style={{ width: `${currentActiveSurfer.skills?.waveReading || 0}%` }}></div>
                 </div>
               </div>
             </div>
 
-            {/* Key Moments - Click seeking functionality */}
+            {/* Key Moments & Coaching Notes - Timestamped from Drawings & Manual Notes */}
             <div className="va-section" style={{ flex: 1 }}>
-              <div className="va-section-title">DETECTED KEY MOMENTS (CLICK TO SEEK)</div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                <div className="va-section-title">
+                  DETECTED KEY MOMENTS & NOTES ({coachMoments.filter(m => m.clipId === undefined || m.clipId === currentClip.id).length})
+                </div>
+                <button
+                  type="button"
+                  className="va-btn-add-note"
+                  onClick={() => setIsAddingNote(prev => !prev)}
+                  title={`Add coaching note at current video time (${formatTime(currentTime)})`}
+                >
+                  <span>+</span> Add Note at {formatTime(currentTime)}
+                </button>
+              </div>
+
+              {/* Add Note Input Box */}
+              {isAddingNote && (
+                <div className="va-note-create-box">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '12.5px', fontWeight: 700, color: '#2DD4BF' }}>
+                      📝 Add Note at Timestamp: <span style={{ color: '#FFFFFF', background: 'rgba(255,255,255,0.1)', padding: '1px 6px', borderRadius: '4px' }}>{formatTime(currentTime)}</span>
+                    </span>
+                    <button
+                      type="button"
+                      style={{ background: 'transparent', border: 'none', color: '#94A3B8', cursor: 'pointer', fontSize: '16px' }}
+                      onClick={() => setIsAddingNote(false)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="e.g. Late pop-up, weight shifting, adjust stance on wave..."
+                    value={newNoteText}
+                    autoFocus
+                    onChange={(e) => setNewNoteText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleSaveNewNote();
+                      if (e.key === 'Escape') setIsAddingNote(false);
+                    }}
+                    style={{
+                      width: '100%',
+                      background: 'rgba(255,255,255,0.08)',
+                      border: '1px solid rgba(45,212,191,0.3)',
+                      borderRadius: '8px',
+                      padding: '8px 12px',
+                      color: '#FFFFFF',
+                      fontSize: '13px',
+                      outline: 'none',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                      <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.5)' }}>Tag:</span>
+                      {['#0D9488', '#F59E0B', '#F43F5E', '#8B5CF6', '#10B981'].map(c => (
+                        <div
+                          key={c}
+                          onClick={() => setNewNoteColor(c)}
+                          style={{
+                            width: '14px',
+                            height: '14px',
+                            borderRadius: '50%',
+                            backgroundColor: c,
+                            cursor: 'pointer',
+                            border: newNoteColor === c ? '2px solid #FFFFFF' : '1px solid rgba(255,255,255,0.3)',
+                            boxShadow: newNoteColor === c ? `0 0 8px ${c}` : 'none'
+                          }}
+                        />
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button
+                        type="button"
+                        onClick={() => setIsAddingNote(false)}
+                        style={{ background: 'transparent', border: 'none', color: '#94A3B8', fontSize: '12px', cursor: 'pointer', padding: '4px 8px' }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSaveNewNote}
+                        disabled={!newNoteText.trim()}
+                        style={{
+                          background: '#0D9488',
+                          color: '#FFFFFF',
+                          border: 'none',
+                          borderRadius: '6px',
+                          padding: '4px 12px',
+                          fontSize: '12px',
+                          fontWeight: 700,
+                          cursor: newNoteText.trim() ? 'pointer' : 'default',
+                          opacity: newNoteText.trim() ? 1 : 0.5
+                        }}
+                      >
+                        Save Note
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
               
               <div className="va-moments-list">
-                <div className="va-moment-card" onClick={() => handleSeekToMoment('0:34')} title="Jump to 0:34">
-                  <div className="va-moment-thumb" style={{ backgroundImage: "url('https://images.unsplash.com/photo-1502680390469-be75c86b636f?auto=format&fit=crop&q=80&w=150')" }}></div>
-                  <div className="va-moment-info">
-                    <div className="va-moment-name">Late pop-up</div>
-                    <div className="va-moment-time">Timestamp 0:34</div>
-                  </div>
-                  <div className="va-moment-dot" style={{ backgroundColor: '#F43F5E' }}></div>
-                </div>
+                {(() => {
+                  const clipMoments = coachMoments.filter(m => m.clipId === undefined || m.clipId === currentClip.id);
+                  if (clipMoments.length === 0) {
+                    return (
+                      <div style={{
+                        padding: '24px 16px',
+                        textAlign: 'center',
+                        background: 'rgba(255,255,255,0.02)',
+                        borderRadius: '12px',
+                        border: '1px dashed rgba(255,255,255,0.1)'
+                      }}>
+                        <div style={{ fontSize: '24px', marginBottom: '8px' }}>✏️</div>
+                        <div style={{ fontSize: '13px', fontWeight: 700, color: 'rgba(255,255,255,0.8)', marginBottom: '4px' }}>
+                          No Timestamps or Notes Yet
+                        </div>
+                        <p style={{ margin: 0, fontSize: '12px', color: 'rgba(255,255,255,0.5)', lineHeight: 1.5 }}>
+                          Draw on the video with the pen tool or click <strong>+ Add Note</strong> at any timeframe to capture coaching advice!
+                        </p>
+                      </div>
+                    );
+                  }
 
-                <div className="va-moment-card" onClick={() => handleSeekToMoment('1:12')} title="Jump to 1:12">
-                  <div className="va-moment-thumb" style={{ backgroundImage: "url('https://images.unsplash.com/photo-1439405326854-014607f694d7?auto=format&fit=crop&q=80&w=150')" }}></div>
-                  <div className="va-moment-info">
-                    <div className="va-moment-name">Weight shifting</div>
-                    <div className="va-moment-time">Timestamp 1:12</div>
-                  </div>
-                  <div className="va-moment-dot" style={{ backgroundColor: '#F59E0B' }}></div>
-                </div>
-
-                <div className="va-moment-card" onClick={() => handleSeekToMoment('2:45')} title="Jump to 2:45">
-                  <div className="va-moment-thumb" style={{ backgroundImage: "url('https://images.unsplash.com/photo-1518182170546-076616fd6738?auto=format&fit=crop&q=80&w=150')" }}></div>
-                  <div className="va-moment-info">
-                    <div className="va-moment-name">Perfect stance</div>
-                    <div className="va-moment-time">Timestamp 2:45</div>
-                  </div>
-                  <div className="va-moment-dot" style={{ backgroundColor: '#0D9488' }}></div>
-                </div>
+                  return clipMoments.map((moment) => {
+                    const fallbackImg = currentClip.bg || 'https://images.unsplash.com/photo-1502680390469-be75c86b636f?auto=format&fit=crop&q=80&w=150';
+                    const isDrawingType = moment.type === 'drawing';
+                    return (
+                      <div
+                        key={moment.id}
+                        className="va-moment-card"
+                        onClick={() => handleSelectMoment(moment)}
+                        title={`Click to seek to ${moment.timestampFormatted}`}
+                      >
+                        <div
+                          className="va-moment-thumb"
+                          style={{ backgroundImage: `url('${moment.thumb || fallbackImg}')` }}
+                        />
+                        <div className="va-moment-info">
+                          <div className="va-moment-name">{moment.title}</div>
+                          <div className="va-moment-time">
+                            <span>⏱ Timestamp {moment.timestampFormatted}</span>
+                            <span
+                              className="va-moment-tag"
+                              style={{
+                                backgroundColor: isDrawingType ? 'rgba(244,63,94,0.2)' : 'rgba(45,212,191,0.2)',
+                                color: isDrawingType ? '#F43F5E' : '#2DD4BF',
+                                border: `1px solid ${isDrawingType ? 'rgba(244,63,94,0.4)' : 'rgba(45,212,191,0.4)'}`
+                              }}
+                            >
+                              {isDrawingType ? 'Drawing' : 'Note'}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="va-moment-dot" style={{ backgroundColor: moment.color || '#0D9488' }} />
+                        <button
+                          type="button"
+                          className="va-moment-del-btn"
+                          title="Delete note"
+                          onClick={(e) => handleDeleteMoment(moment.id, e)}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    );
+                  });
+                })()}
               </div>
             </div>
 
@@ -2102,9 +2648,18 @@ const VideoAnalysis = () => {
         }
         
         /* Progress Bar */
-        .va-progress-bar-container { flex: 1; position: relative; height: 18px; display: flex; align-items: center; cursor: pointer; }
+        .va-progress-bar-container { 
+          flex: 1; 
+          position: relative; 
+          height: 24px; 
+          display: flex; 
+          align-items: center; 
+          cursor: pointer; 
+          user-select: none;
+          touch-action: none;
+        }
         .va-progress-bar-bg { width: 100%; height: 6px; background: rgba(255,255,255,0.25); border-radius: 3px; position: relative; }
-        .va-progress-fill { position: absolute; left: 0; top: 0; height: 100%; background: #0D9488; border-radius: 3px; }
+        .va-progress-fill { position: absolute; left: 0; top: 0; height: 100%; background: #0D9488; border-radius: 3px; pointer-events: none; }
         .va-progress-marker {
           position: absolute;
           top: -4px;
@@ -2131,11 +2686,18 @@ const VideoAnalysis = () => {
         .va-progress-handle {
           position: absolute; top: -5px; width: 16px; height: 16px; background: #FFFFFF; border: 3px solid #0D9488;
           border-radius: 50%; transform: translateX(-50%);
-          transition: transform 0.1s;
+          transition: transform 0.1s ease, box-shadow 0.1s ease;
           z-index: 7;
+          cursor: grab;
         }
         .va-progress-bar-container:hover .va-progress-handle {
-          transform: translateX(-50%) scale(1.2);
+          transform: translateX(-50%) scale(1.25);
+        }
+        .va-progress-handle.va-dragging, .va-progress-handle:active {
+          transform: translateX(-50%) scale(1.4) !important;
+          box-shadow: 0 0 14px rgba(13, 148, 136, 0.9), 0 0 0 4px rgba(13, 148, 136, 0.35);
+          border-color: #14B8A6;
+          cursor: grabbing !important;
         }
 
         /* Controls */
@@ -2155,6 +2717,39 @@ const VideoAnalysis = () => {
           background: rgba(255,255,255,0.15);
         }
         .va-time-display { font-size: 15px; font-weight: 700; color: #FFFFFF; margin-left: 8px; }
+
+        /* Slow Motion Speed Selector */
+        .va-speed-selector {
+          display: inline-flex;
+          align-items: center;
+          background: rgba(255, 255, 255, 0.08);
+          border: 1px solid rgba(255, 255, 255, 0.15);
+          border-radius: 20px;
+          padding: 2px 4px;
+          gap: 3px;
+          margin-left: 12px;
+        }
+        .va-speed-btn {
+          background: transparent;
+          border: none;
+          color: rgba(255, 255, 255, 0.7);
+          font-size: 11px;
+          font-weight: 700;
+          padding: 3px 8px;
+          border-radius: 12px;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          letter-spacing: 0.2px;
+        }
+        .va-speed-btn:hover {
+          color: #FFFFFF;
+          background: rgba(255, 255, 255, 0.12);
+        }
+        .va-speed-btn.active {
+          background: #0D9488;
+          color: #FFFFFF;
+          box-shadow: 0 0 8px rgba(13, 148, 136, 0.6);
+        }
 
         /* Clips Horizontal Carousel */
         .va-clips-row {
@@ -2390,31 +2985,166 @@ const VideoAnalysis = () => {
         .va-score-big { font-family: 'Outfit', sans-serif; font-size: 48px; font-weight: 800; color: #FFFFFF; line-height: 1; }
         .va-score-small { font-family: 'Outfit', sans-serif; font-size: 20px; font-weight: 700; color: rgba(255,255,255,0.4); }
 
+        /* Coach Score Input */
+        .va-score-input {
+          font-family: 'Outfit', sans-serif;
+          font-size: 38px;
+          font-weight: 800;
+          color: #2DD4BF;
+          line-height: 1;
+          background: rgba(255, 255, 255, 0.05);
+          border: 1.5px solid rgba(45, 212, 191, 0.35);
+          border-radius: 10px;
+          width: 82px;
+          padding: 4px 6px;
+          text-align: center;
+          outline: none;
+          transition: all 0.2s ease;
+        }
+        .va-score-input:focus {
+          border-color: #2DD4BF;
+          background: rgba(45, 212, 191, 0.12);
+          box-shadow: 0 0 14px rgba(45, 212, 191, 0.4);
+        }
+
         /* Skill Breakdown */
-        .va-skill-row { display: flex; flex-direction: column; gap: 8px; }
-        .va-skill-header { display: flex; justify-content: space-between; font-size: 14px; color: #FFFFFF; }
+        .va-skill-row { display: flex; flex-direction: column; gap: 6px; }
+        .va-skill-header { display: flex; justify-content: space-between; font-size: 13.5px; color: #FFFFFF; }
         .va-skill-pct { font-weight: 700; color: #0D9488; }
         .va-skill-bar-bg { width: 100%; height: 6px; background: rgba(255,255,255,0.06); border-radius: 3px; }
-        .va-skill-bar-fill { height: 100%; background: #0D9488; border-radius: 3px; }
+        .va-skill-bar-fill { height: 100%; background: linear-gradient(90deg, #0D9488 0%, #2DD4BF 100%); border-radius: 3px; transition: width 0.15s ease; }
 
-        /* Key Moments */
-        .va-moments-list { display: flex; flex-direction: column; gap: 12px; }
+        .va-skill-input-row { display: flex; align-items: center; gap: 4px; }
+        .va-skill-number-input {
+          width: 44px;
+          background: rgba(255, 255, 255, 0.08);
+          border: 1px solid rgba(255, 255, 255, 0.15);
+          border-radius: 6px;
+          color: #2DD4BF;
+          font-weight: 700;
+          font-size: 13px;
+          text-align: center;
+          padding: 2px 4px;
+          outline: none;
+        }
+        .va-skill-number-input:focus {
+          border-color: #2DD4BF;
+          background: rgba(45, 212, 191, 0.15);
+        }
+        .va-skill-slider {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 100%;
+          height: 6px;
+          background: rgba(255, 255, 255, 0.1);
+          border-radius: 3px;
+          outline: none;
+          cursor: pointer;
+          margin-top: 2px;
+          margin-bottom: 2px;
+        }
+        .va-skill-slider::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 14px;
+          height: 14px;
+          border-radius: 50%;
+          background: #2DD4BF;
+          cursor: pointer;
+          box-shadow: 0 0 10px rgba(45, 212, 191, 0.8);
+          border: 2px solid #FFFFFF;
+          transition: transform 0.15s ease;
+        }
+        .va-skill-slider::-webkit-slider-thumb:hover {
+          transform: scale(1.3);
+        }
+        .va-skill-slider::-moz-range-thumb {
+          width: 14px;
+          height: 14px;
+          border-radius: 50%;
+          background: #2DD4BF;
+          cursor: pointer;
+          box-shadow: 0 0 10px rgba(45, 212, 191, 0.8);
+          border: 2px solid #FFFFFF;
+        }
+
+        /* Key Moments & Add Note */
+        .va-btn-add-note {
+          background: rgba(45, 212, 191, 0.12);
+          border: 1px solid rgba(45, 212, 191, 0.4);
+          color: #2DD4BF;
+          font-size: 11.5px;
+          font-weight: 700;
+          padding: 4px 10px;
+          border-radius: 8px;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          transition: all 0.2s ease;
+        }
+        .va-btn-add-note:hover {
+          background: #0D9488;
+          color: #FFFFFF;
+          border-color: #0D9488;
+          box-shadow: 0 4px 12px rgba(13, 148, 136, 0.35);
+        }
+
+        .va-note-create-box {
+          background: rgba(15, 23, 42, 0.95);
+          border: 1.5px solid rgba(45, 212, 191, 0.4);
+          border-radius: 12px;
+          padding: 12px 14px;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+        }
+
+        .va-moments-list { display: flex; flex-direction: column; gap: 10px; }
         .va-moment-card {
-          background: rgba(255,255,255,0.02); border-radius: 12px; padding: 14px;
+          background: rgba(255,255,255,0.03); border-radius: 12px; padding: 12px 14px;
           display: flex; align-items: center; gap: 12px; cursor: pointer;
-          border: 1px solid rgba(255,255,255,0.02);
-          transition: all 0.2s;
+          border: 1px solid rgba(255,255,255,0.06);
+          transition: all 0.2s ease;
+          position: relative;
         }
         .va-moment-card:hover {
-          background: rgba(255,255,255,0.06);
-          border-color: rgba(255,255,255,0.1);
+          background: rgba(255,255,255,0.08);
+          border-color: rgba(45, 212, 191, 0.4);
           transform: translateX(2px);
         }
-        .va-moment-thumb { width: 60px; height: 40px; border-radius: 4px; background-size: cover; background-position: center; }
-        .va-moment-info { flex: 1; display: flex; flex-direction: column; }
-        .va-moment-name { font-size: 14px; font-weight: 700; color: #FFFFFF; }
-        .va-moment-time { font-size: 12px; color: rgba(255,255,255,0.6); margin-top: 2px; }
+        .va-moment-thumb { width: 56px; height: 38px; border-radius: 6px; background-size: cover; background-position: center; border: 1px solid rgba(255,255,255,0.1); flex-shrink: 0; }
+        .va-moment-info { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+        .va-moment-name { font-size: 13.5px; font-weight: 700; color: #FFFFFF; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .va-moment-time { font-size: 11.5px; color: #2DD4BF; margin-top: 3px; display: flex; align-items: center; gap: 6px; }
+        .va-moment-tag {
+          font-size: 9px;
+          font-weight: 800;
+          text-transform: uppercase;
+          padding: 1px 5px;
+          border-radius: 4px;
+          letter-spacing: 0.4px;
+        }
         .va-moment-dot { width: 8px; height: 8px; border-radius: 4px; flex-shrink: 0; }
+        .va-moment-del-btn {
+          background: transparent;
+          border: none;
+          color: rgba(255, 255, 255, 0.35);
+          width: 22px;
+          height: 22px;
+          border-radius: 4px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          font-size: 15px;
+          transition: all 0.15s ease;
+        }
+        .va-moment-del-btn:hover {
+          color: #F43F5E;
+          background: rgba(244, 63, 94, 0.15);
+        }
 
         /* Responsive Layout Media Queries */
         @media (max-width: 1024px) {

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
+import NewSession from './NewSession';
 
 const API = import.meta.env.VITE_API_URL || '';
 
@@ -74,6 +75,7 @@ const SchoolDashboard = () => {
   const [activity, setActivity] = useState([]);
   const [loading, setLoading] = useState(true);
   const [school, setSchool] = useState(null);
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [currentUser] = useState(() => {
     try {
       const saved = sessionStorage.getItem('user');
@@ -318,7 +320,7 @@ const SchoolDashboard = () => {
 
             {/* Quick Action Cards Grid */}
             <div className="db-quick-actions">
-              <div className="action-card" onClick={() => navigate('/instructors')} style={{ cursor: 'pointer' }}>
+              <div className="action-card" onClick={() => navigate('/instructors?action=add', { state: { openAddModal: true } })} style={{ cursor: 'pointer' }}>
                 <div className="action-icon-wrapper" style={{ color: '#0D9488', background: '#CCFBF1' }}>
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="8" cy="7" r="4" /><line x1="20" y1="8" x2="20" y2="14" /><line x1="23" y1="11" x2="17" y2="11" /></svg>
                 </div>
@@ -328,7 +330,7 @@ const SchoolDashboard = () => {
                 </div>
               </div>
 
-              <div className="action-card" onClick={() => navigate('/students')} style={{ cursor: 'pointer' }}>
+              <div className="action-card" onClick={() => navigate('/students?action=add', { state: { openAddModal: true } })} style={{ cursor: 'pointer' }}>
                 <div className="action-icon-wrapper" style={{ color: '#0284C7', background: '#E0F2FE' }}>
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="8" cy="7" r="4" /><line x1="20" y1="8" x2="20" y2="14" /><line x1="23" y1="11" x2="17" y2="11" /></svg>
                 </div>
@@ -338,23 +340,13 @@ const SchoolDashboard = () => {
                 </div>
               </div>
 
-              <div className="action-card" onClick={() => navigate('/sessions/new')} style={{ cursor: 'pointer' }}>
+              <div className="action-card" onClick={() => setShowScheduleModal(true)} style={{ cursor: 'pointer' }}>
                 <div className="action-icon-wrapper" style={{ color: '#10B981', background: '#D1FAE5' }}>
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>
                 </div>
                 <div className="action-text-box">
-                  <span className="action-label">Schedule Session</span>
-                  <span className="action-sublabel">Plan multi-slot coaching</span>
-                </div>
-              </div>
-
-              <div className="action-card" onClick={() => navigate('/analysis')} style={{ cursor: 'pointer' }}>
-                <div className="action-icon-wrapper" style={{ color: '#F43F5E', background: '#FFE4E6' }}>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" ry="2" /></svg>
-                </div>
-                <div className="action-text-box">
-                  <span className="action-label">Upload Video</span>
-                  <span className="action-sublabel">AI technique analysis</span>
+                  <span className="action-label">Add Session</span>
+                  <span className="action-sublabel">Create new training session</span>
                 </div>
               </div>
             </div>
@@ -393,7 +385,7 @@ const SchoolDashboard = () => {
                     <button
                       type="button"
                       className="db-empty-btn"
-                      onClick={() => navigate('/sessions/new')}
+                      onClick={() => setShowScheduleModal(true)}
                     >
                       + Schedule Today's Session
                     </button>
@@ -445,7 +437,29 @@ const SchoolDashboard = () => {
         )}
       </main>
 
+      {/* Schedule Session Popup Modal - same wizard used in Sessions Hub */}
+      {showScheduleModal && (
+        <NewSession
+          isModal={true}
+          onClose={() => setShowScheduleModal(false)}
+          onSessionCreated={() => {
+            setShowScheduleModal(false);
+          }}
+        />
+      )}
+
       <style>{`
+        /* Modal Overlay (for NewSession popup) */
+        .ses-modal-overlay {
+          position: fixed; inset: 0; background: rgba(5, 11, 26, 0.8); backdrop-filter: blur(6px);
+          display: flex; align-items: center; justify-content: center; z-index: 1100; padding: 24px;
+        }
+        .ses-modal-box {
+          background: #FFFFFF; border-radius: 20px; max-width: 1100px; width: 100%; max-height: 90vh;
+          display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 24px 60px rgba(0,0,0,0.35);
+          border: 1px solid rgba(255,255,255,0.2);
+        }
+
         /* Welcome Banner */
         .db-welcome-banner {
           background: linear-gradient(135deg, #0F766E 0%, #0D9488 55%, #14B8A6 100%);
@@ -590,7 +604,7 @@ const SchoolDashboard = () => {
         /* Quick Actions Grid */
         .db-quick-actions {
           display: grid;
-          grid-template-columns: repeat(4, 1fr);
+          grid-template-columns: repeat(3, 1fr);
           gap: 18px;
           width: 100%;
         }

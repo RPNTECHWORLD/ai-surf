@@ -52,7 +52,50 @@ const getTodayISO = () => {
 
 const AthleteIntelligence = () => {
   const navigate = useNavigate();
-  const [currentUser, setCurrentUser] = useState(null);
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('user');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) {
+      return null;
+    }
+  });
+
+  const activeSchoolName = (() => {
+    try {
+      const savedSchool = sessionStorage.getItem('activeSchool');
+      if (savedSchool) {
+        const parsed = JSON.parse(savedSchool);
+        if (parsed?.name) {
+          return typeof parsed.name === 'string' ? parsed.name : (parsed.name?.name || null);
+        }
+        if (typeof parsed === 'string') return parsed;
+      }
+      const savedUser = sessionStorage.getItem('user');
+      if (savedUser) {
+        const parsed = JSON.parse(savedUser);
+        if (parsed?.school) return typeof parsed.school === 'string' ? parsed.school : (parsed.school?.name || null);
+        if (parsed?.school_name) return typeof parsed.school_name === 'string' ? parsed.school_name : (parsed.school_name?.name || null);
+      }
+    } catch (e) {}
+    return null;
+  })();
+
+  const schoolLower = (activeSchoolName || '').toLowerCase().trim();
+  const isSuperAdmin = currentUser?.role === 'superadmin' || schoolLower === 'super admin';
+  const isCoach = currentUser?.role === 'coach' || currentUser?.role === 'instructor';
+  const isFreelance = (
+    schoolLower.includes('individual') ||
+    schoolLower.includes('freelance') ||
+    (currentUser?.school || currentUser?.school_name || '').toLowerCase().includes('freelance')
+  );
+
+  const effectiveSchool = (isCoach && isFreelance)
+    ? 'Individual / Freelance Coach'
+    : (activeSchoolName && schoolLower !== 'school admin' && schoolLower !== 'super admin')
+      ? activeSchoolName
+      : null;
+
   const [students, setStudents] = useState([]);
   const [selectedStudentId, setSelectedStudentId] = useState('');
   const [levelFilter, setLevelFilter] = useState('ALL'); // 'ALL', 'Beginner', 'Intermediate', 'Advanced', 'Master'
@@ -124,33 +167,41 @@ const AthleteIntelligence = () => {
     showToast('Video cached in browser memory for testing!');
   };
 
-  useEffect(() => {
-    const saved = sessionStorage.getItem('user');
-    if (saved) {
-      try {
-        const u = JSON.parse(saved);
-        setCurrentUser(u);
-
-        // If user is athlete, lock to their student ID
-        if (u.role === 'athlete' && u.student_id) {
-          setSelectedStudentId(u.student_id.toString());
-        }
-      } catch (e) { }
-    }
-
-    // Fetch student list if coach or admin
-    fetch(`${API}/api/students`)
+  const fetchStudents = () => {
+    const schoolParam = (!isSuperAdmin && effectiveSchool) ? `?school=${encodeURIComponent(effectiveSchool)}` : '';
+    fetch(`${API}/api/students${schoolParam}`)
       .then(res => res.json())
       .then(data => {
-        setStudents(data);
-        // Default select first student if role is coach/admin
-        const savedUser = JSON.parse(sessionStorage.getItem('user'));
-        if (savedUser && savedUser.role !== 'athlete' && data.length > 0) {
-          setSelectedStudentId(data[0].id.toString());
-        }
+        const list = Array.isArray(data) ? data : [];
+        setStudents(list);
       })
       .catch(() => { });
-  }, []);
+  };
+
+  useEffect(() => {
+    const updateUserAndSchool = () => {
+      const saved = sessionStorage.getItem('user');
+      if (saved) {
+        try {
+          const u = JSON.parse(saved);
+          setCurrentUser(u);
+          if (u.role === 'athlete' && u.student_id) {
+            setSelectedStudentId(u.student_id.toString());
+          }
+        } catch (e) { }
+      }
+    };
+
+    updateUserAndSchool();
+    fetchStudents();
+
+    window.addEventListener('storage', updateUserAndSchool);
+    window.addEventListener('user_updated', updateUserAndSchool);
+    return () => {
+      window.removeEventListener('storage', updateUserAndSchool);
+      window.removeEventListener('user_updated', updateUserAndSchool);
+    };
+  }, [effectiveSchool, isSuperAdmin]);
 
   const fetchStudentData = (studentId) => {
     if (!studentId) return;
@@ -174,10 +225,21 @@ const AthleteIntelligence = () => {
     }
   }, [selectedStudentId]);
 
+  // Strictly filter students by active school unless Super Admin
+  const schoolStudents = useMemo(() => {
+    if (isSuperAdmin || !effectiveSchool) return students;
+    const targetNorm = (effectiveSchool || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    return students.filter(s => {
+      const sSchool = s.school || s.school_name || '';
+      const sNorm = sSchool.toLowerCase().replace(/[^a-z0-9]/g, '');
+      return sNorm === targetNorm || sNorm.includes(targetNorm) || targetNorm.includes(sNorm);
+    });
+  }, [students, effectiveSchool, isSuperAdmin]);
+
   // Calculate student counts per skill level
   const levelCounts = useMemo(() => {
-    const counts = { ALL: students.length, Beginner: 0, Intermediate: 0, Advanced: 0, Master: 0 };
-    students.forEach(s => {
+    const counts = { ALL: schoolStudents.length, Beginner: 0, Intermediate: 0, Advanced: 0, Master: 0 };
+    schoolStudents.forEach(s => {
       const lvl = (s.level || 'Beginner').trim();
       const match = ['Beginner', 'Intermediate', 'Advanced', 'Master'].find(k => k.toLowerCase() === lvl.toLowerCase());
       if (match) {
@@ -187,19 +249,37 @@ const AthleteIntelligence = () => {
       }
     });
     return counts;
-  }, [students]);
+  }, [schoolStudents]);
 
   // Filter students by skill level
   const filteredStudents = useMemo(() => {
-    if (levelFilter === 'ALL') return students;
-    return students.filter(s => (s.level || 'Beginner').toLowerCase() === levelFilter.toLowerCase());
-  }, [students, levelFilter]);
+    if (levelFilter === 'ALL') return schoolStudents;
+    return schoolStudents.filter(s => (s.level || 'Beginner').toLowerCase() === levelFilter.toLowerCase());
+  }, [schoolStudents, levelFilter]);
+
+  // Auto-select athlete when active list changes or filter updates
+  useEffect(() => {
+    if (currentUser?.role === 'athlete') return;
+    if (filteredStudents.length > 0) {
+      const existsInFiltered = filteredStudents.some(s => s.id.toString() === selectedStudentId);
+      if (!existsInFiltered) {
+        setSelectedStudentId(filteredStudents[0].id.toString());
+      }
+    } else if (schoolStudents.length > 0) {
+      const existsInSchool = schoolStudents.some(s => s.id.toString() === selectedStudentId);
+      if (!existsInSchool) {
+        setSelectedStudentId(schoolStudents[0].id.toString());
+      }
+    } else {
+      setSelectedStudentId('');
+    }
+  }, [schoolStudents, filteredStudents, selectedStudentId, currentUser?.role]);
 
   const handleLevelFilterChange = (lvl) => {
     setLevelFilter(lvl);
     const subset = lvl === 'ALL'
-      ? students
-      : students.filter(s => (s.level || 'Beginner').toLowerCase() === lvl.toLowerCase());
+      ? schoolStudents
+      : schoolStudents.filter(s => (s.level || 'Beginner').toLowerCase() === lvl.toLowerCase());
     
     if (subset.length > 0) {
       const stillInSubset = subset.some(s => s.id.toString() === selectedStudentId);
@@ -476,7 +556,7 @@ const AthleteIntelligence = () => {
                     onChange={(e) => handleLevelFilterChange(e.target.value)}
                     style={{ fontWeight: 700 }}
                   >
-                    <option value="ALL">All Levels ({students.length})</option>
+                    <option value="ALL">All Levels ({schoolStudents.length})</option>
                     <option value="Beginner">Beginner ({levelCounts.Beginner})</option>
                     <option value="Intermediate">Intermediate ({levelCounts.Intermediate})</option>
                     <option value="Advanced">Advanced ({levelCounts.Advanced})</option>

@@ -481,9 +481,18 @@ window.fetch = async function (input, init) {
       );
       
       // ONLY return approved students from /api/students active roster
-      const activeStudents = state.students.filter(s => 
+      let activeStudents = state.students.filter(s => 
         s && s.email && !deletedEmails.has(s.email.toLowerCase().trim()) && s.approval_status !== 'pending' && s.approval_status !== 'rejected'
       );
+
+      const schoolParam = url.searchParams.get('school');
+      if (schoolParam && schoolParam.toLowerCase().trim() !== 'all' && schoolParam.toLowerCase().trim() !== 'super admin' && schoolParam.toLowerCase().trim() !== 'school admin') {
+        const targetSchool = schoolParam.toLowerCase().trim();
+        activeStudents = activeStudents.filter(s => {
+          const sSchool = (s.school || s.school_name || '').toLowerCase().trim();
+          return sSchool === targetSchool;
+        });
+      }
 
       return jsonResponse(activeStudents);
     }

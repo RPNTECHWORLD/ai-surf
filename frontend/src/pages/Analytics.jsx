@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import Sidebar from '../components/Sidebar';
 
 const API = import.meta.env.VITE_API_URL || '';
@@ -13,31 +13,76 @@ const BADGE_COLORS = {
 const BADGE_ORDER = ['WHITE', 'YELLOW', 'GREEN', 'BLUE', 'RED'];
 
 const Analytics = () => {
-  const [badgeStats, setBadgeStats] = useState([]);
+  const [badgeStats, setBadgeStats] = useState([
+    { label: 'WHITE', count: 0 },
+    { label: 'YELLOW', count: 0 },
+    { label: 'GREEN', count: 0 },
+    { label: 'BLUE', count: 0 },
+    { label: 'RED', count: 0 },
+  ]);
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  const currentUser = (() => {
+    try { return JSON.parse(sessionStorage.getItem('user') || '{}'); } catch (e) { return {}; }
+  })();
+
+  const activeSchool = (() => {
+    try {
+      const s = sessionStorage.getItem('activeSchool');
+      if (s) {
+        const parsed = JSON.parse(s);
+        return parsed?.name || s;
+      }
+      return currentUser?.school || currentUser?.school_name || '';
+    } catch (e) { return currentUser?.school || ''; }
+  })();
+
+  const userRole = (currentUser?.role || '').toLowerCase().trim();
+  const isCoach = userRole === 'coach';
+  const coachId = currentUser?.instructor_id || currentUser?.id;
+  const coachName = currentUser?.name || '';
+
   useEffect(() => {
+    const queryParams = new URLSearchParams();
+    if (isCoach && coachId) {
+      queryParams.append('instructor_id', coachId);
+    } else if (activeSchool && activeSchool.toLowerCase() !== 'super admin' && activeSchool.toLowerCase() !== 'all') {
+      queryParams.append('school', activeSchool);
+    }
+    const qStr = queryParams.toString() ? `?${queryParams.toString()}` : '';
+
     Promise.all([
-      fetch(`${API}/api/analytics/badges`).then(r => r.json()),
-      fetch(`${API}/api/analytics/students`).then(r => r.json()),
+      fetch(`${API}/api/analytics/badges${qStr}`).then(r => r.json()),
+      fetch(`${API}/api/analytics/students${qStr}`).then(r => r.json()),
     ])
       .then(([badges, studs]) => {
-        setBadgeStats(badges);
-        setStudents(studs);
+        if (Array.isArray(badges)) setBadgeStats(badges);
+        if (Array.isArray(studs)) setStudents(studs);
       })
-      .catch(() => {
-        // Fallback mock data
-        setBadgeStats([
-          { label: 'WHITE', count: 6 },
-          { label: 'YELLOW', count: 4 },
-          { label: 'GREEN', count: 3 },
-          { label: 'BLUE', count: 2 },
-          { label: 'RED', count: 1 },
-        ]);
+      .catch((err) => {
+        console.error('Analytics fetch error:', err);
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [isCoach, coachId, activeSchool]);
+
+  const filteredStudents = useMemo(() => {
+    if (!students || students.length === 0) return [];
+    return students.filter(s => {
+      if (isCoach && (coachId || coachName)) {
+        const coachMatches = 
+          (coachId && (s.instructor_id === coachId || String(s.instructor_id) === String(coachId))) ||
+          (coachName && s.instructor && s.instructor.toLowerCase().trim() === coachName.toLowerCase().trim());
+        return coachMatches;
+      }
+      if (activeSchool && activeSchool.toLowerCase() !== 'super admin' && activeSchool.toLowerCase() !== 'all') {
+        const sSchool = (s.school || '').toLowerCase().trim();
+        const actSchool = activeSchool.toLowerCase().trim();
+        return !sSchool || sSchool === actSchool;
+      }
+      return true;
+    });
+  }, [students, isCoach, coachId, coachName, activeSchool]);
 
   const maxCount = badgeStats.length > 0 ? Math.max(...badgeStats.map(b => b.count), 1) : 1;
 
@@ -118,8 +163,8 @@ const Analytics = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {students.map((student, i) => (
-                    <tr key={i} style={{ borderBottom: i === students.length - 1 ? 'none' : '1px solid #E2E8F0' }}>
+                  {filteredStudents.map((student, i) => (
+                    <tr key={i} style={{ borderBottom: i === filteredStudents.length - 1 ? 'none' : '1px solid #E2E8F0' }}>
                       <td className="an-student-name">{student.name}</td>
                       <td>
                         <div className="an-badge-history">
@@ -144,7 +189,7 @@ const Analytics = () => {
                       <td className="an-instructor-name">{student.instructor || '—'}</td>
                     </tr>
                   ))}
-                  {students.length === 0 && (
+                  {filteredStudents.length === 0 && (
                     <tr>
                       <td colSpan="4" style={{ textAlign: 'center', padding: '40px', color: '#94A3B8' }}>
                         No student data available.
@@ -159,8 +204,28 @@ const Analytics = () => {
       </main>
 
       <style>{`
-        .an-page { display: flex; min-height: 100vh; background: #F8FAFC; font-family: 'Instrument Sans', sans-serif; padding-top: 84px; box-sizing: border-box; width: 100%; }
-        .an-main { flex: 1; padding: 32px 40px 80px 40px; display: flex; flex-direction: column; gap: 28px; overflow-y: auto; width: 100%; box-sizing: border-box; }
+        .an-page {
+          display: flex;
+          min-height: 100vh;
+          height: auto !important;
+          background: #F8FAFC;
+          font-family: 'Instrument Sans', sans-serif;
+          padding-top: 84px;
+          box-sizing: border-box;
+          width: 100%;
+          overflow-y: auto !important;
+        }
+        .an-main {
+          flex: 1;
+          padding: 32px 40px 80px 40px;
+          display: flex;
+          flex-direction: column;
+          gap: 28px;
+          width: 100%;
+          box-sizing: border-box;
+          min-width: 0;
+          overflow-y: visible !important;
+        }
 
         /* Header */
         .an-header { display: flex; justify-content: space-between; align-items: center; }

@@ -25,8 +25,42 @@ const Competitions = () => {
   const [loading, setLoading] = useState(true);
 
   // Students list for Mock Heat Setup
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('user');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) {
+      return null;
+    }
+  });
+
+  const activeSchoolName = (() => {
+    try {
+      const savedSchool = sessionStorage.getItem('activeSchool');
+      if (savedSchool) {
+        const parsed = JSON.parse(savedSchool);
+        if (parsed?.name) {
+          return typeof parsed.name === 'string' ? parsed.name : (parsed.name?.name || null);
+        }
+        if (typeof parsed === 'string') return parsed;
+      }
+      const savedUser = sessionStorage.getItem('user');
+      if (savedUser) {
+        const parsed = JSON.parse(savedUser);
+        if (parsed?.school) return typeof parsed.school === 'string' ? parsed.school : (parsed.school?.name || null);
+        if (parsed?.school_name) return typeof parsed.school_name === 'string' ? parsed.school_name : (parsed.school_name?.name || null);
+      }
+    } catch (e) {}
+    return null;
+  })();
+
+  const schoolLower = (activeSchoolName || '').toLowerCase().trim();
+  const isSuperAdmin = currentUser?.role === 'superadmin' || schoolLower === 'super admin';
+  const effectiveSchool = (activeSchoolName && schoolLower !== 'school admin' && schoolLower !== 'super admin')
+    ? activeSchoolName
+    : null;
+
   const [students, setStudents] = useState([]);
-  const [currentUser, setCurrentUser] = useState(null);
 
   // Mock Heat Form/Active state
   const [selectedStudentId, setSelectedStudentId] = useState('');
@@ -433,13 +467,23 @@ const Competitions = () => {
       });
 
 
-    // 2. Fetch student list for setup dropdown
-    fetch(`${API}/api/students`)
+    // 2. Fetch student list for setup dropdown isolated by active school
+    const schoolParam = (!isSuperAdmin && effectiveSchool) ? `?school=${encodeURIComponent(effectiveSchool)}` : '';
+    fetch(`${API}/api/students${schoolParam}`)
       .then(res => res.json())
       .then(data => {
-        setStudents(data);
-        if (data.length > 0) {
-          setSelectedStudentId(data[0].id.toString());
+        let list = Array.isArray(data) ? data : [];
+        if (!isSuperAdmin && effectiveSchool) {
+          const targetNorm = (effectiveSchool || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          list = list.filter(s => {
+            const sSchool = s.school || s.school_name || '';
+            const sNorm = sSchool.toLowerCase().replace(/[^a-z0-9]/g, '');
+            return sNorm === targetNorm || sNorm.includes(targetNorm) || targetNorm.includes(sNorm);
+          });
+        }
+        setStudents(list);
+        if (list.length > 0) {
+          setSelectedStudentId(list[0].id.toString());
         }
       })
       .catch(() => {});
@@ -455,7 +499,7 @@ const Competitions = () => {
         }
       } catch (e) {}
     }
-  }, []);
+  }, [effectiveSchool, isSuperAdmin]);
 
   // Poll/Check if the selected student already has an active mock heat running
   const checkActiveMockHeat = (studentId) => {

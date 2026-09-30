@@ -496,7 +496,7 @@ h2 {
 }
 
 /* Page Containers Grid */
-.im-page, .an-page, .va-page, .ip-page, .sp-page, .ns-page, .cr-page {
+.im-page, .va-page, .ip-page, .sp-page, .ns-page, .cr-page {
   display: flex !important;
   flex-direction: row !important;
   height: 100vh !important;
@@ -504,7 +504,7 @@ h2 {
   overflow: hidden !important;
   box-sizing: border-box !important;
 }
-/* Dashboard, Students, Sessions & Session Configure page — allow full vertical scroll */
+/* Dashboard, Students, Sessions, Analytics & Session Configure page — allow full vertical scroll */
 .db-page {
   display: flex !important;
   flex-direction: column !important;
@@ -514,7 +514,7 @@ h2 {
   overflow-y: auto !important;
   box-sizing: border-box !important;
 }
-.sm-page, .ses-page, .sc-page-container {
+.sm-page, .ses-page, .sc-page-container, .an-page {
   display: flex !important;
   flex-direction: row !important;
   min-height: 100vh !important;

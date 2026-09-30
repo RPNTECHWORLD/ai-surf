@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 
 const API = import.meta.env.VITE_API_URL || '';
@@ -53,11 +53,24 @@ const calculateAge = (dobString) => {
 
 const InstructorManagement = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [instructors, setInstructors] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState(null);
   const [showAddModal, setShowAddModal] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (location.state?.openAddModal || params.get('action') === 'add' || params.get('add') === 'true') {
+      setSelected(null);
+      setPhotoPreview('');
+      setShowAddModal(true);
+      if (window.history.replaceState) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    }
+  }, [location]);
   const [saving, setSaving] = useState(false);
   const fileInputRef = useRef(null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
@@ -751,8 +764,8 @@ const InstructorManagement = () => {
                   </div>
                 )}
 
-                <div className="form-row">
-                  <div className="form-group">
+                <div className="form-row" style={{ alignItems: 'flex-end' }}>
+                  <div className="form-group" style={{ flex: 1 }}>
                     <label>Date of Birth (DOB)</label>
                     <input
                       type="date"
@@ -765,7 +778,7 @@ const InstructorManagement = () => {
                       }}
                     />
                   </div>
-                  <div className="form-group">
+                  <div className="form-group" style={{ flex: '0 0 110px', maxWidth: '110px' }}>
                     <label>Age</label>
                     <input
                       type="number"
@@ -785,9 +798,6 @@ const InstructorManagement = () => {
                       <option>Non-binary</option>
                     </select>
                   </div>
-                </div>
-
-                <div className="form-row">
                   <div className="form-group">
                     <label>Fitness Level</label>
                     <select value={form.fitness_level} onChange={e => setForm({...form, fitness_level: e.target.value})}>
@@ -797,7 +807,10 @@ const InstructorManagement = () => {
                       <option>Elite</option>
                     </select>
                   </div>
-                  <div className="form-group">
+                </div>
+
+                <div className="form-row">
+                  <div className="form-group" style={{ flex: '0 0 calc(50% - 6px)', maxWidth: 'calc(50% - 6px)' }}>
                     <label>Experience (Years)</label>
                     <input type="number" min="0" max="60" placeholder="e.g. 5" value={form.experience} onChange={e => setForm({...form, experience: e.target.value})} required />
                   </div>

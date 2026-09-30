@@ -279,6 +279,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const isSuperAdmin = currentUser?.role === 'superadmin' || schoolLower === 'super admin';
   const isAdminOrSuperAdmin = isSuperAdmin || currentUser?.role === 'admin' || currentUser?.role === 'school_admin' || currentUser?.role === 'schooladmin' || schoolLower === 'school admin';
 
+  const isCoach = currentUser?.role === 'coach' || currentUser?.role === 'instructor';
   const isIndividualSurfer = (
     (currentUser?.school || currentUser?.school_name || '').toLowerCase().trim().includes('individual') ||
     (currentUser?.school || currentUser?.school_name || '').toLowerCase().trim().includes('freelance') ||
@@ -287,9 +288,17 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     schoolLower.includes('freelance')
   );
 
-  // Only School Admins and Individual/Freelance Surfers can Schedule sessions
+  const isCoachFreelance = isCoach && (
+    (currentUser?.school || currentUser?.school_name || '').toLowerCase().trim().includes('individual') ||
+    (currentUser?.school || currentUser?.school_name || '').toLowerCase().trim().includes('freelance') ||
+    schoolLower.includes('individual') ||
+    schoolLower.includes('freelance') ||
+    isIndividualSurfer
+  );
+
+  // Only School Admins and Individual/Freelance Surfers/Coaches can Schedule sessions
   // Coaches assigned to a school cannot schedule sessions
-  const canManageSessions = Boolean(isAdminOrSuperAdmin || isIndividualSurfer);
+  const canManageSessions = Boolean(isAdminOrSuperAdmin || isIndividualSurfer || isCoachFreelance);
 
   useEffect(() => {
     if (currentUser && !canManageSessions) {
@@ -406,6 +415,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const [dayFilter, setDayFilter] = useState('all');
   const [selectedSlotStep2, setSelectedSlotStep2] = useState(1);
   const [studentSearchStep2, setStudentSearchStep2] = useState('');
+  const [showMoreFiltersMobile, setShowMoreFiltersMobile] = useState(false);
 
   // ─── Step 2 State: Per-Slot Student Selection Mapping ───
   // Map of slotId -> array of studentIds selected for that specific slot
@@ -491,10 +501,22 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     if (activeSchoolStr) {
       try {
         const parsed = JSON.parse(activeSchoolStr);
-        schoolName = typeof parsed.name === 'string' ? parsed.name : parsed.name?.name;
-        const loc = parsed.city || parsed.location || schoolName;
+        if (parsed && typeof parsed === 'object') {
+          schoolName = typeof parsed.name === 'string' ? parsed.name : parsed.name?.name;
+        } else if (typeof parsed === 'string') {
+          schoolName = parsed;
+        }
+        const loc = parsed?.city || parsed?.location || schoolName;
         if (loc) setSpotName(`${loc} Beach`);
-      } catch (e) {}
+      } catch (e) {
+        schoolName = activeSchoolStr;
+      }
+    }
+    if (!schoolName && currentUser?.school) {
+      schoolName = typeof currentUser.school === 'string' ? currentUser.school : currentUser.school?.name;
+    }
+    if (isCoachFreelance) {
+      schoolName = 'Individual / Freelance Coach';
     }
     const schoolParam = schoolName ? `?school=${encodeURIComponent(schoolName)}` : '';
 
@@ -510,8 +532,15 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       .then(r => r.json())
       .then(data => {
         if (Array.isArray(data)) {
+          const filteredStudents = data.filter(s => {
+            const sSchool = (s.school || s.school_name || '').toLowerCase().trim();
+            if (isCoachFreelance) {
+              return sSchool === 'individual / freelance coach' || (!sSchool && String(s.created_by_user_id) === String(currentUser?.instructor_id || currentUser?.id));
+            }
+            return true;
+          });
           const mapped = [];
-          data.forEach((s, idx) => {
+          filteredStudents.forEach((s, idx) => {
             const dayInfo = getStudentCourseDayInfo(s, idx);
             // 1. Primary Student
             mapped.push({
@@ -602,11 +631,28 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
               isReal: true
             };
           });
+
+          if (isCoach && currentUser) {
+            const myCoachId = currentUser.instructor_id || currentUser.id;
+            const hasSelf = mapped.some(i => String(i.id) === String(myCoachId));
+            if (!hasSelf) {
+              mapped.unshift({
+                id: myCoachId || 1,
+                name: currentUser.name || 'Coach',
+                gender: currentUser.gender || 'Male',
+                role: 'Head Coach',
+                status: 'Available',
+                avatar: currentUser.image || '',
+                isReal: true
+              });
+            }
+          }
+
           setDbInstructors(mapped);
         }
       })
       .catch(() => {});
-  }, []);
+  }, [isCoachFreelance]);
 
   // Real Students Pool (Excludes students already scheduled on selected date)
   // In edit mode: ONLY show students who belong to the session/group being edited!
@@ -1133,7 +1179,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
               level: 'General',
               slotId: slot.id,
               studentIds: slotStudents,
-              assignedInstructorId: null,
+              assignedInstructorId: (isCoachFreelance && (currentUser?.instructor_id || currentUser?.id)) ? (currentUser?.instructor_id || currentUser?.id) : null,
+              assignedInstructorIds: (isCoachFreelance && (currentUser?.instructor_id || currentUser?.id)) ? [(currentUser?.instructor_id || currentUser?.id)] : [],
             };
           });
           setTrainingGroups(newGroups);
@@ -1147,7 +1194,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
               level: 'General',
               slotId: initialSlot?.id || null,
               studentIds: targetIds,
-              assignedInstructorId: null,
+              assignedInstructorId: (isCoachFreelance && (currentUser?.instructor_id || currentUser?.id)) ? (currentUser?.instructor_id || currentUser?.id) : null,
+              assignedInstructorIds: (isCoachFreelance && (currentUser?.instructor_id || currentUser?.id)) ? [(currentUser?.instructor_id || currentUser?.id)] : [],
             }
           ]);
           setActiveDropGroupId('group-1');
@@ -1341,7 +1389,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       level: levelLabel,
       slotId: defaultSlotId,
       studentIds: [...step3CheckedStudentIds],
-      assignedInstructorId: null,
+      assignedInstructorId: (isCoachFreelance && (currentUser?.instructor_id || currentUser?.id)) ? (currentUser?.instructor_id || currentUser?.id) : null,
+      assignedInstructorIds: (isCoachFreelance && (currentUser?.instructor_id || currentUser?.id)) ? [(currentUser?.instructor_id || currentUser?.id)] : [],
     };
     setTrainingGroups(prev => [...prev, newGroup]);
     setActiveDropGroupId(newGroup.id);
@@ -1575,6 +1624,29 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
         if (numericStudentIds.length === 0) continue;
 
+        const studentsData = grp.studentIds
+          .map(sid => {
+            const found = dbStudents.find(s => String(s.id) === String(sid));
+            if (found) {
+              const pId = found.parentStudentId || (typeof found.id === 'number' ? found.id : parseInt(String(found.id).replace(/\D/g, ''), 10));
+              return {
+                student_id: pId,
+                student_name: found.name,
+                is_guest: Boolean(found.isGuest),
+                guest_name: found.isGuest ? found.name : null,
+                parent_student_name: found.parentStudentName || null,
+              };
+            }
+            const numId = typeof sid === 'number' ? sid : parseInt(String(sid).replace(/\D/g, ''), 10);
+            return {
+              student_id: numId,
+              student_name: '',
+              is_guest: false,
+              guest_name: null
+            };
+          })
+          .filter(item => !isNaN(item.student_id) && item.student_id > 0);
+
         const coachIds = (grp.assignedInstructorIds && grp.assignedInstructorIds.length > 0)
           ? grp.assignedInstructorIds
           : (grp.assignedInstructorId ? [grp.assignedInstructorId] : []);
@@ -1584,7 +1656,10 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
         const assignedCoachId = grp.assignedInstructorId || coachIds[0];
         const numericCoachId = typeof assignedCoachId === 'number' ? assignedCoachId : parseInt(String(assignedCoachId).replace(/\D/g, ''), 10);
-        const primaryInstructorId = numericCoachIds[0] || (!isNaN(numericCoachId) ? numericCoachId : (allInstructors[0]?.id || 1));
+        const myCoachId = currentUser?.instructor_id || currentUser?.id;
+        const primaryInstructorId = (isCoachFreelance && myCoachId)
+          ? myCoachId
+          : (numericCoachIds[0] || (!isNaN(numericCoachId) ? numericCoachId : (allInstructors[0]?.id || 1)));
 
         const assignedCoachObjs = allInstructors.filter(i => coachIds.map(String).includes(String(i.id)));
         const assignedCoachObj = allInstructors.find(i => String(i.id) === String(assignedCoachId));
@@ -1602,6 +1677,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           time: slotTimeStr,
           duration_mins: slotDuration,
           student_ids: numericStudentIds,
+          students_data: studentsData,
           instructor_id: primaryInstructorId,
           location: spotName || 'Main Beach',
           condition: 'Moderate',
@@ -1704,42 +1780,71 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     <>
       {/* Top Header & Breadcrumb Stepper */}
       <header className="ns-header" style={isModal ? { padding: '16px 24px', background: '#FFFFFF', borderBottom: '1px solid #E2E8F0', flexShrink: 0 } : {}}>
-        <div className="ns-header-left" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          {currentStep > 1 && (
-            <button
-              type="button"
-              className="ns-header-back-btn"
-              onClick={() => setCurrentStep(prev => Math.max(1, prev - 1))}
-              title={`Back to Step ${currentStep - 1}`}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                background: '#F1F5F9',
-                border: '1px solid #CBD5E1',
-                borderRadius: '8px',
-                padding: '6px 12px',
-                fontSize: '13px',
-                fontWeight: 600,
-                color: '#1E293B',
-                cursor: 'pointer',
-                transition: 'all 0.15s ease'
-              }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-              <span>Back</span>
-            </button>
-          )}
-          <h1 className="ns-title" style={isModal ? { fontSize: '20px' } : {}}>
-            {editSession ? 'Edit Session' : (
-              currentStep === 1 ? 'Schedule Surf Session' :
-              currentStep === 2 ? 'Roster Selector Pool' :
-              'Instructor Groups Matching'
+        <div className="ns-header-main-row">
+          <div className="ns-header-left" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            {currentStep > 1 && (
+              <button
+                type="button"
+                className="ns-header-back-btn"
+                onClick={() => setCurrentStep(prev => Math.max(1, prev - 1))}
+                title={`Back to Step ${currentStep - 1}`}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  background: '#F1F5F9',
+                  border: '1px solid #CBD5E1',
+                  borderRadius: '8px',
+                  padding: '6px 12px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  color: '#1E293B',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                <span>Back</span>
+              </button>
             )}
-          </h1>
-          <span className={`ns-status-tag ${currentStep === 3 ? 'review' : 'upcoming'}`}>
-            {currentStep === 3 ? 'Review' : 'Upcoming'}
-          </span>
+            <h1 className="ns-title" style={isModal ? { fontSize: '20px' } : {}}>
+              {editSession ? 'Edit Session' : (
+                currentStep === 1 ? 'Schedule Surf Session' :
+                currentStep === 2 ? 'Roster Selector Pool' :
+                'Instructor Groups Matching'
+              )}
+            </h1>
+            <span className={`ns-status-tag ${currentStep === 3 ? 'review' : 'upcoming'}`}>
+              {currentStep === 3 ? 'Review' : 'Upcoming'}
+            </span>
+          </div>
+
+          {isModal && (
+            <div className="ns-header-close-wrap" style={{ display: 'flex', alignItems: 'center' }}>
+              <button
+                type="button"
+                className="ses-modal-close"
+                onClick={onClose}
+                style={{
+                  width: '34px',
+                  height: '34px',
+                  borderRadius: '50%',
+                  background: '#F1F5F9',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontWeight: 700,
+                  fontSize: '15px',
+                  color: '#475569',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transition: 'all 0.2s'
+                }}
+              >
+                ✕
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Stepper Navigation */}
@@ -1778,37 +1883,10 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             <span className="ns-step-text">3. Assign Instructors</span>
           </div>
         </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          {isModal && (
-            <button
-              type="button"
-              className="ses-modal-close"
-              onClick={onClose}
-              style={{
-                width: '34px',
-                height: '34px',
-                borderRadius: '50%',
-                background: '#F1F5F9',
-                border: 'none',
-                cursor: 'pointer',
-                fontWeight: 700,
-                fontSize: '15px',
-                color: '#475569',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                transition: 'all 0.2s'
-              }}
-            >
-              ✕
-            </button>
-          )}
-        </div>
       </header>
 
       {/* Main Form Scrollable Container */}
-      <div style={isModal ? { padding: '24px 28px', overflowY: 'auto', flex: 1, maxHeight: 'calc(90vh - 85px)' } : {}}>
+      <div className={isModal ? "ns-modal-body-scroll" : ""} style={isModal ? { padding: '24px 28px', overflowY: 'auto', flex: 1, maxHeight: 'calc(90vh - 85px)' } : {}}>
 
         {/* ═════════════════════════════════════════════════════════════════ */}
         {/* STEP 1: SESSION SETUP                                           */}
@@ -2218,8 +2296,22 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                 </div>
               </div>
 
+              {/* Mobile More Filters Toggle Button */}
+              <div className="ns-more-filters-bar">
+                <button
+                  type="button"
+                  className="ns-more-filters-toggle"
+                  onClick={() => setShowMoreFiltersMobile(prev => !prev)}
+                >
+                  <span>{showMoreFiltersMobile ? '▲ Fewer Filters' : '▼ More Filters (Day, Gender, Swimming)'}</span>
+                  {(courseDayFilter !== 'all' || genderFilterStep2 !== 'all' || swimmingFilterStep2 !== 'all') && (
+                    <span className="ns-active-filter-badge">Active</span>
+                  )}
+                </button>
+              </div>
+
               {/* Filter by Day (Which Day Athlete is Attending) */}
-              <div className="ns-filter-row" style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #F1F5F9' }}>
+              <div className={`ns-filter-row ns-extra-filter ${showMoreFiltersMobile ? 'show' : ''}`} style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #F1F5F9' }}>
                 <span className="ns-filter-label">Filter by Day:</span>
                 <div className="ns-pill-group" style={{ flexWrap: 'wrap', gap: '6px' }}>
                   <button
@@ -2244,7 +2336,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
               </div>
 
               {/* Filter by Gender */}
-              <div className="ns-filter-row" style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #F1F5F9' }}>
+              <div className={`ns-filter-row ns-extra-filter ${showMoreFiltersMobile ? 'show' : ''}`} style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #F1F5F9' }}>
                 <span className="ns-filter-label">Filter by Gender:</span>
                 <div className="ns-pill-group" style={{ flexWrap: 'wrap', gap: '6px' }}>
                   <button
@@ -2269,7 +2361,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
               </div>
 
               {/* Filter by Swimming Ability */}
-              <div className="ns-filter-row" style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #F1F5F9' }}>
+              <div className={`ns-filter-row ns-extra-filter ${showMoreFiltersMobile ? 'show' : ''}`} style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #F1F5F9' }}>
                 <span className="ns-filter-label">Swimming Ability:</span>
                 <div className="ns-pill-group" style={{ flexWrap: 'wrap', gap: '6px' }}>
                   <button
@@ -2298,6 +2390,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                 <span className="ns-filter-label">Search Student:</span>
                 <input
                   type="text"
+                  className="ns-search-student-input"
                   placeholder="Filter by student name..."
                   value={studentSearchStep2}
                   onChange={(e) => setStudentSearchStep2(e.target.value)}
@@ -2441,16 +2534,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                         borderLeft: student.isGuest
                           ? (isCurrentSlotStudent ? '4px solid #0284C7' : '4px solid #38BDF8')
                           : undefined,
-                        marginLeft: student.isGuest ? '28px' : '0px',
                         boxShadow: isCurrentSlotStudent ? '0 1px 4px rgba(15, 23, 42, 0.08)' : '0 1px 2px rgba(0, 0, 0, 0.02)',
                         opacity: isOtherSlotStudent ? 0.72 : 1,
                         transition: 'all 0.15s ease',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: student.isGuest ? '10px 16px' : '12px 18px',
-                        borderRadius: '12px',
-                        gap: '16px',
                         cursor: 'pointer'
                       };
                     };
@@ -2458,22 +2544,22 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                     return (
                       <div
                         key={student.id}
-                        className={`ns-student-row ${isChecked ? 'selected' : ''}`}
+                        className={`ns-student-row ${isChecked ? 'selected' : ''} ${student.isGuest ? 'ns-guest-row' : ''}`}
                         onClick={() => toggleSelectStudent(student.id)}
                         style={cardStyle()}
                       >
-                        {/* Left Side: Checkbox + Avatar + Student Name + Target Badge */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: 0 }}>
+                        {/* Left Side: Checkbox + Avatar + Student Name */}
+                        <div className="ns-student-row-left">
                           {student.isGuest && (
                             <span
+                              className="ns-guest-arrow"
                               style={{
-                                fontSize: '13px',
+                                fontSize: '12px',
                                 color: '#0284C7',
                                 fontWeight: 800,
                                 lineHeight: 1,
                                 display: 'inline-flex',
-                                alignItems: 'center',
-                                marginRight: '-4px'
+                                alignItems: 'center'
                               }}
                               title={`Accompanying Guest of ${student.parentStudentName}`}
                             >
@@ -2483,9 +2569,10 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
                           {/* Checkbox Icon */}
                           <div
+                            className="ns-student-check-circle"
                             style={{
-                              width: '22px',
-                              height: '22px',
+                              width: '20px',
+                              height: '20px',
                               borderRadius: '50%',
                               border: isCurrentSlotStudent
                                 ? (student.isGuest ? '2px solid #0284C7' : '2px solid #0F172A')
@@ -2511,73 +2598,67 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                             }}
                           >
                             {isCurrentSlotStudent && (
-                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
                                 <polyline points="20 6 9 17 4 12" />
                               </svg>
                             )}
                             {isOtherSlotStudent && (
-                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#64748B" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#64748B" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                                 <polyline points="20 6 9 17 4 12" />
                               </svg>
                             )}
                             {!isCurrentSlotStudent && !isOtherSlotStudent && isScheduledInDb && (
-                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
                                 <polyline points="20 6 9 17 4 12" />
                               </svg>
                             )}
                           </div>
 
-                          <UserAvatar src={student.avatar} name={student.name} size={student.isGuest ? 28 : 32} className="ns-student-avatar" />
+                          <UserAvatar src={student.avatar} name={student.name} size={student.isGuest ? 24 : 28} className="ns-student-avatar" />
 
-                          <span className="ns-student-name" style={{
-                            fontWeight: (isChecked || isScheduledInDb) ? 800 : 600,
-                            color: '#0F172A',
-                            fontSize: student.isGuest ? '14px' : '14.5px',
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis'
+                          <div className="ns-student-name-box">
+                            <span className="ns-student-name" style={{
+                              fontWeight: (isChecked || isScheduledInDb) ? 800 : 600,
+                              color: '#0F172A',
+                              fontSize: student.isGuest ? '13px' : '13.5px',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis'
+                            }}>
+                              {student.name}
+                            </span>
+                            {student.isGuest && (
+                              <span
+                                className="ns-guest-tag"
+                                title={`Accompanying Guest of ${student.parentStudentName}`}
+                              >
+                                👥 Guest {student.guestIndex} ({student.parentStudentName})
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Desktop Only: Swimming Ability Badge */}
+                          <span className="ns-hide-mobile" style={{
+                            fontSize: '10.5px',
+                            fontWeight: 700,
+                            color: student.swimming_ability?.toLowerCase() === 'non-swimmer' ? '#D97706' : '#0D9488',
+                            background: student.swimming_ability?.toLowerCase() === 'non-swimmer' ? '#FEF3C7' : '#ECFDF5',
+                            border: `1px solid ${student.swimming_ability?.toLowerCase() === 'non-swimmer' ? '#FDE68A' : '#A7F3D0'}`,
+                            padding: '1px 6px',
+                            borderRadius: '4px',
+                            flexShrink: 0
                           }}>
-                            {student.name}
+                            {student.swimming_ability?.toLowerCase() === 'non-swimmer' ? '🤿 Non-Swimmer' : '🏊 Swimmer'}
                           </span>
 
-                          {student.isGuest && (
-                            <span
-                              style={{
-                                fontSize: '11px',
-                                fontWeight: 700,
-                                color: '#0369A1',
-                                background: '#E0F2FE',
-                                border: '1px solid #BAE6FD',
-                                padding: '2px 8px',
-                                borderRadius: '6px',
-                                flexShrink: 0,
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '4px'
-                              }}
-                              title={`Accompanying Guest of ${student.parentStudentName}`}
-                            >
-                              👥 Guest {student.guestIndex} ({student.parentStudentName})
-                            </span>
-                          )}
-
-                          {student.swimming_ability?.toLowerCase() === 'non-swimmer' ? (
-                            <span style={{ fontSize: '10.5px', fontWeight: 700, color: '#D97706', background: '#FEF3C7', border: '1px solid #FDE68A', padding: '1px 6px', borderRadius: '4px', flexShrink: 0 }}>
-                              🤿 Non-Swimmer
-                            </span>
-                          ) : (
-                            <span style={{ fontSize: '10.5px', fontWeight: 700, color: '#0D9488', background: '#ECFDF5', border: '1px solid #A7F3D0', padding: '1px 6px', borderRadius: '4px', flexShrink: 0 }}>
-                              🏊 Swimmer
-                            </span>
-                          )}
-
+                          {/* Desktop Only: Day Target Badge */}
                           {isSelectedFilterMatch && (
-                            <span style={{
+                            <span className="ns-hide-mobile" style={{
                               background: 'linear-gradient(135deg, #059669 0%, #047857 100%)',
                               color: '#FFFFFF',
-                              padding: '3px 8px',
+                              padding: '2px 7px',
                               borderRadius: '20px',
-                              fontSize: '10px',
+                              fontSize: '9.5px',
                               fontWeight: 800,
                               textTransform: 'uppercase',
                               letterSpacing: '0.4px',
@@ -2591,60 +2672,60 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                           )}
                         </div>
 
-                        {/* Right Columns Container: perfectly aligned columns across all rows */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexShrink: 0 }}>
-                          {/* Column 1: Slot Status (140px) */}
-                          <div style={{ width: '140px', display: 'flex', justifyContent: 'center' }}>
+                        {/* Right Columns Container */}
+                        <div className="ns-student-row-right">
+                          {/* Column 1: Slot Status (on mobile: HIDE if Not Selected to keep it simple & compact) */}
+                          <div className={`ns-student-col-slot ${(!isCurrentSlotStudent && !isOtherSlotStudent && !isScheduledInDb) ? 'ns-hide-mobile' : ''}`}>
                             {isCurrentSlotStudent && assignment ? (
-                              <span style={{
+                              <span className="ns-slot-badge-assigned" style={{
                                 background: '#0F172A',
                                 color: '#FFFFFF',
                                 border: '1px solid #0F172A',
-                                padding: '4px 10px',
-                                borderRadius: '14px',
+                                padding: '3px 8px',
+                                borderRadius: '12px',
                                 fontSize: '11px',
                                 fontWeight: 700,
                                 display: 'inline-flex',
                                 alignItems: 'center',
-                                gap: '4px',
+                                gap: '3px',
                                 whiteSpace: 'nowrap'
                               }}>
-                                ✓ {assignment.slot.startTime || assignment.slot.time} SLOT
+                                ✓ {assignment.slot.startTime || assignment.slot.time}
                               </span>
                             ) : isOtherSlotStudent && assignment ? (
-                              <span style={{
+                              <span className="ns-slot-badge-other" style={{
                                 background: '#F1F5F9',
                                 color: '#64748B',
                                 border: '1px dashed #CBD5E1',
-                                padding: '4px 10px',
-                                borderRadius: '14px',
+                                padding: '3px 8px',
+                                borderRadius: '12px',
                                 fontSize: '11px',
                                 fontWeight: 600,
                                 display: 'inline-flex',
                                 alignItems: 'center',
-                                gap: '4px',
+                                gap: '3px',
                                 whiteSpace: 'nowrap'
                               }} title="Assigned to another time slot. Click row to move to this slot.">
                                 ⏰ {assignment.slot.startTime || assignment.slot.time}
                               </span>
                             ) : isScheduledInDb ? (
-                              <span style={{
+                              <span className="ns-slot-badge-scheduled" style={{
                                 background: '#FEF3C7',
                                 color: '#B45309',
                                 border: '1px solid #FDE68A',
-                                padding: '4px 10px',
-                                borderRadius: '14px',
+                                padding: '3px 8px',
+                                borderRadius: '12px',
                                 fontSize: '11px',
                                 fontWeight: 700,
                                 display: 'inline-flex',
                                 alignItems: 'center',
-                                gap: '4px',
+                                gap: '3px',
                                 whiteSpace: 'nowrap'
                               }}>
-                                ✓ Scheduled
+                                ✓ Sched
                               </span>
                             ) : (
-                              <span style={{
+                              <span className="ns-slot-badge-empty ns-hide-mobile" style={{
                                 background: '#F8FAFC',
                                 color: '#94A3B8',
                                 padding: '4px 10px',
@@ -2659,30 +2740,30 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                             )}
                           </div>
 
-                          {/* Column 2: Day Badge (125px) */}
-                          <div style={{ width: '125px', display: 'flex', justifyContent: 'center' }}>
+                          {/* Column 2: Day Badge */}
+                          <div className="ns-student-col-day">
                             <span
                               className="ns-day-progress-badge"
                               style={{
                                 background: '#F1F5F9',
                                 color: '#475569',
                                 fontWeight: 600,
-                                fontSize: '11.5px',
-                                padding: '4px 10px',
-                                borderRadius: '12px',
+                                fontSize: '11px',
+                                padding: '3px 8px',
+                                borderRadius: '10px',
                                 border: '1px solid #E2E8F0',
                                 whiteSpace: 'nowrap',
                                 display: 'inline-flex',
                                 alignItems: 'center',
-                                gap: '4px'
+                                gap: '3px'
                               }}
                             >
-                              📅 Day {student.whichDay} of {student.totalDays}
+                              <span className="ns-hide-mobile">📅 </span>Day {student.whichDay}/{student.totalDays}
                             </span>
                           </div>
 
-                          {/* Column 3: Course Duration (115px) */}
-                          <div style={{ width: '115px', display: 'flex', justifyContent: 'center' }}>
+                          {/* Column 3: Course Duration (Desktop Only) */}
+                          <div className="ns-student-col-course ns-hide-mobile">
                             <span
                               className="ns-student-group-label"
                               style={{
@@ -2698,8 +2779,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                             </span>
                           </div>
 
-                          {/* Column 4: Level Badge (105px) */}
-                          <div style={{ width: '105px', display: 'flex', justifyContent: 'flex-end' }}>
+                          {/* Column 4: Level Badge */}
+                          <div className="ns-student-col-level">
                             <span
                               className="ns-level-badge"
                               style={{
@@ -2707,7 +2788,6 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                 color: badge.text,
                                 borderColor: badge.border,
                                 margin: 0,
-                                width: '96px',
                                 textAlign: 'center',
                                 display: 'inline-block'
                               }}
@@ -2734,17 +2814,20 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
                 return (
                   <div className="ns-sb-left">
-                    <span className="ns-sb-target-label" style={isOver ? { background: '#EF4444', color: '#FFFFFF' } : {}}>
+                    <span className="ns-sb-target-label ns-hide-mobile" style={isOver ? { background: '#EF4444', color: '#FFFFFF' } : {}}>
                       {isOver ? 'CAPACITY EXCEEDED' : 'SELECTED ROSTER'}
                     </span>
                     <span className="ns-sb-capacity" style={{ fontSize: '14px', fontWeight: 800, color: isOver ? '#FCA5A5' : '#FFFFFF' }}>
-                      Total {allSelectedStudentIds.length}/{slotCap} Students Selected
+                      <span className="ns-hide-mobile">Total </span>
+                      {allSelectedStudentIds.length}/{slotCap}
+                      <span className="ns-hide-mobile"> Students Selected</span>
+                      <span className="ns-show-mobile"> Selected</span>
                     </span>
                   </div>
                 );
               })()}
 
-              <div className="ns-sb-center">
+              <div className="ns-sb-center ns-hide-mobile">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                   {slots.filter(s => (slotStudentMap[s.id] || []).length > 0).map((s) => {
                     const theme = getSlotThemeForSlot(s.id);
@@ -2769,17 +2852,18 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                 </div>
               </div>
 
-              <div className="ns-sb-right" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div className="ns-sb-right" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <button
                   type="button"
                   className="ns-sb-back-btn"
                   onClick={() => setCurrentStep(1)}
+                  title="Back to Session Setup"
                   style={{
                     background: 'rgba(255, 255, 255, 0.12)',
                     color: '#FFFFFF',
                     border: '1px solid rgba(255, 255, 255, 0.25)',
                     borderRadius: '8px',
-                    padding: '10px 18px',
+                    padding: '8px 14px',
                     fontSize: '13px',
                     fontWeight: 600,
                     cursor: 'pointer',
@@ -2791,13 +2875,15 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                   onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)'}
                   onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)'}
                 >
-                  ← Back to Session Setup
+                  <span className="ns-hide-mobile">← Back to Session Setup</span>
+                  <span className="ns-show-mobile">← Back</span>
                 </button>
                 <button
                   className="ns-primary-btn"
                   onClick={proceedToStep3}
                 >
-                  Import Selected in &amp; Next
+                  <span className="ns-hide-mobile">Import Selected in &amp; Next</span>
+                  <span className="ns-show-mobile">Next →</span>
                 </button>
               </div>
             </div>
@@ -5950,10 +6036,409 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           line-height: 1.5;
           margin: 0 0 24px 0;
         }
-        .ns-modal-actions {
+        /* ═════════════════════════════════════════════════════════════════ */
+        /* RESPONSIVE & MOBILE STYLES (CHINNA SIMPLE MOBILE UI)             */
+        /* ═════════════════════════════════════════════════════════════════ */
+        .ns-header-main-row {
+          display: contents;
+        }
+        .ns-hide-mobile {
+          /* visible on desktop */
+        }
+        .ns-show-mobile {
+          display: none !important;
+        }
+        .ns-more-filters-bar {
+          display: none;
+        }
+
+        .ns-student-row {
           display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 12px 18px;
+          border-radius: 12px;
+          gap: 14px;
+        }
+        .ns-student-row.ns-guest-row {
+          margin-left: 28px;
+          padding: 10px 16px;
+        }
+        .ns-student-row-left {
+          display: flex;
+          align-items: center;
           gap: 12px;
-          justify-content: center;
+          flex: 1;
+          min-width: 0;
+        }
+        .ns-student-name-box {
+          display: flex;
+          flex-direction: column;
+          min-width: 0;
+        }
+        .ns-guest-tag {
+          font-size: 11px;
+          font-weight: 700;
+          color: #0369A1;
+          background: #E0F2FE;
+          border: 1px solid #BAE6FD;
+          padding: 1px 6px;
+          border-radius: 4px;
+          display: inline-block;
+          white-space: nowrap;
+          margin-top: 2px;
+        }
+        .ns-student-row-right {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          flex-shrink: 0;
+        }
+
+        @media (max-width: 768px) {
+          /* Mobile Utilities */
+          .ns-hide-mobile {
+            display: none !important;
+          }
+          .ns-show-mobile {
+            display: inline !important;
+          }
+
+          /* Modal Container */
+          .ses-modal-overlay {
+            padding: 6px 4px !important;
+          }
+          .ses-modal-box.ns-modal-container {
+            width: 98% !important;
+            max-width: 98% !important;
+            max-height: 96vh !important;
+            border-radius: 14px !important;
+          }
+          .ns-modal-body-scroll {
+            padding: 10px 8px 100px 8px !important;
+          }
+
+          /* Header */
+          .ns-header {
+            flex-direction: column !important;
+            align-items: stretch !important;
+            padding: 10px 12px !important;
+            gap: 8px !important;
+          }
+          .ns-header-main-row {
+            display: flex !important;
+            align-items: center !important;
+            justify-content: space-between !important;
+            width: 100% !important;
+            gap: 6px !important;
+          }
+          .ns-header-left {
+            gap: 6px !important;
+            min-width: 0 !important;
+            flex: 1 !important;
+          }
+          .ns-title {
+            font-size: 15px !important;
+            white-space: nowrap !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+            max-width: 150px !important;
+          }
+          .ns-status-tag {
+            font-size: 9.5px !important;
+            padding: 1px 6px !important;
+          }
+          .ns-header-back-btn {
+            padding: 3px 6px !important;
+            font-size: 11px !important;
+          }
+
+          /* Stepper */
+          .ns-stepper {
+            width: 100% !important;
+            overflow-x: auto !important;
+            -webkit-overflow-scrolling: touch !important;
+            scrollbar-width: none !important;
+            gap: 6px !important;
+            padding: 2px 0 !important;
+          }
+          .ns-stepper::-webkit-scrollbar {
+            display: none !important;
+          }
+          .ns-step-item {
+            font-size: 11px !important;
+            white-space: nowrap !important;
+            flex-shrink: 0 !important;
+            padding: 2px 5px !important;
+            gap: 4px !important;
+          }
+          .ns-step-circle {
+            width: 18px !important;
+            height: 18px !important;
+            font-size: 9.5px !important;
+          }
+
+          /* Step 2 Banner */
+          .ns-selected-banner {
+            padding: 6px 10px !important;
+            font-size: 11.5px !important;
+            border-radius: 8px !important;
+          }
+
+          /* Filters Card: Compact & Simple */
+          .ns-filters-card {
+            padding: 10px 10px !important;
+            border-radius: 10px !important;
+            gap: 8px !important;
+          }
+          .ns-filter-row {
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            gap: 6px !important;
+            width: 100% !important;
+            margin-top: 8px !important;
+            padding-top: 8px !important;
+          }
+          .ns-filter-row:first-child {
+            margin-top: 0 !important;
+            padding-top: 0 !important;
+          }
+          .ns-filter-label {
+            min-width: 0 !important;
+            width: 100% !important;
+            font-size: 11.5px !important;
+            font-weight: 700 !important;
+            color: #0F172A !important;
+          }
+          .ns-slot-pills-wrap {
+            width: 100% !important;
+            display: flex !important;
+            flex-wrap: wrap !important;
+            gap: 6px !important;
+          }
+          .ns-slot-pill-btn {
+            padding: 4px 8px !important;
+            font-size: 11px !important;
+            border-radius: 8px !important;
+            gap: 4px !important;
+          }
+          .ns-slot-pill-num {
+            width: 18px !important;
+            height: 18px !important;
+            font-size: 10px !important;
+          }
+          .ns-slot-pill-time {
+            font-size: 11px !important;
+          }
+          .ns-pill-group {
+            width: 100% !important;
+            display: flex !important;
+            flex-wrap: wrap !important;
+            gap: 5px !important;
+          }
+          .ns-pill {
+            padding: 4px 8px !important;
+            font-size: 11px !important;
+            border-radius: 14px !important;
+          }
+          .ns-search-student-input {
+            width: 100% !important;
+            min-width: 0 !important;
+            box-sizing: border-box !important;
+            padding: 6px 10px !important;
+            font-size: 12px !important;
+          }
+
+          /* Collapsible Secondary Filters */
+          .ns-more-filters-bar {
+            display: flex !important;
+            width: 100% !important;
+            margin-top: 8px !important;
+            padding-top: 6px !important;
+            border-top: 1px solid #F1F5F9 !important;
+          }
+          .ns-more-filters-toggle {
+            background: #F8FAFC !important;
+            border: 1px dashed #CBD5E1 !important;
+            border-radius: 6px !important;
+            padding: 5px 10px !important;
+            font-size: 11px !important;
+            font-weight: 600 !important;
+            color: #0284C7 !important;
+            cursor: pointer !important;
+            width: 100% !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            gap: 6px !important;
+          }
+          .ns-active-filter-badge {
+            background: #0284C7 !important;
+            color: #FFFFFF !important;
+            font-size: 9px !important;
+            padding: 1px 5px !important;
+            border-radius: 8px !important;
+            font-weight: 700 !important;
+          }
+          .ns-extra-filter {
+            display: none !important;
+          }
+          .ns-extra-filter.show {
+            display: flex !important;
+          }
+
+          /* Pool Section Header */
+          .ns-pool-section {
+            padding: 10px 10px !important;
+            border-radius: 10px !important;
+          }
+          .ns-pool-section-header {
+            flex-direction: row !important;
+            align-items: center !important;
+            justify-content: space-between !important;
+            margin-bottom: 8px !important;
+            gap: 6px !important;
+          }
+          .ns-ps-title {
+            font-size: 13.5px !important;
+            font-weight: 700 !important;
+          }
+          .ns-ps-count {
+            font-size: 11px !important;
+          }
+          .ns-select-all-btn {
+            font-size: 11px !important;
+            padding: 4px 8px !important;
+            border-radius: 6px !important;
+          }
+
+          /* Student Rows: Ultra Compact, 1 Clean Line, ZERO Overlap */
+          .ns-student-row {
+            padding: 6px 8px !important;
+            gap: 6px !important;
+            border-radius: 8px !important;
+            min-height: 40px !important;
+            margin-bottom: 4px !important;
+          }
+          .ns-student-row.ns-guest-row {
+            margin-left: 8px !important;
+            padding: 5px 8px !important;
+          }
+          .ns-student-row-left {
+            gap: 6px !important;
+            min-width: 0 !important;
+            flex: 1 !important;
+          }
+          .ns-student-check-circle {
+            width: 18px !important;
+            height: 18px !important;
+          }
+          .ns-student-avatar {
+            width: 24px !important;
+            height: 24px !important;
+          }
+          .ns-student-name {
+            font-size: 12.5px !important;
+            max-width: 110px !important;
+          }
+          .ns-guest-tag {
+            font-size: 9px !important;
+            padding: 0 4px !important;
+            max-width: 90px !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+          }
+          .ns-student-row-right {
+            gap: 5px !important;
+          }
+          .ns-student-col-slot,
+          .ns-student-col-day,
+          .ns-student-col-level {
+            width: auto !important;
+            display: flex !important;
+            align-items: center !important;
+          }
+          .ns-day-progress-badge {
+            font-size: 10px !important;
+            padding: 2px 5px !important;
+            border-radius: 5px !important;
+          }
+          .ns-level-badge {
+            font-size: 9.5px !important;
+            padding: 2px 6px !important;
+            border-radius: 5px !important;
+            width: auto !important;
+          }
+          .ns-slot-badge-assigned,
+          .ns-slot-badge-other,
+          .ns-slot-badge-scheduled {
+            font-size: 9.5px !important;
+            padding: 2px 5px !important;
+            border-radius: 5px !important;
+          }
+
+          /* Bottom Sticky Bar: Sleek, compact 44px bar */
+          .ns-sticky-bar,
+          .ns-modal-container .ns-sticky-bar {
+            position: sticky !important;
+            bottom: 0 !important;
+            left: 0 !important;
+            right: 0 !important;
+            width: 100% !important;
+            box-sizing: border-box !important;
+            padding: 8px 10px !important;
+            border-radius: 10px !important;
+            margin-top: 8px !important;
+            display: flex !important;
+            flex-direction: row !important;
+            align-items: center !important;
+            justify-content: space-between !important;
+            background-color: #0A0F1D !important;
+            z-index: 50 !important;
+            gap: 8px !important;
+          }
+          .ns-sb-left {
+            display: flex !important;
+            align-items: center !important;
+            gap: 4px !important;
+            min-width: 0 !important;
+          }
+          .ns-sb-capacity {
+            font-size: 12px !important;
+            font-weight: 700 !important;
+            color: #FFFFFF !important;
+            white-space: nowrap !important;
+          }
+          .ns-sb-center {
+            display: none !important;
+          }
+          .ns-sb-right {
+            display: flex !important;
+            align-items: center !important;
+            gap: 6px !important;
+          }
+          .ns-sb-back-btn {
+            padding: 6px 10px !important;
+            font-size: 11.5px !important;
+            border-radius: 6px !important;
+            white-space: nowrap !important;
+          }
+          .ns-primary-btn {
+            padding: 6px 12px !important;
+            font-size: 11.5px !important;
+            border-radius: 6px !important;
+            white-space: nowrap !important;
+          }
+        }
+
+        @media (max-width: 480px) {
+          .ns-student-name {
+            max-width: 95px !important;
+          }
+          .ns-title {
+            max-width: 120px !important;
+            font-size: 14px !important;
+          }
         }
       `}</style>
     </>

@@ -47,6 +47,12 @@ const AuthPage = () => {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
+  const activeInviteError = inviteError || schoolInviteError || (
+    schoolInviteData && (!schoolInviteData.valid || schoolInviteData.remaining <= 0)
+      ? (schoolInviteData.detail || `This invite link has reached its maximum registration limit (${schoolInviteData.used_count || schoolInviteData.max_count}/${schoolInviteData.max_count} used). All spots for this invite have been filled. Please request a new invite link from ${schoolInviteData.school || 'the school'}.`)
+      : ''
+  );
+
   // Strictly enforce Student role when coming via any invite link
   useEffect(() => {
     if (isInviteRoleLocked && role !== 'athlete') {
@@ -92,6 +98,7 @@ const AuthPage = () => {
   const [loginPassword, setLoginPassword] = useState('');
   const [signupPassword, setSignupPassword] = useState('');
   const [signupConfirmPassword, setSignupConfirmPassword] = useState('');
+  const [isManualDuration, setIsManualDuration] = useState(false);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -472,9 +479,6 @@ const AuthPage = () => {
         email: formData.email.toLowerCase().trim(),
         password: pwd
       };
-      if (loginRole) {
-        payload.role = loginRole;
-      }
       const res = await fetch(`${API}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -491,6 +495,10 @@ const AuthPage = () => {
   // ── Registration OTP ───────────────────────────────────────────────────────
   const sendOTP = async (isResend = false) => {
     setErrorMsg(''); setSuccessMsg('');
+    if (activeInviteError) {
+      setErrorMsg(activeInviteError);
+      return;
+    }
     if (!formData.email.trim()) { setErrorMsg('Please enter your email address.'); return; }
     setLoading(true);
     try {
@@ -535,6 +543,10 @@ const AuthPage = () => {
   const completeRegistration = async (e) => {
     e && e.preventDefault();
     setErrorMsg(''); setSuccessMsg('');
+    if (activeInviteError) {
+      setErrorMsg(activeInviteError);
+      return;
+    }
     const pwd = signupPassword;
     const confirmPwd = signupConfirmPassword;
     if (!formData.name.trim() || !pwd || !confirmPwd) {
@@ -827,23 +839,94 @@ const AuthPage = () => {
 
   // ── Render ─────────────────────────────────────────────────────────────────
   // Invite loading screen
-  if (inviteLoading) {
+  if (inviteLoading || schoolInviteLoading) {
     return (
       <div style={{ minHeight: '100vh', background: '#050B1A', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: '16px' }}>
         <div style={{ width: '40px', height: '40px', border: '3px solid rgba(255,77,109,0.3)', borderTopColor: '#FF4D6D', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-        <p style={{ color: '#94A3B8', fontSize: '15px', fontFamily: 'Inter, sans-serif' }}>Loading your invite...</p>
+        <p style={{ color: '#94A3B8', fontSize: '15px', fontFamily: 'Inter, sans-serif' }}>Verifying your invite link...</p>
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }
 
-  if (inviteError) {
+  // Full-page Blocked / Expired Screen (Stops user from going inside or registering)
+  if (activeInviteError) {
     return (
-      <div style={{ minHeight: '100vh', background: '#050B1A', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: '16px', padding: '24px' }}>
-        <div style={{ fontSize: '48px' }}>🔗</div>
-        <h2 style={{ color: '#FFFFFF', fontFamily: 'Outfit, sans-serif', margin: 0 }}>Invite Link Issue</h2>
-        <p style={{ color: '#94A3B8', textAlign: 'center', maxWidth: '360px' }}>{inviteError}</p>
-        <button onClick={() => navigate('/auth')} style={{ background: '#FF4D6D', color: '#fff', border: 'none', borderRadius: '10px', padding: '12px 28px', fontWeight: 700, cursor: 'pointer' }}>Go to Login</button>
+      <div style={{ minHeight: '100vh', background: '#050B1A', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: '20px', padding: '24px', fontFamily: 'Inter, sans-serif' }}>
+        <div style={{
+          width: '84px',
+          height: '84px',
+          borderRadius: '50%',
+          background: 'rgba(239, 68, 68, 0.12)',
+          border: '2px solid rgba(239, 68, 68, 0.4)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontSize: '38px',
+          boxShadow: '0 8px 30px rgba(239, 68, 68, 0.2)'
+        }}>
+          ⛔
+        </div>
+
+        <div style={{ textAlign: 'center', maxWidth: '440px' }}>
+          <h2 style={{ color: '#FFFFFF', fontFamily: 'Outfit, sans-serif', fontSize: '26px', fontWeight: 800, margin: '0 0 12px 0' }}>
+            Invite Link Expired / Limit Reached
+          </h2>
+          <div style={{
+            background: 'rgba(239, 68, 68, 0.08)',
+            border: '1px solid rgba(239, 68, 68, 0.3)',
+            borderRadius: '12px',
+            padding: '14px 18px',
+            color: '#FCA5A5',
+            fontSize: '13.5px',
+            lineHeight: '1.6',
+            marginBottom: '16px'
+          }}>
+            {activeInviteError}
+          </div>
+          {schoolInviteData?.school && (
+            <p style={{ color: '#94A3B8', fontSize: '13px', margin: '0 0 4px 0' }}>
+              School: <strong style={{ color: '#38BDF8' }}>{schoolInviteData.school}</strong>
+            </p>
+          )}
+          <p style={{ color: '#64748B', fontSize: '13px', margin: 0 }}>
+            You cannot register with this link as all spots have been filled.
+          </p>
+        </div>
+
+        <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
+          <button
+            onClick={() => navigate('/auth')}
+            style={{
+              background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
+              color: '#FFFFFF',
+              border: 'none',
+              borderRadius: '12px',
+              padding: '12px 28px',
+              fontWeight: 800,
+              fontSize: '14px',
+              cursor: 'pointer',
+              boxShadow: '0 4px 14px rgba(13, 148, 136, 0.3)'
+            }}
+          >
+            Go to Login
+          </button>
+          <button
+            onClick={() => navigate('/')}
+            style={{
+              background: 'rgba(255, 255, 255, 0.08)',
+              color: '#E2E8F0',
+              border: '1px solid rgba(255, 255, 255, 0.2)',
+              borderRadius: '12px',
+              padding: '12px 22px',
+              fontWeight: 700,
+              fontSize: '14px',
+              cursor: 'pointer'
+            }}
+          >
+            Home
+          </button>
+        </div>
       </div>
     );
   }
@@ -1025,20 +1108,10 @@ const AuthPage = () => {
                 )}
 
                 <form className="auth-form" onSubmit={handleLoginSubmit}>
-                  <div className="auth-fields-row">
-                    <div className="auth-field" style={{ flex: 1.4 }}>
-                      <label>Email Address</label>
-                      <input type="email" name="email" placeholder="you@example.com"
-                        value={formData.email} onChange={handleChange} required />
-                    </div>
-                    <div className="auth-field" style={{ flex: 1 }}>
-                      <label>Login As</label>
-                      <select value={loginRole} onChange={e => setLoginRole(e.target.value)}>
-                        <option value="athlete">Student</option>
-                        <option value="coach">Coach</option>
-                        <option value="admin">School Admin</option>
-                      </select>
-                    </div>
+                  <div className="auth-field">
+                    <label>Email Address</label>
+                    <input type="email" name="email" placeholder="you@example.com"
+                      value={formData.email} onChange={handleChange} required />
                   </div>
                   <div className="auth-field">
                     <label>Password</label>
@@ -1482,40 +1555,160 @@ const AuthPage = () => {
                           <div className="auth-field">
                             <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                               <span>🏄 Course Duration</span>
-                              {(schoolInviteData?.course_duration || searchParams.get('course_duration')) && (
-                                <span style={{ fontSize: '11px', color: '#10B981', fontWeight: 800 }}>
-                                  🔒 Locked by Invite ({schoolInviteData?.course_duration || searchParams.get('course_duration')})
-                                </span>
-                              )}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                {(schoolInviteData?.course_duration || searchParams.get('course_duration')) ? (
+                                  <span style={{ fontSize: '11px', color: '#10B981', fontWeight: 800 }}>
+                                    🔒 Locked by Invite ({schoolInviteData?.course_duration || searchParams.get('course_duration')})
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setIsManualDuration(prev => !prev)}
+                                    style={{
+                                      background: isManualDuration ? 'rgba(0, 242, 254, 0.15)' : 'rgba(255, 255, 255, 0.08)',
+                                      border: isManualDuration ? '1px solid #00F2FE' : '1px solid rgba(255, 255, 255, 0.2)',
+                                      color: isManualDuration ? '#00F2FE' : '#94A3B8',
+                                      fontSize: '11px',
+                                      fontWeight: 700,
+                                      padding: '3px 8px',
+                                      borderRadius: '6px',
+                                      cursor: 'pointer',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      transition: 'all 0.15s ease'
+                                    }}
+                                    title="Toggle between presets dropdown and typing manual days"
+                                  >
+                                    <span>{isManualDuration ? '📋 Choose Presets' : '✏️ Type Manually'}</span>
+                                  </button>
+                                )}
+                              </div>
                             </label>
-                            <select 
-                              name="course_duration" 
-                              value={formData.course_duration || ''} 
-                              onChange={handleChange}
-                              disabled={Boolean(schoolInviteData?.course_duration || searchParams.get('course_duration'))}
-                              style={(schoolInviteData?.course_duration || searchParams.get('course_duration')) ? { opacity: 0.9, cursor: 'not-allowed', borderColor: '#10B981', background: 'rgba(16, 185, 129, 0.08)' } : {}}
-                            >
-                              <option value="">-- Select Course Duration --</option>
-                              <option value="1 Day Crash Course">1 Day Crash Course</option>
-                              <option value="2 Days Course">2 Days Course</option>
-                              <option value="3 Days Course">3 Days Course</option>
-                              <option value="4 Days Course">4 Days Course</option>
-                              <option value="5 Days Course">5 Days Course</option>
-                              <option value="6 Days Course">6 Days Course</option>
-                              <option value="7 Days Course">7 Days Course</option>
-                              <option value="8 Days Course">8 Days Course</option>
-                              <option value="9 Days Course">9 Days Course</option>
-                              <option value="10 Days Course">10 Days Course</option>
-                              <option value="12 Days Course">12 Days Course</option>
-                              <option value="14 Days Course">14 Days Course</option>
-                              {formData.course_duration && ![
-                                '1 Day Crash Course', '2 Days Course', '3 Days Course', '4 Days Course',
-                                '5 Days Course', '6 Days Course', '7 Days Course', '8 Days Course',
-                                '9 Days Course', '10 Days Course', '12 Days Course', '14 Days Course'
-                              ].includes(formData.course_duration) && (
-                                <option value={formData.course_duration}>{formData.course_duration}</option>
-                              )}
-                            </select>
+
+                            {!isManualDuration ? (
+                              <select 
+                                name="course_duration" 
+                                value={formData.course_duration || ''} 
+                                onChange={(e) => {
+                                  if (e.target.value === '__custom_manual__') {
+                                    setIsManualDuration(true);
+                                  } else {
+                                    handleChange(e);
+                                  }
+                                }}
+                                disabled={Boolean(schoolInviteData?.course_duration || searchParams.get('course_duration'))}
+                                style={(schoolInviteData?.course_duration || searchParams.get('course_duration')) ? { opacity: 0.9, cursor: 'not-allowed', borderColor: '#10B981', background: 'rgba(16, 185, 129, 0.08)' } : {}}
+                              >
+                                <option value="">-- Select Course Duration --</option>
+                                <option value="1 Day Crash Course">1 Day Crash Course</option>
+                                <option value="2 Days Course">2 Days Course</option>
+                                <option value="3 Days Course">3 Days Course</option>
+                                <option value="4 Days Course">4 Days Course</option>
+                                <option value="5 Days Course">5 Days Course</option>
+                                <option value="6 Days Course">6 Days Course</option>
+                                <option value="7 Days Course">7 Days Course</option>
+                                <option value="8 Days Course">8 Days Course</option>
+                                <option value="9 Days Course">9 Days Course</option>
+                                <option value="10 Days Course">10 Days Course</option>
+                                <option value="12 Days Course">12 Days Course</option>
+                                <option value="14 Days Course">14 Days Course</option>
+                                {formData.course_duration && ![
+                                  '1 Day Crash Course', '2 Days Course', '3 Days Course', '4 Days Course',
+                                  '5 Days Course', '6 Days Course', '7 Days Course', '8 Days Course',
+                                  '9 Days Course', '10 Days Course', '12 Days Course', '14 Days Course'
+                                ].includes(formData.course_duration) && (
+                                  <option value={formData.course_duration}>{formData.course_duration}</option>
+                                )}
+                                <option value="__custom_manual__">✏️ Custom / Type Days Manually...</option>
+                              </select>
+                            ) : (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                                  <input 
+                                    type="number"
+                                    min="1"
+                                    max="365"
+                                    placeholder="Enter days (e.g. 3, 5, 21)"
+                                    value={(() => {
+                                      const match = (formData.course_duration || '').match(/^(\d+)/);
+                                      return match ? match[1] : (formData.course_duration || '');
+                                    })()}
+                                    onChange={e => {
+                                      const val = e.target.value;
+                                      const num = parseInt(val, 10);
+                                      if (!isNaN(num) && num > 0) {
+                                        const formatted = num === 1 ? '1 Day Crash Course' : `${num} Days Course`;
+                                        handleChange({ target: { name: 'course_duration', value: formatted } });
+                                      } else {
+                                        handleChange({ target: { name: 'course_duration', value: val } });
+                                      }
+                                    }}
+                                    disabled={Boolean(schoolInviteData?.course_duration || searchParams.get('course_duration'))}
+                                    style={{
+                                      paddingRight: '65px',
+                                      fontWeight: 600,
+                                      fontSize: '13.5px'
+                                    }}
+                                    autoFocus
+                                  />
+                                  <span style={{
+                                    position: 'absolute',
+                                    right: '12px',
+                                    fontSize: '12px',
+                                    fontWeight: 700,
+                                    color: '#00F2FE',
+                                    pointerEvents: 'none'
+                                  }}>
+                                    Days
+                                  </span>
+                                </div>
+                                
+                                {/* Quick Presets Pill Row */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                  <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 600 }}>Quick:</span>
+                                  {[1, 3, 5, 7, 10, 14, 21, 30].map(d => {
+                                    const label = d === 1 ? '1 Day Crash Course' : `${d} Days Course`;
+                                    const isSelected = formData.course_duration === label;
+                                    return (
+                                      <button
+                                        key={d}
+                                        type="button"
+                                        onClick={() => handleChange({ target: { name: 'course_duration', value: label } })}
+                                        style={{
+                                          background: isSelected ? '#00F2FE' : 'rgba(255, 255, 255, 0.06)',
+                                          color: isSelected ? '#090D1A' : '#CBD5E1',
+                                          border: isSelected ? '1px solid #00F2FE' : '1px solid rgba(255, 255, 255, 0.12)',
+                                          borderRadius: '6px',
+                                          padding: '2px 8px',
+                                          fontSize: '11px',
+                                          fontWeight: 700,
+                                          cursor: 'pointer',
+                                          transition: 'all 0.15s ease'
+                                        }}
+                                      >
+                                        {d}D
+                                      </button>
+                                    );
+                                  })}
+                                  <button
+                                    type="button"
+                                    onClick={() => setIsManualDuration(false)}
+                                    style={{
+                                      marginLeft: 'auto',
+                                      background: 'transparent',
+                                      border: 'none',
+                                      color: '#00F2FE',
+                                      fontSize: '11px',
+                                      cursor: 'pointer',
+                                      textDecoration: 'underline'
+                                    }}
+                                  >
+                                    📋 Dropdown View
+                                  </button>
+                                </div>
+                              </div>
+                            )}
                           </div>
 
                           <div className="auth-field">
