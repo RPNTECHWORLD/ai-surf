@@ -671,7 +671,6 @@ const StudentProfile = () => {
           if (Array.isArray(allSess)) {
             const mySess = allSess.filter(s => 
               s.student_id === data.id || 
-              (data.user_id && s.student_id === data.user_id) ||
               (stName && (
                 (s.student || '').toLowerCase().trim() === stName ||
                 (s.student_name || '').toLowerCase().trim() === stName ||
@@ -1001,17 +1000,120 @@ const StudentProfile = () => {
   const badgeDotColor = currentBadge.color || '#F59E0B';
 
   const effectiveSessions = (student?.sessions && Array.isArray(student.sessions)) ? student.sessions : [];
-  const upcomingSessions = effectiveSessions.filter(s => {
-    const st = (s.status || '').toLowerCase().trim();
-    return st !== 'completed' && st !== 'cancelled' && st !== 'canceled';
+
+  const normalizeToYYYYMMDD = (dateStr) => {
+    if (!dateStr) return '';
+    const str = String(dateStr).trim();
+    const yyyymmdd = str.match(/^(\d{4})[-/](\d{2})[-/](\d{2})/);
+    if (yyyymmdd) return `${yyyymmdd[1]}-${yyyymmdd[2]}-${yyyymmdd[3]}`;
+    const ddmmyyyy = str.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
+    if (ddmmyyyy) return `${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}`;
+    const parsed = new Date(str);
+    if (!isNaN(parsed.getTime())) {
+      const y = parsed.getFullYear();
+      const m = String(parsed.getMonth() + 1).padStart(2, '0');
+      const d = String(parsed.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+    return str;
+  };
+
+  const getTodayYYYYMMDD = () => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  };
+
+  const parseTimeStrToMinutes = (t) => {
+    if (!t) return null;
+    const match = String(t).match(/(\d{1,2}):(\d{2})(?:\s*(AM|PM))?/i);
+    if (!match) return null;
+    let hours = parseInt(match[1], 10);
+    const mins = parseInt(match[2], 10);
+    const ampm = match[3] ? match[3].toUpperCase() : null;
+    if (ampm === 'PM' && hours < 12) hours += 12;
+    if (ampm === 'AM' && hours === 12) hours = 0;
+    return hours * 60 + mins;
+  };
+
+  const getSessionDisplayStatus = (s) => {
+    if (!s) return 'Upcoming';
+    const rawStatus = s.status;
+    const rawDate = s.date;
+    const rawTime = s.time;
+    const rawDuration = s.duration_mins;
+
+    const str = String(rawStatus || '').trim();
+    const lower = str.toLowerCase();
+
+    if (lower === 'completed') return 'Completed';
+    if (lower === 'cancelled' || lower === 'canceled') return 'Cancelled';
+    if (lower === 'pending for review' || lower === 'pending review' || lower === 'pending_review') {
+      return 'Pending for Review';
+    }
+
+    if (rawDate) {
+      const sessionISO = normalizeToYYYYMMDD(rawDate);
+      const todayISO = getTodayYYYYMMDD();
+      if (sessionISO) {
+        if (sessionISO < todayISO) {
+          return 'Pending for Review';
+        } else if (sessionISO > todayISO) {
+          return 'Upcoming';
+        } else {
+          if (rawTime) {
+            const timeParts = String(rawTime).split(/\s*(?:[-–—]|to)\s*/i);
+            const startMins = parseTimeStrToMinutes(timeParts[0]);
+            if (startMins !== null) {
+              let endMins = null;
+              if (timeParts.length >= 2) endMins = parseTimeStrToMinutes(timeParts[1]);
+              if (endMins === null || endMins <= startMins) {
+                const dur = Number(rawDuration) || 60;
+                endMins = startMins + dur;
+              }
+              const now = new Date();
+              const nowMins = now.getHours() * 60 + now.getMinutes();
+              if (nowMins < startMins) return 'Upcoming';
+              if (nowMins >= endMins) return 'Pending for Review';
+              return 'In Progress';
+            }
+          }
+          return 'Upcoming';
+        }
+      }
+    }
+
+    if (lower === 'in progress' || lower === 'in_progress') return 'In Progress';
+    if (lower === 'upcoming' || lower === 'scheduled') return 'Upcoming';
+    return str || 'Upcoming';
+  };
+
+  const completedSessions = effectiveSessions.filter(s => getSessionDisplayStatus(s) === 'Completed');
+  const upcomingSessions = effectiveSessions.filter(s => getSessionDisplayStatus(s) === 'Upcoming');
+  const pendingReviewSessions = effectiveSessions.filter(s => getSessionDisplayStatus(s) === 'Pending for Review');
+  const inProgressSessions = effectiveSessions.filter(s => getSessionDisplayStatus(s) === 'In Progress');
+
+  // All active or pending sessions (Pending for Review + In Progress + Upcoming)
+  const pendingOrActiveSessions = effectiveSessions.filter(s => {
+    const st = getSessionDisplayStatus(s);
+    return st !== 'Completed' && st !== 'Cancelled';
   });
-  const nextSession = upcomingSessions.length > 0 ? upcomingSessions[0] : (effectiveSessions.length > 0 ? effectiveSessions[0] : null);
+
+  // Next Session banner:
+  // If there is an upcoming future session -> that's the next session
+  // If no upcoming session, but there is a pending review session -> show pending session
+  const nextSession = upcomingSessions.length > 0 ? upcomingSessions[0] : null;
+  const pendingBannerSession = (!nextSession && pendingReviewSessions.length > 0)
+    ? pendingReviewSessions[0]
+    : (!nextSession && inProgressSessions.length > 0 ? inProgressSessions[0] : null);
 
   const assignedCoachName = (student?.instructor && student.instructor.trim() !== '' && student.instructor !== 'Assigned Surf Coach' && student.instructor !== 'Not Assigned Yet')
     ? student.instructor
-    : (nextSession?.instructor || (effectiveSessions.find(s => s.instructor && s.instructor !== '—' && s.instructor !== 'Coach' && s.instructor !== 'Not Assigned Yet')?.instructor) || 'Not Assigned Yet');
+    : (nextSession?.instructor || pendingBannerSession?.instructor || (effectiveSessions.find(s => s.instructor && s.instructor !== '—' && s.instructor !== 'Coach' && s.instructor !== 'Not Assigned Yet')?.instructor) || 'Not Assigned Yet');
 
-  const assignedCoachId = student?.instructor_id || nextSession?.instructor_id || (effectiveSessions.find(s => s.instructor_id)?.instructor_id) || null;
+  const assignedCoachId = student?.instructor_id || nextSession?.instructor_id || pendingBannerSession?.instructor_id || (effectiveSessions.find(s => s.instructor_id)?.instructor_id) || null;
 
   const nextSessionTime = nextSession
     ? `${nextSession.date ? nextSession.date + ', ' : ''}${nextSession.time || ''}`
@@ -1371,7 +1473,7 @@ const StudentProfile = () => {
           </div>
 
           <div className="sp-hero-right">
-            {/* NEXT SESSION Banner Box */}
+            {/* NEXT SESSION / PENDING FOR REVIEW Banner Box */}
             {nextSession ? (
               <div className="sp-next-session-box">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -1380,6 +1482,39 @@ const StudentProfile = () => {
                 </div>
                 <div className="sp-ns-box-time">{nextSessionTime}</div>
                 <div className="sp-ns-box-sub">{nextSessionSub}</div>
+              </div>
+            ) : pendingBannerSession ? (
+              <div className="sp-next-session-box" style={{
+                background: 'linear-gradient(135deg, #D97706 0%, #B45309 100%)',
+                boxShadow: '0 6px 20px rgba(217, 119, 6, 0.28)',
+                border: '1px solid rgba(251, 191, 36, 0.35)'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ fontSize: '13px' }}>⏳</span>
+                    <span className="sp-ns-box-label" style={{ color: '#FEF3C7', letterSpacing: '0.6px', fontWeight: 800 }}>
+                      PENDING FOR REVIEW
+                    </span>
+                  </div>
+                  <span style={{
+                    fontSize: '10.5px',
+                    background: 'rgba(255, 255, 255, 0.22)',
+                    color: '#FFFFFF',
+                    padding: '2px 8px',
+                    borderRadius: '10px',
+                    fontWeight: 700,
+                    letterSpacing: '0.3px'
+                  }}>
+                    Under Review
+                  </span>
+                </div>
+                <div className="sp-ns-box-time" style={{ fontSize: '20px', fontWeight: 800, marginTop: '2px', color: '#FFFFFF' }}>
+                  {pendingBannerSession.date ? pendingBannerSession.date : 'Recent Session'}
+                  {pendingBannerSession.time ? ` • ${pendingBannerSession.time}` : ''}
+                </div>
+                <div className="sp-ns-box-sub" style={{ color: 'rgba(255, 255, 255, 0.92)', fontSize: '12.5px', marginTop: '2px' }}>
+                  {pendingBannerSession.location || student?.school || 'Surf Spot'}{pendingBannerSession.instructor ? ` • Coach: ${pendingBannerSession.instructor}` : (assignedCoachName ? ` • Coach: ${assignedCoachName}` : '')}
+                </div>
               </div>
             ) : (
               <div className="sp-next-session-box-empty">
@@ -1575,7 +1710,7 @@ const StudentProfile = () => {
                 Recents
               </div>
 
-              {(effectiveSessions.filter(s => s.status === 'Completed')).length === 0 ? (
+              {completedSessions.length === 0 ? (
                 <div className="sp-empty-box" style={{ padding: '14px 12px', textAlign: 'center', background: '#F8FAFC', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
                   <div style={{ fontSize: '22px', marginBottom: '4px' }}>🏄‍♂️</div>
                   <div style={{ fontWeight: 700, color: '#1E293B', fontSize: '13.5px' }}>No Completed Sessions Yet</div>
@@ -1583,7 +1718,7 @@ const StudentProfile = () => {
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-                  {effectiveSessions.filter(s => s.status === 'Completed').slice(0, 5).map((session, sIdx) => (
+                  {completedSessions.slice(0, 5).map((session, sIdx) => (
                     <div key={session.id || sIdx} style={{ display: 'flex', alignItems: 'flex-start', gap: '14px' }}>
                       <div style={{
                         width: '10px',
@@ -1627,11 +1762,11 @@ const StudentProfile = () => {
                   alignItems: 'center',
                   justifyContent: 'center'
                 }}>
-                  {upcomingSessions.length}
+                  {pendingOrActiveSessions.length}
                 </span>
               </div>
 
-              {upcomingSessions.length === 0 ? (
+              {pendingOrActiveSessions.length === 0 ? (
                 <div className="sp-empty-box" style={{ padding: '14px 12px', textAlign: 'center', color: '#94A3B8', fontSize: '13px', background: '#F8FAFC', borderRadius: '10px', border: '1px dashed #E2E8F0' }}>
                   <div style={{ fontSize: '24px', marginBottom: '6px' }}>📅</div>
                   <div style={{ fontWeight: 600, color: '#64748B' }}>No pending sessions</div>
@@ -1639,92 +1774,116 @@ const StudentProfile = () => {
                 </div>
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  {upcomingSessions.map((session, pIdx, arr) => (
-                    <div
-                      key={session.id || pIdx}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'flex-start',
-                        gap: '14px',
-                        padding: pIdx === 0 ? '0 0 16px 0' : (pIdx === arr.length - 1 ? '16px 0 0 0' : '16px 0'),
-                        borderBottom: pIdx !== arr.length - 1 ? '1px solid #F1F5F9' : 'none'
-                      }}
-                    >
-                      <div style={{
-                        width: '10px',
-                        height: '10px',
-                        borderRadius: '50%',
-                        background: '#F59E0B',
-                        marginTop: '5px',
-                        flexShrink: 0
-                      }} />
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                        <span style={{ fontSize: '11px', fontWeight: 700, color: '#F59E0B', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
-                          {session.date}
-                        </span>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                          <strong style={{ fontSize: '14px', fontWeight: 800, color: '#0F172A' }}>
-                            {session.title || session.group_name || session.location || 'Scheduled Session'}
-                          </strong>
-                          {(session.is_guest || session.guest_name) ? (
+                  {pendingOrActiveSessions.map((session, pIdx, arr) => {
+                    const st = getSessionDisplayStatus(session);
+                    const isPendingReview = st === 'Pending for Review';
+                    const isInProgress = st === 'In Progress';
+                    const dotColor = isPendingReview ? '#D97706' : isInProgress ? '#10B981' : '#0284C7';
+                    const badgeBg = isPendingReview ? '#FEF3C7' : isInProgress ? '#DCFCE7' : '#E0F2FE';
+                    const badgeColor = isPendingReview ? '#92400E' : isInProgress ? '#166534' : '#0369A1';
+                    const badgeBorder = isPendingReview ? '#FDE68A' : isInProgress ? '#BBF7D0' : '#BAE6FD';
+                    const badgeLabel = isPendingReview ? '⏳ Pending for Review' : isInProgress ? '⚡ In Progress' : '🗓️ Scheduled';
+
+                    return (
+                      <div
+                        key={session.id || pIdx}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'flex-start',
+                          gap: '14px',
+                          padding: pIdx === 0 ? '0 0 16px 0' : (pIdx === arr.length - 1 ? '16px 0 0 0' : '16px 0'),
+                          borderBottom: pIdx !== arr.length - 1 ? '1px solid #F1F5F9' : 'none'
+                        }}
+                      >
+                        <div style={{
+                          width: '10px',
+                          height: '10px',
+                          borderRadius: '50%',
+                          background: dotColor,
+                          marginTop: '5px',
+                          flexShrink: 0
+                        }} />
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '11px', fontWeight: 700, color: dotColor, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                              {session.date}
+                            </span>
                             <span style={{
                               fontSize: '11px',
-                              background: '#FEF3C7',
-                              color: '#92400E',
-                              border: '1px solid #FDE68A',
-                              padding: '1px 6px',
-                              borderRadius: '4px',
                               fontWeight: 700,
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '3px'
+                              background: badgeBg,
+                              color: badgeColor,
+                              border: `1px solid ${badgeBorder}`,
+                              padding: '2px 8px',
+                              borderRadius: '6px'
                             }}>
-                              👥 Guest: {session.student || session.guest_name}
+                              {badgeLabel}
                             </span>
-                          ) : (
-                            <span style={{
-                              fontSize: '11px',
-                              background: '#E0F2FE',
-                              color: '#0369A1',
-                              border: '1px solid #BAE6FD',
-                              padding: '1px 6px',
-                              borderRadius: '4px',
-                              fontWeight: 700,
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '3px'
-                            }}>
-                              👤 {session.student || 'You'}
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <strong style={{ fontSize: '14px', fontWeight: 800, color: '#0F172A' }}>
+                              {session.title || session.group_name || session.location || 'Surf Session'}
+                            </strong>
+                            {(session.is_guest || session.guest_name) ? (
+                              <span style={{
+                                fontSize: '11px',
+                                background: '#FEF3C7',
+                                color: '#92400E',
+                                border: '1px solid #FDE68A',
+                                padding: '1px 6px',
+                                borderRadius: '4px',
+                                fontWeight: 700,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '3px'
+                              }}>
+                                👥 Guest: {session.student || session.guest_name}
+                              </span>
+                            ) : (
+                              <span style={{
+                                fontSize: '11px',
+                                background: '#E0F2FE',
+                                color: '#0369A1',
+                                border: '1px solid #BAE6FD',
+                                padding: '1px 6px',
+                                borderRadius: '4px',
+                                fontWeight: 700,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '3px'
+                              }}>
+                                👤 {session.student || 'You'}
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', flexWrap: 'wrap' }}>
+                            <span 
+                              style={{ 
+                                color: '#0F766E', 
+                                fontWeight: 700, 
+                                cursor: session.instructor ? 'pointer' : 'default',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                              }}
+                              onClick={() => handleOpenCoachModal(session.instructor, session.instructor_id)}
+                              title="Click to view coach profile & submit a review"
+                            >
+                              <span style={{ textDecoration: session.instructor ? 'underline' : 'none' }}>
+                                🏄‍♂️ Coach: {session.instructor || 'Coach'}
+                              </span>
+                              <span style={{ fontSize: '10px', background: '#CCFBF1', color: '#0F766E', padding: '1px 5px', borderRadius: '4px', fontWeight: 700 }}>
+                                ★ Review
+                              </span>
                             </span>
-                          )}
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
-                          <span 
-                            style={{ 
-                              color: '#0F766E', 
-                              fontWeight: 700, 
-                              cursor: session.instructor ? 'pointer' : 'default',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '4px'
-                            }}
-                            onClick={() => handleOpenCoachModal(session.instructor, session.instructor_id)}
-                            title="Click to view coach profile & submit a review"
-                          >
-                            <span style={{ textDecoration: session.instructor ? 'underline' : 'none' }}>
-                              🏄‍♂️ Coach: {session.instructor || 'Coach'}
-                            </span>
-                            <span style={{ fontSize: '10px', background: '#CCFBF1', color: '#0F766E', padding: '1px 5px', borderRadius: '4px', fontWeight: 700 }}>
-                              ★ Review
-                            </span>
-                          </span>
-                          {session.time && (
-                            <span style={{ color: '#64748B' }}>• {session.time}</span>
-                          )}
+                            {session.time && (
+                              <span style={{ color: '#64748B' }}>• {session.time}</span>
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

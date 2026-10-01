@@ -655,7 +655,10 @@ const Sessions = () => {
     setHubImageUrl(parsedImages[0]?.url || data.image_url || '');
 
     setHubNotes(data.notes || '');
-    setHubStatus(data.status || 'Upcoming');
+    const resolvedStatus = (data.status || '').toLowerCase().trim() === 'completed'
+      ? 'Completed'
+      : formatSessionStatus(data);
+    setHubStatus(resolvedStatus);
     setHubSaveSuccess(false);
     setHubHasChanges(false);
   };
@@ -782,6 +785,58 @@ const Sessions = () => {
     setHubImageUrl(remaining.length > 0 ? remaining[0].url : '');
     setHubHasChanges(true);
     setHubSaveSuccess(false);
+  };
+
+  const handleHubStatusChange = async (newVal) => {
+    if (!selectedHubSession) return;
+    const isGroupSession = Boolean(selectedHubSession.isGroup);
+    const sessionIds = (isGroupSession && selectedHubSession.sessions)
+      ? selectedHubSession.sessions.map(s => s.id)
+      : [selectedHubSession.id];
+
+    const targetStatus = newVal === 'Completed' ? 'Completed' : 'Upcoming';
+    setHubStatus(newVal);
+
+    try {
+      await Promise.all(
+        sessionIds.map(id =>
+          fetch(`${API}/api/sessions/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: targetStatus })
+          })
+        )
+      );
+
+      // Update parent sessions list
+      setSessions(prev =>
+        prev.map(s => {
+          if (sessionIds.includes(s.id)) {
+            return { ...s, status: targetStatus };
+          }
+          return s;
+        })
+      );
+
+      // Update selectedHubSession
+      setSelectedHubSession(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          status: targetStatus,
+          sessions: prev.sessions ? prev.sessions.map(s => ({ ...s, status: targetStatus })) : prev.sessions
+        };
+      });
+
+      if (newVal === 'Completed') {
+        showToast('✓ Session marked as Completed!', 'success');
+      } else {
+        showToast('Session status reverted to automatic mode.', 'info');
+      }
+    } catch (err) {
+      console.error('Error saving session status:', err);
+      showToast('Failed to update status: ' + err.message, 'error');
+    }
   };
 
   const handleSaveHubChanges = async () => {
@@ -1908,60 +1963,6 @@ const Sessions = () => {
               <button
                 type="button"
                 className="ses-bulk-btn-complete"
-                onClick={() => handleBulkStatusChange('Upcoming')}
-                title="Mark all selected sessions as Upcoming"
-                style={{
-                  background: '#0284C7',
-                  color: '#FFFFFF',
-                  border: 'none',
-                  borderRadius: '8px',
-                  padding: '7px 14px',
-                  fontSize: '12.5px',
-                  fontWeight: 700,
-                  cursor: 'pointer'
-                }}
-              >
-                ⏱ Mark Upcoming
-              </button>
-              <button
-                type="button"
-                className="ses-bulk-btn-complete"
-                onClick={() => handleBulkStatusChange('In Progress')}
-                title="Mark all selected sessions as In Progress"
-                style={{
-                  background: '#0D9488',
-                  color: '#FFFFFF',
-                  border: 'none',
-                  borderRadius: '8px',
-                  padding: '7px 14px',
-                  fontSize: '12.5px',
-                  fontWeight: 700,
-                  cursor: 'pointer'
-                }}
-              >
-                ▶ Mark In Progress
-              </button>
-              <button
-                type="button"
-                className="ses-bulk-btn-complete"
-                onClick={() => handleBulkStatusChange('Pending for Review')}
-                title="Mark all selected sessions as Pending for Review"
-                style={{
-                  background: '#D97706',
-                  color: '#FFFFFF',
-                  border: 'none',
-                  borderRadius: '8px',
-                  padding: '7px 14px',
-                  fontSize: '12.5px',
-                  fontWeight: 700,
-                  cursor: 'pointer'
-                }}
-              >
-                📋 Mark Pending Review
-              </button>
-              <button
-                type="button"
-                className="ses-bulk-btn-complete"
                 onClick={() => handleBulkStatusChange('Completed')}
                 title="Mark all selected sessions as Completed"
               >
@@ -2890,32 +2891,45 @@ const Sessions = () => {
                     >
                       {hubStatus}
                     </span>
-                  ) : (
-                    <select
-                      value={hubStatus}
-                      onChange={(e) => {
-                        setHubStatus(e.target.value);
-                        setHubHasChanges(true);
-                        setHubSaveSuccess(false);
-                      }}
-                      style={{
-                        background: statusBg(hubStatus),
-                        color: statusColor(hubStatus),
-                        border: `1px solid ${statusColor(hubStatus)}40`,
-                        borderRadius: '8px',
-                        padding: '5px 10px',
-                        fontSize: '12px',
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        outline: 'none'
-                      }}
-                    >
-                      <option value="Upcoming">Upcoming</option>
-                      <option value="In Progress">In Progress</option>
-                      <option value="Pending for Review">Pending for Review</option>
-                      <option value="Completed">Completed</option>
-                    </select>
-                  )}
+                  ) : (() => {
+                    const autoStatus = formatSessionStatus(selectedHubSession);
+                    const isCompleted = hubStatus === 'Completed' || (selectedHubSession?.status || '').toLowerCase().trim() === 'completed';
+
+                    return (
+                      <select
+                        value={isCompleted ? 'Completed' : (autoStatus !== 'Completed' ? autoStatus : 'Pending for Review')}
+                        onChange={(e) => handleHubStatusChange(e.target.value)}
+                        style={{
+                          background: statusBg(isCompleted ? 'Completed' : autoStatus),
+                          color: statusColor(isCompleted ? 'Completed' : autoStatus),
+                          border: `1.5px solid ${statusColor(isCompleted ? 'Completed' : autoStatus)}60`,
+                          borderRadius: '8px',
+                          padding: '5px 12px',
+                          fontSize: '12.5px',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          outline: 'none',
+                          boxShadow: '0 2px 6px rgba(0,0,0,0.06)'
+                        }}
+                      >
+                        {isCompleted ? (
+                          <>
+                            <option value="Completed">Completed</option>
+                            <option value={autoStatus !== 'Completed' ? autoStatus : 'Pending for Review'}>
+                              {autoStatus !== 'Completed' ? autoStatus : 'Pending for Review'}
+                            </option>
+                          </>
+                        ) : (
+                          <>
+                            <option value={autoStatus !== 'Completed' ? autoStatus : 'Pending for Review'}>
+                              {autoStatus !== 'Completed' ? autoStatus : 'Pending for Review'}
+                            </option>
+                            <option value="Completed">Completed</option>
+                          </>
+                        )}
+                      </select>
+                    );
+                  })()}
 
                   <button
                     className="ses-modal-close"

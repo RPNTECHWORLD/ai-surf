@@ -44,6 +44,9 @@ const StudentsManagement = () => {
   const [schoolInviteLoading, setSchoolInviteLoading] = useState(false);
   const [copiedSchoolInviteCode, setCopiedSchoolInviteCode] = useState(null);
   const [schoolInvitesList, setSchoolInvitesList] = useState([]);
+  const [showActiveInvitesOnly, setShowActiveInvitesOnly] = useState(false);
+  const [showInviteLinksPanel, setShowInviteLinksPanel] = useState(false);
+  const [inviteModalTab, setInviteModalTab] = useState('generate'); // 'generate' | 'history'
   const [attendanceModal, setAttendanceModal] = useState(null); // student object to mark attendance
   const [attSaving, setAttSaving] = useState(false);
   const [attError, setAttError] = useState('');
@@ -1217,14 +1220,45 @@ const StudentsManagement = () => {
   };
 
   const downloadCSVSample = () => {
-    const csvContent = "data:text/csv;charset=utf-8,Full Name,Email Address,Phone Number,Date of Birth,Swimming Ability,Surf Level,Course Days,Start Date,End Date\\nLiam Torres,liam.torres@gmail.com,(555) 123-4567,1998-05-22,Swimmer,Intermediate,3,2026-10-01,2026-10-03\\nMaya Chen,maya.chen@yahoo.com,(555) 987-6543,2001-11-08,Non-Swimmer,Beginner,5,2026-10-05,2026-10-09";
-    const encodedUri = encodeURI(csvContent);
+    const headers = [
+      "Full Name",
+      "Email Address",
+      "Phone Number",
+      "Date of Birth",
+      "Swimming Ability",
+      "Surf Level",
+      "Course Days",
+      "Start Date",
+      "End Date"
+    ];
+
+    const sampleRows = [
+      ["Liam Torres", "liam.torres@gmail.com", "+1 555-123-4567", "1998-05-22", "Swimmer", "Intermediate", "3", "2026-10-01", "2026-10-03"],
+      ["Maya Chen", "maya.chen@yahoo.com", "+1 555-987-6543", "2001-11-08", "Non-Swimmer", "Beginner", "5", "2026-10-05", "2026-10-09"],
+      ["Carlos Silva", "carlos.surf@hotmail.com", "+1 555-456-7890", "1995-03-14", "Swimmer", "Advanced", "7", "2026-10-10", "2026-10-16"]
+    ];
+
+    const allData = [headers, ...sampleRows];
+
+    const csvContent = "\uFEFF" + allData.map(row =>
+      row.map(field => {
+        const val = String(field ?? '');
+        if (val.includes(',') || val.includes('"') || val.includes('\n') || val.includes('\r')) {
+          return `"${val.replace(/"/g, '""')}"`;
+        }
+        return val;
+      }).join(",")
+    ).join("\r\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", "student_import_sample.csv");
+    link.href = url;
+    link.download = "student_import_sample.csv";
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const [inviteCopied, setInviteCopied] = useState(false);
@@ -4191,271 +4225,523 @@ const StudentsManagement = () => {
               </button>
             </div>
 
-            {/* School Locking Card */}
-            <div style={{ background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: '14px', padding: '14px 16px', marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <span style={{ fontSize: '20px' }}>🏫</span>
-                <div>
-                  <div style={{ fontSize: '11px', fontWeight: '800', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                    Active School
+            {/* Top Navigation Tabs */}
+            <div style={{
+              display: 'flex',
+              gap: '6px',
+              padding: '4px',
+              background: '#F1F5F9',
+              borderRadius: '12px',
+              marginBottom: '20px'
+            }}>
+              <button
+                type="button"
+                onClick={() => setInviteModalTab('generate')}
+                style={{
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  padding: '9px 16px',
+                  borderRadius: '9px',
+                  border: 'none',
+                  background: inviteModalTab === 'generate' ? '#FFFFFF' : 'transparent',
+                  color: inviteModalTab === 'generate' ? '#0F172A' : '#64748B',
+                  fontWeight: inviteModalTab === 'generate' ? 800 : 600,
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                  boxShadow: inviteModalTab === 'generate' ? '0 2px 6px rgba(0,0,0,0.06)' : 'none',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <span>⚡</span>
+                <span>Generate Link</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setInviteModalTab('history')}
+                style={{
+                  flex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  padding: '9px 16px',
+                  borderRadius: '9px',
+                  border: 'none',
+                  background: inviteModalTab === 'history' ? '#FFFFFF' : 'transparent',
+                  color: inviteModalTab === 'history' ? '#0F172A' : '#64748B',
+                  fontWeight: inviteModalTab === 'history' ? 800 : 600,
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                  boxShadow: inviteModalTab === 'history' ? '0 2px 6px rgba(0,0,0,0.06)' : 'none',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <span>📋</span>
+                <span>History</span>
+                <span style={{
+                  background: inviteModalTab === 'history' ? '#0D9488' : '#CBD5E1',
+                  color: '#FFFFFF',
+                  borderRadius: '10px',
+                  padding: '1px 7px',
+                  fontSize: '11px',
+                  fontWeight: 800,
+                  marginLeft: '2px'
+                }}>
+                  {schoolInvitesList.length}
+                </span>
+                {(() => {
+                  const actCnt = schoolInvitesList.filter(inv => {
+                    const rem = inv.remaining !== undefined ? inv.remaining : Math.max(0, inv.max_count - (inv.used_count || 0));
+                    return rem > 0 && inv.is_active;
+                  }).length;
+                  return actCnt > 0 ? (
+                    <span style={{
+                      background: '#DCFCE7',
+                      color: '#16A34A',
+                      borderRadius: '10px',
+                      padding: '1px 6px',
+                      fontSize: '10.5px',
+                      fontWeight: 800
+                    }}>
+                      ⚡ {actCnt} Active
+                    </span>
+                  ) : null;
+                })()}
+              </button>
+            </div>
+
+            {/* TAB 1: GENERATE INVITE LINK */}
+            {inviteModalTab === 'generate' && (
+              <div>
+                {/* School Locking Card */}
+                <div style={{ background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: '14px', padding: '14px 16px', marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span style={{ fontSize: '20px' }}>🏫</span>
+                    <div>
+                      <div style={{ fontSize: '11px', fontWeight: '800', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                        Active School
+                      </div>
+                      <div style={{ fontSize: '14px', fontWeight: '800', color: '#0F172A', marginTop: '1px' }}>
+                        {effectiveSchool}
+                      </div>
+                    </div>
                   </div>
-                  <div style={{ fontSize: '14px', fontWeight: '800', color: '#0F172A', marginTop: '1px' }}>
-                    {effectiveSchool}
+                  <div style={{ background: '#DCFCE7', color: '#15803D', padding: '4px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: '800', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                    <span>🔒</span>
+                    <span>School Locked on Signup</span>
                   </div>
                 </div>
-              </div>
-              <div style={{ background: '#DCFCE7', color: '#15803D', padding: '4px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: '800', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                <span>🔒</span>
-                <span>School Locked on Signup</span>
-              </div>
-            </div>
 
-            {/* Capacity Input Block */}
-            <div style={{ background: '#FFFFFF', border: '1.5px solid #E2E8F0', borderRadius: '16px', padding: '20px', marginBottom: '20px' }}>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: '800', color: '#0F172A', marginBottom: '8px' }}>
-                👥 Registration Capacity / Student Count
-              </label>
+                {/* Capacity Input Block */}
+                <div style={{ background: '#FFFFFF', border: '1.5px solid #E2E8F0', borderRadius: '16px', padding: '20px', marginBottom: '20px' }}>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: '800', color: '#0F172A', marginBottom: '8px' }}>
+                    👥 Registration Capacity / Student Count
+                  </label>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+                    <button
+                      type="button"
+                      onClick={() => setInviteCapacityCount(c => Math.max(1, (parseInt(c) || 1) - 1))}
+                      style={{ width: '40px', height: '40px', borderRadius: '10px', border: '1.5px solid #CBD5E1', background: '#F8FAFC', color: '#0F172A', fontSize: '18px', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    >
+                      −
+                    </button>
+                    <input
+                      type="number"
+                      min="1"
+                      max="100"
+                      value={inviteCapacityCount}
+                      onChange={e => setInviteCapacityCount(e.target.value)}
+                      style={{ flex: 1, height: '40px', borderRadius: '10px', border: '1.5px solid #0D9488', textAlign: 'center', fontSize: '18px', fontWeight: 800, color: '#0F172A', outline: 'none' }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setInviteCapacityCount(c => (parseInt(c) || 0) + 1)}
+                      style={{ width: '40px', height: '40px', borderRadius: '10px', border: '1.5px solid #CBD5E1', background: '#F8FAFC', color: '#0F172A', fontSize: '18px', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    >
+                      +
+                    </button>
+                  </div>
+
+                  {/* Quick Preset Buttons */}
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
+                    {[1, 2, 3, 5, 10].map(cnt => (
+                      <button
+                        key={cnt}
+                        type="button"
+                        onClick={() => setInviteCapacityCount(cnt)}
+                        style={{
+                          padding: '5px 12px',
+                          borderRadius: '8px',
+                          border: parseInt(inviteCapacityCount) === cnt ? '1.5px solid #0D9488' : '1px solid #E2E8F0',
+                          background: parseInt(inviteCapacityCount) === cnt ? '#F0FDFA' : '#F8FAFC',
+                          color: parseInt(inviteCapacityCount) === cnt ? '#0D9488' : '#64748B',
+                          fontWeight: '700',
+                          fontSize: '12px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {cnt} {cnt === 1 ? 'Person' : 'People'}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* How it works note */}
+                  <div style={{ background: '#F0F9FF', border: '1px solid #BAE6FD', borderRadius: '10px', padding: '12px', fontSize: '12.5px', color: '#0369A1', lineHeight: '1.5' }}>
+                    <div style={{ fontWeight: 800, marginBottom: '3px' }}>💡 How this capacity count works:</div>
+                    If set to <strong>{inviteCapacityCount || 3}</strong>:
+                    <ul style={{ margin: '4px 0 0 18px', padding: 0 }}>
+                      <li><strong>Option A:</strong> 1 primary email signup with {(parseInt(inviteCapacityCount) || 3) - 1} accompanying guest(s)</li>
+                      <li><strong>Option B:</strong> {inviteCapacityCount || 3} separate students registering with their individual emails</li>
+                    </ul>
+                    Once all {inviteCapacityCount || 3} slot(s) are used, the link automatically locks and closes.
+                  </div>
+                </div>
+
+                {/* Course Duration / Allowed Days Block - Manual Entry */}
+                <div style={{ marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: '800', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      Course Duration (Allowed Days)
+                    </label>
+                    <span style={{ fontSize: '11px', fontWeight: '800', background: '#F0FDFA', color: '#0D9488', padding: '2px 8px', borderRadius: '6px' }}>
+                      {(() => {
+                        const m = String(inviteCourseDuration || '').match(/^(\d+)/);
+                        const n = m ? parseInt(m[1], 10) : 3;
+                        return n === 1 ? '1 Day Crash Course' : `${n} Days Course`;
+                      })()}
+                    </span>
+                  </div>
+                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                    <input
+                      type="number"
+                      min="1"
+                      max="365"
+                      placeholder="Enter days (e.g. 3, 5, 7, 10)"
+                      value={(() => {
+                        const match = String(inviteCourseDuration || '').match(/^(\d+)/);
+                        return match ? match[1] : (inviteCourseDuration || '');
+                      })()}
+                      onChange={e => {
+                        const val = e.target.value;
+                        const num = parseInt(val, 10);
+                        if (!isNaN(num) && num > 0) {
+                          setInviteCourseDuration(num === 1 ? '1 Day Crash Course' : `${num} Days Course`);
+                        } else {
+                          setInviteCourseDuration(val);
+                        }
+                      }}
+                      style={{
+                        width: '100%',
+                        padding: '10px 65px 10px 14px',
+                        borderRadius: '10px',
+                        border: '1.5px solid #CBD5E1',
+                        fontSize: '14px',
+                        fontWeight: '700',
+                        color: '#0F172A',
+                        background: '#F8FAFC',
+                        outline: 'none',
+                        boxSizing: 'border-box'
+                      }}
+                    />
+                    <span style={{ position: 'absolute', right: '14px', fontSize: '13px', fontWeight: '700', color: '#64748B', pointerEvents: 'none' }}>
+                      Days
+                    </span>
+                  </div>
+                </div>
+
+                {/* Generate Button */}
                 <button
                   type="button"
-                  onClick={() => setInviteCapacityCount(c => Math.max(1, (parseInt(c) || 1) - 1))}
-                  style={{ width: '40px', height: '40px', borderRadius: '10px', border: '1.5px solid #CBD5E1', background: '#F8FAFC', color: '#0F172A', fontSize: '18px', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                >
-                  −
-                </button>
-                <input
-                  type="number"
-                  min="1"
-                  max="100"
-                  value={inviteCapacityCount}
-                  onChange={e => setInviteCapacityCount(e.target.value)}
-                  style={{ flex: 1, height: '40px', borderRadius: '10px', border: '1.5px solid #0D9488', textAlign: 'center', fontSize: '18px', fontWeight: 800, color: '#0F172A', outline: 'none' }}
-                />
-                <button
-                  type="button"
-                  onClick={() => setInviteCapacityCount(c => (parseInt(c) || 0) + 1)}
-                  style={{ width: '40px', height: '40px', borderRadius: '10px', border: '1.5px solid #CBD5E1', background: '#F8FAFC', color: '#0F172A', fontSize: '18px', fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                >
-                  +
-                </button>
-              </div>
-
-              {/* Quick Preset Buttons */}
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '14px' }}>
-                {[1, 2, 3, 5, 10].map(cnt => (
-                  <button
-                    key={cnt}
-                    type="button"
-                    onClick={() => setInviteCapacityCount(cnt)}
-                    style={{
-                      padding: '5px 12px',
-                      borderRadius: '8px',
-                      border: parseInt(inviteCapacityCount) === cnt ? '1.5px solid #0D9488' : '1px solid #E2E8F0',
-                      background: parseInt(inviteCapacityCount) === cnt ? '#F0FDFA' : '#F8FAFC',
-                      color: parseInt(inviteCapacityCount) === cnt ? '#0D9488' : '#64748B',
-                      fontWeight: '700',
-                      fontSize: '12px',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    {cnt} {cnt === 1 ? 'Person' : 'People'}
-                  </button>
-                ))}
-              </div>
-
-              {/* How it works note */}
-              <div style={{ background: '#F0F9FF', border: '1px solid #BAE6FD', borderRadius: '10px', padding: '12px', fontSize: '12.5px', color: '#0369A1', lineHeight: '1.5' }}>
-                <div style={{ fontWeight: 800, marginBottom: '3px' }}>💡 How this capacity count works:</div>
-                If set to <strong>{inviteCapacityCount || 3}</strong>:
-                <ul style={{ margin: '4px 0 0 18px', padding: 0 }}>
-                  <li><strong>Option A:</strong> 1 primary email signup with {(parseInt(inviteCapacityCount) || 3) - 1} accompanying guest(s)</li>
-                  <li><strong>Option B:</strong> {inviteCapacityCount || 3} separate students registering with their individual emails</li>
-                </ul>
-                Once all {inviteCapacityCount || 3} slot(s) are used, the link automatically locks and closes.
-              </div>
-            </div>
-
-            {/* Course Duration / Allowed Days Block - Manual Entry */}
-            <div style={{ marginBottom: '16px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                <label style={{ fontSize: '12px', fontWeight: '800', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  Course Duration (Allowed Days)
-                </label>
-                <span style={{ fontSize: '11px', fontWeight: '800', background: '#F0FDFA', color: '#0D9488', padding: '2px 8px', borderRadius: '6px' }}>
-                  {(() => {
-                    const m = String(inviteCourseDuration || '').match(/^(\d+)/);
-                    const n = m ? parseInt(m[1], 10) : 3;
-                    return n === 1 ? '1 Day Crash Course' : `${n} Days Course`;
-                  })()}
-                </span>
-              </div>
-              <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-                <input
-                  type="number"
-                  min="1"
-                  max="365"
-                  placeholder="Enter days (e.g. 3, 5, 7, 10)"
-                  value={(() => {
-                    const match = String(inviteCourseDuration || '').match(/^(\d+)/);
-                    return match ? match[1] : (inviteCourseDuration || '');
-                  })()}
-                  onChange={e => {
-                    const val = e.target.value;
-                    const num = parseInt(val, 10);
-                    if (!isNaN(num) && num > 0) {
-                      setInviteCourseDuration(num === 1 ? '1 Day Crash Course' : `${num} Days Course`);
-                    } else {
-                      setInviteCourseDuration(val);
-                    }
-                  }}
+                  onClick={handleCreateSchoolInvite}
+                  disabled={schoolInviteLoading}
                   style={{
                     width: '100%',
-                    padding: '10px 65px 10px 14px',
-                    borderRadius: '10px',
-                    border: '1.5px solid #CBD5E1',
+                    padding: '12px',
+                    borderRadius: '12px',
+                    background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
+                    color: '#FFFFFF',
+                    border: 'none',
+                    fontWeight: 800,
                     fontSize: '14px',
-                    fontWeight: '700',
-                    color: '#0F172A',
-                    background: '#F8FAFC',
-                    outline: 'none',
-                    boxSizing: 'border-box'
+                    cursor: schoolInviteLoading ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                    boxShadow: '0 4px 12px rgba(13, 148, 136, 0.25)',
+                    marginBottom: '16px'
                   }}
-                />
-                <span style={{ position: 'absolute', right: '14px', fontSize: '13px', fontWeight: '700', color: '#64748B', pointerEvents: 'none' }}>
-                  Days
-                </span>
-              </div>
-            </div>
+                >
+                  {schoolInviteLoading ? 'Generating…' : '⚡ Generate & Copy Invite Link'}
+                </button>
 
-            {/* Generate Button */}
-            <button
-              type="button"
-              onClick={handleCreateSchoolInvite}
-              disabled={schoolInviteLoading}
-              style={{
-                width: '100%',
-                padding: '12px',
-                borderRadius: '12px',
-                background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
-                color: '#FFFFFF',
-                border: 'none',
-                fontWeight: 800,
-                fontSize: '14px',
-                cursor: schoolInviteLoading ? 'not-allowed' : 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-                boxShadow: '0 4px 12px rgba(13, 148, 136, 0.25)',
-                marginBottom: '20px'
-              }}
-            >
-              {schoolInviteLoading ? 'Generating…' : '⚡ Generate & Copy Invite Link'}
-            </button>
+                {/* Created Invite Box */}
+                {createdSchoolInvite && (
+                  <div style={{ background: '#ECFDF5', border: '1.5px solid #10B981', borderRadius: '16px', padding: '18px', marginBottom: '14px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                      <span style={{ fontSize: '13px', fontWeight: 800, color: '#065F46', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span>✅</span>
+                        <span>Link Ready & Copied!</span>
+                      </span>
+                      <span style={{ fontSize: '11px', fontWeight: 800, color: '#15803D', background: '#DCFCE7', padding: '3px 10px', borderRadius: '12px' }}>
+                        0 / {createdSchoolInvite.max_count} Used ({createdSchoolInvite.max_count} Slots Left)
+                      </span>
+                    </div>
 
-            {/* Created Invite Box */}
-            {createdSchoolInvite && (
-              <div style={{ background: '#ECFDF5', border: '1.5px solid #10B981', borderRadius: '16px', padding: '18px', marginBottom: '20px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 800, color: '#065F46', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span>✅</span>
-                    <span>Link Ready & Copied!</span>
-                  </span>
-                  <span style={{ fontSize: '11px', fontWeight: 800, color: '#15803D', background: '#DCFCE7', padding: '3px 10px', borderRadius: '12px' }}>
-                    0 / {createdSchoolInvite.max_count} Used ({createdSchoolInvite.max_count} Slots Left)
-                  </span>
-                </div>
-
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <input
-                    type="text"
-                    readOnly
-                    value={createdSchoolInvite.fullUrl}
-                    style={{ flex: 1, padding: '10px 12px', borderRadius: '8px', border: '1px solid #A7F3D0', background: '#FFFFFF', fontSize: '12px', color: '#0F172A', outline: 'none' }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => copySchoolInviteLink(createdSchoolInvite)}
-                    style={{
-                      background: copiedSchoolInviteCode === createdSchoolInvite.code ? '#10B981' : '#0D9488',
-                      color: '#FFF',
-                      border: 'none',
-                      borderRadius: '8px',
-                      padding: '0 16px',
-                      fontWeight: 800,
-                      fontSize: '12px',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    {copiedSchoolInviteCode === createdSchoolInvite.code ? '✓ Copied!' : 'Copy'}
-                  </button>
-                </div>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input
+                        type="text"
+                        readOnly
+                        value={createdSchoolInvite.fullUrl}
+                        style={{ flex: 1, padding: '10px 12px', borderRadius: '8px', border: '1px solid #A7F3D0', background: '#FFFFFF', fontSize: '12px', color: '#0F172A', outline: 'none' }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => copySchoolInviteLink(createdSchoolInvite)}
+                        style={{
+                          background: copiedSchoolInviteCode === createdSchoolInvite.code ? '#10B981' : '#0D9488',
+                          color: '#FFF',
+                          border: 'none',
+                          borderRadius: '8px',
+                          padding: '0 16px',
+                          fontWeight: 800,
+                          fontSize: '12px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        {copiedSchoolInviteCode === createdSchoolInvite.code ? '✓ Copied!' : 'Copy'}
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
-            {/* List of Recent Invites */}
-            {schoolInvitesList.length > 0 && (
+            {/* TAB 2: INVITE LINKS HISTORY */}
+            {inviteModalTab === 'history' && (
               <div>
-                <h4 style={{ margin: '0 0 10px 0', fontSize: '13px', fontWeight: 800, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  Previous Invite Links for {effectiveSchool} ({schoolInvitesList.length})
-                </h4>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto' }}>
-                  {schoolInvitesList.map((inv, idx) => {
-                    const rem = inv.remaining !== undefined ? inv.remaining : Math.max(0, inv.max_count - (inv.used_count || 0));
-                    const isFull = rem <= 0 || !inv.is_active;
-                    return (
-                      <div
-                        key={inv.id || inv.code || idx}
-                        style={{
-                          background: isFull ? '#F8FAFC' : '#FFFFFF',
-                          border: isFull ? '1px solid #E2E8F0' : '1px solid #BBF7D0',
-                          borderRadius: '10px',
-                          padding: '10px 12px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          gap: '10px'
-                        }}
-                      >
-                        <div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                            <code style={{ fontSize: '11px', fontWeight: 700, color: '#0D9488', background: '#F0FDFA', padding: '2px 6px', borderRadius: '4px' }}>
-                              {inv.code}
-                            </code>
-                            <span style={{ fontSize: '11px', color: '#64748B' }}>
-                              Capacity: <strong>{inv.max_count}</strong>
-                            </span>
-                            <span style={{ fontSize: '11px', color: '#0D9488', fontWeight: 700, background: '#F0FDFA', padding: '1px 6px', borderRadius: '4px', border: '1px solid #CCFBF1' }}>
-                              🗓️ {inv.course_duration || '3 Days Course'}
-                            </span>
-                          </div>
-                          <div style={{ fontSize: '11px', color: isFull ? '#EF4444' : '#15803D', fontWeight: 700, marginTop: '2px' }}>
-                            {isFull ? `⛔ Full (${inv.used_count || inv.max_count}/${inv.max_count} used)` : `⚡ ${rem} of ${inv.max_count} slots left`}
-                          </div>
-                        </div>
+                {/* History Header & Filter Pills */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <button
+                      type="button"
+                      onClick={() => setShowActiveInvitesOnly(false)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '5px',
+                        background: !showActiveInvitesOnly ? '#0D9488' : '#F1F5F9',
+                        color: !showActiveInvitesOnly ? '#FFFFFF' : '#64748B',
+                        border: !showActiveInvitesOnly ? '1.5px solid #0D9488' : '1.5px solid #E2E8F0',
+                        borderRadius: '20px',
+                        padding: '4px 12px',
+                        fontSize: '11.5px',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      All Links
+                      <span style={{
+                        background: !showActiveInvitesOnly ? 'rgba(255,255,255,0.25)' : '#E2E8F0',
+                        color: !showActiveInvitesOnly ? '#FFFFFF' : '#475569',
+                        borderRadius: '10px',
+                        padding: '0 6px',
+                        fontSize: '11px',
+                        fontWeight: 800
+                      }}>
+                        {schoolInvitesList.length}
+                      </span>
+                    </button>
 
+                    <button
+                      type="button"
+                      onClick={() => setShowActiveInvitesOnly(true)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '5px',
+                        background: showActiveInvitesOnly ? '#10B981' : '#F1F5F9',
+                        color: showActiveInvitesOnly ? '#FFFFFF' : '#64748B',
+                        border: showActiveInvitesOnly ? '1.5px solid #10B981' : '1.5px solid #E2E8F0',
+                        borderRadius: '20px',
+                        padding: '4px 12px',
+                        fontSize: '11.5px',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      ⚡ Active Only
+                      <span style={{
+                        background: showActiveInvitesOnly ? 'rgba(255,255,255,0.25)' : '#DCFCE7',
+                        color: showActiveInvitesOnly ? '#FFFFFF' : '#16A34A',
+                        borderRadius: '10px',
+                        padding: '0 6px',
+                        fontSize: '11px',
+                        fontWeight: 800
+                      }}>
+                        {schoolInvitesList.filter(inv => {
+                          const rem = inv.remaining !== undefined ? inv.remaining : Math.max(0, inv.max_count - (inv.used_count || 0));
+                          return rem > 0 && inv.is_active;
+                        }).length}
+                      </span>
+                    </button>
+                  </div>
+
+                  <span style={{ fontSize: '11.5px', color: '#64748B' }}>
+                    Click <strong>Copy Link</strong> to share
+                  </span>
+                </div>
+
+                {/* List of Previous Invites */}
+                {(() => {
+                  const activeInvites = schoolInvitesList.filter(inv => {
+                    const rem = inv.remaining !== undefined ? inv.remaining : Math.max(0, inv.max_count - (inv.used_count || 0));
+                    return rem > 0 && inv.is_active;
+                  });
+                  const displayedInvites = showActiveInvitesOnly ? activeInvites : schoolInvitesList;
+
+                  if (displayedInvites.length === 0) {
+                    return (
+                      <div style={{
+                        textAlign: 'center',
+                        padding: '36px 16px',
+                        background: '#F8FAFC',
+                        border: '1.5px dashed #CBD5E1',
+                        borderRadius: '14px',
+                        color: '#64748B'
+                      }}>
+                        <div style={{ fontSize: '32px', marginBottom: '8px' }}>🔗</div>
+                        <div style={{ fontWeight: 800, fontSize: '14px', color: '#0F172A', marginBottom: '4px' }}>
+                          {showActiveInvitesOnly ? 'No Active Invite Links' : 'No Invite Links Created Yet'}
+                        </div>
+                        <div style={{ fontSize: '12.5px', color: '#64748B', maxWidth: '300px', margin: '0 auto 14px' }}>
+                          {showActiveInvitesOnly
+                            ? 'All previous invite links are currently full or expired.'
+                            : 'Generate a new batch registration link from the Generate Link tab.'}
+                        </div>
                         <button
                           type="button"
-                          onClick={() => copySchoolInviteLink(inv)}
-                          disabled={isFull}
+                          onClick={() => setInviteModalTab('generate')}
                           style={{
-                            background: isFull ? '#E2E8F0' : (copiedSchoolInviteCode === inv.code ? '#10B981' : '#F0FDFA'),
-                            color: isFull ? '#94A3B8' : (copiedSchoolInviteCode === inv.code ? '#FFFFFF' : '#0D9488'),
-                            border: isFull ? 'none' : '1px solid #99F6E4',
-                            borderRadius: '6px',
-                            padding: '4px 10px',
-                            fontSize: '11.5px',
+                            background: '#0D9488',
+                            color: '#FFFFFF',
+                            border: 'none',
+                            borderRadius: '8px',
+                            padding: '8px 16px',
+                            fontSize: '12.5px',
                             fontWeight: 700,
-                            cursor: isFull ? 'not-allowed' : 'pointer'
+                            cursor: 'pointer'
                           }}
                         >
-                          {copiedSchoolInviteCode === inv.code ? '✓ Copied' : isFull ? 'Expired' : 'Copy Link'}
+                          ⚡ Go to Generate Link Tab
                         </button>
                       </div>
                     );
-                  })}
-                </div>
+                  }
+
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '380px', overflowY: 'auto', paddingRight: '4px' }}>
+                      {displayedInvites.map((inv, idx) => {
+                        const rem = inv.remaining !== undefined ? inv.remaining : Math.max(0, inv.max_count - (inv.used_count || 0));
+                        const isFull = rem <= 0 || !inv.is_active;
+                        const isCopied = copiedSchoolInviteCode === inv.code;
+
+                        return (
+                          <div
+                            key={inv.id || inv.code || idx}
+                            style={{
+                              background: isFull ? '#F8FAFC' : '#FFFFFF',
+                              border: isFull ? '1.5px solid #E2E8F0' : '1.5px solid #BBF7D0',
+                              borderRadius: '12px',
+                              padding: '12px 14px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: '12px',
+                              boxShadow: isFull ? 'none' : '0 2px 6px rgba(16, 185, 129, 0.08)'
+                            }}
+                          >
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                                <code style={{
+                                  fontSize: '11.5px',
+                                  fontWeight: 800,
+                                  color: isFull ? '#64748B' : '#0D9488',
+                                  background: isFull ? '#E2E8F0' : '#F0FDFA',
+                                  padding: '2px 8px',
+                                  borderRadius: '6px',
+                                  border: isFull ? '1px solid #CBD5E1' : '1px solid #CCFBF1'
+                                }}>
+                                  {inv.code}
+                                </code>
+                                <span style={{ fontSize: '12px', color: '#64748B' }}>
+                                  Capacity: <strong style={{ color: '#0F172A' }}>{inv.max_count}</strong>
+                                </span>
+                                <span style={{
+                                  fontSize: '11px',
+                                  color: '#0D9488',
+                                  fontWeight: 700,
+                                  background: '#F0FDFA',
+                                  padding: '1px 7px',
+                                  borderRadius: '6px',
+                                  border: '1px solid #CCFBF1'
+                                }}>
+                                  🗓️ {inv.course_duration || '3 Days Course'}
+                                </span>
+                              </div>
+
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', fontSize: '11.5px' }}>
+                                <span style={{
+                                  color: isFull ? '#EF4444' : '#15803D',
+                                  fontWeight: 800,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px'
+                                }}>
+                                  {isFull
+                                    ? `⛔ Full (${inv.used_count || inv.max_count}/${inv.max_count} used)`
+                                    : `⚡ ${rem} of ${inv.max_count} slots left`}
+                                </span>
+                                {inv.created_at && (
+                                  <span style={{ color: '#94A3B8' }}>
+                                    • Created {new Date(inv.created_at).toLocaleDateString()}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => copySchoolInviteLink(inv)}
+                              disabled={isFull}
+                              style={{
+                                background: isFull ? '#E2E8F0' : (isCopied ? '#10B981' : '#F0FDFA'),
+                                color: isFull ? '#94A3B8' : (isCopied ? '#FFFFFF' : '#0D9488'),
+                                border: isFull ? 'none' : (isCopied ? '1px solid #10B981' : '1.5px solid #0D9488'),
+                                borderRadius: '8px',
+                                padding: '6px 14px',
+                                fontSize: '12px',
+                                fontWeight: 800,
+                                cursor: isFull ? 'not-allowed' : 'pointer',
+                                whiteSpace: 'nowrap',
+                                transition: 'all 0.15s ease'
+                              }}
+                            >
+                              {isCopied ? '✓ Copied' : isFull ? 'Expired' : 'Copy Link'}
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </div>
