@@ -861,7 +861,7 @@ const EventManagement = () => {
                                     type="text"
                                     className="form-control"
                                     required
-                                    placeholder="e.g., Aquatic Indica Surf Event"
+                                    placeholder="e.g., Annual Surf Championship"
                                     value={formData.name}
                                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                                 />

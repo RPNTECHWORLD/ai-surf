@@ -615,6 +615,63 @@ const Sessions = () => {
     return [];
   };
 
+  // Helper to parse structured coach feedback from session notes string
+  const parseCoachNotes = (raw) => {
+    if (!raw || typeof raw !== 'string') {
+      return { waveCount: '', whatDidWell: '', whatDidWellScore: '', whatToImprove: '', whatToImproveScore: '' };
+    }
+
+    let waveCount = '';
+    const waveMatch = raw.match(/Wave Count:\s*(\d+)/i);
+    if (waveMatch) waveCount = waveMatch[1];
+
+    let whatDidWell = '';
+    let whatDidWellScore = '';
+    const wellBlockMatch = raw.match(/What You did Well:\s*\n?([\s\S]*?)(?=(?:What to Improve:|$))/i);
+    if (wellBlockMatch) {
+      const block = wellBlockMatch[1];
+      const scoreMatch = block.match(/\[\s*(\d+)\s*(?:out of|\/)\s*10\s*\]/i) || block.match(/\(\s*(\d+)\s*(?:out of|\/)\s*10\s*\)/i);
+      if (scoreMatch) whatDidWellScore = scoreMatch[1];
+      whatDidWell = block
+        .replace(/\[\s*\d+\s*(?:out of|\/)\s*10\s*\]\.?/gi, '')
+        .replace(/\(\s*\d+\s*(?:out of|\/)\s*10\s*\)\.?/gi, '')
+        .replace(/^-\s*/gm, '')
+        .trim();
+    }
+
+    let whatToImprove = '';
+    let whatToImproveScore = '';
+    const impBlockMatch = raw.match(/What to Improve:\s*\n?([\s\S]*?)$/i);
+    if (impBlockMatch) {
+      const block = impBlockMatch[1];
+      const scoreMatch = block.match(/\[\s*(\d+)\s*(?:out of|\/)\s*10\s*\]/i) || block.match(/\(\s*(\d+)\s*(?:out of|\/)\s*10\s*\)/i);
+      if (scoreMatch) whatToImproveScore = scoreMatch[1];
+      whatToImprove = block
+        .replace(/\[\s*\d+\s*(?:out of|\/)\s*10\s*\]\.?/gi, '')
+        .replace(/\(\s*\d+\s*(?:out of|\/)\s*10\s*\)\.?/gi, '')
+        .replace(/^-\s*/gm, '')
+        .trim();
+    }
+
+    return { waveCount, whatDidWell, whatDidWellScore, whatToImprove, whatToImproveScore };
+  };
+
+  const formatCoachNotes = (wc, well, wellScore, imp, impScore) => {
+    const parts = [];
+    if (wc !== '' && wc !== null && wc !== undefined) {
+      parts.push(`Wave Count: ${wc}`);
+    }
+    if (well || wellScore) {
+      const scoreStr = wellScore ? ` [${wellScore} out of 10]` : '';
+      parts.push(`What You did Well:\n - ${well || '—'}${scoreStr}`);
+    }
+    if (imp || impScore) {
+      const scoreStr = impScore ? ` [${impScore} out of 10]` : '';
+      parts.push(`What to Improve:\n - ${imp || '—'}${scoreStr}`);
+    }
+    return parts.join('\n\n');
+  };
+
   // Detailed Session & Group Media Hub State
   const [selectedHubSession, setSelectedHubSession] = useState(null);
   const [hubActiveTab, setHubActiveTab] = useState('overview'); // 'overview' | 'video' | 'photos' | 'notes'
@@ -625,6 +682,13 @@ const Sessions = () => {
   const [hubActiveImageId, setHubActiveImageId] = useState(null);
   const [hubImageUrl, setHubImageUrl] = useState('');
   const [hubNotes, setHubNotes] = useState('');
+  const [hubWaveCount, setHubWaveCount] = useState('');
+  const [hubWhatDidWell, setHubWhatDidWell] = useState('');
+  const [hubWhatDidWellScore, setHubWhatDidWellScore] = useState('');
+  const [hubWhatToImprove, setHubWhatToImprove] = useState('');
+  const [hubWhatToImproveScore, setHubWhatToImproveScore] = useState('');
+  const [hubSelectedStudentId, setHubSelectedStudentId] = useState(null);
+  const [hubStudentNotesMap, setHubStudentNotesMap] = useState({});
   const [hubStatus, setHubStatus] = useState('Upcoming');
   const [hubIsUploadingVideo, setHubIsUploadingVideo] = useState(false);
   const [hubIsUploadingImage, setHubIsUploadingImage] = useState(false);
@@ -654,7 +718,45 @@ const Sessions = () => {
     setHubActiveImageId(parsedImages.length > 0 ? parsedImages[0].id : null);
     setHubImageUrl(parsedImages[0]?.url || data.image_url || '');
 
-    setHubNotes(data.notes || '');
+    const initialNotes = data.notes || '';
+    setHubNotes(initialNotes);
+
+    const sessionList = (data.sessions && data.sessions.length > 0) ? data.sessions : [data];
+    const notesMap = {};
+    sessionList.forEach(s => {
+      const p = parseCoachNotes(s.notes || '');
+      notesMap[s.id] = {
+        waveCount: p.waveCount || '',
+        whatDidWell: p.whatDidWell || '',
+        whatDidWellScore: p.whatDidWellScore || '',
+        whatToImprove: p.whatToImprove || '',
+        whatToImproveScore: p.whatToImproveScore || ''
+      };
+    });
+    setHubStudentNotesMap(notesMap);
+
+    let initialStudentId = sessionList[0]?.id || data.id;
+    if (isStudent) {
+      const effUser = currentUser || (() => {
+        try { return JSON.parse(sessionStorage.getItem('user') || localStorage.getItem('user') || '{}'); } catch (e) { return {}; }
+      })();
+      const effId = effUser.student_id || effUser.id;
+      const effName = (effUser.name || effUser.student_name || '').toLowerCase().trim();
+      const matched = sessionList.find(s => 
+        (effId && (s.student_id === effId || s.id === effId)) ||
+        (effName && s.student && s.student.toLowerCase().trim() === effName)
+      );
+      if (matched) initialStudentId = matched.id;
+    }
+    setHubSelectedStudentId(initialStudentId);
+
+    const activeObj = notesMap[initialStudentId] || parseCoachNotes(initialNotes);
+    setHubWaveCount(activeObj.waveCount || '');
+    setHubWhatDidWell(activeObj.whatDidWell || '');
+    setHubWhatDidWellScore(activeObj.whatDidWellScore || '');
+    setHubWhatToImprove(activeObj.whatToImprove || '');
+    setHubWhatToImproveScore(activeObj.whatToImproveScore || '');
+
     const resolvedStatus = (data.status || '').toLowerCase().trim() === 'completed'
       ? 'Completed'
       : formatSessionStatus(data);
@@ -839,14 +941,89 @@ const Sessions = () => {
     }
   };
 
+  const handleSelectHubStudent = (newStudentId) => {
+    // 1. Persist current student's form inputs to map
+    const currId = hubSelectedStudentId;
+    let nextMap = { ...hubStudentNotesMap };
+    if (currId) {
+      nextMap[currId] = {
+        waveCount: hubWaveCount,
+        whatDidWell: hubWhatDidWell,
+        whatDidWellScore: hubWhatDidWellScore,
+        whatToImprove: hubWhatToImprove,
+        whatToImproveScore: hubWhatToImproveScore
+      };
+      setHubStudentNotesMap(nextMap);
+    }
+
+    // 2. Switch to new student
+    setHubSelectedStudentId(newStudentId);
+    const targetObj = nextMap[newStudentId] || {
+      waveCount: '',
+      whatDidWell: '',
+      whatDidWellScore: '',
+      whatToImprove: '',
+      whatToImproveScore: ''
+    };
+    setHubWaveCount(targetObj.waveCount || '');
+    setHubWhatDidWell(targetObj.whatDidWell || '');
+    setHubWhatDidWellScore(targetObj.whatDidWellScore || '');
+    setHubWhatToImprove(targetObj.whatToImprove || '');
+    setHubWhatToImproveScore(targetObj.whatToImproveScore || '');
+
+    const formatted = formatCoachNotes(
+      targetObj.waveCount,
+      targetObj.whatDidWell,
+      targetObj.whatDidWellScore,
+      targetObj.whatToImprove,
+      targetObj.whatToImproveScore
+    );
+    setHubNotes(formatted);
+  };
+
+  const handleUpdateNotesField = (updates) => {
+    const nextWc = updates.waveCount !== undefined ? updates.waveCount : hubWaveCount;
+    const nextWell = updates.whatDidWell !== undefined ? updates.whatDidWell : hubWhatDidWell;
+    const nextWellScore = updates.whatDidWellScore !== undefined ? updates.whatDidWellScore : hubWhatDidWellScore;
+    const nextImp = updates.whatToImprove !== undefined ? updates.whatToImprove : hubWhatToImprove;
+    const nextImpScore = updates.whatToImproveScore !== undefined ? updates.whatToImproveScore : hubWhatToImproveScore;
+
+    if (updates.waveCount !== undefined) setHubWaveCount(updates.waveCount);
+    if (updates.whatDidWell !== undefined) setHubWhatDidWell(updates.whatDidWell);
+    if (updates.whatDidWellScore !== undefined) setHubWhatDidWellScore(updates.whatDidWellScore);
+    if (updates.whatToImprove !== undefined) setHubWhatToImprove(updates.whatToImprove);
+    if (updates.whatToImproveScore !== undefined) setHubWhatToImproveScore(updates.whatToImproveScore);
+
+    const formatted = formatCoachNotes(nextWc, nextWell, nextWellScore, nextImp, nextImpScore);
+    setHubNotes(formatted);
+
+    // Keep map in sync for current student
+    if (hubSelectedStudentId) {
+      setHubStudentNotesMap(prev => ({
+        ...prev,
+        [hubSelectedStudentId]: {
+          waveCount: nextWc,
+          whatDidWell: nextWell,
+          whatDidWellScore: nextWellScore,
+          whatToImprove: nextImp,
+          whatToImproveScore: nextImpScore
+        }
+      }));
+    }
+
+    setHubHasChanges(true);
+    setHubSaveSuccess(false);
+  };
+
   const handleSaveHubChanges = async () => {
     if (!selectedHubSession) return;
     setHubIsSaving(true);
     try {
       const isGroupSession = Boolean(selectedHubSession.isGroup);
-      const sessionIds = (isGroupSession && selectedHubSession.sessions)
-        ? selectedHubSession.sessions.map(s => s.id)
-        : [selectedHubSession.id];
+      const sessionList = (isGroupSession && selectedHubSession.sessions)
+        ? selectedHubSession.sessions
+        : [selectedHubSession];
+
       const serializedVideoUrl = hubVideos.length === 1
         ? hubVideos[0].url
         : (hubVideos.length > 1 ? JSON.stringify(hubVideos) : '');
@@ -857,31 +1034,64 @@ const Sessions = () => {
         : (hubImages.length > 1 ? JSON.stringify(hubImages.map(img => img.url)) : (hubImageUrl || ''));
       const primaryImageUrl = hubImages[0]?.url || hubImageUrl || '';
 
-      const payload = {
-        status: hubStatus,
-        notes: hubNotes,
-        video_url: serializedVideoUrl || primaryVideoUrl,
-        image_url: serializedImageUrl || primaryImageUrl,
+      // Ensure current active student's notes are saved into latest map
+      const currentMap = {
+        ...hubStudentNotesMap,
+        ...(hubSelectedStudentId ? {
+          [hubSelectedStudentId]: {
+            waveCount: hubWaveCount,
+            whatDidWell: hubWhatDidWell,
+            whatDidWellScore: hubWhatDidWellScore,
+            whatToImprove: hubWhatToImprove,
+            whatToImproveScore: hubWhatToImproveScore
+          }
+        } : {})
       };
 
       await Promise.all(
-        sessionIds.map(id =>
-          fetch(`${API}/api/sessions/${id}`, {
+        sessionList.map(s => {
+          const sObj = currentMap[s.id];
+          const sNotesFormatted = sObj
+            ? formatCoachNotes(
+                sObj.waveCount,
+                sObj.whatDidWell,
+                sObj.whatDidWellScore,
+                sObj.whatToImprove,
+                sObj.whatToImproveScore
+              )
+            : (s.notes || '');
+
+          const payload = {
+            status: hubStatus,
+            notes: sNotesFormatted,
+            video_url: serializedVideoUrl || primaryVideoUrl,
+            image_url: serializedImageUrl || primaryImageUrl,
+          };
+
+          return fetch(`${API}/api/sessions/${s.id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
-          }).catch(err => console.error('Failed updating session', id, err))
-        )
+          }).catch(err => console.error('Failed updating session', s.id, err));
+        })
       );
 
       // Update local sessions state
       setSessions(prev =>
         prev.map(s => {
-          if (sessionIds.includes(s.id)) {
+          const sObj = currentMap[s.id];
+          if (sObj) {
+            const sNotesFormatted = formatCoachNotes(
+              sObj.waveCount,
+              sObj.whatDidWell,
+              sObj.whatDidWellScore,
+              sObj.whatToImprove,
+              sObj.whatToImproveScore
+            );
             return {
               ...s,
               status: hubStatus,
-              notes: hubNotes,
+              notes: sNotesFormatted,
               video_url: serializedVideoUrl || primaryVideoUrl,
               video_urls: hubVideos,
               image_url: serializedImageUrl || primaryImageUrl,
@@ -893,32 +1103,34 @@ const Sessions = () => {
       );
 
       // Update selectedHubSession
-      setSelectedHubSession(prev => ({
-        ...prev,
-        status: hubStatus,
-        notes: hubNotes,
-        video_url: serializedVideoUrl || primaryVideoUrl,
-        video_urls: hubVideos,
-        image_url: serializedImageUrl || primaryImageUrl,
-        image_urls: hubImages,
-        sessions: prev.sessions ? prev.sessions.map(s => ({
-          ...s,
-          status: hubStatus,
-          notes: hubNotes,
-          video_url: serializedVideoUrl || primaryVideoUrl,
-          video_urls: hubVideos,
-          image_url: serializedImageUrl || primaryImageUrl,
-          image_urls: hubImages,
-        })) : [{
+      setSelectedHubSession(prev => {
+        if (!prev) return prev;
+        const updatedSessions = prev.sessions
+          ? prev.sessions.map(s => {
+              const sObj = currentMap[s.id];
+              const sNotesFormatted = sObj
+                ? formatCoachNotes(
+                    sObj.waveCount,
+                    sObj.whatDidWell,
+                    sObj.whatDidWellScore,
+                    sObj.whatToImprove,
+                    sObj.whatToImproveScore
+                  )
+                : s.notes;
+              return { ...s, notes: sNotesFormatted, status: hubStatus };
+            })
+          : prev.sessions;
+
+        return {
           ...prev,
           status: hubStatus,
-          notes: hubNotes,
+          sessions: updatedSessions,
           video_url: serializedVideoUrl || primaryVideoUrl,
           video_urls: hubVideos,
           image_url: serializedImageUrl || primaryImageUrl,
           image_urls: hubImages,
-        }]
-      }));
+        };
+      });
 
       setHubSaveSuccess(true);
       setHubHasChanges(false);
@@ -996,7 +1208,7 @@ const Sessions = () => {
     ? 'Individual / Freelance Coach'
     : (activeSchoolName && schoolLower !== 'school admin' && schoolLower !== 'super admin')
       ? activeSchoolName
-      : 'Aquatic Indica Surf School';
+      : '';
   const effectiveSchoolLower = effectiveSchool.toLowerCase().trim();
 
   const fetchSessions = () => {
@@ -1607,7 +1819,7 @@ const Sessions = () => {
                 ? 'Your personalized surf coaching, training logs & scheduled slots'
                 : (isCoach
                   ? 'Your assigned coaching roster, student trainees & scheduled slots'
-                  : 'Aquatic Indica Ground Operations & Coaching Management Platform')}
+                  : (activeSchoolName ? `${activeSchoolName} Ground Operations & Coaching Management Platform` : 'Ground Operations & Coaching Management Platform'))}
             </p>
           </div>
           <div className="ses-actions">
@@ -2871,8 +3083,12 @@ const Sessions = () => {
                     <span>{selectedHubSession.time}</span>
                     <span>•</span>
                     <span>Coach: <strong style={{ color: '#0F172A' }}>{selectedHubSession.instructor || 'Unassigned'}</strong></span>
-                    <span>•</span>
-                    <span>{selectedHubSession.location || 'Aquatic Indica Surf Beach'}</span>
+                    {selectedHubSession.location && (
+                      <>
+                        <span>•</span>
+                        <span>{selectedHubSession.location}</span>
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -3700,31 +3916,411 @@ const Sessions = () => {
                 {/* ─── TAB 4: COACH NOTES & OBJECTIVES ─── */}
                 {hubActiveTab === 'notes' && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                    <div>
-                      <label style={{ display: 'block', fontSize: '13px', fontWeight: 700, color: '#0F172A', marginBottom: '6px' }}>
-                        📝 Coach Feedback, Wave Counts & Tactical Briefing
-                      </label>
-                      <textarea
-                        rows="6"
-                        placeholder={isStudent ? "No coach notes available yet..." : "Add training goals, wave count, board setup notes, pop-up corrections, or student feedback for this session..."}
-                        value={hubNotes}
+                    {/* Header */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '15px', fontWeight: 800, color: '#0F172A', fontFamily: 'Outfit, sans-serif' }}>
+                          📝 Coach Feedback, Wave Counts & Tactical Briefing
+                        </label>
+                        <p style={{ margin: '2px 0 0', fontSize: '12px', color: '#64748B' }}>
+                          {isStudent ? 'Performance metrics and tactical advice from your coach' : 'Fill in session wave count and evaluate performance with 1 to 10 scores'}
+                        </p>
+                      </div>
+                      {!isStudent && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontSize: '11px', color: '#0D9488', fontWeight: 700, background: '#F0FDFA', border: '1px solid #99F6E4', padding: '3px 8px', borderRadius: '6px' }}>
+                            Interactive Scoring Mode
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Student Selection Dropdown for Group Sessions */}
+                    {selectedHubSession?.sessions && selectedHubSession.sessions.length > 1 && (
+                      <div style={{
+                        background: 'linear-gradient(135deg, #F0FDFA 0%, #F8FAFC 100%)',
+                        border: '1.5px solid #0D9488',
+                        borderRadius: '12px',
+                        padding: '12px 16px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        flexWrap: 'wrap',
+                        gap: '12px',
+                        boxShadow: '0 2px 8px rgba(13, 148, 136, 0.08)'
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <div style={{
+                            width: '36px',
+                            height: '36px',
+                            borderRadius: '10px',
+                            background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
+                            color: '#FFFFFF',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '17px',
+                            fontWeight: 700,
+                            flexShrink: 0
+                          }}>
+                            👥
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '13px', fontWeight: 800, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <span>Select Student ({selectedHubSession.sessions.length} Athletes):</span>
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#64748B' }}>
+                              Choose an athlete from the dropdown to record their specific wave count and feedback
+                            </div>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <label style={{ fontSize: '12.5px', fontWeight: 700, color: '#0F766E' }}>
+                            Student:
+                          </label>
+                          <select
+                            value={hubSelectedStudentId || selectedHubSession.sessions[0]?.id}
+                            onChange={(e) => handleSelectHubStudent(Number(e.target.value))}
+                            style={{
+                              padding: '8px 14px',
+                              borderRadius: '8px',
+                              border: '2px solid #0D9488',
+                              fontSize: '13.5px',
+                              fontWeight: 700,
+                              color: '#0F172A',
+                              background: '#FFFFFF',
+                              cursor: 'pointer',
+                              outline: 'none',
+                              boxShadow: '0 2px 6px rgba(13, 148, 136, 0.15)',
+                              minWidth: '220px'
+                            }}
+                          >
+                            {selectedHubSession.sessions.map((s, idx) => {
+                              const sObj = hubStudentNotesMap[s.id];
+                              const hasFeedback = Boolean(sObj && (sObj.waveCount || sObj.whatDidWell || sObj.whatToImprove));
+                              return (
+                                <option key={s.id || idx} value={s.id}>
+                                  {s.student || `Student ${idx + 1}`} ({s.level || 'Beginner'}) {hasFeedback ? '✓' : ''}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* CARD 1: Wave Count */}
+                    <div style={{ background: '#FFFFFF', border: '1.5px solid #E2E8F0', borderRadius: '14px', padding: '16px 18px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                        <span style={{ fontSize: '13.5px', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ fontSize: '16px' }}>🌊</span> Wave Count:
+                        </span>
+                        <span style={{ fontSize: '12px', color: '#64748B' }}>
+                          {isStudent ? 'Total waves surfed during session' : 'Number of waves caught'}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                        {!isStudent && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const curr = parseInt(hubWaveCount) || 0;
+                              handleUpdateNotesField({ waveCount: Math.max(0, curr - 1).toString() });
+                            }}
+                            style={{
+                              width: '36px',
+                              height: '36px',
+                              borderRadius: '8px',
+                              border: '1.5px solid #CBD5E1',
+                              background: '#F8FAFC',
+                              fontSize: '18px',
+                              fontWeight: 700,
+                              color: '#334155',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              userSelect: 'none'
+                            }}
+                            title="Decrease wave count"
+                          >
+                            −
+                          </button>
+                        )}
+
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          placeholder="0"
+                          value={hubWaveCount}
+                          readOnly={isStudent}
+                          onChange={(e) => handleUpdateNotesField({ waveCount: e.target.value })}
+                          style={{
+                            width: '90px',
+                            height: '36px',
+                            padding: '0 10px',
+                            border: '1.5px solid #0D9488',
+                            borderRadius: '8px',
+                            fontSize: '16px',
+                            fontWeight: 800,
+                            color: '#0F766E',
+                            textAlign: 'center',
+                            background: isStudent ? '#F8FAFC' : '#F0FDFA',
+                            boxSizing: 'border-box'
+                          }}
+                        />
+
+                        {!isStudent && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const curr = parseInt(hubWaveCount) || 0;
+                              handleUpdateNotesField({ waveCount: (curr + 1).toString() });
+                            }}
+                            style={{
+                              width: '36px',
+                              height: '36px',
+                              borderRadius: '8px',
+                              border: '1.5px solid #CBD5E1',
+                              background: '#F8FAFC',
+                              fontSize: '18px',
+                              fontWeight: 700,
+                              color: '#334155',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              userSelect: 'none'
+                            }}
+                            title="Increase wave count"
+                          >
+                            +
+                          </button>
+                        )}
+
+                        {!isStudent && (
+                          <div style={{ display: 'flex', gap: '6px', marginLeft: '6px' }}>
+                            {[1, 2, 3, 5, 8, 10].map(cnt => (
+                              <button
+                                key={cnt}
+                                type="button"
+                                onClick={() => handleUpdateNotesField({ waveCount: cnt.toString() })}
+                                style={{
+                                  padding: '5px 10px',
+                                  borderRadius: '6px',
+                                  fontSize: '12px',
+                                  fontWeight: 700,
+                                  border: hubWaveCount === cnt.toString() ? '1.5px solid #0D9488' : '1px solid #E2E8F0',
+                                  background: hubWaveCount === cnt.toString() ? '#0D9488' : '#F8FAFC',
+                                  color: hubWaveCount === cnt.toString() ? '#FFFFFF' : '#475569',
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                {cnt}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {isStudent && (
+                          <span style={{ fontSize: '14px', fontWeight: 700, color: '#0F766E' }}>
+                            {hubWaveCount ? `${hubWaveCount} waves logged` : 'No waves logged'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* CARD 2: What You did Well */}
+                    <div style={{ background: '#FFFFFF', border: '1.5px solid #E2E8F0', borderRadius: '14px', padding: '16px 18px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                        <span style={{ fontSize: '13.5px', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ fontSize: '16px' }}>🌟</span> What You did Well:
+                        </span>
+                        {hubWhatDidWellScore ? (
+                          <span style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            fontSize: '12px',
+                            fontWeight: 800,
+                            color: '#065F46',
+                            background: '#D1FAE5',
+                            border: '1px solid #A7F3D0',
+                            padding: '3px 9px',
+                            borderRadius: '6px'
+                          }}>
+                            ★ Score: {hubWhatDidWellScore} out of 10
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: '12px', color: '#94A3B8' }}>Rate 1 to 10</span>
+                        )}
+                      </div>
+
+                      <input
+                        type="text"
+                        placeholder={isStudent ? "No feedback recorded..." : "e.g. Good Take off (Pop Up), clean bottom turn..."}
+                        value={hubWhatDidWell}
                         readOnly={isStudent}
-                        onChange={(e) => {
-                          setHubNotes(e.target.value);
-                          setHubHasChanges(true);
-                          setHubSaveSuccess(false);
-                        }}
+                        onChange={(e) => handleUpdateNotesField({ whatDidWell: e.target.value })}
                         style={{
                           width: '100%',
-                          padding: '12px 14px',
+                          padding: '10px 14px',
                           border: '1.5px solid #CBD5E1',
-                          borderRadius: '10px',
+                          borderRadius: '8px',
                           fontSize: '14px',
-                          fontFamily: 'inherit',
+                          color: '#0F172A',
                           boxSizing: 'border-box',
-                          resize: 'vertical'
+                          background: isStudent ? '#F8FAFC' : '#FFFFFF',
+                          marginBottom: '12px',
+                          outline: 'none'
                         }}
                       />
+
+                      {/* 1 to 10 Score Selector */}
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                          <span style={{ fontSize: '11.5px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                            Score (1 to 10):
+                          </span>
+                          {!isStudent && hubWhatDidWellScore && (
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateNotesField({ whatDidWellScore: '' })}
+                              style={{ background: 'none', border: 'none', color: '#EF4444', fontSize: '11px', fontWeight: 600, cursor: 'pointer', padding: 0 }}
+                            >
+                              Clear Score ✕
+                            </button>
+                          )}
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((score) => {
+                            const isSelected = hubWhatDidWellScore === score.toString();
+                            return (
+                              <button
+                                key={score}
+                                type="button"
+                                disabled={isStudent}
+                                onClick={() => handleUpdateNotesField({ whatDidWellScore: score.toString() })}
+                                style={{
+                                  flex: '1 0 30px',
+                                  maxWidth: '48px',
+                                  height: '34px',
+                                  borderRadius: '8px',
+                                  fontSize: '13px',
+                                  fontWeight: isSelected ? 800 : 600,
+                                  border: isSelected ? '2px solid #0D9488' : '1px solid #CBD5E1',
+                                  background: isSelected ? 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)' : '#F8FAFC',
+                                  color: isSelected ? '#FFFFFF' : '#334155',
+                                  cursor: isStudent ? 'default' : 'pointer',
+                                  transition: 'all 0.15s ease',
+                                  boxShadow: isSelected ? '0 2px 8px rgba(13, 148, 136, 0.35)' : 'none'
+                                }}
+                              >
+                                {score}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* CARD 3: What to Improve */}
+                    <div style={{ background: '#FFFFFF', border: '1.5px solid #E2E8F0', borderRadius: '14px', padding: '16px 18px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                        <span style={{ fontSize: '13.5px', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ fontSize: '16px' }}>🎯</span> What to Improve:
+                        </span>
+                        {hubWhatToImproveScore ? (
+                          <span style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            fontSize: '12px',
+                            fontWeight: 800,
+                            color: '#9A3412',
+                            background: '#FFEDD5',
+                            border: '1px solid #FED7AA',
+                            padding: '3px 9px',
+                            borderRadius: '6px'
+                          }}>
+                            ★ Score: {hubWhatToImproveScore} out of 10
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: '12px', color: '#94A3B8' }}>Rate 1 to 10</span>
+                        )}
+                      </div>
+
+                      <input
+                        type="text"
+                        placeholder={isStudent ? "No improvement areas noted..." : "e.g. Paddling Strength, head position, wave anticipation..."}
+                        value={hubWhatToImprove}
+                        readOnly={isStudent}
+                        onChange={(e) => handleUpdateNotesField({ whatToImprove: e.target.value })}
+                        style={{
+                          width: '100%',
+                          padding: '10px 14px',
+                          border: '1.5px solid #CBD5E1',
+                          borderRadius: '8px',
+                          fontSize: '14px',
+                          color: '#0F172A',
+                          boxSizing: 'border-box',
+                          background: isStudent ? '#F8FAFC' : '#FFFFFF',
+                          marginBottom: '12px',
+                          outline: 'none'
+                        }}
+                      />
+
+                      {/* 1 to 10 Score Selector */}
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                          <span style={{ fontSize: '11.5px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                            Score (1 to 10):
+                          </span>
+                          {!isStudent && hubWhatToImproveScore && (
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateNotesField({ whatToImproveScore: '' })}
+                              style={{ background: 'none', border: 'none', color: '#EF4444', fontSize: '11px', fontWeight: 600, cursor: 'pointer', padding: 0 }}
+                            >
+                              Clear Score ✕
+                            </button>
+                          )}
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((score) => {
+                            const isSelected = hubWhatToImproveScore === score.toString();
+                            return (
+                              <button
+                                key={score}
+                                type="button"
+                                disabled={isStudent}
+                                onClick={() => handleUpdateNotesField({ whatToImproveScore: score.toString() })}
+                                style={{
+                                  flex: '1 0 30px',
+                                  maxWidth: '48px',
+                                  height: '34px',
+                                  borderRadius: '8px',
+                                  fontSize: '13px',
+                                  fontWeight: isSelected ? 800 : 600,
+                                  border: isSelected ? '2px solid #EA580C' : '1px solid #CBD5E1',
+                                  background: isSelected ? 'linear-gradient(135deg, #EA580C 0%, #F59E0B 100%)' : '#F8FAFC',
+                                  color: isSelected ? '#FFFFFF' : '#334155',
+                                  cursor: isStudent ? 'default' : 'pointer',
+                                  transition: 'all 0.15s ease',
+                                  boxShadow: isSelected ? '0 2px 8px rgba(234, 88, 12, 0.35)' : 'none'
+                                }}
+                              >
+                                {score}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 )}

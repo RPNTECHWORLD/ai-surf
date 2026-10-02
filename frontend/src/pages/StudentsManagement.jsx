@@ -461,9 +461,9 @@ const StudentsManagement = () => {
     ? 'Individual / Freelance Coach'
     : (activeSchoolName && schoolLower !== 'school admin' && schoolLower !== 'super admin')
       ? activeSchoolName
-      : 'Aquatic Indica Surf School';
+      : '';
   const effectiveSchoolLower = effectiveSchool.toLowerCase().trim();
-  const isDefaultSchool = !activeSchoolName || (typeof activeSchoolName === 'string' && (activeSchoolName.toLowerCase() === 'aquatic indica surf school' || activeSchoolName.toLowerCase() === 'school admin'));
+  const isDefaultSchool = !activeSchoolName || (typeof activeSchoolName === 'string' && activeSchoolName.toLowerCase() === 'school admin');
 
   const [allSessions, setAllSessions] = useState([]);
   const [expandedGuestStudentId, setExpandedGuestStudentId] = useState(null);
@@ -746,7 +746,7 @@ const StudentsManagement = () => {
       const isInstFreelance = (selectedInst?.school || '').toLowerCase().trim() === 'individual / freelance coach';
       const studentSchool = (isCoach && isCoachFreelance)
         ? 'Individual / Freelance Coach'
-        : (isInstFreelance ? 'Individual / Freelance Coach' : (coachAffiliatedSchool || effectiveSchool || 'Aquatic Indica Surf School'));
+        : (isInstFreelance ? 'Individual / Freelance Coach' : (coachAffiliatedSchool || effectiveSchool || activeSchoolName || ''));
 
       const assignedInstId = isCoach ? currentCoachId : (form.instructor_id ? parseInt(form.instructor_id) : null);
       const studentAge = form.dob ? (calculateAge(form.dob) || (form.age ? parseInt(form.age) : undefined)) : (form.age ? parseInt(form.age) : undefined);
@@ -1044,7 +1044,7 @@ const StudentsManagement = () => {
           staying_at_school: 'Yes',
           school: (isCoach && isCoachFreelance)
             ? 'Individual / Freelance Coach'
-            : (coachAffiliatedSchool || activeSchoolName || 'Aquatic Indica Surf School'),
+            : (coachAffiliatedSchool || activeSchoolName || ''),
           guests_count: cleanedGuests.length,
           guests_details: cleanedGuests
         };
@@ -1265,7 +1265,7 @@ const StudentsManagement = () => {
 
   const handleCopyStudentInviteLink = () => {
     const savedUser = sessionStorage.getItem('user');
-    let schoolName = 'Aquatic Indica Surf School';
+    let schoolName = activeSchoolName || '';
     if (savedUser) {
       try {
         const u = JSON.parse(savedUser);
@@ -1274,7 +1274,7 @@ const StudentsManagement = () => {
       } catch (e) {}
     }
 
-    const link = `${window.location.origin}/auth?mode=signup&school=${encodeURIComponent(schoolName)}`;
+    const link = `${window.location.origin}/auth?mode=signup${schoolName ? `&school=${encodeURIComponent(schoolName)}` : ''}`;
     
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(link);
@@ -1365,7 +1365,7 @@ const StudentsManagement = () => {
         if (req && (req.status === 'approved' || req.status === 'rejected')) return;
 
         // Check school match
-        const targetSchool = schoolName || req?.school_name || req?.school || 'Aquatic Indica Surf School';
+        const targetSchool = schoolName || req?.school_name || req?.school || activeSchoolName || '';
         if (activeSchoolName && !isDefaultSchool) {
           const normTarget = (targetSchool || '').toLowerCase().replace(/[^a-z0-9]/g, '');
           const normActive = (activeSchoolName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -1502,7 +1502,7 @@ const StudentsManagement = () => {
               session_time: targetReq.session_time || '',
               start_date: targetReq.start_date || new Date().toISOString().split('T')[0],
               staying_at_school: targetReq.staying_at_school || 'Yes',
-              school: targetReq.school_name || activeSchoolName || 'Aquatic Indica Surf School',
+              school: targetReq.school_name || activeSchoolName || '',
               approval_status: 'approved'
             })
           });
@@ -1545,7 +1545,7 @@ const StudentsManagement = () => {
           student_id: reqId,
           student_email: emailLower,
           student_name: targetReq?.student_name || emailLower.split('@')[0],
-          school_name: targetReq?.school_name || activeSchoolName || 'Aquatic Indica Surf School',
+          school_name: targetReq?.school_name || activeSchoolName || '',
           status: 'approved'
         });
       }
@@ -1924,7 +1924,7 @@ const StudentsManagement = () => {
                                     </div>
                                     <div style={{ fontSize: '12px', color: '#D97706', fontWeight: 600, marginTop: '3px', display: 'flex', alignItems: 'center', gap: '4px' }}>
                                       <span>🏫</span>
-                                      <span>{req.school_name || req.school || 'Aquatic Indica Surf School'}</span>
+                                      <span>{req.school_name || req.school || activeSchoolName || 'Surf School'}</span>
                                     </div>
                                   </div>
                                 </div>
@@ -4134,7 +4134,7 @@ const StudentsManagement = () => {
                     onClick={() => {
                       const cleanPhone = String(inviteModalData.phone).replace(/\D/g, '');
                       const text = encodeURIComponent(
-                        `Hi ${inviteModalData.name}! Here is your Aquatic Indica Surf School portal link: ${inviteModalData.link}\n\nClick the link to access your student portal and set your password.`
+                        `Hi ${inviteModalData.name}! Here is your student portal registration link: ${inviteModalData.link}\n\nClick the link to access your portal and set your password.`
                       );
                       window.open(`https://wa.me/${cleanPhone}?text=${text}`, '_blank');
                     }}
@@ -4392,13 +4392,15 @@ const StudentsManagement = () => {
 
                   {/* How it works note */}
                   <div style={{ background: '#F0F9FF', border: '1px solid #BAE6FD', borderRadius: '10px', padding: '12px', fontSize: '12.5px', color: '#0369A1', lineHeight: '1.5' }}>
-                    <div style={{ fontWeight: 800, marginBottom: '3px' }}>💡 How this capacity count works:</div>
-                    If set to <strong>{inviteCapacityCount || 3}</strong>:
+                    <div style={{ fontWeight: 800, marginBottom: '3px' }}>💡 How this group capacity works:</div>
+                    Total Group Capacity: <strong>{inviteCapacityCount || 3} People</strong>
                     <ul style={{ margin: '4px 0 0 18px', padding: 0 }}>
-                      <li><strong>Option A:</strong> 1 primary email signup with {(parseInt(inviteCapacityCount) || 3) - 1} accompanying guest(s)</li>
-                      <li><strong>Option B:</strong> {inviteCapacityCount || 3} separate students registering with their individual emails</li>
+                      <li><strong>Primary Student:</strong> 1 main email registration (Account Owner)</li>
+                      <li><strong>Accompanying Guests:</strong> {Math.max(0, (parseInt(inviteCapacityCount) || 3) - 1)} guest(s) (Locked on registration)</li>
                     </ul>
-                    Once all {inviteCapacityCount || 3} slot(s) are used, the link automatically locks and closes.
+                    <div style={{ marginTop: '6px', fontSize: '12px', color: '#0284C7', fontWeight: 600 }}>
+                      🔒 <strong>Single-Use Link:</strong> Multiple emails cannot register with this link. Once the primary student signs up with their accompanying guests, this invite link automatically closes.
+                    </div>
                   </div>
                 </div>
 
@@ -4489,7 +4491,7 @@ const StudentsManagement = () => {
                         <span>Link Ready & Copied!</span>
                       </span>
                       <span style={{ fontSize: '11px', fontWeight: 800, color: '#15803D', background: '#DCFCE7', padding: '3px 10px', borderRadius: '12px' }}>
-                        0 / {createdSchoolInvite.max_count} Used ({createdSchoolInvite.max_count} Slots Left)
+                        1 Main Account + {Math.max(0, createdSchoolInvite.max_count - 1)} Guests
                       </span>
                     </div>
 
@@ -4706,8 +4708,8 @@ const StudentsManagement = () => {
                                   gap: '4px'
                                 }}>
                                   {isFull
-                                    ? `⛔ Full (${inv.used_count || inv.max_count}/${inv.max_count} used)`
-                                    : `⚡ ${rem} of ${inv.max_count} slots left`}
+                                    ? `⛔ Used (${inv.used_count || inv.max_count}/${inv.max_count} slots registered)`
+                                    : `⚡ Active (1 Main + ${Math.max(0, inv.max_count - 1)} Guests)`}
                                 </span>
                                 {inv.created_at && (
                                   <span style={{ color: '#94A3B8' }}>

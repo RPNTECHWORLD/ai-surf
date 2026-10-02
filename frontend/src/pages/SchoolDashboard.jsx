@@ -109,7 +109,7 @@ const SchoolDashboard = () => {
         if (userSchoolName) {
           parsedSchool.name = userSchoolName;
         } else if (parsedSchool.name && typeof parsedSchool.name === 'object') {
-          parsedSchool.name = parsedSchool.name?.name || 'Aquatic Indica Surf School';
+          parsedSchool.name = parsedSchool.name?.name || '';
         }
         setSchool(parsedSchool);
       } catch (e) {}
@@ -122,7 +122,7 @@ const SchoolDashboard = () => {
           if (data && data.length > 0) {
             const latest = data[data.length - 1];
             setSchool({
-              name: typeof latest.name === 'string' ? latest.name : (latest.name?.name || 'Aquatic Indica Surf School'),
+              name: typeof latest.name === 'string' ? latest.name : (latest.name?.name || ''),
               owner: typeof latest.owner === 'string' ? latest.owner : '',
             });
           }
@@ -151,7 +151,7 @@ const SchoolDashboard = () => {
     const isSuperAdmin = currentUser?.role === 'superadmin' || schoolLower === 'super admin';
     const effectiveSchool = (currentSchoolName && schoolLower !== 'school admin' && schoolLower !== 'super admin')
       ? currentSchoolName
-      : 'Aquatic Indica Surf School';
+      : '';
     const schoolParam = (!isSuperAdmin && effectiveSchool) ? `?school=${encodeURIComponent(effectiveSchool)}` : '';
 
     // Fetch real instructors, students, sessions & activity log
@@ -220,7 +220,7 @@ const SchoolDashboard = () => {
 
   const schoolDisplayName = typeof school?.name === 'string'
     ? school.name
-    : (school?.name?.name || 'Aquatic Indica Surf School');
+    : (school?.name?.name || '');
 
   const activityIcon = (type) => {
     if (type === 'badge') return (

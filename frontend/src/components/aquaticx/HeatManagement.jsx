@@ -670,7 +670,7 @@ const HeatManagement = ({ currentUser }) => {
                         email: st.email || '',
                         gender: st.gender || 'Male',
                         age: st.age || 20,
-                        school_name: st.school || st.school_name || 'Aquatic Indica Surf School',
+                        school_name: st.school || st.school_name || '',
                         state: st.state || 'Tamil Nadu'
                     });
                 }

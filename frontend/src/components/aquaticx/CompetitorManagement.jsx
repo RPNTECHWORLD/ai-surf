@@ -451,7 +451,7 @@ const CompetitorManagement = () => {
                         uniqueSurfers.push({
                             id: st.id || `student-${stNameLower}`,
                             name: st.name,
-                            school_name: st.school || 'Aquatic Indica Surf School',
+                            school_name: st.school || '',
                             age: st.age || 20,
                             gender: st.gender || 'Male',
                             divisions: JSON.stringify([st.gender === 'Female' ? "Women's Open" : "Men's Open"]),
@@ -607,7 +607,7 @@ const CompetitorManagement = () => {
                     // Create new surfer on server (DO NOT send id in body)
                     const payload = {
                         name: st.name,
-                        school_name: st.school || 'Aquatic Indica Surf School',
+                        school_name: st.school || '',
                         age: st.age || 20,
                         gender: genderVal,
                         divisions: JSON.stringify(defaultDivs),

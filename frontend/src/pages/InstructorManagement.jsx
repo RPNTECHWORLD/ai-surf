@@ -76,7 +76,7 @@ const InstructorManagement = () => {
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [photoPreview, setPhotoPreview] = useState('');
   const [deletingId, setDeletingId] = useState(null);
-  const [schoolsList, setSchoolsList] = useState(['Aquatic Indica Surf School']);
+  const [schoolsList, setSchoolsList] = useState([]);
   const [copiedInviteId, setCopiedInviteId] = useState(null);
   const [inviteModalData, setInviteModalData] = useState(null);
   const [inviteLinkCopied, setInviteLinkCopied] = useState(false);
@@ -124,25 +124,28 @@ const InstructorManagement = () => {
 
   const getActiveSchoolName = () => {
     try {
-      const activeSchool = sessionStorage.getItem('activeSchool');
+      const activeSchool = sessionStorage.getItem('activeSchool') || localStorage.getItem('activeSchool');
       if (activeSchool) {
         const parsed = JSON.parse(activeSchool);
         if (parsed.name) {
-          return typeof parsed.name === 'string' ? parsed.name : (parsed.name?.name || 'Aquatic Indica Surf School');
+          const s = typeof parsed.name === 'string' ? parsed.name : parsed.name?.name;
+          if (s) return s;
         }
       }
-      const user = sessionStorage.getItem('user');
+      const user = sessionStorage.getItem('user') || localStorage.getItem('user');
       if (user) {
         const parsed = JSON.parse(user);
         if (parsed.school) {
-          return typeof parsed.school === 'string' ? parsed.school : (parsed.school?.name || 'Aquatic Indica Surf School');
+          const s = typeof parsed.school === 'string' ? parsed.school : parsed.school?.name;
+          if (s) return s;
         }
         if (parsed.school_name) {
-          return typeof parsed.school_name === 'string' ? parsed.school_name : (parsed.school_name?.name || 'Aquatic Indica Surf School');
+          const s = typeof parsed.school_name === 'string' ? parsed.school_name : parsed.school_name?.name;
+          if (s) return s;
         }
       }
     } catch (e) {}
-    return 'Aquatic Indica Surf School';
+    return '';
   };
 
   const [form, setForm] = useState({
@@ -166,7 +169,7 @@ const InstructorManagement = () => {
 
   const handleCopyGeneralCoachInvite = () => {
     const baseUrl = window.location.origin;
-    const schoolName = schoolsList[0] || 'Aquatic Indica Surf School';
+    const schoolName = schoolsList[0] || getActiveSchoolName() || '';
     const inviteUrl = `${baseUrl}/coach-portal`;
     if (navigator.clipboard) {
       navigator.clipboard.writeText(inviteUrl);
@@ -183,7 +186,7 @@ const InstructorManagement = () => {
 
   const handleGenerateCoachInvite = (instructor) => {
     const baseUrl = window.location.origin;
-    const schoolName = instructor.school || schoolsList[0] || 'Aquatic Indica Surf School';
+    const schoolName = instructor.school || schoolsList[0] || getActiveSchoolName() || '';
     const inviteUrl = `${baseUrl}/coach-portal?id=${instructor.id}`;
     if (navigator.clipboard) {
       navigator.clipboard.writeText(inviteUrl);

@@ -921,41 +921,68 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     const activeSlot = slots.find(s => s.id === activeSlotId) || selectedSlot;
     const slotCap = getSlotCapacity(activeSlot);
     const currentSlotList = slotStudentMap[activeSlotId] || [];
-    const isAlreadyInCurrentSlot = currentSlotList.includes(studentId);
 
-    // If trying to select a new student, check whether capacity is already reached
-    if (!isAlreadyInCurrentSlot) {
-      if (currentSlotList.length >= slotCap) {
+    const clickedStudent = allPoolStudents.find(s => String(s.id) === String(studentId));
+
+    // If main student (not a guest), group with all their accompanying guests
+    const isMainStudent = clickedStudent && !clickedStudent.isGuest;
+    const associatedGuests = isMainStudent
+      ? allPoolStudents.filter(s => s.isGuest && String(s.parentStudentId) === String(clickedStudent.id))
+      : [];
+
+    const familyIds = isMainStudent
+      ? [studentId, ...associatedGuests.map(g => g.id)]
+      : [studentId];
+
+    // Check if all family members are already in the current slot
+    const allInCurrentSlot = familyIds.every(id => currentSlotList.includes(id));
+
+    if (!allInCurrentSlot) {
+      // Need to add whichever family members are not yet in this slot
+      const idsToAdd = familyIds.filter(id => !currentSlotList.includes(id));
+      const spotsNeeded = idsToAdd.length;
+      const spotsRemaining = slotCap - currentSlotList.length;
+
+      if (spotsNeeded > spotsRemaining) {
         const slotTimeName = activeSlot ? (activeSlot.startTime || activeSlot.time) : 'this time slot';
+        const groupDesc = associatedGuests.length > 0
+          ? `${clickedStudent.name} and their ${associatedGuests.length} accompanying guest(s) (${spotsNeeded} spot(s) needed)`
+          : (clickedStudent?.name || 'this student');
         setUiAlert({
           title: 'Slot Capacity Limit Reached',
-          message: `The capacity limit for ${slotTimeName} is ${slotCap} students. You cannot select more than ${slotCap} students. Please deselect another student first or increase the capacity in Step 1.`,
+          message: `The capacity limit for ${slotTimeName} is ${slotCap} students. Only ${Math.max(0, spotsRemaining)} spot(s) remaining, but ${groupDesc} requires ${spotsNeeded} spot(s). Please deselect other students first or increase slot capacity in Step 1.`,
           type: 'warning',
           icon: '⚠️'
         });
         return;
       }
-    }
 
-    setSlotStudentMap(prevMap => {
-      const prevList = prevMap[activeSlotId] || [];
-      const alreadyIn = prevList.includes(studentId);
+      setSlotStudentMap(prevMap => {
+        const newMap = { ...prevMap };
 
-      const newMap = { ...prevMap };
+        // Remove family members from ALL slots first (so student belongs to only 1 slot at a time)
+        Object.keys(newMap).forEach(sId => {
+          if (Array.isArray(newMap[sId])) {
+            newMap[sId] = newMap[sId].filter(id => !familyIds.includes(id));
+          }
+        });
 
-      // Remove student from ALL slots first (so student belongs to only 1 slot at a time)
-      Object.keys(newMap).forEach(sId => {
-        if (Array.isArray(newMap[sId])) {
-          newMap[sId] = newMap[sId].filter(id => id !== studentId);
-        }
+        // Add all family members to active slot
+        newMap[activeSlotId] = Array.from(new Set([...(newMap[activeSlotId] || []), ...familyIds]));
+        return newMap;
       });
-
-      if (!alreadyIn) {
-        newMap[activeSlotId] = [...(newMap[activeSlotId] || []), studentId];
-      }
-
-      return newMap;
-    });
+    } else {
+      // Deselect all family members from active slot
+      setSlotStudentMap(prevMap => {
+        const newMap = { ...prevMap };
+        Object.keys(newMap).forEach(sId => {
+          if (Array.isArray(newMap[sId])) {
+            newMap[sId] = newMap[sId].filter(id => !familyIds.includes(id));
+          }
+        });
+        return newMap;
+      });
+    }
   };
 
 
@@ -1340,11 +1367,39 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     return trainingGroups.filter(g => String(g.slotId || slots[0]?.id) === String(step3SlotFilter));
   }, [trainingGroups, step3SlotFilter, slots, editSession]);
 
-  // Step 3: Toggle check in Column 1
+  // Step 3: Toggle check in Column 1 (Synchronized Main Student + Accompanying Guests)
   const toggleStep3StudentCheck = (id) => {
-    setStep3CheckedStudentIds(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-    );
+    const clickedStudent = importedStudents.find(s => s.id === id);
+    if (!clickedStudent) {
+      setStep3CheckedStudentIds(prev =>
+        prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+      );
+      return;
+    }
+
+    if (!clickedStudent.isGuest) {
+      // Main student -> toggle main student and all their accompanying guests together
+      const associatedGuests = importedStudents.filter(
+        s => s.isGuest && String(s.parentStudentId) === String(clickedStudent.id)
+      );
+      const familyIds = [clickedStudent.id, ...associatedGuests.map(g => g.id)];
+
+      setStep3CheckedStudentIds(prev => {
+        const isMainChecked = prev.includes(clickedStudent.id);
+        if (isMainChecked) {
+          // Deselect main student and all accompanying guests
+          return prev.filter(x => !familyIds.includes(x));
+        } else {
+          // Select main student and all accompanying guests
+          return Array.from(new Set([...prev, ...familyIds]));
+        }
+      });
+    } else {
+      // Individual guest student clicked
+      setStep3CheckedStudentIds(prev =>
+        prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+      );
+    }
   };
 
   // Create Group from checked students or create a fresh empty group card with assigned slot
@@ -1780,108 +1835,120 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     <>
       {/* Top Header & Breadcrumb Stepper */}
       <header className="ns-header" style={isModal ? { padding: '16px 24px', background: '#FFFFFF', borderBottom: '1px solid #E2E8F0', flexShrink: 0 } : {}}>
-        <div className="ns-header-main-row">
-          <div className="ns-header-left" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            {currentStep > 1 && (
-              <button
-                type="button"
-                className="ns-header-back-btn"
-                onClick={() => setCurrentStep(prev => Math.max(1, prev - 1))}
-                title={`Back to Step ${currentStep - 1}`}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  background: '#F1F5F9',
-                  border: '1px solid #CBD5E1',
-                  borderRadius: '8px',
-                  padding: '6px 12px',
-                  fontSize: '13px',
-                  fontWeight: 600,
-                  color: '#1E293B',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease'
-                }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-                <span>Back</span>
-              </button>
+        <div className="ns-header-left" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {currentStep > 1 && (
+            <button
+              type="button"
+              className="ns-header-back-btn"
+              onClick={() => setCurrentStep(prev => Math.max(1, prev - 1))}
+              title={`Back to Step ${currentStep - 1}`}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                background: '#F1F5F9',
+                border: '1px solid #CBD5E1',
+                borderRadius: '8px',
+                padding: '6px 12px',
+                fontSize: '13px',
+                fontWeight: 600,
+                color: '#1E293B',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+              <span>Back</span>
+            </button>
+          )}
+          <h1 className="ns-title" style={isModal ? { fontSize: '20px' } : {}}>
+            {editSession ? 'Edit Session' : (
+              currentStep === 1 ? 'Schedule Surf Session' :
+              currentStep === 2 ? 'Roster Selector Pool' :
+              'Instructor Groups Matching'
             )}
-            <h1 className="ns-title" style={isModal ? { fontSize: '20px' } : {}}>
-              {editSession ? 'Edit Session' : (
-                currentStep === 1 ? 'Schedule Surf Session' :
-                currentStep === 2 ? 'Roster Selector Pool' :
-                'Instructor Groups Matching'
-              )}
-            </h1>
-            <span className={`ns-status-tag ${currentStep === 3 ? 'review' : 'upcoming'}`}>
-              {currentStep === 3 ? 'Review' : 'Upcoming'}
-            </span>
+          </h1>
+          <span className={`ns-status-tag ${currentStep === 3 ? 'review' : 'upcoming'}`}>
+            {currentStep === 3 ? 'Review' : 'Upcoming'}
+          </span>
+        </div>
+
+        <div className="ns-header-right">
+          {/* Stepper Navigation */}
+          <div className="ns-stepper">
+            <div
+              className={`ns-step-item ${currentStep === 1 ? 'active' : ''} ${currentStep > 1 ? 'completed' : ''}`}
+              onClick={() => setCurrentStep(1)}
+            >
+              <div className="ns-step-circle">
+                {currentStep > 1 ? (
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                ) : '1'}
+              </div>
+              <span className="ns-step-text">1. Session Setup</span>
+              <span className="ns-step-chevron">&gt;</span>
+            </div>
+
+            <div
+              className={`ns-step-item ${currentStep === 2 ? 'active' : ''} ${currentStep > 2 ? 'completed' : ''}`}
+              onClick={() => setCurrentStep(2)}
+            >
+              <div className="ns-step-circle">
+                {currentStep > 2 ? (
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                ) : '2'}
+              </div>
+              <span className="ns-step-text">2. Select Students</span>
+              <span className="ns-step-chevron">&gt;</span>
+            </div>
+
+            <div
+              className={`ns-step-item ${currentStep === 3 ? 'active' : ''}`}
+              onClick={() => setCurrentStep(3)}
+            >
+              <div className="ns-step-circle">3</div>
+              <span className="ns-step-text">3. Assign Instructors</span>
+            </div>
           </div>
 
           {isModal && (
-            <div className="ns-header-close-wrap" style={{ display: 'flex', alignItems: 'center' }}>
+            <div className="ns-header-close-wrap">
               <button
                 type="button"
                 className="ses-modal-close"
                 onClick={onClose}
                 style={{
-                  width: '34px',
-                  height: '34px',
+                  width: '32px',
+                  height: '32px',
                   borderRadius: '50%',
                   background: '#F1F5F9',
-                  border: 'none',
+                  border: '1px solid #E2E8F0',
                   cursor: 'pointer',
                   fontWeight: 700,
-                  fontSize: '15px',
+                  fontSize: '14px',
                   color: '#475569',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  transition: 'all 0.2s'
+                  transition: 'all 0.15s ease',
+                  flexShrink: 0
                 }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.background = '#EF4444';
+                  e.currentTarget.style.color = '#FFFFFF';
+                  e.currentTarget.style.borderColor = '#EF4444';
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.background = '#F1F5F9';
+                  e.currentTarget.style.color = '#475569';
+                  e.currentTarget.style.borderColor = '#E2E8F0';
+                }}
+                title="Close"
               >
                 ✕
               </button>
             </div>
           )}
-        </div>
-
-        {/* Stepper Navigation */}
-        <div className="ns-stepper">
-          <div
-            className={`ns-step-item ${currentStep === 1 ? 'active' : ''} ${currentStep > 1 ? 'completed' : ''}`}
-            onClick={() => setCurrentStep(1)}
-          >
-            <div className="ns-step-circle">
-              {currentStep > 1 ? (
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-              ) : '1'}
-            </div>
-            <span className="ns-step-text">1. Session Setup</span>
-            <span className="ns-step-chevron">&gt;</span>
-          </div>
-
-          <div
-            className={`ns-step-item ${currentStep === 2 ? 'active' : ''} ${currentStep > 2 ? 'completed' : ''}`}
-            onClick={() => setCurrentStep(2)}
-          >
-            <div className="ns-step-circle">
-              {currentStep > 2 ? (
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-              ) : '2'}
-            </div>
-            <span className="ns-step-text">2. Select Students</span>
-            <span className="ns-step-chevron">&gt;</span>
-          </div>
-
-          <div
-            className={`ns-step-item ${currentStep === 3 ? 'active' : ''}`}
-            onClick={() => setCurrentStep(3)}
-          >
-            <div className="ns-step-circle">3</div>
-            <span className="ns-step-text">3. Assign Instructors</span>
-          </div>
         </div>
       </header>
 
@@ -3268,16 +3335,34 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                       const badge = getBadgeStyle(student.level);
                       const assignedGroup = trainingGroups.find(g => g.studentIds.includes(student.id));
                       const slotAssignment = getStudentSlotAssignment(student.id);
+                      const accompanyingGuests = !student.isGuest
+                        ? importedStudents.filter(s => s.isGuest && String(s.parentStudentId) === String(student.id))
+                        : [];
 
                       return (
                         <div
                           key={student.id}
-                          className={`ns-ws-student-item ${isChecked ? 'active' : ''}`}
+                          className={`ns-ws-student-item ${isChecked ? 'active' : ''} ${student.isGuest ? 'ns-ws-guest-item' : ''}`}
+                          style={student.isGuest ? {
+                            marginLeft: '24px',
+                            width: 'calc(100% - 24px)',
+                            boxSizing: 'border-box',
+                            background: isChecked ? '#E0F2FE' : '#F0F9FF',
+                            border: isChecked ? '1.5px solid #0284C7' : '1.5px solid #BAE6FD',
+                            borderLeft: '4px solid #0284C7'
+                          } : {}}
                           draggable={true}
                           onDragStart={(e) => {
-                            const ids = step3CheckedStudentIds.includes(student.id) && step3CheckedStudentIds.length > 0
-                              ? step3CheckedStudentIds
-                              : [student.id];
+                            let ids = [student.id];
+                            if (step3CheckedStudentIds.includes(student.id) && step3CheckedStudentIds.length > 0) {
+                              ids = step3CheckedStudentIds;
+                            } else if (!student.isGuest) {
+                              // If dragging an unselected main student, automatically pull along their unassigned guests
+                              const guestIds = filteredColumn1Students
+                                .filter(s => s.isGuest && String(s.parentStudentId) === String(student.id))
+                                .map(g => g.id);
+                              ids = [student.id, ...guestIds];
+                            }
                             e.dataTransfer.setData('application/json', JSON.stringify({
                               type: 'student',
                               studentIds: ids,
@@ -3291,16 +3376,39 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                             setDragOverGroupId(null);
                           }}
                           onClick={() => toggleStep3StudentCheck(student.id)}
-                          title={`${student.name} • Drag into any Group Card, or click to select`}
+                          title={`${student.name}${student.isGuest ? ` (Guest of ${student.parentStudentName})` : ''} • Drag into any Group Card, or click to select`}
                         >
                           <div className="ns-ws-student-left">
+                            {student.isGuest && (
+                              <span
+                                className="ns-guest-arrow"
+                                style={{
+                                  fontSize: '13px',
+                                  color: '#0284C7',
+                                  fontWeight: 800,
+                                  lineHeight: 1,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  flexShrink: 0
+                                }}
+                                title={`Accompanying Guest of ${student.parentStudentName}`}
+                              >
+                                ↳
+                              </span>
+                            )}
                             <span className="ns-drag-grip" title="Drag">⠿</span>
-                            <div className={`ns-checkbox-box ${isChecked ? 'checked' : ''}`}>
+                            <div
+                              className={`ns-checkbox-box ${isChecked ? 'checked' : ''}`}
+                              style={student.isGuest ? {
+                                borderColor: isChecked ? '#0284C7' : '#7DD3FC',
+                                background: isChecked ? '#0284C7' : '#FFFFFF'
+                              } : {}}
+                            >
                               {isChecked && (
                                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                               )}
                             </div>
-                            <UserAvatar src={student.avatar} name={student.name} size={30} className="ns-ws-avatar" />
+                            <UserAvatar src={student.avatar} name={student.name} size={student.isGuest ? 26 : 30} className="ns-ws-avatar" />
                           </div>
 
                           <div className="ns-ws-student-body">
@@ -3319,6 +3427,21 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                   flexShrink: 0
                                 }} title={`Accompanying Guest of ${student.parentStudentName}`}>
                                   👥 Guest of {student.parentStudentName}
+                                </span>
+                              )}
+                              {!student.isGuest && accompanyingGuests.length > 0 && (
+                                <span style={{
+                                  fontSize: '9.5px',
+                                  fontWeight: 700,
+                                  color: '#0F766E',
+                                  background: '#F0FDFA',
+                                  border: '1px solid #99F6E4',
+                                  padding: '1px 5px',
+                                  borderRadius: '4px',
+                                  whiteSpace: 'nowrap',
+                                  flexShrink: 0
+                                }} title={`Main student with ${accompanyingGuests.length} accompanying guest(s)`}>
+                                  👥 +{accompanyingGuests.length} Guests
                                 </span>
                               )}
                               <span
@@ -3506,7 +3629,18 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                         .filter(Boolean);
                       const grpStudents = grp.studentIds
                         .map(id => allPoolStudents.find(s => s.id === id))
-                        .filter(Boolean);
+                        .filter(Boolean)
+                        .slice()
+                        .sort((a, b) => {
+                          const familyIdA = a.parentStudentId || a.id;
+                          const familyIdB = b.parentStudentId || b.id;
+                          if (String(familyIdA) !== String(familyIdB)) {
+                            return (a.parentStudentName || a.name).localeCompare(b.parentStudentName || b.name);
+                          }
+                          const subA = a.isGuest ? (a.guestIndex || 1) : 0;
+                          const subB = b.isGuest ? (b.guestIndex || 1) : 0;
+                          return subA - subB;
+                        });
                       const isDragOver = dragOverGroupId === grp.id;
 
                       const grpSlot = slots.find(s => s.id === grp.slotId) || slots[0];
@@ -4469,8 +4603,12 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         .ns-header-right {
           display: flex;
           align-items: center;
-          gap: 6px;
-          font-size: 13px;
+          gap: 16px;
+        }
+        .ns-header-close-wrap {
+          display: flex;
+          align-items: center;
+          margin-left: 2px;
         }
         .ns-forecast-label {
           color: #64748B;
@@ -5624,6 +5762,25 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           border-color: #0284C7;
           box-shadow: 0 0 0 1px #0284C7;
         }
+        .ns-ws-student-item.ns-ws-guest-item {
+          margin-left: 24px;
+          width: calc(100% - 24px);
+          box-sizing: border-box;
+          background-color: #F0F9FF;
+          border-color: #BAE6FD;
+          border-left: 4px solid #0284C7;
+        }
+        .ns-ws-student-item.ns-ws-guest-item:hover {
+          background-color: #E0F2FE;
+          border-color: #7DD3FC;
+          border-left-color: #0284C7;
+        }
+        .ns-ws-student-item.ns-ws-guest-item.active {
+          background-color: #E0F2FE;
+          border-color: #0284C7;
+          border-left: 4px solid #0284C7;
+          box-shadow: 0 0 0 1px #0284C7;
+        }
         .ns-ws-student-left {
           display: flex;
           align-items: center;
@@ -6039,9 +6196,6 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         /* ═════════════════════════════════════════════════════════════════ */
         /* RESPONSIVE & MOBILE STYLES (CHINNA SIMPLE MOBILE UI)             */
         /* ═════════════════════════════════════════════════════════════════ */
-        .ns-header-main-row {
-          display: contents;
-        }
         .ns-hide-mobile {
           /* visible on desktop */
         }
@@ -6120,22 +6274,36 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
           /* Header */
           .ns-header {
-            flex-direction: column !important;
-            align-items: stretch !important;
-            padding: 10px 12px !important;
-            gap: 8px !important;
-          }
-          .ns-header-main-row {
             display: flex !important;
+            flex-direction: row !important;
+            flex-wrap: wrap !important;
             align-items: center !important;
             justify-content: space-between !important;
-            width: 100% !important;
-            gap: 6px !important;
+            padding: 10px 12px !important;
+            gap: 8px !important;
           }
           .ns-header-left {
             gap: 6px !important;
             min-width: 0 !important;
             flex: 1 !important;
+            display: flex !important;
+            align-items: center !important;
+          }
+          .ns-header-right {
+            display: contents !important;
+          }
+          .ns-header-close-wrap {
+            display: flex !important;
+            align-items: center !important;
+            order: 1 !important;
+          }
+          .ns-stepper {
+            order: 2 !important;
+            width: 100% !important;
+            overflow-x: auto !important;
+            -webkit-overflow-scrolling: touch !important;
+            scrollbar-width: none !important;
+            gap: 6px !important;
           }
           .ns-title {
             font-size: 15px !important;
@@ -6323,6 +6491,10 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           .ns-student-row.ns-guest-row {
             margin-left: 8px !important;
             padding: 5px 8px !important;
+          }
+          .ns-ws-student-item.ns-ws-guest-item {
+            margin-left: 12px !important;
+            width: calc(100% - 12px) !important;
           }
           .ns-student-row-left {
             gap: 6px !important;

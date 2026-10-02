@@ -29,3 +29,6 @@ dist/
 # Temporary scratch and zip files
 scratch/
 *.zip
+
+# Database local backups
+backups/

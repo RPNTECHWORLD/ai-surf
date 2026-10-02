@@ -321,13 +321,11 @@ const StudentProfile = () => {
           const savedSchools = JSON.parse(localStorage.getItem('saved_schools_list') || '[]');
           names = [...names, ...savedSchools];
         } catch (e) {}
-        if (!names.some(n => n && n.toLowerCase().includes('aquatic indica'))) {
-          names.push('Aquatic Indica Surf School');
-        }
+        names = names.filter(Boolean);
         setSchoolsList(Array.from(new Set(names)));
       })
       .catch(() => {
-        setSchoolsList(['Aquatic Indica Surf School']);
+        setSchoolsList([]);
       });
   }, []);
 
@@ -1687,60 +1685,265 @@ const StudentProfile = () => {
 
             {/* Session History Card */}
             <div className="sp-card">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                <h2 className="sp-card-title">Session History</h2>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px', flexWrap: 'wrap', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <h2 className="sp-card-title">Session History</h2>
+                  {completedSessions.length > 0 && (
+                    <span style={{
+                      background: '#ECFDF5',
+                      color: '#059669',
+                      border: '1px solid #A7F3D0',
+                      fontSize: '11px',
+                      fontWeight: 800,
+                      padding: '2px 9px',
+                      borderRadius: '20px',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}>
+                      <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10B981' }} />
+                      {completedSessions.length} Completed
+                    </span>
+                  )}
+                </div>
                 <button
                   type="button"
                   onClick={() => navigate('/sessions')}
                   style={{
-                    background: 'none',
-                    border: 'none',
+                    background: '#F8FAFC',
+                    border: '1px solid #E2E8F0',
                     color: '#0284C7',
-                    fontSize: '13px',
+                    fontSize: '12px',
                     fontWeight: 700,
+                    padding: '5px 12px',
+                    borderRadius: '8px',
                     cursor: 'pointer',
-                    fontFamily: "'Inter', sans-serif"
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    transition: 'all 0.15s ease'
+                  }}
+                  onMouseEnter={e => {
+                    e.currentTarget.style.background = '#F0F9FF';
+                    e.currentTarget.style.borderColor = '#BAE6FD';
+                  }}
+                  onMouseLeave={e => {
+                    e.currentTarget.style.background = '#F8FAFC';
+                    e.currentTarget.style.borderColor = '#E2E8F0';
                   }}
                 >
-                  Show All Sessions
+                  <span>All Sessions</span>
+                  <span style={{ fontSize: '13px' }}>&rarr;</span>
                 </button>
               </div>
 
-              <div style={{ fontSize: '12px', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '12px' }}>
-                Recents
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                fontSize: '11px',
+                fontWeight: 800,
+                color: '#64748B',
+                textTransform: 'uppercase',
+                letterSpacing: '0.6px',
+                marginTop: '4px',
+                marginBottom: '8px'
+              }}>
+                <span>Recent Completed Sessions</span>
+                <div style={{ flex: 1, height: '1px', background: '#F1F5F9' }} />
               </div>
 
               {completedSessions.length === 0 ? (
-                <div className="sp-empty-box" style={{ padding: '14px 12px', textAlign: 'center', background: '#F8FAFC', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
-                  <div style={{ fontSize: '22px', marginBottom: '4px' }}>🏄‍♂️</div>
-                  <div style={{ fontWeight: 700, color: '#1E293B', fontSize: '13.5px' }}>No Completed Sessions Yet</div>
-                  <div style={{ fontSize: '12px', color: '#94A3B8', marginTop: '2px' }}>Your surf coaching logs and analysis will appear here after each session.</div>
+                <div className="sp-empty-box" style={{ padding: '24px 16px', textAlign: 'center', background: '#F8FAFC', borderRadius: '12px', border: '1px dashed #CBD5E1' }}>
+                  <div style={{ fontSize: '28px', marginBottom: '6px' }}>🏄‍♂️</div>
+                  <div style={{ fontWeight: 700, color: '#1E293B', fontSize: '14px' }}>No Completed Sessions Yet</div>
+                  <div style={{ fontSize: '12px', color: '#94A3B8', marginTop: '3px' }}>Your surf coaching logs, attendance, and video analysis will appear here after each completed session.</div>
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-                  {completedSessions.slice(0, 5).map((session, sIdx) => (
-                    <div key={session.id || sIdx} style={{ display: 'flex', alignItems: 'flex-start', gap: '14px' }}>
-                      <div style={{
-                        width: '10px',
-                        height: '10px',
-                        borderRadius: '50%',
-                        background: '#0D9488',
-                        marginTop: '5px',
-                        flexShrink: 0
-                      }} />
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                        <span style={{ fontSize: '11px', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
-                          {session.date}
-                        </span>
-                        <strong style={{ fontSize: '14px', fontWeight: 800, color: '#0F172A' }}>
-                          {session.title || session.location || 'Surf Training Session'}
-                        </strong>
-                        <span style={{ fontSize: '13px', color: '#64748B' }}>
-                          {session.instructor || student.instructor || 'Surf Coach'}
-                        </span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {completedSessions.slice(0, 5).map((session, sIdx) => {
+                    const coachName = session.instructor || student.instructor || 'Surf Coach';
+                    const coachId = session.instructor_id || student.instructor_id || null;
+                    const sessionTitle = session.title || session.group_name || session.location || 'Surf Training Session';
+
+                    return (
+                      <div
+                        key={session.id || sIdx}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'flex-start',
+                          gap: '14px',
+                          padding: '14px 16px',
+                          background: '#FFFFFF',
+                          border: '1px solid #E2E8F0',
+                          borderLeft: '4px solid #10B981',
+                          borderRadius: '12px',
+                          transition: 'all 0.18s ease',
+                          boxShadow: '0 1px 3px rgba(0, 0, 0, 0.02)'
+                        }}
+                        onMouseEnter={e => {
+                          e.currentTarget.style.background = '#F8FAFC';
+                          e.currentTarget.style.borderColor = '#CBD5E1';
+                          e.currentTarget.style.borderLeftColor = '#059669';
+                          e.currentTarget.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.05)';
+                          e.currentTarget.style.transform = 'translateY(-1px)';
+                        }}
+                        onMouseLeave={e => {
+                          e.currentTarget.style.background = '#FFFFFF';
+                          e.currentTarget.style.borderColor = '#E2E8F0';
+                          e.currentTarget.style.borderLeftColor = '#10B981';
+                          e.currentTarget.style.boxShadow = '0 1px 3px rgba(0, 0, 0, 0.02)';
+                          e.currentTarget.style.transform = 'none';
+                        }}
+                      >
+                        {/* Surf Icon Pill */}
+                        <div style={{
+                          width: '38px',
+                          height: '38px',
+                          borderRadius: '10px',
+                          background: 'linear-gradient(135deg, #ECFDF5 0%, #D1FAE5 100%)',
+                          border: '1px solid #A7F3D0',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: '18px',
+                          flexShrink: 0,
+                          marginTop: '2px',
+                          boxShadow: '0 1px 2px rgba(16, 185, 129, 0.1)'
+                        }}>
+                          🏄‍♂️
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minWidth: 0 }}>
+                          {/* Top Row: Date, Time & Completed Badge */}
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: '11px', fontWeight: 800, color: '#047857', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                📅 {session.date}
+                              </span>
+                              {session.time && (
+                                <span style={{
+                                  fontSize: '11px',
+                                  fontWeight: 600,
+                                  color: '#475569',
+                                  background: '#F1F5F9',
+                                  border: '1px solid #E2E8F0',
+                                  padding: '1px 6px',
+                                  borderRadius: '4px',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px'
+                                }}>
+                                  ⏰ {session.time}
+                                </span>
+                              )}
+                            </div>
+
+                            <span style={{
+                              fontSize: '10.5px',
+                              fontWeight: 800,
+                              background: '#ECFDF5',
+                              color: '#065F46',
+                              border: '1px solid #A7F3D0',
+                              padding: '2px 8px',
+                              borderRadius: '6px',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}>
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                              Completed
+                            </span>
+                          </div>
+
+                          {/* Middle Row: Title & Participant/Guest Tag */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <strong style={{ fontSize: '14.5px', fontWeight: 800, color: '#0F172A' }}>
+                              {sessionTitle}
+                            </strong>
+
+                            {(session.is_guest || session.guest_name) ? (
+                              <span style={{
+                                fontSize: '10.5px',
+                                background: '#FEF3C7',
+                                color: '#92400E',
+                                border: '1px solid #FDE68A',
+                                padding: '1px 6px',
+                                borderRadius: '4px',
+                                fontWeight: 700,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '3px'
+                              }}>
+                                👥 Guest: {session.student || session.guest_name}
+                              </span>
+                            ) : (
+                              <span style={{
+                                fontSize: '10.5px',
+                                background: '#E0F2FE',
+                                color: '#0369A1',
+                                border: '1px solid #BAE6FD',
+                                padding: '1px 6px',
+                                borderRadius: '4px',
+                                fontWeight: 700,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '3px'
+                              }}>
+                                👤 {session.student || 'You'}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Bottom Row: Coach & Review link + View Details */}
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', fontSize: '12px', flexWrap: 'wrap', marginTop: '2px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                              <span 
+                                style={{ 
+                                  color: '#0F766E', 
+                                  fontWeight: 700, 
+                                  cursor: (coachName && coachName !== 'Surf Coach') ? 'pointer' : 'default',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  background: '#F0FDFA',
+                                  border: '1px solid #CCFBF1',
+                                  padding: '2px 8px',
+                                  borderRadius: '6px'
+                                }}
+                                onClick={() => handleOpenCoachModal(coachName, coachId)}
+                                title="Click to view coach profile & submit a review"
+                              >
+                                <span>🏄‍♂️ Coach: {coachName}</span>
+                                <span style={{ fontSize: '9.5px', background: '#0D9488', color: '#FFFFFF', padding: '1px 5px', borderRadius: '4px', fontWeight: 800 }}>
+                                  ★ Review
+                                </span>
+                              </span>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => navigate('/sessions')}
+                              style={{
+                                background: 'none',
+                                border: 'none',
+                                color: '#0284C7',
+                                fontSize: '12px',
+                                fontWeight: 700,
+                                cursor: 'pointer',
+                                padding: 0,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '3px'
+                              }}
+                            >
+                              View Details &rarr;
+                            </button>
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

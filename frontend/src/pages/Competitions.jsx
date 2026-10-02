@@ -959,7 +959,7 @@ const Competitions = () => {
                       Membership Request Pending Approval
                     </div>
                     <div style={{ color: '#64748B', fontSize: '13px', marginTop: '2px' }}>
-                      Your direct registration request to join <strong>{currentUser?.school || 'Aquatic Indica Surf School'}</strong> has been sent to the Surf School Admin. Direct signups require explicit school approval.
+                      Your direct registration request to join <strong>{currentUser?.school || 'the Surf School'}</strong> has been sent to the Surf School Admin. Direct signups require explicit school approval.
                     </div>
                   </div>
                 </div>

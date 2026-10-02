@@ -41,7 +41,7 @@ const InstructorProfile = () => {
 
   // Auth states
   const [currentUser, setCurrentUser] = useState(null);
-  const [schoolsList, setSchoolsList] = useState(['Aquatic Indica Surf School']);
+  const [schoolsList, setSchoolsList] = useState([]);
   const [showEditModal, setShowEditModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
@@ -279,7 +279,7 @@ const InstructorProfile = () => {
     const coachName = acc?.name || saved.name || (saved.role === 'coach' ? saved.name : 'Surf Coach');
     const coachEmail = acc?.email || saved.email || '';
     const userSchoolStr = typeof saved.school === 'string' ? saved.school : (saved.school?.name || saved.school_name || '');
-    const coachSchool = acc?.school || userSchoolStr || activeSchoolName || 'Aquatic Indica Surf School';
+    const coachSchool = acc?.school || userSchoolStr || activeSchoolName || '';
 
     return {
       id: parseInt(coachId) || saved.instructor_id || saved.id || 1,
@@ -336,8 +336,8 @@ const InstructorProfile = () => {
         if (!data.certifications) data.certifications = [];
         if (!data.reviews) data.reviews = [];
 
-        // Dynamic sync: if data.school is missing or generic default, match activeSchoolName
-        if (activeSchoolName && (!data.school || data.school === 'Aquatic Indica Surf School')) {
+        // Dynamic sync: if data.school is missing, match activeSchoolName
+        if (activeSchoolName && !data.school) {
           data.school = activeSchoolName;
         }
 
@@ -527,6 +527,16 @@ const InstructorProfile = () => {
 
   const canEditProfile = isSuperAdmin || isCoachThemselves;
 
+  const userRole = (currentUser?.role || (() => {
+    try {
+      const u = JSON.parse(sessionStorage.getItem('user') || localStorage.getItem('user') || '{}');
+      return u.role || '';
+    } catch (e) {
+      return '';
+    }
+  })()).toLowerCase().trim();
+  const isStudent = userRole === 'athlete' || userRole === 'student' || userRole === 'user';
+
   // Group sessions by month (last 8 months) for chart
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const now = new Date();
@@ -659,9 +669,9 @@ const InstructorProfile = () => {
           )}
         </section>
 
-        <div className="ip-grid">
+        <div className="ip-grid" style={isStudent && (!instructor.reviews || instructor.reviews.length === 0) ? { maxWidth: '780px', margin: '0 auto' } : {}}>
           {/* Left Column */}
-          <div className="ip-col-left">
+          <div className="ip-col-left" style={isStudent && (!instructor.reviews || instructor.reviews.length === 0) ? { width: '100%', flex: 1 } : {}}>
             {/* Personal Details */}
             <div className="ip-card">
               <h3 className="ip-card-title">Personal Details</h3>
@@ -740,86 +750,91 @@ const InstructorProfile = () => {
           </div>
 
           {/* Right Column */}
-          <div className="ip-col-right">
-            {/* Stats Row */}
-            <div className="ip-stats-row">
-              <div className="ip-card ip-stat-card">
-                <span className="ip-stat-label">SESSIONS / MONTH</span>
-                <div className="ip-chart">
-                  {monthlyStats.map((m, i) => (
-                    <div 
-                      key={i} 
-                      className="ip-bar" 
-                      style={{ height: `${Math.max((m.count / maxCount) * 60, 4)}px` }} 
-                      title={`${m.label} ${m.year}: ${m.count} sessions`}
-                    />
-                  ))}
+          {(!isStudent || (instructor.reviews && instructor.reviews.length > 0)) && (
+            <div className="ip-col-right">
+              {/* Stats Row (Admin & Coach only) */}
+            {!isStudent && (
+              <div className="ip-stats-row">
+                <div className="ip-card ip-stat-card">
+                  <span className="ip-stat-label">SESSIONS / MONTH</span>
+                  <div className="ip-chart">
+                    {monthlyStats.map((m, i) => (
+                      <div 
+                        key={i} 
+                        className="ip-bar" 
+                        style={{ height: `${Math.max((m.count / maxCount) * 60, 4)}px` }} 
+                        title={`${m.label} ${m.year}: ${m.count} sessions`}
+                      />
+                    ))}
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
-            {/* Assigned Students */}
-            <div className="ip-card">
-              <h3 className="ip-card-title">Assigned Students ({assignedStudents.length})</h3>
-              <div className="ip-student-list">
-                {assignedStudents.length > 0 ? (
-                  assignedStudents.map((s, i) => (
-                    <div 
-                      key={s.id} 
-                      className="ip-student-row" 
-                      style={{ 
-                        borderBottom: i === assignedStudents.length - 1 ? 'none' : '1px solid #E2E8F0',
-                        cursor: 'pointer'
-                      }}
-                      onClick={() => navigate(`/students/${s.id}`)}
-                    >
-                      <div className="ip-student-info">
-                        {s.image && typeof s.image === 'string' && s.image.trim() !== '' && !s.image.includes('unsplash.com') && !s.image.includes('1500648767791') ? (
-                          <img 
-                            src={s.image} 
-                            alt={s.name} 
-                            className="ip-student-avatar" 
-                            onError={e => {
-                              e.currentTarget.style.display = 'none';
-                              const fallback = e.currentTarget.parentElement.querySelector('.ip-student-fallback');
-                              if (fallback) fallback.style.display = 'flex';
+            {/* Assigned Students (Admin & Coach only) */}
+            {!isStudent && (
+              <div className="ip-card">
+                <h3 className="ip-card-title">Assigned Students ({assignedStudents.length})</h3>
+                <div className="ip-student-list">
+                  {assignedStudents.length > 0 ? (
+                    assignedStudents.map((s, i) => (
+                      <div 
+                        key={s.id} 
+                        className="ip-student-row" 
+                        style={{ 
+                          borderBottom: i === assignedStudents.length - 1 ? 'none' : '1px solid #E2E8F0',
+                          cursor: 'pointer'
+                        }}
+                        onClick={() => navigate(`/students/${s.id}`)}
+                      >
+                        <div className="ip-student-info">
+                          {s.image && typeof s.image === 'string' && s.image.trim() !== '' && !s.image.includes('unsplash.com') && !s.image.includes('1500648767791') ? (
+                            <img 
+                              src={s.image} 
+                              alt={s.name} 
+                              className="ip-student-avatar" 
+                              onError={e => {
+                                e.currentTarget.style.display = 'none';
+                                const fallback = e.currentTarget.parentElement.querySelector('.ip-student-fallback');
+                                if (fallback) fallback.style.display = 'flex';
+                              }}
+                            />
+                          ) : null}
+                          <div
+                            className="ip-student-fallback"
+                            style={{
+                              display: (s.image && typeof s.image === 'string' && s.image.trim() !== '' && !s.image.includes('unsplash.com') && !s.image.includes('1500648767791')) ? 'none' : 'flex',
+                              width: '36px',
+                              height: '36px',
+                              borderRadius: '50%',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
+                              color: '#FFFFFF',
+                              fontWeight: '800',
+                              fontSize: '14px',
+                              fontFamily: 'Outfit, sans-serif',
+                              flexShrink: 0
                             }}
-                          />
-                        ) : null}
-                        <div
-                          className="ip-student-fallback"
-                          style={{
-                            display: (s.image && typeof s.image === 'string' && s.image.trim() !== '' && !s.image.includes('unsplash.com') && !s.image.includes('1500648767791')) ? 'none' : 'flex',
-                            width: '36px',
-                            height: '36px',
-                            borderRadius: '50%',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
-                            color: '#FFFFFF',
-                            fontWeight: '800',
-                            fontSize: '14px',
-                            fontFamily: 'Outfit, sans-serif',
-                            flexShrink: 0
-                          }}
-                        >
-                          {s.name ? s.name.charAt(0).toUpperCase() : 'S'}
+                          >
+                            {s.name ? s.name.charAt(0).toUpperCase() : 'S'}
+                          </div>
+                          <div>
+                            <div className="ip-student-name">{s.name}</div>
+                            <div className="ip-student-time">{s.last_active || 'Today'}</div>
+                          </div>
                         </div>
-                        <div>
-                          <div className="ip-student-name">{s.name}</div>
-                          <div className="ip-student-time">{s.last_active || 'Today'}</div>
-                        </div>
+                        <span className={`ip-level-badge level-${(s.level || 'Beginner').toLowerCase()}`}>{s.level || 'Beginner'}</span>
                       </div>
-                      <span className={`ip-level-badge level-${(s.level || 'Beginner').toLowerCase()}`}>{s.level || 'Beginner'}</span>
+                    ))
+                  ) : (
+                    <div style={{ padding: '20px 0', textAlign: 'center', color: '#94A3B8', fontSize: '13px' }}>
+                      No students assigned to this coach yet.
                     </div>
-                  ))
-                ) : (
-                  <div style={{ padding: '20px 0', textAlign: 'center', color: '#94A3B8', fontSize: '13px' }}>
-                    No students assigned to this coach yet.
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
-            </div>
+            )}
 
             {/* Student Reviews */}
             {instructor.reviews && instructor.reviews.length > 0 && (
@@ -839,30 +854,33 @@ const InstructorProfile = () => {
               </div>
             )}
 
-            {/* Recent Session Activity */}
-            <div className="ip-card">
-              <h3 className="ip-card-title">Recent Session Activity</h3>
-              <div className="ip-activity-list">
-                {instructorSessions.length > 0 ? (
-                  instructorSessions.slice(0, 5).map((session, index) => (
-                    <div key={session.id} className="ip-activity-row">
-                      <div className="ip-activity-icon" />
-                      <div className="ip-activity-info">
-                        <div className="ip-activity-title">Session with {session.student}</div>
-                        <div className="ip-activity-sub">{session.location} • {session.date} at {session.time}</div>
+            {/* Recent Session Activity (Admin & Coach only) */}
+            {!isStudent && (
+              <div className="ip-card">
+                <h3 className="ip-card-title">Recent Session Activity</h3>
+                <div className="ip-activity-list">
+                  {instructorSessions.length > 0 ? (
+                    instructorSessions.slice(0, 5).map((session, index) => (
+                      <div key={session.id} className="ip-activity-row">
+                        <div className="ip-activity-icon" />
+                        <div className="ip-activity-info">
+                          <div className="ip-activity-title">Session with {session.student}</div>
+                          <div className="ip-activity-sub">{session.location} • {session.date} at {session.time}</div>
+                        </div>
+                        <span className="ip-badge-primary">{session.type}</span>
                       </div>
-                      <span className="ip-badge-primary">{session.type}</span>
+                    ))
+                  ) : (
+                    <div style={{ padding: '20px 0', textAlign: 'center', color: '#94A3B8', fontSize: '13px' }}>
+                      No session activity recorded yet.
                     </div>
-                  ))
-                ) : (
-                  <div style={{ padding: '20px 0', textAlign: 'center', color: '#94A3B8', fontSize: '13px' }}>
-                    No session activity recorded yet.
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
-            </div>
+            )}
           </div>
-        </div>
+        )}
+      </div>
 
         {/* EDIT PROFILE MODAL */}
         {showEditModal && (

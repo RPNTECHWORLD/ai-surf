@@ -48,8 +48,8 @@ const AuthPage = () => {
   const [successMsg, setSuccessMsg] = useState('');
 
   const activeInviteError = inviteError || schoolInviteError || (
-    schoolInviteData && (!schoolInviteData.valid || schoolInviteData.remaining <= 0)
-      ? (schoolInviteData.detail || `This invite link has reached its maximum registration limit (${schoolInviteData.used_count || schoolInviteData.max_count}/${schoolInviteData.max_count} used). All spots for this invite have been filled. Please request a new invite link from ${schoolInviteData.school || 'the school'}.`)
+    schoolInviteData && (!schoolInviteData.valid || schoolInviteData.remaining <= 0 || (schoolInviteData.used_count || 0) > 0)
+      ? (schoolInviteData.detail || `This invite link has already been used. Each invite link is valid for 1 primary account registration with accompanying guests only. Please request a new invite link from ${schoolInviteData.school || 'the school'}.`)
       : ''
   );
 
@@ -123,9 +123,7 @@ const AuthPage = () => {
     guests_count: '',
   });
 
-  const [schoolsList, setSchoolsList] = useState([
-    'Aquatic Indica Surf School'
-  ]);
+  const [schoolsList, setSchoolsList] = useState([]);
 
   // Ensure signup passwords are blank whenever switching to registration
   useEffect(() => {
@@ -171,20 +169,28 @@ const AuthPage = () => {
       .then(r => r.json())
       .then(data => {
         if (data.valid || data.remaining !== undefined) {
-          setSchoolInviteData(data);
-          const lockedSchool = data.school || urlSchool || 'Aquatic Indica Surf School';
+          const isAlreadyUsed = (data.used_count > 0) || !data.valid || (data.remaining !== undefined && data.remaining <= 0);
+          const safeData = {
+            ...data,
+            valid: !isAlreadyUsed,
+            remaining: isAlreadyUsed ? 0 : data.max_count
+          };
+          setSchoolInviteData(safeData);
+          const lockedSchool = data.school || urlSchool || '';
           const lockedCourse = data.course_duration || searchParams.get('course_duration');
+          const lockedGuests = data.locked_guests !== undefined ? data.locked_guests : Math.max(0, (data.max_count || 1) - 1);
           setFormData(prev => ({
             ...prev,
             school: lockedSchool,
             course_duration: lockedCourse || prev.course_duration,
+            guests_count: lockedGuests,
+            guests_details: Array.from({ length: lockedGuests }).map((_, i) => (prev.guests_details || [])[i] || { name: '', whatsapp_number: '', email: '' }),
             password: '',
             confirmPassword: '',
           }));
-          setSchoolsList(prev => Array.from(new Set([lockedSchool, ...prev])));
-          // Do not skip OTP: Student must enter email and verify in proper step-by-step flow
-          if (!data.valid || data.remaining <= 0) {
-            setSchoolInviteError(data.detail || 'This invite link has reached its maximum registration limit.');
+          if (lockedSchool) setSchoolsList(prev => Array.from(new Set([lockedSchool, ...prev])));
+          if (isAlreadyUsed) {
+            setSchoolInviteError(data.detail || 'This invite link has already been used. Each invite link is valid for 1 primary account registration only.');
           }
         } else {
           setSchoolInviteError(data.detail || 'Invalid or expired invite link.');
@@ -196,28 +202,33 @@ const AuthPage = () => {
           const localInvites = JSON.parse(localStorage.getItem('local_school_invites') || '[]');
           const match = localInvites.find(i => i.code === inviteCode);
           if (match) {
+            const isAlreadyUsed = (match.used_count || 0) > 0;
             const rem = Math.max(0, match.max_count - (match.used_count || 0));
-            const isValid = match.is_active && rem > 0;
+            const isValid = match.is_active && !isAlreadyUsed && rem > 0;
+            const lockedGuests = Math.max(0, (match.max_count || 1) - 1);
             const mockData = {
               valid: isValid,
               code: match.code,
               school: match.school,
               max_count: match.max_count,
+              locked_guests: lockedGuests,
               course_duration: match.course_duration,
               used_count: match.used_count || 0,
-              remaining: rem,
-              is_active: match.is_active
+              remaining: isValid ? match.max_count : 0,
+              is_active: isValid
             };
             setSchoolInviteData(mockData);
             const lockedCourse = match.course_duration || searchParams.get('course_duration');
             setFormData(prev => ({
               ...prev,
               school: match.school,
-              course_duration: lockedCourse || prev.course_duration
+              course_duration: lockedCourse || prev.course_duration,
+              guests_count: lockedGuests,
+              guests_details: Array.from({ length: lockedGuests }).map((_, i) => (prev.guests_details || [])[i] || { name: '', whatsapp_number: '', email: '' })
             }));
-            setSchoolsList(prev => Array.from(new Set([match.school, ...prev])));
+            if (match.school) setSchoolsList(prev => Array.from(new Set([match.school, ...prev])));
             if (!isValid) {
-              setSchoolInviteError('This invite link has reached its maximum registration limit.');
+              setSchoolInviteError(isAlreadyUsed ? 'This invite link has already been used. Each invite link is valid for 1 primary account registration only.' : 'This invite link has reached its maximum registration limit.');
             }
             return;
           }
@@ -242,20 +253,15 @@ const AuthPage = () => {
             if (!s) return false;
             if (s.id && deletedIds.has(String(s.id))) return false;
             if (s.name && deletedNames.has(String(s.name).toLowerCase().trim())) return false;
-            if (s.email && deletedEmails.has(String(s.email).toLowerCase().trim())) return false;
             return true;
           }).map(s => s.name).filter(Boolean);
         }
 
-        if (!deletedNames.has('aquatic indica surf school') && !validNames.some(n => n.toLowerCase().includes('aquatic indica'))) {
-          validNames.unshift('Aquatic Indica Surf School');
-        }
-
         const uniqueSchools = Array.from(new Set(validNames));
-        setSchoolsList(uniqueSchools.length > 0 ? uniqueSchools : ['Aquatic Indica Surf School']);
+        setSchoolsList(uniqueSchools);
       })
       .catch(() => {
-        setSchoolsList(['Aquatic Indica Surf School']);
+        setSchoolsList([]);
       });
   }, []);
 
@@ -269,7 +275,7 @@ const AuthPage = () => {
         if (data.valid) {
           setInviteData(data);
           const urlSchool = searchParams.get('school');
-          const finalSchool = data.school_name || urlSchool || 'Aquatic Indica Surf School';
+          const finalSchool = data.school_name || urlSchool || '';
           setFormData(prev => ({
             ...prev,
             email: data.email || prev.email,
@@ -370,7 +376,7 @@ const AuthPage = () => {
 
         const schoolNameStr = typeof approvedUser.school === 'string'
           ? approvedUser.school
-          : (approvedUser.school?.name || approvedUser.school_name || 'Aquatic Indica Surf School');
+          : (approvedUser.school?.name || approvedUser.school_name || '');
         sessionStorage.setItem('token', sessionStorage.getItem('token') || 'session_active_token');
         sessionStorage.setItem('user', JSON.stringify(approvedUser));
         sessionStorage.setItem('activeSchool', JSON.stringify({
@@ -585,7 +591,7 @@ const AuthPage = () => {
           session_time: formData.session_time,
           staying_at_school: formData.staying_at_school,
           reminder_preference: formData.reminder_preference,
-          guests_count: parseInt(formData.guests_count) || 0,
+          guests_count: schoolInviteData ? Math.max(0, (schoolInviteData.max_count || 1) - 1) : (parseInt(formData.guests_count) || 0),
           guests_details: formData.guests_details || [],
           school: (schoolInviteData?.school) || formData.school,
           // Pass individual invite token or school batch invite code
@@ -606,19 +612,17 @@ const AuthPage = () => {
         };
         userObj.approval_status = (inviteToken || inviteCode) ? 'approved' : (chosenSchool ? 'pending' : 'approved');
 
-        // Update local school invite tracking if inviteCode used
+        // Update local school invite tracking if inviteCode used (single-use: mark fully used)
         if (inviteCode) {
           try {
             const saved = JSON.parse(localStorage.getItem('local_school_invites') || '[]');
-            const slotsUsed = 1 + (parseInt(formData.guests_count) || 0);
             const updated = saved.map(i => {
               if (i.code === inviteCode) {
-                const nextUsed = (i.used_count || 0) + slotsUsed;
                 return {
                   ...i,
-                  used_count: nextUsed,
-                  remaining: Math.max(0, i.max_count - nextUsed),
-                  is_active: nextUsed < i.max_count
+                  used_count: i.max_count,
+                  remaining: 0,
+                  is_active: false
                 };
               }
               return i;
@@ -1189,7 +1193,7 @@ const AuthPage = () => {
                         <span style={{ fontSize: '22px' }}>{(schoolInviteData.valid && schoolInviteData.remaining > 0) ? '🎟️' : '⛔'}</span>
                         <div>
                           <div style={{ fontSize: '15px', fontWeight: 800, color: (schoolInviteData.valid && schoolInviteData.remaining > 0) ? '#FFFFFF' : '#FCA5A5' }}>
-                            {(schoolInviteData.valid && schoolInviteData.remaining > 0) ? 'School Registration Invite' : 'Invite Link Limit Reached / Expired'}
+                            {(schoolInviteData.valid && schoolInviteData.remaining > 0) ? 'School Registration Invite' : 'Invite Link Already Used / Expired'}
                           </div>
                           <div style={{ fontSize: '13px', color: '#E2E8F0', marginTop: '3px' }}>
                             🔒 School locked to: <strong style={{ color: '#38BDF8', fontSize: '14px' }}>{schoolInviteData.school}</strong>
@@ -1206,17 +1210,17 @@ const AuthPage = () => {
                         boxShadow: '0 2px 8px rgba(0,0,0,0.2)'
                       }}>
                         {(schoolInviteData.valid && schoolInviteData.remaining > 0)
-                          ? `${schoolInviteData.remaining} of ${schoolInviteData.max_count} Slots Available`
-                          : `Full (${schoolInviteData.used_count}/${schoolInviteData.max_count} Used)`}
+                          ? `Group Capacity: ${schoolInviteData.max_count} (1 Main + ${Math.max(0, schoolInviteData.max_count - 1)} Guests)`
+                          : `Link Already Used`}
                       </div>
                     </div>
                     {(schoolInviteData.valid && schoolInviteData.remaining > 0) ? (
                       <div style={{ fontSize: '12px', color: '#A7F3D0', marginTop: '10px', borderTop: '1px dashed rgba(16,185,129,0.3)', paddingTop: '8px' }}>
-                        💡 <strong>Capacity:</strong> You are taking 1 slot for yourself. You can add up to <strong style={{ color: '#FFFFFF' }}>{Math.max(0, schoolInviteData.remaining - 1)}</strong> accompanying guest(s) during Step 3 setup.
+                        💡 <strong>Capacity:</strong> 1 Main Student Account ({formData.email || 'your email'}) + <strong style={{ color: '#FFFFFF' }}>{Math.max(0, schoolInviteData.max_count - 1)}</strong> Accompanying Guest(s) (Locked). Only one email account can register with this invite link.
                       </div>
                     ) : (
                       <div style={{ fontSize: '12px', color: '#FCA5A5', marginTop: '10px', borderTop: '1px dashed rgba(239,68,68,0.3)', paddingTop: '8px', fontWeight: 600 }}>
-                        ⛔ This invite link has reached its maximum registration limit ({schoolInviteData.used_count || schoolInviteData.max_count}/{schoolInviteData.max_count} used). All spots for this invite have been filled. Please request a new invite link from {schoolInviteData.school}.
+                        ⛔ This invite link has already been used. Each invite link is valid for only 1 primary email registration with accompanying guests. Multiple emails cannot register on the same invite link. Please request a new invite link from {schoolInviteData.school}.
                       </div>
                     )}
                   </div>
@@ -1293,7 +1297,7 @@ const AuthPage = () => {
                       </div>
                     </div>
                     <button type="button" className="btn-primary auth-submit"
-                      disabled={loading || !formData.email.trim()} onClick={() => sendOTP()}>
+                      disabled={loading || !formData.email.trim() || Boolean(activeInviteError)} onClick={() => sendOTP()}>
                       {loading ? <span className="auth-spinner" /> : 'Send Verification Code →'}
                     </button>
                   </div>
@@ -1511,7 +1515,9 @@ const AuthPage = () => {
 
                           {/* Row 3: WhatsApp Number & Accompanying Guests */}
                           <div className="auth-field">
-                            <label>📱 WhatsApp Number</label>
+                            <label style={{ display: 'flex', alignItems: 'center', height: '22px', margin: '0 0 6px 0' }}>
+                              <span>📱 WhatsApp Number</span>
+                            </label>
                             <input 
                               type="tel" 
                               name="whatsapp_number" 
@@ -1522,43 +1528,74 @@ const AuthPage = () => {
                           </div>
 
                           <div className="auth-field">
-                            <label>👥 Accompanying Guests</label>
-                            <input 
-                              type="number" 
-                              name="guests_count" 
-                              min={0} 
-                              max={schoolInviteData && schoolInviteData.remaining > 0 ? Math.max(0, schoolInviteData.remaining - 1) : 10} 
-                              placeholder="0"
-                              value={formData.guests_count === '' || formData.guests_count === undefined ? '' : formData.guests_count} 
-                              onChange={e => {
-                                let val = e.target.value;
-                                if (schoolInviteData && schoolInviteData.remaining > 0) {
-                                  const maxAllowed = Math.max(0, schoolInviteData.remaining - 1);
-                                  if (parseInt(val) > maxAllowed) {
-                                    val = String(maxAllowed);
-                                  }
-                                }
-                                handleChange({ target: { name: 'guests_count', value: val } });
-                              }}
-                              disabled={schoolInviteData && schoolInviteData.remaining <= 1}
-                            />
-                            {schoolInviteData && schoolInviteData.remaining > 0 && (
-                              <small style={{ color: '#0D9488', fontSize: '11px', marginTop: '4px', display: 'block', fontWeight: 600 }}>
-                                {schoolInviteData.remaining <= 1
-                                  ? 'Only 1 slot left (reserved for yourself)'
-                                  : `Max ${Math.max(0, schoolInviteData.remaining - 1)} guest(s) allowed (${schoolInviteData.remaining} slots remaining on invite)`}
-                              </small>
+                            <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '22px', margin: '0 0 6px 0' }}>
+                              <span style={{ whiteSpace: 'nowrap' }}>👥 Accompanying Guests</span>
+                              {Boolean(schoolInviteData) && (
+                                <span style={{
+                                  fontSize: '10px',
+                                  fontWeight: 800,
+                                  background: 'rgba(16, 185, 129, 0.15)',
+                                  color: '#10B981',
+                                  border: '1px solid rgba(16, 185, 129, 0.35)',
+                                  padding: '1px 6px',
+                                  borderRadius: '4px',
+                                  whiteSpace: 'nowrap'
+                                }}>
+                                  🔒 Locked ({Math.max(0, (schoolInviteData.max_count || 1) - 1)})
+                                </span>
+                              )}
+                            </label>
+                            {Boolean(schoolInviteData) ? (
+                              <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                                <input 
+                                  type="text" 
+                                  name="guests_count" 
+                                  value={`${Math.max(0, (schoolInviteData.max_count || 1) - 1)} Accompanying Guest${Math.max(0, (schoolInviteData.max_count || 1) - 1) === 1 ? '' : 's'}`} 
+                                  disabled
+                                  readOnly
+                                  style={{
+                                    width: '100%',
+                                    background: 'rgba(16, 185, 129, 0.08)',
+                                    border: '1.5px solid #10B981',
+                                    color: '#A7F3D0',
+                                    fontWeight: 700,
+                                    fontSize: '13px',
+                                    cursor: 'not-allowed',
+                                    paddingRight: '36px'
+                                  }}
+                                />
+                                <span style={{ position: 'absolute', right: '12px', fontSize: '14px', opacity: 0.85, pointerEvents: 'none' }}>🔒</span>
+                              </div>
+                            ) : (
+                              <input 
+                                type="number" 
+                                name="guests_count" 
+                                min={0} 
+                                max={10} 
+                                placeholder="0"
+                                value={formData.guests_count === '' || formData.guests_count === undefined ? '' : formData.guests_count} 
+                                onChange={handleChange} 
+                              />
                             )}
                           </div>
 
                           {/* Row 4: Course Duration & Start Date */}
                           <div className="auth-field">
-                            <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                              <span>🏄 Course Duration</span>
+                            <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '22px', margin: '0 0 6px 0' }}>
+                              <span style={{ whiteSpace: 'nowrap' }}>🏄 Course Duration</span>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                 {(schoolInviteData?.course_duration || searchParams.get('course_duration')) ? (
-                                  <span style={{ fontSize: '11px', color: '#10B981', fontWeight: 800 }}>
-                                    🔒 Locked by Invite ({schoolInviteData?.course_duration || searchParams.get('course_duration')})
+                                  <span style={{
+                                    fontSize: '10px',
+                                    color: '#10B981',
+                                    fontWeight: 800,
+                                    background: 'rgba(16, 185, 129, 0.15)',
+                                    border: '1px solid rgba(16, 185, 129, 0.35)',
+                                    padding: '1px 6px',
+                                    borderRadius: '4px',
+                                    whiteSpace: 'nowrap'
+                                  }}>
+                                    🔒 Locked
                                   </span>
                                 ) : (
                                   <button
@@ -1712,7 +1749,9 @@ const AuthPage = () => {
                           </div>
 
                           <div className="auth-field">
-                            <label>🗓️ Start Date</label>
+                            <label style={{ display: 'flex', alignItems: 'center', height: '22px', margin: '0 0 6px 0' }}>
+                              <span>🗓️ Start Date</span>
+                            </label>
                             <input 
                               type="date" 
                               name="start_date" 
@@ -1724,34 +1763,130 @@ const AuthPage = () => {
                         </div>
 
                         {parseInt(formData.guests_count || 0) > 0 && (
-                          <div style={{ marginTop: '14px', background: 'rgba(255, 255, 255, 0.03)', padding: '14px', borderRadius: '12px', border: '1px solid rgba(0, 242, 254, 0.2)' }}>
-                            <h5 style={{ margin: '0 0 12px 0', color: '#00F2FE', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                              👥 Enter Details for {parseInt(formData.guests_count)} Accompanying Guest(s)
-                            </h5>
+                          <div style={{
+                            marginTop: '16px',
+                            background: 'rgba(15, 23, 42, 0.65)',
+                            border: '1.5px solid rgba(13, 148, 136, 0.35)',
+                            borderRadius: '14px',
+                            padding: '16px',
+                            boxShadow: '0 4px 20px rgba(0, 0, 0, 0.25)'
+                          }}>
+                            <div style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              flexWrap: 'wrap',
+                              gap: '8px',
+                              marginBottom: '14px',
+                              paddingBottom: '10px',
+                              borderBottom: '1px solid rgba(255, 255, 255, 0.08)'
+                            }}>
+                              <div>
+                                <h5 style={{ margin: 0, color: '#38BDF8', fontSize: '13px', fontWeight: 800, letterSpacing: '0.3px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <span>👥</span>
+                                  <span>Accompanying Guests Details</span>
+                                </h5>
+                                <div style={{ fontSize: '11.5px', color: '#94A3B8', marginTop: '2px' }}>
+                                  Please fill in details for all {parseInt(formData.guests_count)} guest(s) in your group booking
+                                </div>
+                              </div>
+                              <span style={{
+                                fontSize: '11px',
+                                fontWeight: 800,
+                                color: '#10B981',
+                                background: 'rgba(16, 185, 129, 0.12)',
+                                border: '1px solid rgba(16, 185, 129, 0.3)',
+                                padding: '3px 10px',
+                                borderRadius: '20px',
+                                whiteSpace: 'nowrap'
+                              }}>
+                                🔒 {parseInt(formData.guests_count)} Guest Slots Reserved
+                              </span>
+                            </div>
+
                             {Array.from({ length: parseInt(formData.guests_count) }).map((_, gIdx) => (
-                              <div key={gIdx} style={{ background: 'rgba(0, 0, 0, 0.3)', padding: '12px', borderRadius: '10px', marginBottom: '10px', border: '1px solid rgba(255, 255, 255, 0.08)' }}>
-                                <div style={{ fontSize: '12px', fontWeight: 700, color: '#FF4D6D', marginBottom: '8px' }}>Guest #{gIdx + 1} Profile</div>
-                                <div className="guest-fields-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px' }}>
+                              <div
+                                key={gIdx}
+                                style={{
+                                  background: 'rgba(255, 255, 255, 0.03)',
+                                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                                  borderRadius: '12px',
+                                  padding: '14px 16px',
+                                  marginBottom: gIdx < parseInt(formData.guests_count) - 1 ? '12px' : '0'
+                                }}
+                              >
+                                <div style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  marginBottom: '12px',
+                                  paddingBottom: '8px',
+                                  borderBottom: '1px solid rgba(255, 255, 255, 0.06)'
+                                }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <span style={{
+                                      fontSize: '11px',
+                                      fontWeight: 800,
+                                      background: 'linear-gradient(135deg, #0D9488, #00F2FE)',
+                                      color: '#090D1A',
+                                      padding: '2px 8px',
+                                      borderRadius: '6px'
+                                    }}>
+                                      Guest #{gIdx + 1}
+                                    </span>
+                                    <span style={{ fontSize: '13px', fontWeight: 700, color: '#F1F5F9' }}>
+                                      {formData.guests_details?.[gIdx]?.name?.trim() ? formData.guests_details[gIdx].name : `Guest Profile`}
+                                    </span>
+                                  </div>
+                                  <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 600 }}>
+                                    {gIdx + 1} of {parseInt(formData.guests_count)}
+                                  </span>
+                                </div>
+
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px 14px' }}>
+                                  {/* Full Name */}
                                   <div className="auth-field" style={{ minWidth: 0 }}>
-                                    <label style={{ fontSize: '11px', color: '#94A3B8' }}>Full Name *</label>
-                                    <input type="text" placeholder="Guest Full Name"
+                                    <label style={{ fontSize: '11.5px', color: '#94A3B8', fontWeight: 600, height: '18px', display: 'flex', alignItems: 'center' }}>
+                                      Full Name <span style={{ color: '#FF4D6D', marginLeft: '3px' }}>*</span>
+                                    </label>
+                                    <input
+                                      type="text"
+                                      placeholder="e.g. Guest Name"
                                       value={formData.guests_details?.[gIdx]?.name || ''}
-                                      onChange={e => handleGuestChange(gIdx, 'name', e.target.value)} required />
+                                      onChange={e => handleGuestChange(gIdx, 'name', e.target.value)}
+                                      required
+                                    />
                                   </div>
+
+                                  {/* Phone */}
                                   <div className="auth-field" style={{ minWidth: 0 }}>
-                                    <label style={{ fontSize: '11px', color: '#94A3B8' }}>WhatsApp / Phone</label>
-                                    <input type="tel" placeholder="Phone Number"
+                                    <label style={{ fontSize: '11.5px', color: '#94A3B8', fontWeight: 600, height: '18px', display: 'flex', alignItems: 'center' }}>
+                                      WhatsApp / Phone
+                                    </label>
+                                    <input
+                                      type="tel"
+                                      placeholder="e.g. 9876543210"
                                       value={formData.guests_details?.[gIdx]?.whatsapp_number || ''}
-                                      onChange={e => handleGuestChange(gIdx, 'whatsapp_number', e.target.value)} />
+                                      onChange={e => handleGuestChange(gIdx, 'whatsapp_number', e.target.value)}
+                                    />
                                   </div>
+
+                                  {/* Email */}
                                   <div className="auth-field" style={{ minWidth: 0 }}>
-                                    <label style={{ fontSize: '11px', color: '#94A3B8' }}>Email Address</label>
-                                    <input type="email" placeholder="guest@example.com"
+                                    <label style={{ fontSize: '11.5px', color: '#94A3B8', fontWeight: 600, height: '18px', display: 'flex', alignItems: 'center' }}>
+                                      Email Address
+                                    </label>
+                                    <input
+                                      type="email"
+                                      placeholder="guest@example.com"
                                       value={formData.guests_details?.[gIdx]?.email || ''}
-                                      onChange={e => handleGuestChange(gIdx, 'email', e.target.value)} />
+                                      onChange={e => handleGuestChange(gIdx, 'email', e.target.value)}
+                                    />
                                   </div>
+
+                                  {/* DOB */}
                                   <div className="auth-field" style={{ minWidth: 0 }}>
-                                    <label style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#94A3B8' }}>
+                                    <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11.5px', color: '#94A3B8', fontWeight: 600, height: '18px' }}>
                                       <span>DOB</span>
                                       {formData.guests_details?.[gIdx]?.dob && (
                                         <span style={{ color: '#00F2FE', fontWeight: 700 }}>
@@ -1759,7 +1894,8 @@ const AuthPage = () => {
                                         </span>
                                       )}
                                     </label>
-                                    <input type="date"
+                                    <input
+                                      type="date"
                                       value={formData.guests_details?.[gIdx]?.dob || ''}
                                       onChange={e => {
                                         const dobVal = e.target.value;
@@ -1774,31 +1910,51 @@ const AuthPage = () => {
                                         });
                                       }}
                                       max={new Date().toISOString().split('T')[0]}
-                                      style={{ colorScheme: 'dark' }} />
+                                      style={{ colorScheme: 'dark' }}
+                                    />
                                   </div>
+
+                                  {/* Gender */}
                                   <div className="auth-field" style={{ minWidth: 0 }}>
-                                    <label style={{ fontSize: '11px', color: '#94A3B8' }}>Gender <span style={{ color: '#FF4D6D', fontWeight: 700 }}>*</span></label>
-                                    <select value={formData.guests_details?.[gIdx]?.gender || ''}
-                                      onChange={e => handleGuestChange(gIdx, 'gender', e.target.value)} required>
+                                    <label style={{ fontSize: '11.5px', color: '#94A3B8', fontWeight: 600, height: '18px', display: 'flex', alignItems: 'center' }}>
+                                      Gender <span style={{ color: '#FF4D6D', marginLeft: '3px' }}>*</span>
+                                    </label>
+                                    <select
+                                      value={formData.guests_details?.[gIdx]?.gender || ''}
+                                      onChange={e => handleGuestChange(gIdx, 'gender', e.target.value)}
+                                      required
+                                    >
                                       <option value="">-- Select Gender --</option>
                                       <option value="Male">Male</option>
                                       <option value="Female">Female</option>
                                       <option value="Other">Other</option>
                                     </select>
                                   </div>
+
+                                  {/* Surf Stance */}
                                   <div className="auth-field" style={{ minWidth: 0 }}>
-                                    <label style={{ fontSize: '11px', color: '#94A3B8' }}>Surf Stance</label>
-                                    <select value={formData.guests_details?.[gIdx]?.stance || ''}
-                                      onChange={e => handleGuestChange(gIdx, 'stance', e.target.value)}>
+                                    <label style={{ fontSize: '11.5px', color: '#94A3B8', fontWeight: 600, height: '18px', display: 'flex', alignItems: 'center' }}>
+                                      Surf Stance
+                                    </label>
+                                    <select
+                                      value={formData.guests_details?.[gIdx]?.stance || ''}
+                                      onChange={e => handleGuestChange(gIdx, 'stance', e.target.value)}
+                                    >
                                       <option value="">-- Select Surf Stance --</option>
                                       <option value="regular">Regular</option>
                                       <option value="goofy">Goofy</option>
                                     </select>
                                   </div>
-                                  <div className="auth-field" style={{ minWidth: 0 }}>
-                                    <label style={{ fontSize: '11px', color: '#94A3B8' }}>Swimming Ability</label>
-                                    <select value={formData.guests_details?.[gIdx]?.swimming_ability || 'Swimmer'}
-                                      onChange={e => handleGuestChange(gIdx, 'swimming_ability', e.target.value)}>
+
+                                  {/* Swimming Ability */}
+                                  <div className="auth-field" style={{ minWidth: 0, gridColumn: 'span 2' }}>
+                                    <label style={{ fontSize: '11.5px', color: '#94A3B8', fontWeight: 600, height: '18px', display: 'flex', alignItems: 'center' }}>
+                                      Swimming Ability
+                                    </label>
+                                    <select
+                                      value={formData.guests_details?.[gIdx]?.swimming_ability || 'Swimmer'}
+                                      onChange={e => handleGuestChange(gIdx, 'swimming_ability', e.target.value)}
+                                    >
                                       <option value="Swimmer">🏊 Swimmer</option>
                                       <option value="Non-Swimmer">🤿 Non-Swimmer</option>
                                     </select>
@@ -1834,7 +1990,7 @@ const AuthPage = () => {
                               <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                                 <span style={{ fontSize: '20px' }}>🏫</span>
                                 <span style={{ color: '#FFFFFF', fontWeight: 800, fontSize: '15px', letterSpacing: '0.3px' }}>
-                                  {(schoolInviteData?.school) || formData.school || searchParams.get('school') || 'Aquatic Indica Surf School'}
+                                  {(schoolInviteData?.school) || formData.school || searchParams.get('school') || 'Surf School'}
                                 </span>
                               </span>
                               <span style={{ fontSize: '11px', background: '#10B981', color: '#FFFFFF', padding: '3px 8px', borderRadius: '4px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px' }}>

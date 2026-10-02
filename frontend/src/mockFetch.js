@@ -12,19 +12,7 @@ const INITIAL_BADGES = [];
 
 const INITIAL_ACTIVITIES = [];
 
-const INITIAL_SCHOOLS = [
-  {
-    id: 1,
-    name: "Aquatic Indica Surf School",
-    owner: "Aquatic Admin",
-    email: "rpntechworld@gmail.com",
-    phone: "+91 9876543210",
-    country: "India",
-    city: "Kovalam / Chennai",
-    instructor_count: "0",
-    website: "https://aquaticindica.com"
-  }
-];
+const INITIAL_SCHOOLS = [];
 
 // In-Memory Database State
 const registeredUsers = {};
@@ -150,7 +138,7 @@ window.fetch = async function (input, init) {
       if (registeredUsers[email] && registeredUsers[email].password === password) {
         matchingUser = registeredUsers[email].user;
       } else if (email === 'rpntechworld@gmail.com' && password === '12345678') {
-        matchingUser = { id: 99, email: 'rpntechworld@gmail.com', role: 'admin', name: 'Aquatic Indica Admin', image: '' };
+        matchingUser = { id: 99, email: 'rpntechworld@gmail.com', role: 'admin', name: 'Admin', image: '' };
       }
 
       if (!matchingUser) {

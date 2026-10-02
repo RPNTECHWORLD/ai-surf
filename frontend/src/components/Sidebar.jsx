@@ -24,7 +24,8 @@ const Sidebar = () => {
     };
 
     const updateHeaderInfo = () => {
-      const savedUserStr = sessionStorage.getItem('user');
+
+      const savedUserStr = sessionStorage.getItem('user') || localStorage.getItem('user');
       let parsedUser = null;
       if (savedUserStr) {
         try {
@@ -33,12 +34,13 @@ const Sidebar = () => {
             parsedUser.school_details = parsedUser.school;
             parsedUser.school = resolveSchoolName(parsedUser.school);
             sessionStorage.setItem('user', JSON.stringify(parsedUser));
+            localStorage.setItem('user', JSON.stringify(parsedUser));
           }
           setUser(parsedUser);
         } catch (e) {}
       }
 
-      const savedSchoolStr = sessionStorage.getItem('activeSchool');
+      const savedSchoolStr = sessionStorage.getItem('activeSchool') || localStorage.getItem('activeSchool');
       let parsedSchool = null;
       if (savedSchoolStr) {
         try {
@@ -56,16 +58,16 @@ const Sidebar = () => {
 
       let displayName = '';
       if (parsedUser?.role === 'athlete' || parsedUser?.role === 'student' || parsedUser?.role === 'user') {
-        displayName = userSch || 'No School Selected';
+        displayName = userSch || '';
       } else if (parsedUser?.role === 'coach') {
         const cName = parsedUser.name || parsedUser.instructor_name;
         displayName = userSch || activeSch || (cName ? `Coach: ${cName}` : 'Individual Surf Coach');
       } else {
-        displayName = activeSch || userSch || 'Aquatic Indica Surf School';
+        displayName = activeSch || userSch || '';
       }
 
       setSchool({
-        name: resolveSchoolName(displayName) || ((parsedUser?.role === 'athlete' || parsedUser?.role === 'student' || parsedUser?.role === 'user') ? 'No School Selected' : 'Aquatic Indica Surf School'),
+        name: resolveSchoolName(displayName) || (parsedUser?.role === 'admin' ? 'School Admin' : ''),
         owner: typeof parsedUser?.name === 'string' ? parsedUser.name : (typeof parsedSchool?.owner === 'string' ? parsedSchool.owner : '')
       });
     };
@@ -176,9 +178,11 @@ const Sidebar = () => {
               <div className="db-header-user-name">
                 {user?.name || user?.username || (typeof school?.owner === 'string' ? school.owner : '') || (user?.email ? user.email.split('@')[0] : 'User')}
               </div>
-              <div className="db-header-school-name">
-                {typeof school?.name === 'string' ? school.name : (school?.name?.name || (user?.role === 'athlete' ? 'No School Selected' : 'Aquatic Indica Surf School'))}
-              </div>
+              {school?.name && (
+                <div className="db-header-school-name">
+                  {typeof school?.name === 'string' ? school.name : (school?.name?.name || '')}
+                </div>
+              )}
               <div className="db-header-user-role" style={{ textTransform: 'capitalize' }}>
                 {user ? (user.role === 'admin' ? 'School Admin' : (user.role === 'athlete' ? 'Student' : (user.role === 'coach' ? 'Coach' : user.role))) : 'School Admin'}
               </div>
@@ -210,9 +214,11 @@ const Sidebar = () => {
       {mobileMenuOpen && (
         <div className="db-mobile-menu">
           <div style={{ padding: '10px 14px', borderBottom: '1px solid #F1F5F9', marginBottom: '6px' }}>
-            <div style={{ fontSize: '13.5px', fontWeight: 800, color: '#0F172A' }}>
-              {typeof school?.name === 'string' ? school.name : (school?.name?.name || (user?.role === 'athlete' ? 'No School Selected' : 'Aquatic Indica Surf School'))}
-            </div>
+            {school?.name && (
+              <div style={{ fontSize: '13.5px', fontWeight: 800, color: '#0F172A' }}>
+                {typeof school?.name === 'string' ? school.name : (school?.name?.name || '')}
+              </div>
+            )}
             <div style={{ fontSize: '11.5px', color: '#64748B', fontWeight: 600, textTransform: 'capitalize', marginTop: '2px' }}>
               {user?.name || 'User'} • {user ? (user.role === 'admin' ? 'School Admin' : (user.role === 'athlete' ? 'Student' : (user.role === 'coach' ? 'Coach' : user.role))) : 'Student'}
             </div>

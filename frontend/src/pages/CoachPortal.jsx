@@ -35,7 +35,7 @@ export default function CoachPortal() {
           name: data.name,
           role: 'coach',
           image: data.image,
-          school: data.school || 'Aquatic Indica Surf School',
+          school: data.school || '',
           email: data.email || ''
         };
         sessionStorage.setItem('user', JSON.stringify(coachUser));

@@ -170,8 +170,68 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
    - Guests remain strictly grouped directly beneath their parent student in all sort orders and searches.
    - Supported in Step 3 Training Groups (drag & drop, group chips) and mapped back cleanly to parent student IDs upon publishing bulk sessions without database constraint errors.
 
+### changes on 02-10-26
+1. **School Registration Invite Capacity Model (1 Main Email + Locked Accompanying Guests)**:
+   - Re-architected school invite links so that total capacity strictly represents **1 Main Primary Student Email** + remaining slots as **Accompanying Guests** (`Capacity - 1`).
+   - For example, an invite created with a capacity of 4 guarantees 1 primary student account and 3 accompanying guests.
+2. **Locked Accompanying Guests on Signup (`AuthPage.jsx`)**:
+   - In Step 3 Profile Setup of registration, the **Accompanying Guests** input field is strictly locked (`readOnly` and `disabled`) when accessing via a school invite link.
+   - Displays a locked indicator badge: `🔒 Locked by Invite: X Guests` (or `0 Guests (Single Person Invite)` if capacity is 1).
+   - Automatically pre-creates and displays guest detail cards (Full Name, Phone/WhatsApp, Email) for each accompanying guest so the primary user enters their group members' information.
+3. **Disallowed Multiple Email Registrations on Single Invite Link (`AuthPage.jsx`, `backend/main.py`)**:
+   - School invite links are now strictly single-use per group: multiple separate email accounts can no longer register on the same invite link.
+   - In `backend/main.py` (`/api/auth/signup`), completing registration immediately consumes the full capacity (`used_count = max_count`, `is_active = False`).
+   - If another user attempts to open or register with a used link, `/api/school-invites/{code}` returns `valid: False` and `AuthPage.jsx` displays `⛔ This invite link has already been used. Each invite link is valid for 1 primary account registration only`, blocking OTP dispatch and signup submission.
+4. **Admin Invite Generator & History UI Updates (`StudentsManagement.jsx`)**:
+   - Updated the Invite Link modal guidance card to clarify the 1 Main Account + Locked Accompanying Guests structure and single-use guarantee.
+   - Updated the invite history list badges to show `1 Main Account + X Guests` and `⛔ Used (X/X slots registered)` status.
+5. **AWS EC2 Backend Deployment & Verification**:
+   - Deployed updated `backend/main.py` to AWS EC2 via S3 deployment script and SSM commands.
+   - Verified live endpoint responses and validated production frontend build.
 
+6. **Automatic Accompanying Guests Group Selection in Session Roster (NewSession.jsx)**:
+   - In Step 2 Student Roster, selecting a main student now automatically selects all of their accompanying guests into the active time slot.
+   - Accurately checks slot capacity for the entire group (e.g. 1 primary student + 5 guests = 6 spots) and alerts if slot capacity is insufficient.
+   - Deselecting the main student automatically deselects all of their accompanying guests together, keeping booking groups synchronized.
 
+7. **Visual Indentation & Synchronized Grouping in Step 3 Training Groups (NewSession.jsx)**:
+   - Accompanying guest cards in Step 3 Column 1 (Student Pool) are now visually indented with a `24px` margin (`12px` on mobile), a branch connector `↳`, and a distinct `#F0F9FF` sky-blue accent with a `4px solid #0284C7` left border.
+   - Main students with accompanying guests now display a badge showing `👥 +X Guests` to indicate that they have registered together as a unit.
+   - In Step 3, checking/selecting the main student automatically selects/deselects all of their accompanying guests together as a single family unit.
+   - Dragging an unselected main student automatically drags all of their unassigned accompanying guests into the target group card.
+   - Inside training group cards, student chips are sorted so that main students and their accompanying guests remain clustered together.
 
+8. **Session Header Modal Close Button Alignment (NewSession.jsx)**:
+   - Fixed the positioning of the modal close button (`✕`) in the top navigation bar.
+   - Grouped the stepper navigation and close button inside `.ns-header-right`, moving the close button to the far right (after Step 3) on desktop instead of awkwardly sitting in the middle between the title and stepper.
+   - Styled with clean circular pill layout, border, and smooth red hover interaction.
+   - Mobile responsive layout keeps title on the left, close button on top-right, and horizontal stepper cleanly underneath.
 
+9. **Session History Card UI Redesign (StudentProfile.jsx)**:
+   - Completely upgraded the "Session History" card from a plain dot text list to premium timeline interactive cards.
+   - Added `{completedCount} Completed` emerald pill badge and sleek `All Sessions →` navigation button in header.
+   - Each completed session now features:
+     - 🏄‍♂️ Surf icon badge with soft emerald gradient.
+     - 📅 Date with calendar tag and ⏰ time slot pill.
+     - Emerald `✓ Completed` status badge.
+     - Bold session location/title with participant indicator (`👥 Guest: ...` or `👤 You`).
+     - Interactive coach pill with `★ Review` modal trigger so students can review their assigned coach after completed sessions.
+     - Direct `View Details →` link to `/sessions`.
+     - Smooth hover lift, border-left accent (`#10B981`), and subtle drop shadow.
 
+10. **Complete Elimination of Dummy Data & Hardcoded Fallbacks (Production Readiness)**:
+    - **Root Cause Resolution**:
+      - Identified why 'Aquatic Indica Surf School' kept reappearing even after database deletion:
+        1. Browser localStorage and sessionStorage retained old login session data (user, activeSchool, and savedAccounts).
+        2. Sidebar.jsx contained a ternary fallback check user?.role === 'athlete' ? 'No School Selected' : 'Aquatic Indica Surf School'. Since the logged-in user's role was 'student', it evaluated to 'Aquatic Indica Surf School'.
+        3. backend/main.py's /api/schools endpoint contained an auto-population check that automatically recreated 'Aquatic Indica Surf School' in the database whenever the schools table was queried while empty.
+        4. seed_database() in backend/main.py and Column definitions had hardcoded demo seed routines (ericsheldon@gmail.com, Aarav, Chloe, etc.) and default='Aquatic Indica Surf School'.
+    - **Frontend Clean-up & Storage Sanitization**:
+      - Replaced all hardcoded school name fallbacks across Sidebar.jsx, SchoolDashboard.jsx, Sessions.jsx, CoachPortal.jsx, Competitions.jsx, CompetitorManagement.jsx, HeatManagement.jsx, and mockFetch.js.
+      - Embedded an automatic client-side storage sanitizer in Sidebar.jsx that inspects localStorage and sessionStorage on mount and strips out any cached 'Aquatic Indica' values.
+      - Updated header and mobile dropdown to only render school affiliation if a valid school exists.
+    - **Backend Clean-up & AWS RDS Database Purge**:
+      - Purged all fake accounts (ericsheldon04@gmail.com, ericsheldon@gmail.com, aarav@aisurf.com, etc.) and dummy school records from the AWS RDS PostgreSQL database.
+      - Removed auto-population of demo schools in /api/schools.
+      - Neutralized seed_database() to prevent demo data injection.
+      - Deployed updated backend/main.py to AWS EC2 instance via S3 upload and SSM command, and verified active endpoints.

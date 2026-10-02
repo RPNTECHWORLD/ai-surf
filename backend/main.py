@@ -242,7 +242,7 @@ class ActivityLog(Base):
     id = Column(Integer, primary_key=True, index=True)
     text = Column(String)
     type = Column(String)   # badge / session / group
-    school = Column(String, nullable=True, default="Aquatic Indica Surf School", index=True)
+    school = Column(String, nullable=True, default="", index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -486,14 +486,14 @@ try:
         except Exception:
             pass
         db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS invite_token VARCHAR(128) DEFAULT NULL"))
-        db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS school VARCHAR(150) DEFAULT 'Aquatic Indica Surf School'"))
+        db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS school VARCHAR(150) DEFAULT ''"))
         db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS approval_status VARCHAR(50) DEFAULT 'approved'"))
         db_migrate.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS approval_status VARCHAR(50) DEFAULT 'approved'"))
         db_migrate.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_by_school BOOLEAN DEFAULT false"))
         db_migrate.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider VARCHAR(50) DEFAULT 'email'"))
         db_migrate.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS social_id VARCHAR(255)"))
         db_migrate.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_plain VARCHAR(255)"))
-        db_migrate.execute(text("ALTER TABLE activity_log ADD COLUMN IF NOT EXISTS school VARCHAR(150) DEFAULT 'Aquatic Indica Surf School'"))
+        db_migrate.execute(text("ALTER TABLE activity_log ADD COLUMN IF NOT EXISTS school VARCHAR(150) DEFAULT ''"))
         try:
             db_migrate.execute(text("""
                 UPDATE activity_log
@@ -508,7 +508,7 @@ try:
                 FROM instructors i
                 WHERE (activity_log.text LIKE '%' || i.name || '%' OR activity_log.text LIKE 'New instructor ' || i.name || '%')
                   AND i.school IS NOT NULL AND i.school != ''
-                  AND (activity_log.school IS NULL OR activity_log.school = 'Aquatic Indica Surf School')
+                  AND (activity_log.school IS NULL OR activity_log.school = '')
             """))
             db_migrate.execute(text("""
                 UPDATE activity_log
@@ -574,7 +574,7 @@ try:
             db_migrate.execute(text("ALTER TABLE students ADD COLUMN guests_details TEXT DEFAULT '[]'"))
             db_migrate.execute(text("ALTER TABLE students ADD COLUMN dob VARCHAR(50) DEFAULT ''"))
             db_migrate.execute(text("ALTER TABLE students ADD COLUMN invite_token VARCHAR(128) DEFAULT NULL"))
-            db_migrate.execute(text("ALTER TABLE students ADD COLUMN school VARCHAR(150) DEFAULT 'Aquatic Indica Surf School'"))
+            db_migrate.execute(text("ALTER TABLE students ADD COLUMN school VARCHAR(150) DEFAULT ''"))
             db_migrate.execute(text("ALTER TABLE students ADD COLUMN approval_status VARCHAR(50) DEFAULT 'approved'"))
             db_migrate.execute(text("ALTER TABLE users ADD COLUMN approval_status VARCHAR(50) DEFAULT 'approved'"))
             db_migrate.execute(text("""
@@ -837,7 +837,7 @@ def send_student_welcome_email(
         return False
     try:
         clean_email = student_email.strip().lower()
-        school_name = student_school or "Aquatic Indica Surf School"
+        school_name = student_school or "Surf School"
         portal_link = f"{app_base_url}/student-portal?token={invite_token}" if invite_token else f"{app_base_url}/auth"
         pass_info = f"<li><strong>Temporary Password:</strong> {password.strip()}</li>" if (password and len(password.strip()) >= 6) else ""
         
@@ -906,193 +906,8 @@ def verify_token(token: str) -> Optional[dict]:
 # ─── Seed Data ────────────────────────────────────────────────────────────────
 
 def seed_database(db: OrmSession, force: bool = False):
-    # Seed Admin User
-    existing_admin = db.query(User).filter(User.email == "admin@aisurf.com").first()
-    if not existing_admin:
-        admin_user = User(
-            email="admin@aisurf.com",
-            password_hash=hash_password("admin123"),
-            password_plain="admin123",
-            role="admin",
-            auth_provider="email"
-        )
-        db.add(admin_user)
-        db.flush()
-
-    # Instructors (Coaches)
-    instructor_users_data = [
-        ("Kai Lenny", "kai@aisurf.com", "kai123", 30, "Male", "Elite", "12 Years", ["ISA Level 2", "CPR"], "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=100", "Big wave charger and multi-discipline waterman.", ["S&C", "Video Analysis", "Big Wave"], "$150 / hr", "Maui, Hawaii"),
-        ("Bethany Hamilton", "bethany@aisurf.com", "bethany123", 34, "Female", "Elite", "15 Years", ["ISA Level 3", "First Aid"], "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=100", "Professional surfer and inspirational speaker.", ["S&C", "Nutrition"], "$200 / hr", "Kauai, Hawaii"),
-        ("Kolohe Andino", "kolohe@aisurf.com", "kolohe123", 28, "Male", "Advanced", "8 Years", ["ISA Level 1", "CPR"], "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100", "CT surfer specializing in heat strategy and performance techniques.", ["Competition Strategy", "Video Analysis"], "$120 / hr", "San Clemente, CA"),
-        ("Carissa Moore", "carissa@aisurf.com", "carissa123", 31, "Female", "Elite", "14 Years", ["ISA Level 3", "First Aid", "Water Safety"], "https://images.unsplash.com/photo-1573497019940-1c28c88b4f3e?auto=format&fit=crop&q=80&w=100", "5x World Champion passionate about youth coaching.", ["S&C", "Competition Strategy"], "$180 / hr", "Honolulu, Hawaii"),
-        ("Marcus Silva", "marcus@aisurf.com", "marcus123", 27, "Male", "Advanced", "6 Years", ["ISA Level 2", "Water Safety"], "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100", "Experienced surf instructor specializing in beginners.", ["Video Analysis", "Water Safety"], "$80 / hr", "Gold Coast, AUS")
-    ]
-
-    for id_val, (name, email, password, age, gender, fit, exp, certs, img, bio, specs, rate, loc) in enumerate(instructor_users_data, 1):
-        u = db.query(User).filter(func.lower(User.email) == email.lower()).first()
-        if not u:
-            u = User(email=email, password_hash=hash_password(password), password_plain=password, role="coach", auth_provider="email")
-            db.add(u)
-            db.flush()
-        
-        inst = db.query(Instructor).filter(Instructor.id == id_val).first()
-        if not inst:
-            inst = Instructor(
-                id=id_val, user_id=u.id, name=name, age=age, gender=gender,
-                fitness_level=fit, experience=exp, certifications=json.dumps(certs),
-                image=img, bio=bio, specializations=json.dumps(specs),
-                rates=rate, location=loc, reviews=json.dumps([])
-            )
-            db.add(inst)
-    db.flush()
-
-    # Students (Athletes with Aquatic Indica fields)
-    today_iso = date.today().strftime("%Y-%m-%d")
-    student_users_data = [
-        ("Eric Sheldon", "ericsheldon@gmail.com", "admin123", "Beginner", 1, "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=100", "Passionate surfer training at Aquatic Indica.", 24, "Men's Open", "regular", {"waves_ridden": 15, "max_speed": "18 mph", "avg_session_mins": 60}, ["Great pop-up balance in morning dawn patrol."], "9876543210", 2, "3 Days Course", today_iso, "", "Morning 6:00 AM", "Yes", "WhatsApp Text", [
-            {"name": "tukku", "age": 24, "stance": "regular", "level": "Advanced"}
-        ]),
-        ("Aarav Sharma", "aarav@aisurf.com", "aarav123", "Beginner", 2, "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100", "First time catching waves at Kovalam beach.", 22, "Men's Amateur", "regular", {"waves_ridden": 8, "max_speed": "12 mph", "avg_session_mins": 60}, ["Learned duck dive fundamentals."], "9840123456", 1, "5 Days Course", today_iso, "", "Morning 8:00 AM", "Yes", "WhatsApp Text", []),
-        ("Priya Nair", "priya@aisurf.com", "priya123", "Intermediate", 4, "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=100", "Working on rail control and bottom turns.", 26, "Women's Open", "goofy", {"waves_ridden": 28, "max_speed": "20 mph", "avg_session_mins": 75}, ["Smooth cutbacks on sunset swells."], "9123456780", 3, "7 Days Course", today_iso, "", "Evening 4:00 PM", "No", "WhatsApp Text", [
-            {"name": "Vikram S", "age": 26, "stance": "goofy", "level": "Beginner"},
-            {"name": "Kavya M", "age": 24, "stance": "regular", "level": "Intermediate"}
-        ]),
-        ("Chloe Kim", "chloe@aisurf.com", "chloe123", "Intermediate", 5, "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=100", "Olympic snowboarder mastering ocean waves.", 23, "Women's Open", "regular", {"waves_ridden": 42, "max_speed": "24 mph", "avg_session_mins": 75}, ["Pipeline clean swell - pop-up speed fast."], "9884012345", 1, "3 Days Course", today_iso, "", "Morning 6:00 AM", "Yes", "WhatsApp Text", []),
-        ("John Miller", "john@aisurf.com", "john123", "Beginner", 2, "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=100", "Stoked to learn and charge waves.", 19, "Juniors", "goofy", {"waves_ridden": 18, "max_speed": "16 mph", "avg_session_mins": 60}, [], "9712345678", 1, "1 Day Crash Course", today_iso, "", "Morning 8:00 AM", "No", "Phone Call", []),
-        ("Emma Watson", "emma@aisurf.com", "emma123", "Intermediate", 1, "https://images.unsplash.com/photo-1573497019940-1c28c88b4f3e?auto=format&fit=crop&q=80&w=100", "Surfing is my peace from screen acting.", 25, "Women's Amateur", "regular", {"waves_ridden": 31, "max_speed": "18 mph", "avg_session_mins": 90}, ["Intro to duck diving success."], "9988776655", 1, "3 Days Course", today_iso, "", "Morning 6:00 AM", "Yes", "WhatsApp Text", [])
-    ]
-
-    for id_val, (name, email, password, level, inst_id, img, bio, age, div, stance, stats, logs, wa, guests_c, dur, s_date, e_date, s_time, stay, rem_pref, g_details) in enumerate(student_users_data, 1):
-        u = db.query(User).filter(func.lower(User.email) == email.lower()).first()
-        if not u:
-            u = User(email=email, password_hash=hash_password(password), password_plain=password, role="athlete", auth_provider="email")
-            db.add(u)
-            db.flush()
-        
-        stud = db.query(Student).filter(Student.id == id_val).first()
-        if not stud:
-            stud = Student(
-                id=id_val, user_id=u.id, name=name, email=email, level=level,
-                instructor_id=inst_id, image=img, last_active="Today",
-                bio=bio, age=age, division=div, stance=stance,
-                surf_stats=json.dumps(stats), performance_logs=json.dumps(logs),
-                whatsapp_number=wa, guests_count=guests_c, course_duration=dur,
-                start_date=s_date, end_date=e_date, session_time=s_time,
-                staying_at_school=stay, reminder_preference=rem_pref,
-                reminder_sent=False, guests_details=json.dumps(g_details)
-            )
-            db.add(stud)
-    db.flush()
-
-    # Add reviews to Kai Lenny
-    kai_lenny = db.query(Instructor).filter(Instructor.id == 1).first()
-    if kai_lenny:
-        kai_lenny.reviews = json.dumps([
-            {"student": "Emma Watson", "rating": 5, "comment": "Kai is an incredible coach! He breaks down paddling technique so clearly."}
-        ])
-
-    # Sessions
-    today = datetime.now().strftime("%d %b %Y")
-    sessions = [
-        SurfSession(date=today, time="08:00 AM", duration_mins=90,
-                    student_id=2, instructor_id=1, location="Pipeline",
-                    condition="Hard", type="Advanced", status="IN PROGRESS",
-                    notes="Strong offshore wind, good form"),
-        SurfSession(date=today, time="09:30 AM", duration_mins=60,
-                    student_id=3, instructor_id=2, location="Waikiki",
-                    condition="Easy", type="Beginner", status="Upcoming", notes=""),
-        SurfSession(date=today, time="11:00 AM", duration_mins=120,
-                    student_id=4, instructor_id=3, location="Sunset Beach",
-                    condition="Moderate", type="Intermediate", status="Upcoming", notes=""),
-        SurfSession(date=today, time="02:00 PM", duration_mins=90,
-                    student_id=5, instructor_id=4, location="Pipeline",
-                    condition="Hard", type="Master", status="Upcoming", notes=""),
-        SurfSession(date="12 Jun 2025", time="08:00 AM", duration_mins=90,
-                    student_id=1, instructor_id=1, location="Pipeline",
-                    condition="Hard", type="Advanced", status="Completed",
-                    notes="Excellent session"),
-        SurfSession(date="12 Jun 2025", time="10:30 AM", duration_mins=60,
-                    student_id=3, instructor_id=2, location="Waikiki",
-                    condition="Easy", type="Beginner", status="Completed", notes=""),
-    ]
-    for s in sessions:
-        db.add(s)
-    db.flush()
-
-    # Badges
-    badge_data = [
-        Badge(student_id=1, badge_level="WHITE"),
-        Badge(student_id=1, badge_level="YELLOW"),
-        Badge(student_id=2, badge_level="WHITE"),
-        Badge(student_id=3, badge_level="WHITE"),
-        Badge(student_id=3, badge_level="YELLOW"),
-        Badge(student_id=3, badge_level="GREEN"),
-        Badge(student_id=4, badge_level="WHITE"),
-        Badge(student_id=4, badge_level="YELLOW"),
-        Badge(student_id=4, badge_level="GREEN"),
-        Badge(student_id=4, badge_level="BLUE"),
-        Badge(student_id=5, badge_level="WHITE"),
-        Badge(student_id=6, badge_level="WHITE"),
-        Badge(student_id=6, badge_level="YELLOW"),
-        Badge(student_id=6, badge_level="GREEN"),
-        Badge(student_id=6, badge_level="BLUE"),
-        Badge(student_id=6, badge_level="RED"),
-    ]
-    for b in badge_data:
-        db.add(b)
-    db.flush()
-
-    # Activity Log
-    activities = [
-        ActivityLog(text="Emma Watson earned 'First Barrel' badge", type="badge", school="Aquatic Indica Surf School"),
-        ActivityLog(text="John Miller completed session with Kai", type="session", school="Aquatic Indica Surf School"),
-        ActivityLog(text="Rick Grimes joined 'Intermediate' cohort", type="group", school="Aquatic Indica Surf School"),
-        ActivityLog(text="Chloe Kim scored personal best this session", type="session", school="Aquatic Indica Surf School"),
-        ActivityLog(text="James Bond earned RED badge — Master level!", type="badge", school="Aquatic Indica Surf School"),
-    ]
-    for a in activities:
-        db.add(a)
-
-    # Demo schools
-    if not db.query(School).filter(func.lower(School.email) == "rpntechworld@gmail.com").first():
-        db.add(School(name="Aquatic Indica Surf School", owner="Aquatic Admin",
-                      email="rpntechworld@gmail.com", phone="+91 9876543210",
-                      country="India", city="Kovalam / Chennai",
-                      instructor_count="5–15", website="https://aquaticindica.com"))
-    if not db.query(School).filter(func.lower(School.email) == "hello@pipeline.com").first():
-        db.add(School(name="Pipeline Surf School", owner="John Doe",
-                      email="hello@pipeline.com", phone="+1 808 555 0100",
-                      country="United States", city="Honolulu",
-                      instructor_count="6–15", website="https://pipeline.com"))
-
-    # Seed Chloe Kim Logs (student_id=1)
-    chloe_nutrition = [
-        NutritionLog(student_id=1, date="01 Aug 2026", calories=2400, hydration_liters=3.0, protein_g=140, carbs_g=300, fats_g=70, meal_timing="Pre-heat smoothie 9AM, Post-surf lunch 1PM"),
-        NutritionLog(student_id=1, date="02 Aug 2026", calories=2600, hydration_liters=3.5, protein_g=150, carbs_g=320, fats_g=75, meal_timing="Pre-heat oatmeal 8AM, Competition snack 11AM"),
-        NutritionLog(student_id=1, date="03 Aug 2026", calories=2500, hydration_liters=3.2, protein_g=145, carbs_g=310, fats_g=72, meal_timing="Energy bar 9:30AM, Post-heat dinner 6PM")
-    ]
-    chloe_sc = [
-        SCLog(student_id=1, date="01 Aug 2026", workout_details="Strength Session: Deadlifts 3x5, Squats 4x6, Core workout", mobility_notes="Good hip mobility, slight stiffness in thoracic spine", sleep_score=82, recovery_score=85, injury_notes="None"),
-        SCLog(student_id=1, date="02 Aug 2026", workout_details="Active Recovery: Swim 30 mins, light stretching", mobility_notes="Thoracic spine mobility drills", sleep_score=90, recovery_score=92, injury_notes="None"),
-        SCLog(student_id=1, date="03 Aug 2026", workout_details="Power Session: Box jumps 4x5, Kettlebell swings 4x10", mobility_notes="Full body dynamic warm-up", sleep_score=85, recovery_score=88, injury_notes="Mild left shoulder tightness")
-    ]
-    chloe_tech = [
-        TechnicalLog(student_id=1, date="01 Aug 2026", session_notes="Felt good in 4-6ft barrels. Focus on pop-up speed.", wave_count=12, board_setup="6'1 Channel Islands Shortboard, Thruster fin setup", wave_type="Reef break barrel", video_url="http://localhost:8000/uploads/c041fea3-b7ed-40d0-ad1e-2c1e14ee6e4d.mp4"),
-        TechnicalLog(student_id=1, date="02 Aug 2026", session_notes="Clean beach break session. Practice snaps and cutbacks.", wave_count=18, board_setup="6'0 Firewire, Quad fin setup", wave_type="Beach break A-frame", video_url="http://localhost:8000/uploads/c041fea3-b7ed-40d0-ad1e-2c1e14ee6e4d.mp4"),
-        TechnicalLog(student_id=1, date="03 Aug 2026", session_notes="Tested thruster fin configuration in heavy surf.", wave_count=14, board_setup="6'2 Pyzel Gun, Thruster setup", wave_type="Point break, fast and hollow", video_url="http://localhost:8000/uploads/c041fea3-b7ed-40d0-ad1e-2c1e14ee6e4d.mp4")
-    ]
-    chloe_mental = [
-        MentalLog(student_id=1, date="01 Aug 2026", pre_heat_anxiety=4, focus_level=8, reflection_notes="Stayed calm before paddling out. Visualization helped."),
-        MentalLog(student_id=1, date="02 Aug 2026", pre_heat_anxiety=3, focus_level=9, reflection_notes="Highly focused today. Flow state achieved in early waves."),
-        MentalLog(student_id=1, date="03 Aug 2026", pre_heat_anxiety=5, focus_level=7, reflection_notes="Anxiety was a bit high due to heavy swell. Focus improved after first wave.")
-    ]
-    for n in chloe_nutrition: db.add(n)
-    for s in chloe_sc: db.add(s)
-    for t in chloe_tech: db.add(t)
-    for m in chloe_mental: db.add(m)
-
-    db.commit()
-    print("Database seeded with demo data!")
+    """Production database: Do not inject demo or mock data into database."""
+    print("Database ready.")
 
 
 # Run startup database sequence sync
@@ -1128,7 +943,7 @@ with SessionLocal() as _db:
             "ALTER TABLE students ADD COLUMN IF NOT EXISTS reminder_preference VARCHAR DEFAULT 'WhatsApp Text';",
             "ALTER TABLE students ADD COLUMN IF NOT EXISTS reminder_sent BOOLEAN DEFAULT FALSE;",
             "ALTER TABLE students ADD COLUMN IF NOT EXISTS guests_details TEXT;",
-            "ALTER TABLE students ADD COLUMN IF NOT EXISTS school VARCHAR DEFAULT 'Aquatic Indica Surf School';",
+            "ALTER TABLE students ADD COLUMN IF NOT EXISTS school VARCHAR DEFAULT '';",
             "ALTER TABLE students ADD COLUMN IF NOT EXISTS approval_status VARCHAR DEFAULT 'approved';",
             "ALTER TABLE students ADD COLUMN IF NOT EXISTS dob VARCHAR DEFAULT '';",
             "ALTER TABLE students ADD COLUMN IF NOT EXISTS division VARCHAR;",
@@ -1857,7 +1672,7 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
                 name=st_name,
                 email=user.email or "",
                 level="Beginner",
-                school="Aquatic Indica Surf School",
+                school="",
                 approval_status="approved",
                 swimming_ability="Swimmer"
             )
@@ -1945,26 +1760,31 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
 
     # If signup is via school invite link, validate and lock early
     school_invite_record = None
-    slots_needed = 1 + (data.guests_count or 0)
     if data.invite_code and role == "athlete":
         school_invite_record = db.query(SchoolInviteLink).filter(SchoolInviteLink.code == data.invite_code.strip()).first()
         if not school_invite_record:
             raise HTTPException(status_code=400, detail="Invalid school invite link.")
-        remaining_slots = school_invite_record.max_count - school_invite_record.used_count
-        if slots_needed > remaining_slots:
+        if not school_invite_record.is_active or school_invite_record.used_count > 0:
             raise HTTPException(
                 status_code=400,
-                detail=f"This invite link has only {max(0, remaining_slots)} slot(s) remaining, but this registration requires {slots_needed} slot(s)."
+                detail="This invite link has already been used. Each invite link allows only 1 primary email registration with accompanying guests."
             )
-        # Deduct used slots
-        school_invite_record.used_count += slots_needed
-        if school_invite_record.used_count >= school_invite_record.max_count:
-            school_invite_record.is_active = False
+        # Lock guests count strictly to (max_count - 1) - single email + accompanying guests only
+        expected_guests = max(0, school_invite_record.max_count - 1)
+        data.guests_count = expected_guests
+        slots_needed = school_invite_record.max_count
+
+        # Consume full capacity and deactivate so no multiple emails can register on this invite
+        school_invite_record.used_count = school_invite_record.max_count
+        school_invite_record.is_active = False
+
         # Lock school strictly to the invite link's school
         data.school = school_invite_record.school
         if getattr(school_invite_record, 'course_duration', None):
             data.course_duration = school_invite_record.course_duration
         initial_approval = "approved"
+    else:
+        slots_needed = 1 + (data.guests_count or 0)
 
     user = User(
         email=data.email.lower(),
@@ -2007,7 +1827,7 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
             # Keep invite_token permanent so portal link in email remains permanently valid
             existing_student.last_active = "Today"
             existing_student.approval_status = "approved"
-            db.add(ActivityLog(text=f"{existing_student.name} activated their student account", type="group", school=existing_student.school or "Aquatic Indica Surf School"))
+            db.add(ActivityLog(text=f"{existing_student.name} activated their student account", type="group", school=existing_student.school or ""))
         else:
             student = Student(
                 user_id=user.id,
@@ -2821,7 +2641,7 @@ def create_mock_heat(data: MockHeatCreate, db: OrmSession = Depends(get_db)):
     db.refresh(heat)
     
     # Log activity
-    db.add(ActivityLog(text=f"Coach {coach.name} initiated mock heat with {student.name}", type="session", school=student.school or coach.school or "Aquatic Indica Surf School"))
+    db.add(ActivityLog(text=f"Coach {coach.name} initiated mock heat with {student.name}", type="session", school=student.school or coach.school or ""))
     db.commit()
     
     return {"heat_id": heat.id, "message": "Mock heat started"}
@@ -3274,7 +3094,7 @@ def add_instructor_review(instructor_id: int, data: InstructorReviewCreate, db: 
     db.add(ActivityLog(
         text=f"Review added for Coach {i.name} by {data.student_name} ({data.rating} Stars)",
         type="review",
-        school=i.school or "Aquatic Indica Surf School"
+        school=i.school or ""
     ))
     db.commit()
     
@@ -3331,7 +3151,7 @@ def create_instructor(data: InstructorCreate, request: Request, db: OrmSession =
     db.add(instructor)
     db.commit()
     db.refresh(instructor)
-    db.add(ActivityLog(text=f"New instructor {data.name} joined the team", type="group", school=instructor.school or data.school or "Aquatic Indica Surf School"))
+    db.add(ActivityLog(text=f"New instructor {data.name} joined the team", type="group", school=instructor.school or data.school or ""))
     db.commit()
 
     # Send Welcome Email via AquaticX SMTP
@@ -3343,20 +3163,20 @@ def create_instructor(data: InstructorCreate, request: Request, db: OrmSession =
             coach_html = f"""
             <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 24px; background: #0F172A; color: #F8FAFC; border-radius: 16px; max-width: 540px; margin: auto;">
                 <div style="text-align: center; margin-bottom: 20px;">
-                    <h1 style="color: #00F2FE; margin: 0; font-size: 24px;">🏄 Aquatic Indica Surf School</h1>
+                    <h1 style="color: #00F2FE; margin: 0; font-size: 24px;">🏄 {instructor.school or 'Surf School'}</h1>
                     <p style="color: #94A3B8; font-size: 13px; margin: 4px 0 0 0;">Coach Account Access &amp; Portal Invitation</p>
                 </div>
                 <div style="background: rgba(255,255,255,0.05); padding: 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
                     <h3 style="margin-top: 0; color: #F1F5F9;">Aloha {data.name}! 🏄‍♂️</h3>
                     <p style="font-size: 14px; line-height: 1.6; color: #CBD5E1;">
-                        You have been registered as an Instructor / Coach at <strong>{instructor.school or 'Aquatic Indica Surf School'}</strong>.
+                        You have been registered as an Instructor / Coach at <strong>{instructor.school or 'Surf School'}</strong>.
                     </p>
                     <div style="background: rgba(13, 148, 136, 0.15); border: 1px solid rgba(13, 148, 136, 0.4); padding: 14px; border-radius: 10px; margin: 16px 0;">
                         <p style="margin: 0 0 8px 0; font-weight: 700; color: #2DD4BF; font-size: 13px;">🔑 Your Coach Login Details:</p>
                         <ul style="font-size: 13px; color: #F8FAFC; margin: 0; padding-left: 18px; line-height: 1.8;">
                             <li><strong>Login Email ID:</strong> {email_clean}</li>
                             {pass_info}
-                            <li><strong>School Affiliation:</strong> {instructor.school or 'Aquatic Indica Surf School'}</li>
+                            <li><strong>School Affiliation:</strong> {instructor.school or 'Independent'}</li>
                         </ul>
                     </div>
                     <p style="font-size: 13px; color: #94A3B8;">
@@ -3385,38 +3205,81 @@ def create_instructor(data: InstructorCreate, request: Request, db: OrmSession =
 
 @app.delete("/api/instructors/{instructor_id}")
 def delete_instructor(instructor_id: int, db: OrmSession = Depends(get_db)):
-    i = db.query(Instructor).filter((Instructor.id == instructor_id) | (Instructor.user_id == instructor_id)).first()
+    # Resolve instructor record (by Instructor.id or Instructor.user_id)
+    i = db.query(Instructor).filter(
+        (Instructor.id == instructor_id) | (Instructor.user_id == instructor_id)
+    ).first()
+
+    # If not found by instructor table, try resolving via User table
+    if not i:
+        u = db.query(User).filter(User.id == instructor_id).first()
+        if u:
+            i = db.query(Instructor).filter(Instructor.user_id == u.id).first()
+
     try:
         if i:
-            db.query(Student).filter(Student.instructor_id == i.id).update({"instructor_id": None})
-            db.query(SurfSession).filter(SurfSession.instructor_id == i.id).delete()
-            db.query(MockHeat).filter(MockHeat.coach_id == i.id).delete()
+            # 1. Unlink all students assigned to this coach (do NOT delete students)
+            db.query(Student).filter(Student.instructor_id == i.id).update(
+                {"instructor_id": None}, synchronize_session="fetch"
+            )
+
+            # 2. Delete attendance records linked to this coach's sessions
+            coach_session_ids = [
+                s.id for s in db.query(SurfSession).filter(SurfSession.instructor_id == i.id).all()
+            ]
+            if coach_session_ids:
+                db.query(AttendanceRecord).filter(
+                    AttendanceRecord.student_id.in_(
+                        db.query(SurfSession.student_id).filter(SurfSession.instructor_id == i.id)
+                    )
+                ).delete(synchronize_session="fetch")
+
+            # 3. Delete sessions belonging to this coach
+            db.query(SurfSession).filter(SurfSession.instructor_id == i.id).delete(
+                synchronize_session="fetch"
+            )
+
+            # 4. Delete mock heat participants first (FK constraint), then mock heats
+            coach_heat_ids = [
+                h.id for h in db.query(MockHeat).filter(MockHeat.coach_id == i.id).all()
+            ]
+            if coach_heat_ids:
+                db.execute(
+                    __import__("sqlalchemy").text(
+                        "DELETE FROM mock_heat_participants WHERE mock_heat_id = ANY(:ids)"
+                    ),
+                    {"ids": coach_heat_ids}
+                )
+            db.query(MockHeat).filter(MockHeat.coach_id == i.id).delete(
+                synchronize_session="fetch"
+            )
+
+            # 5. Delete linked user account
             if i.user_id:
-                db.query(User).filter(User.id == i.user_id).delete()
+                db.query(User).filter(User.id == i.user_id).delete(
+                    synchronize_session="fetch"
+                )
+
+            # 6. Delete the instructor record itself
             db.delete(i)
             db.commit()
             return {"message": "Instructor deleted successfully"}
+
+        # Fallback: no instructor record found, but a user record may exist
         u = db.query(User).filter(User.id == instructor_id).first()
         if u:
-            inst = db.query(Instructor).filter(Instructor.user_id == u.id).first()
-            if inst:
-                db.query(Student).filter(Student.instructor_id == inst.id).update({"instructor_id": None})
-                db.query(SurfSession).filter(SurfSession.instructor_id == inst.id).delete()
-                db.query(MockHeat).filter(MockHeat.coach_id == inst.id).delete()
-                db.delete(inst)
             db.delete(u)
             db.commit()
             return {"message": "Instructor deleted successfully"}
+
+        raise HTTPException(status_code=404, detail="Instructor not found")
+
+    except HTTPException:
+        raise
     except Exception as e:
         db.rollback()
         print(f"Error deleting instructor {instructor_id}: {e}")
-        try:
-            if i:
-                db.delete(i)
-                db.commit()
-        except Exception:
-            db.rollback()
-    return {"message": "Instructor deleted successfully"}
+        raise HTTPException(status_code=500, detail=f"Failed to delete instructor: {str(e)}")
 
 
 # ─── Students ─────────────────────────────────────────────────────────────────
@@ -3432,7 +3295,11 @@ def get_students(school: Optional[str] = None, db: OrmSession = Depends(get_db))
 
 @app.get("/api/students/{student_id}")
 def get_student(student_id: int, db: OrmSession = Depends(get_db)):
-    s = db.query(Student).filter((Student.id == student_id) | (Student.user_id == student_id)).first()
+    # 1. Look up student by their primary key ID first
+    s = db.query(Student).filter(Student.id == student_id).first()
+    # 2. Only if no student with this Student.id exists, fall back to matching by user_id
+    if not s:
+        s = db.query(Student).filter(Student.user_id == student_id).first()
     if not s:
         # Check if student_id is a User ID with athlete role
         u = db.query(User).filter(User.id == student_id).first()
@@ -3443,7 +3310,7 @@ def get_student(student_id: int, db: OrmSession = Depends(get_db)):
                 name=st_name,
                 email=u.email or "",
                 level="Beginner",
-                school="Aquatic Indica Surf School",
+                school="",
                 approval_status="approved",
                 swimming_ability="Swimmer"
             )
@@ -3458,11 +3325,10 @@ def get_student(student_id: int, db: OrmSession = Depends(get_db)):
     d = student_to_dict(s)
     d["badges"] = [b.badge_level for b in s.badges]
     
-    # Query all sessions matching this student by id, user_id, or name/guest_name
+    # Query all sessions matching this student by student id or student/guest name
     all_sess = db.query(SurfSession).filter(
         or_(
             SurfSession.student_id == s.id,
-            (SurfSession.student_id == s.user_id) if s.user_id else False,
             and_(SurfSession.student_name != None, func.lower(SurfSession.student_name) == s.name.lower().strip()),
             and_(SurfSession.guest_name != None, func.lower(SurfSession.guest_name) == s.name.lower().strip())
         )
@@ -3532,7 +3398,7 @@ def create_student(data: StudentCreate, request: Request, db: OrmSession = Depen
             elif not student_school:
                 student_school = inst.school
     if not student_school:
-        student_school = "Aquatic Indica Surf School"
+        student_school = (data.school or "").strip()
 
     computed_age = data.age
     if data.dob:
@@ -3564,7 +3430,7 @@ def create_student(data: StudentCreate, request: Request, db: OrmSession = Depen
     db.add(student)
     db.commit()
     db.refresh(student)
-    db.add(ActivityLog(text=f"{data.name} joined as a new student", type="group", school=student_school or "Aquatic Indica Surf School"))
+    db.add(ActivityLog(text=f"{data.name} joined as a new student", type="group", school=student_school or ""))
     db.commit()
     db.refresh(student)
 
@@ -3608,7 +3474,7 @@ def create_students_bulk(
         if not data.name or not data.email:
             continue
         clean_email = data.email.lower().strip()
-        target_school = (data.school or "Aquatic Indica Surf School").strip()
+        target_school = (data.school or "").strip()
         batch_key = (clean_email, target_school.lower())
         if batch_key in seen_in_batch:
             continue
@@ -3735,7 +3601,7 @@ def create_students_bulk(
             })
     
     db.commit()
-    bulk_school = (students_data[0].school if students_data and students_data[0].school else "Aquatic Indica Surf School")
+    bulk_school = (students_data[0].school if students_data and students_data[0].school else "")
     db.add(ActivityLog(text=f"Imported/updated {len(created)} students & sent welcome emails", type="group", school=bulk_school))
     db.commit()
 
@@ -3928,7 +3794,7 @@ def get_invite_info(token: str, db: OrmSession = Depends(get_db)):
     if not student:
         raise HTTPException(status_code=404, detail="Invalid or expired invite link")
     sch = db.query(School).first()
-    sch_name = sch.name if sch else "Aquatic Indica Surf School"
+    sch_name = (student.school or (sch.name if sch else ""))
     password_set = student.user_id is not None
     instructor_name = None
     if student.instructor_id:
@@ -4000,7 +3866,7 @@ def set_invite_password(token: str, data: dict, db: OrmSession = Depends(get_db)
     db.flush()
     student.user_id = user.id
     student.approval_status = "approved"
-    db.add(ActivityLog(text=f"{student.name} set their password and activated their account", type="group", school=student.school or "Aquatic Indica Surf School"))
+    db.add(ActivityLog(text=f"{student.name} set their password and activated their account", type="group", school=student.school or ""))
     db.commit()
     return {"success": True, "message": "Password set! You can now log in with your email."}
 
@@ -4110,7 +3976,7 @@ def set_instructor_password(instructor_id: int, data: dict, db: OrmSession = Dep
 def create_school_invite(data: SchoolInviteCreate, db: OrmSession = Depends(get_db)):
     """Create a new batch/school registration invite link with a strict capacity count and locked course duration."""
     import secrets as _secrets
-    school_name = data.school.strip() if data.school else "Aquatic Indica Surf School"
+    school_name = data.school.strip() if data.school else ""
     capacity = max(1, int(data.max_count or 1))
     course_dur = (data.course_duration or "3 Days Course").strip()
     code = f"inv_{_secrets.token_urlsafe(12)}"
@@ -4131,6 +3997,7 @@ def create_school_invite(data: SchoolInviteCreate, db: OrmSession = Depends(get_
         "code": invite.code,
         "school": invite.school,
         "max_count": invite.max_count,
+        "locked_guests": max(0, invite.max_count - 1),
         "used_count": invite.used_count,
         "course_duration": invite.course_duration or "3 Days Course",
         "remaining": invite.max_count - invite.used_count,
@@ -4149,15 +4016,17 @@ def list_school_invites(school: Optional[str] = None, db: OrmSession = Depends(g
     res = []
     for inv in invites:
         rem = max(0, inv.max_count - inv.used_count)
+        is_active = inv.is_active and (inv.used_count == 0) and (rem > 0)
         res.append({
             "id": inv.id,
             "code": inv.code,
             "school": inv.school,
             "max_count": inv.max_count,
+            "locked_guests": max(0, inv.max_count - 1),
             "used_count": inv.used_count,
             "course_duration": getattr(inv, 'course_duration', None) or "3 Days Course",
             "remaining": rem,
-            "is_active": inv.is_active and (rem > 0),
+            "is_active": is_active,
             "created_at": inv.created_at.isoformat() if inv.created_at else ""
         })
     return res
@@ -4170,19 +4039,32 @@ def get_school_invite(code: str, db: OrmSession = Depends(get_db)):
     if not invite:
         return {"valid": False, "detail": "Invite link not found or has been revoked."}
 
-    remaining = max(0, invite.max_count - invite.used_count)
-    is_valid = invite.is_active and (remaining > 0)
+    # Invite is single-use: 1 primary email registration with accompanying guests
+    if invite.used_count > 0 or not invite.is_active:
+        return {
+            "valid": False,
+            "code": invite.code,
+            "school": invite.school,
+            "max_count": invite.max_count,
+            "locked_guests": max(0, invite.max_count - 1),
+            "used_count": invite.used_count,
+            "remaining": 0,
+            "is_active": False,
+            "detail": "This invite link has already been used. Each invite link is valid for 1 primary account registration only."
+        }
 
+    locked_guests = max(0, invite.max_count - 1)
     return {
-        "valid": is_valid,
+        "valid": True,
         "code": invite.code,
         "school": invite.school,
         "max_count": invite.max_count,
+        "locked_guests": locked_guests,
         "used_count": invite.used_count,
         "course_duration": getattr(invite, 'course_duration', None) or "3 Days Course",
-        "remaining": remaining,
-        "is_active": invite.is_active,
-        "detail": "Invite link is valid" if is_valid else "This invite link has reached its maximum registration limit."
+        "remaining": invite.max_count,
+        "is_active": True,
+        "detail": "Invite link is valid"
     }
 
 
@@ -4230,7 +4112,7 @@ def approve_student_by_email(data: ApproveEmailData, db: OrmSession = Depends(ge
                 email=u.email,
                 level="Beginner",
                 approval_status="approved",
-                school="Aquatic Indica Surf School",
+                school="",
                 start_date=datetime.now().strftime("%Y-%m-%d"),
                 course_duration="3 Days Course",
                 session_time=None,
@@ -4274,7 +4156,9 @@ def check_approval(email: str, db: OrmSession = Depends(get_db)):
 
 @app.delete("/api/students/{student_id}")
 def delete_student(student_id: int, db: OrmSession = Depends(get_db)):
-    s = db.query(Student).filter((Student.id == student_id) | (Student.user_id == student_id)).first()
+    s = db.query(Student).filter(Student.id == student_id).first()
+    if not s:
+        s = db.query(Student).filter(Student.user_id == student_id).first()
     try:
         if s:
             target_id = s.id
@@ -4366,7 +4250,7 @@ def create_session(data: SessionCreate, db: OrmSession = Depends(get_db)):
     db.refresh(session)
     student_name = student.name if student else "Unknown"
     instructor_name = instructor.name if instructor else "Unknown"
-    session_school = (student.school if student and student.school else (instructor.school if instructor and instructor.school else "Aquatic Indica Surf School"))
+    session_school = (student.school if student and student.school else (instructor.school if instructor and instructor.school else ""))
     db.add(ActivityLog(
         text=f"{student_name} session with {instructor_name} scheduled at {data.location}",
         type="session",
@@ -4441,7 +4325,7 @@ def create_sessions_bulk(data: SessionBulkCreate, db: OrmSession = Depends(get_d
     
     count = len(created)
     names_summary = ", ".join(student_names[:3]) + (f" and {count - 3} more" if count > 3 else "")
-    bulk_inst_school = instructor.school if instructor and instructor.school else "Aquatic Indica Surf School"
+    bulk_inst_school = instructor.school if instructor and instructor.school else ""
     first_st = db.query(Student).filter(Student.id == data.student_ids[0]).first() if data.student_ids else None
     bulk_session_school = first_st.school if first_st and first_st.school else bulk_inst_school
     db.add(ActivityLog(
@@ -4606,15 +4490,6 @@ def analytics_students(
 @app.get("/api/schools")
 def get_schools(db: OrmSession = Depends(get_db)):
     schools = db.query(School).all()
-    if not schools:
-        # Auto-populate main surf school if empty
-        s1 = School(name="Aquatic Indica Surf School", owner="Aquatic Admin",
-                    email="rpntechworld@gmail.com", phone="+91 9876543210",
-                    country="India", city="Kovalam / Chennai",
-                    instructor_count="0", website="https://aquaticindica.com")
-        db.add(s1)
-        db.commit()
-        schools = db.query(School).all()
     return [
         {
             "id": s.id, "name": s.name, "owner": s.owner,

@@ -73,8 +73,14 @@ try:
     print("[INFO] Deleting demo users...")
     cursor.execute("DELETE FROM users WHERE email IN %s;", (demo_emails,))
 
+    print("[INFO] Deleting Aquatic Indica Surf School from schools and cleaning references...")
+    cursor.execute("DELETE FROM schools WHERE name ILIKE '%aquatic indica%';")
+    cursor.execute("UPDATE students SET school = '' WHERE school ILIKE '%aquatic indica%';")
+    cursor.execute("UPDATE activity_log SET school = '' WHERE school ILIKE '%aquatic indica%';")
+    cursor.execute("UPDATE instructors SET school = '' WHERE school ILIKE '%aquatic indica%';")
+
     conn.commit()
-    print("[SUCCESS] All fake/demo coaches, students, and sessions have been permanently purged from AWS RDS!")
+    print("[SUCCESS] All fake/demo coaches, students, sessions, and Aquatic Indica entries have been permanently purged from AWS RDS!")
     
     cursor.close()
     conn.close()
