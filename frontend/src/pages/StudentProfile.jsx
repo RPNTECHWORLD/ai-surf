@@ -48,6 +48,10 @@ const StudentProfile = () => {
   const avatarFileInputRef = useRef(null);
   const modalPhotoInputRef = useRef(null);
 
+  // Primary Athlete Swap state
+  const [swapModalGuest, setSwapModalGuest] = useState(null); // the guest to promote
+  const [swappingPrimary, setSwappingPrimary] = useState(false);
+
   const handleOpenGuestModal = () => {
     const existing = student?.guests_details && student.guests_details.length > 0
       ? student.guests_details
@@ -950,6 +954,95 @@ const StudentProfile = () => {
     }
   };
 
+  // ── Primary Athlete Swap ────────────────────────────────────────────────────
+  const handleSwapPrimary = async () => {
+    if (!swapModalGuest || !student) return;
+    setSwappingPrimary(true);
+    try {
+      const token = sessionStorage.getItem('token');
+
+      // Build the original-primary-as-guest entry
+      const originalAsPrimaryGuest = {
+        name: student.name || '',
+        whatsapp_number: student.whatsapp_number || '',
+        email: student.email || '',
+        dob: student.dob || '',
+        age: student.age || '',
+        level: student.level || 'Beginner',
+      };
+
+      // Collect all guests EXCEPT the one being promoted, plus original primary as a new guest
+      let currentGuests = [];
+      try {
+        if (Array.isArray(student.guests_details)) currentGuests = student.guests_details;
+        else if (typeof student.guests_details === 'string') currentGuests = JSON.parse(student.guests_details);
+      } catch (e) { currentGuests = []; }
+      if (!Array.isArray(currentGuests)) currentGuests = [];
+
+      const remainingGuests = currentGuests.filter(
+        g => (g.name || '').toLowerCase().trim() !== (swapModalGuest.name || '').toLowerCase().trim()
+      );
+      const newGuestsList = [originalAsPrimaryGuest, ...remainingGuests];
+
+      // Build updated student payload: guest data → primary fields
+      const updatedStudentData = {
+        name: swapModalGuest.name || student.name,
+        whatsapp_number: swapModalGuest.whatsapp_number || student.whatsapp_number || '',
+        email: swapModalGuest.email || student.email || '',
+        dob: swapModalGuest.dob || '',
+        age: swapModalGuest.age ? parseInt(swapModalGuest.age) : null,
+        level: swapModalGuest.level || student.level || 'Beginner',
+        guests_count: newGuestsList.length,
+        guests_details: newGuestsList,
+      };
+
+      const res = await fetch(`${API}/api/students/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(updatedStudentData),
+      });
+
+      // Optimistic UI update regardless of backend
+      setStudent(prev => ({
+        ...prev,
+        name: updatedStudentData.name,
+        whatsapp_number: updatedStudentData.whatsapp_number,
+        email: updatedStudentData.email,
+        dob: updatedStudentData.dob,
+        age: updatedStudentData.age,
+        level: updatedStudentData.level,
+        guests_count: newGuestsList.length,
+        guests_details: newGuestsList,
+      }));
+
+      // Sync sessionStorage if viewing own profile
+      try {
+        const savedUser = JSON.parse(sessionStorage.getItem('user') || '{}');
+        if (savedUser && (savedUser.student_id === parseInt(id) || savedUser.id === parseInt(id))) {
+          Object.assign(savedUser, {
+            name: updatedStudentData.name,
+            guests_count: newGuestsList.length,
+            guests_details: newGuestsList,
+          });
+          sessionStorage.setItem('user', JSON.stringify(savedUser));
+        }
+      } catch (e) {}
+
+      setSwapModalGuest(null);
+      // Re-fetch to sync with server
+      setTimeout(fetchStudent, 300);
+    } catch (err) {
+      console.error('Swap primary error:', err);
+      alert('Failed to swap primary athlete. Please try again.');
+    } finally {
+      setSwappingPrimary(false);
+    }
+  };
+  // ───────────────────────────────────────────────────────────────────────────
+
   const hasSchool = Boolean(
     student?.school &&
     typeof student.school === 'string' &&
@@ -1088,19 +1181,41 @@ const StudentProfile = () => {
     return str || 'Upcoming';
   };
 
-  const completedSessions = effectiveSessions.filter(s => getSessionDisplayStatus(s) === 'Completed');
-  const upcomingSessions = effectiveSessions.filter(s => getSessionDisplayStatus(s) === 'Upcoming');
-  const pendingReviewSessions = effectiveSessions.filter(s => getSessionDisplayStatus(s) === 'Pending for Review');
-  const inProgressSessions = effectiveSessions.filter(s => getSessionDisplayStatus(s) === 'In Progress');
+  const sortSessionsAscending = (sessionsList) => {
+    return [...sessionsList].sort((a, b) => {
+      const dateA = normalizeToYYYYMMDD(a.date) || a.date || '';
+      const dateB = normalizeToYYYYMMDD(b.date) || b.date || '';
+      if (dateA !== dateB) return dateA.localeCompare(dateB);
+      const timeA = parseTimeStrToMinutes(a.time) ?? 0;
+      const timeB = parseTimeStrToMinutes(b.time) ?? 0;
+      return timeA - timeB;
+    });
+  };
 
-  // All active or pending sessions (Pending for Review + In Progress + Upcoming)
-  const pendingOrActiveSessions = effectiveSessions.filter(s => {
+  const sortSessionsDescending = (sessionsList) => {
+    return [...sessionsList].sort((a, b) => {
+      const dateA = normalizeToYYYYMMDD(a.date) || a.date || '';
+      const dateB = normalizeToYYYYMMDD(b.date) || b.date || '';
+      if (dateA !== dateB) return dateB.localeCompare(dateA);
+      const timeA = parseTimeStrToMinutes(a.time) ?? 0;
+      const timeB = parseTimeStrToMinutes(b.time) ?? 0;
+      return timeB - timeA;
+    });
+  };
+
+  const completedSessions = sortSessionsDescending(effectiveSessions.filter(s => getSessionDisplayStatus(s) === 'Completed'));
+  const upcomingSessions = sortSessionsAscending(effectiveSessions.filter(s => getSessionDisplayStatus(s) === 'Upcoming'));
+  const pendingReviewSessions = sortSessionsAscending(effectiveSessions.filter(s => getSessionDisplayStatus(s) === 'Pending for Review'));
+  const inProgressSessions = sortSessionsAscending(effectiveSessions.filter(s => getSessionDisplayStatus(s) === 'In Progress'));
+
+  // All active or pending sessions (Pending for Review + In Progress + Upcoming) sorted chronologically (earliest first)
+  const pendingOrActiveSessions = sortSessionsAscending(effectiveSessions.filter(s => {
     const st = getSessionDisplayStatus(s);
     return st !== 'Completed' && st !== 'Cancelled';
-  });
+  }));
 
   // Next Session banner:
-  // If there is an upcoming future session -> that's the next session
+  // Earliest upcoming future session -> that's the next session
   // If no upcoming session, but there is a pending review session -> show pending session
   const nextSession = upcomingSessions.length > 0 ? upcomingSessions[0] : null;
   const pendingBannerSession = (!nextSession && pendingReviewSessions.length > 0)
@@ -1651,30 +1766,78 @@ const StudentProfile = () => {
                     </div>
                   </div>
 
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                     {guestsList.map((g, gIdx) => (
-                      <div key={gIdx} style={{ display: 'flex', alignItems: 'center', gap: '14px', padding: '14px', background: '#F8FAFC', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
-                        <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'linear-gradient(135deg, #0EA5E9, #2563EB)', color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '15px', flexShrink: 0 }}>
-                          {g.name ? g.name.charAt(0).toUpperCase() : `G${gIdx + 1}`}
+                      <div key={gIdx} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                        {/* ↳ indent arrow */}
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: '16px', flexShrink: 0 }}>
+                          <span style={{ fontSize: '16px', color: '#94A3B8', lineHeight: 1 }}>↳</span>
                         </div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                            <span style={{ fontSize: '14.5px', fontWeight: 800, color: '#0F172A' }}>
-                              {g.name || `Guest #${gIdx + 1}`}
-                            </span>
-                            {g.level && (
-                              <span style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '10px', background: '#E0F2FE', color: '#0369A1' }}>
-                                {g.level}
+
+                        {/* Guest card */}
+                        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '14px', padding: '12px 14px', background: '#F0F9FF', borderRadius: '12px', border: '1px solid #BAE6FD', borderLeft: '3px solid #0284C7' }}>
+                          <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'linear-gradient(135deg, #0EA5E9, #2563EB)', color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '15px', flexShrink: 0 }}>
+                            {g.name ? g.name.charAt(0).toUpperCase() : `G${gIdx + 1}`}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: '14.5px', fontWeight: 800, color: '#0F172A' }}>
+                                {g.name || `Guest #${gIdx + 1}`}
                               </span>
-                            )}
+                              {/* ↳ Guest of [primary] label */}
+                              <span style={{
+                                fontSize: '10.5px',
+                                background: '#E0F2FE',
+                                color: '#0369A1',
+                                border: '1px solid #BAE6FD',
+                                padding: '1px 7px',
+                                borderRadius: '5px',
+                                fontWeight: 700,
+                              }}>
+                                Guest of {student.name}
+                              </span>
+                              {g.level && (
+                                <span style={{ fontSize: '11px', fontWeight: 700, padding: '2px 8px', borderRadius: '10px', background: '#ECFDF5', color: '#059669' }}>
+                                  {g.level}
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#64748B', display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '4px' }}>
+                              {g.age && <span>🎂 Age: {g.age} yrs</span>}
+                              {g.gender && <span>• {g.gender}</span>}
+                              {g.stance && <span>• Stance: {g.stance}</span>}
+                              {g.whatsapp_number && <span>📱 {g.whatsapp_number}</span>}
+                              {g.email && <span>✉️ {g.email}</span>}
+                            </div>
                           </div>
-                          <div style={{ fontSize: '12px', color: '#64748B', display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '4px' }}>
-                            {g.age && <span>🎂 Age: {g.age} yrs</span>}
-                            {g.gender && <span>• {g.gender}</span>}
-                            {g.stance && <span>• Stance: {g.stance}</span>}
-                            {g.whatsapp_number && <span>📱 {g.whatsapp_number}</span>}
-                            {g.email && <span>✉️ {g.email}</span>}
-                          </div>
+                          {/* ⇄ Swap button — visible to athlete (own profile), coach, or admin */}
+                          {(isOwnProfile || isCoach || currentUser?.role === 'admin') && (
+                            <button
+                              id={`swap-primary-guest-${gIdx}`}
+                              title={`Make ${g.name || 'this guest'} the primary athlete`}
+                              onClick={() => setSwapModalGuest(g)}
+                              style={{
+                                flexShrink: 0,
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '5px',
+                                padding: '6px 12px',
+                                borderRadius: '8px',
+                                border: '1.5px solid #7C3AED',
+                                background: 'transparent',
+                                color: '#7C3AED',
+                                fontWeight: 700,
+                                fontSize: '12px',
+                                cursor: 'pointer',
+                                transition: 'background 0.18s, color 0.18s',
+                                whiteSpace: 'nowrap',
+                              }}
+                              onMouseEnter={e => { e.currentTarget.style.background = '#7C3AED'; e.currentTarget.style.color = '#FFF'; }}
+                              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#7C3AED'; }}
+                            >
+                              ⇄ Make Primary
+                            </button>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -3049,6 +3212,135 @@ const StudentProfile = () => {
           }
         }
       `}</style>
+
+      {/* ── Primary Athlete Swap Confirmation Modal ── */}
+      {swapModalGuest && (
+        <div
+          id="swap-primary-modal-overlay"
+          onClick={(e) => { if (e.target === e.currentTarget) setSwapModalGuest(null); }}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 9999,
+            background: 'rgba(15,23,42,0.55)', backdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: '16px',
+          }}
+        >
+          <div
+            id="swap-primary-modal"
+            style={{
+              background: '#FFFFFF', borderRadius: '18px', padding: '32px 28px',
+              maxWidth: '440px', width: '100%',
+              boxShadow: '0 24px 60px rgba(124,58,237,0.18), 0 4px 20px rgba(0,0,0,0.12)',
+              border: '1.5px solid #EDE9FE',
+              animation: 'sp-fade-in 0.22s ease',
+            }}
+          >
+            {/* Icon + Title */}
+            <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+              <div style={{
+                width: '56px', height: '56px', borderRadius: '50%',
+                background: 'linear-gradient(135deg, #7C3AED, #A78BFA)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: '26px', margin: '0 auto 14px',
+                boxShadow: '0 4px 16px rgba(124,58,237,0.3)',
+              }}>
+                ⇄
+              </div>
+              <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: '#0F172A' }}>
+                Swap Primary Athlete
+              </h2>
+              <p style={{ margin: '6px 0 0', fontSize: '13.5px', color: '#64748B', lineHeight: 1.5 }}>
+                This will change who is registered as the primary student.
+              </p>
+            </div>
+
+            {/* Swap preview */}
+            <div style={{
+              background: '#F8FAFC', borderRadius: '12px', padding: '16px',
+              border: '1px solid #E2E8F0', marginBottom: '22px',
+            }}>
+              {/* Guest → Primary */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                <div style={{
+                  width: '38px', height: '38px', borderRadius: '50%', flexShrink: 0,
+                  background: 'linear-gradient(135deg, #7C3AED, #A78BFA)',
+                  color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontWeight: 800, fontSize: '15px',
+                }}>
+                  {(swapModalGuest.name || 'G').charAt(0).toUpperCase()}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: '13px', fontWeight: 800, color: '#0F172A' }}>
+                    {swapModalGuest.name || 'Guest'}
+                  </div>
+                  <div style={{ fontSize: '11.5px', color: '#7C3AED', fontWeight: 700 }}>
+                    → Becomes Primary Athlete
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ borderTop: '1px dashed #E2E8F0', margin: '0 0 12px' }} />
+
+              {/* Current Primary → Guest */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{
+                  width: '38px', height: '38px', borderRadius: '50%', flexShrink: 0,
+                  background: 'linear-gradient(135deg, #0EA5E9, #2563EB)',
+                  color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontWeight: 800, fontSize: '15px',
+                }}>
+                  {(student.name || 'S').charAt(0).toUpperCase()}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: '13px', fontWeight: 800, color: '#0F172A' }}>
+                    {student.name}
+                  </div>
+                  <div style={{ fontSize: '11.5px', color: '#64748B', fontWeight: 700 }}>
+                    → Moves to Guest list
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Action buttons */}
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                id="swap-primary-cancel-btn"
+                onClick={() => setSwapModalGuest(null)}
+                disabled={swappingPrimary}
+                style={{
+                  flex: 1, padding: '11px 0', borderRadius: '10px',
+                  border: '1.5px solid #E2E8F0', background: '#F8FAFC',
+                  color: '#475569', fontWeight: 700, fontSize: '14px',
+                  cursor: 'pointer', transition: 'background 0.15s',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#E2E8F0'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = '#F8FAFC'; }}
+              >
+                Cancel
+              </button>
+              <button
+                id="swap-primary-confirm-btn"
+                onClick={handleSwapPrimary}
+                disabled={swappingPrimary}
+                style={{
+                  flex: 1, padding: '11px 0', borderRadius: '10px',
+                  border: 'none', background: 'linear-gradient(135deg, #7C3AED, #A78BFA)',
+                  color: '#FFF', fontWeight: 800, fontSize: '14px',
+                  cursor: swappingPrimary ? 'not-allowed' : 'pointer',
+                  opacity: swappingPrimary ? 0.7 : 1,
+                  transition: 'opacity 0.15s, transform 0.15s',
+                  boxShadow: '0 4px 14px rgba(124,58,237,0.35)',
+                }}
+                onMouseEnter={e => { if (!swappingPrimary) e.currentTarget.style.transform = 'translateY(-1px)'; }}
+                onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; }}
+              >
+                {swappingPrimary ? 'Swapping…' : '⇄ Confirm Swap'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

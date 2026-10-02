@@ -1030,14 +1030,14 @@ const Competitions = () => {
       </main>
 
       <style>{`
-        .cmp-page { display: flex; min-height: 100vh; background: #F8FAFC; font-family: 'Instrument Sans', sans-serif; padding-top: 84px; box-sizing: border-box; width: 100%; }
+        .cmp-page { display: flex; min-height: 100vh; background: #F8FAFC; font-family: 'Instrument Sans', sans-serif; padding-top: 0px; box-sizing: border-box; width: 100%; }
         .cmp-main { flex: 1; padding: 28px 40px 80px 40px; display: flex; flex-direction: column; gap: 32px; overflow-y: auto; width: 100%; box-sizing: border-box; }
 
         /* Header */
         .cmp-header { display: flex; justify-content: space-between; align-items: center; gap: 20px; width: 100%; }
-        .cmp-header-text { display: flex; flex-direction: column; }
-        .cmp-title { font-family: 'Outfit', sans-serif; font-size: 32px; font-weight: 700; color: #050B1A; margin: 0; line-height: 1.2; }
-        .cmp-subtitle { color: #475569; font-size: 14px; margin: 4px 0 0 0; }
+        .cmp-header-text { display: flex; flex-direction: column; align-items: flex-start; text-align: left; }
+        .cmp-title { font-family: 'Outfit', sans-serif; font-size: 24px; font-weight: 700; color: #0F172A; margin: 0; line-height: 1.2; text-align: left; }
+        .cmp-subtitle { font-size: 13.5px; color: #64748B; margin: 4px 0 0 0; line-height: 1.4; text-align: left; }
 
         /* Tab Switcher */
         .cmp-tab-switcher { display: flex; gap: 12px; background: #FFF; border: 1.5px solid #E2E8F0; padding: 6px; border-radius: 30px; flex-shrink: 0; }
@@ -1323,7 +1323,7 @@ const Competitions = () => {
         .report-actions { display: flex; justify-content: center; }
 
         @media (max-width: 768px) {
-          .cmp-page { padding-top: 60px !important; width: 100% !important; max-width: 100% !important; overflow-x: hidden !important; }
+          .cmp-page { padding-top: 0px !important; width: 100% !important; max-width: 100% !important; overflow-x: hidden !important; }
           .cmp-main { padding: 14px 12px 80px 12px !important; gap: 16px !important; width: 100% !important; max-width: 100% !important; overflow-x: hidden !important; }
           
           .cmp-header {

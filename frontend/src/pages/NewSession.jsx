@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import { normalizeTimeString, getNextAvailableSlotTime } from './SessionConfigure';
@@ -296,9 +296,25 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     isIndividualSurfer
   );
 
+  const isIndividualCoach = Boolean(
+    isCoachFreelance ||
+    (isCoach && isIndividualSurfer) ||
+    (isCoach && (
+      !activeSchoolName ||
+      schoolLower === 'coach portal' ||
+      schoolLower.includes('individual') ||
+      schoolLower.includes('freelance') ||
+      schoolLower === 'no school selected' ||
+      (typeof currentUser?.school === 'string' && currentUser.school.toLowerCase().includes('individual')) ||
+      (typeof currentUser?.school_name === 'string' && currentUser.school_name.toLowerCase().includes('individual')) ||
+      currentUser?.school === 'Individual / Freelance Coach' ||
+      currentUser?.is_individual === true
+    ))
+  );
+
   // Only School Admins and Individual/Freelance Surfers/Coaches can Schedule sessions
   // Coaches assigned to a school cannot schedule sessions
-  const canManageSessions = Boolean(isAdminOrSuperAdmin || isIndividualSurfer || isCoachFreelance);
+  const canManageSessions = Boolean(isAdminOrSuperAdmin || isIndividualSurfer || isCoachFreelance || isIndividualCoach);
 
   useEffect(() => {
     if (currentUser && !canManageSessions) {
@@ -431,7 +447,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const [step3CoachGenderFilter, setStep3CoachGenderFilter] = useState('all'); // 'all' | 'male' | 'female'
   const [step3SlotFilter, setStep3SlotFilter] = useState(() => slots[0]?.id || 1);
   const [studentSearch, setStudentSearch] = useState('');
-  const [step3CheckedStudentIds, setStep3CheckedStudentIds] = useState([]);
+  const [step3CheckedStudentIdsBySlot, setStep3CheckedStudentIdsBySlot] = useState({});
 
   const [trainingGroups, setTrainingGroups] = useState([]);
   const [activeDropGroupId, setActiveDropGroupId] = useState(null);
@@ -439,6 +455,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const [draggingType, setDraggingType] = useState(null);
   const [isPublishing, setIsPublishing] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [publishedStats, setPublishedStats] = useState({ sessionsCount: 1, slotsCount: 1 });
   const [uiAlert, setUiAlert] = useState(null);
   const [existingDbSessions, setExistingDbSessions] = useState([]);
 
@@ -536,6 +553,11 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             const sSchool = (s.school || s.school_name || '').toLowerCase().trim();
             if (isCoachFreelance) {
               return sSchool === 'individual / freelance coach' || (!sSchool && String(s.created_by_user_id) === String(currentUser?.instructor_id || currentUser?.id));
+            }
+            // Safety: if we know the active school, only show students from that school
+            if (schoolName) {
+              const targetSchool = schoolName.toLowerCase().trim();
+              return sSchool === targetSchool;
             }
             return true;
           });
@@ -706,6 +728,26 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
   // Real Instructors (NO fake data)
   const allInstructors = dbInstructors;
+
+  // Single Instructor for Individual Coach Account
+  const currentIndividualCoach = useMemo(() => {
+    if (!isIndividualCoach) return null;
+    const myId = currentUser?.instructor_id || currentUser?.id;
+    if (myId) {
+      const found = allInstructors.find(i => String(i.id) === String(myId));
+      if (found) return found;
+    }
+    if (allInstructors.length > 0) return allInstructors[0];
+    return {
+      id: myId || 1,
+      name: currentUser?.name || 'Coach',
+      gender: currentUser?.gender || 'Male',
+      role: 'Head Coach',
+      status: 'Available',
+      avatar: currentUser?.image || '',
+      isReal: true
+    };
+  }, [isIndividualCoach, currentUser, allInstructors]);
 
   // Filtered Instructors for Step 3 (Coach Gender Filter)
   const filteredInstructors = useMemo(() => {
@@ -1206,8 +1248,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
               level: 'General',
               slotId: slot.id,
               studentIds: slotStudents,
-              assignedInstructorId: (isCoachFreelance && (currentUser?.instructor_id || currentUser?.id)) ? (currentUser?.instructor_id || currentUser?.id) : null,
-              assignedInstructorIds: (isCoachFreelance && (currentUser?.instructor_id || currentUser?.id)) ? [(currentUser?.instructor_id || currentUser?.id)] : [],
+              assignedInstructorId: (isIndividualCoach && currentIndividualCoach?.id) ? currentIndividualCoach.id : ((isCoachFreelance && (currentUser?.instructor_id || currentUser?.id)) ? (currentUser?.instructor_id || currentUser?.id) : null),
+              assignedInstructorIds: (isIndividualCoach && currentIndividualCoach?.id) ? [currentIndividualCoach.id] : ((isCoachFreelance && (currentUser?.instructor_id || currentUser?.id)) ? [(currentUser?.instructor_id || currentUser?.id)] : []),
             };
           });
           setTrainingGroups(newGroups);
@@ -1221,8 +1263,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
               level: 'General',
               slotId: initialSlot?.id || null,
               studentIds: targetIds,
-              assignedInstructorId: (isCoachFreelance && (currentUser?.instructor_id || currentUser?.id)) ? (currentUser?.instructor_id || currentUser?.id) : null,
-              assignedInstructorIds: (isCoachFreelance && (currentUser?.instructor_id || currentUser?.id)) ? [(currentUser?.instructor_id || currentUser?.id)] : [],
+              assignedInstructorId: (isIndividualCoach && currentIndividualCoach?.id) ? currentIndividualCoach.id : ((isCoachFreelance && (currentUser?.instructor_id || currentUser?.id)) ? (currentUser?.instructor_id || currentUser?.id) : null),
+              assignedInstructorIds: (isIndividualCoach && currentIndividualCoach?.id) ? [currentIndividualCoach.id] : ((isCoachFreelance && (currentUser?.instructor_id || currentUser?.id)) ? [(currentUser?.instructor_id || currentUser?.id)] : []),
             }
           ]);
           setActiveDropGroupId('group-1');
@@ -1367,8 +1409,41 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     return trainingGroups.filter(g => String(g.slotId || slots[0]?.id) === String(step3SlotFilter));
   }, [trainingGroups, step3SlotFilter, slots, editSession]);
 
+  // Set of student IDs that belong to the active slot in Step 3
+  const activeSlotStudentIdSet = useMemo(() => {
+    if (editSession || step3SlotFilter === 'ALL') {
+      return new Set(importedStudents.map(s => s.id));
+    }
+    const slotAssignedIds = slotStudentMap[step3SlotFilter] || [];
+    return new Set(slotAssignedIds);
+  }, [importedStudents, step3SlotFilter, slotStudentMap, editSession]);
+
+  // Checked student IDs strictly scoped to the active slot
+  const step3CheckedStudentIds = useMemo(() => {
+    const slotKey = step3SlotFilter ?? 'default';
+    const list = step3CheckedStudentIdsBySlot[slotKey] || [];
+    return list.filter(id => activeSlotStudentIdSet.has(id));
+  }, [step3CheckedStudentIdsBySlot, step3SlotFilter, activeSlotStudentIdSet]);
+
+  const setStep3CheckedStudentIds = useCallback((valOrFn) => {
+    const slotKey = step3SlotFilter ?? 'default';
+    setStep3CheckedStudentIdsBySlot(prev => {
+      const prevList = (prev[slotKey] || []).filter(id => activeSlotStudentIdSet.has(id));
+      const nextList = typeof valOrFn === 'function' ? valOrFn(prevList) : valOrFn;
+      return {
+        ...prev,
+        [slotKey]: Array.isArray(nextList) ? nextList.filter(id => activeSlotStudentIdSet.has(id)) : []
+      };
+    });
+  }, [step3SlotFilter, activeSlotStudentIdSet]);
+
   // Step 3: Toggle check in Column 1 (Synchronized Main Student + Accompanying Guests)
   const toggleStep3StudentCheck = (id) => {
+    // Only allow selecting students that actually belong to the currently active slot
+    if (!activeSlotStudentIdSet.has(id) && step3SlotFilter !== 'ALL' && !editSession) {
+      return;
+    }
+
     const clickedStudent = importedStudents.find(s => s.id === id);
     if (!clickedStudent) {
       setStep3CheckedStudentIds(prev =>
@@ -1378,11 +1453,11 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     }
 
     if (!clickedStudent.isGuest) {
-      // Main student -> toggle main student and all their accompanying guests together
+      // Main student -> toggle main student and all their accompanying guests together (strictly within active slot)
       const associatedGuests = importedStudents.filter(
-        s => s.isGuest && String(s.parentStudentId) === String(clickedStudent.id)
+        s => s.isGuest && String(s.parentStudentId) === String(clickedStudent.id) && activeSlotStudentIdSet.has(s.id)
       );
-      const familyIds = [clickedStudent.id, ...associatedGuests.map(g => g.id)];
+      const familyIds = [clickedStudent.id, ...associatedGuests.map(g => g.id)].filter(x => activeSlotStudentIdSet.has(x));
 
       setStep3CheckedStudentIds(prev => {
         const isMainChecked = prev.includes(clickedStudent.id);
@@ -1444,13 +1519,43 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       level: levelLabel,
       slotId: defaultSlotId,
       studentIds: [...step3CheckedStudentIds],
-      assignedInstructorId: (isCoachFreelance && (currentUser?.instructor_id || currentUser?.id)) ? (currentUser?.instructor_id || currentUser?.id) : null,
-      assignedInstructorIds: (isCoachFreelance && (currentUser?.instructor_id || currentUser?.id)) ? [(currentUser?.instructor_id || currentUser?.id)] : [],
+      assignedInstructorId: (isIndividualCoach && currentIndividualCoach?.id) ? currentIndividualCoach.id : ((isCoachFreelance && (currentUser?.instructor_id || currentUser?.id)) ? (currentUser?.instructor_id || currentUser?.id) : null),
+      assignedInstructorIds: (isIndividualCoach && currentIndividualCoach?.id) ? [currentIndividualCoach.id] : ((isCoachFreelance && (currentUser?.instructor_id || currentUser?.id)) ? [(currentUser?.instructor_id || currentUser?.id)] : []),
     };
-    setTrainingGroups(prev => [...prev, newGroup]);
+    setTrainingGroups(prev => {
+      // Clean previously assigned groups of these students to prevent duplicates
+      const cleaned = prev.map(g => ({
+        ...g,
+        studentIds: g.studentIds.filter(id => !step3CheckedStudentIds.includes(id))
+      }));
+      return [...cleaned, newGroup];
+    });
     setActiveDropGroupId(newGroup.id);
     setStep3CheckedStudentIds([]);
   };
+
+  // Auto-assign individual coach to any created or unassigned training groups
+  useEffect(() => {
+    if (isIndividualCoach && currentIndividualCoach?.id && trainingGroups.length > 0) {
+      const hasUnassigned = trainingGroups.some(g =>
+        !g.assignedInstructorId ||
+        !g.assignedInstructorIds ||
+        g.assignedInstructorIds.length === 0
+      );
+      if (hasUnassigned) {
+        setTrainingGroups(prev => prev.map(g => {
+          if (!g.assignedInstructorId || !g.assignedInstructorIds || g.assignedInstructorIds.length === 0) {
+            return {
+              ...g,
+              assignedInstructorId: currentIndividualCoach.id,
+              assignedInstructorIds: [currentIndividualCoach.id]
+            };
+          }
+          return g;
+        }));
+      }
+    }
+  }, [isIndividualCoach, currentIndividualCoach, trainingGroups]);
 
   // Delete group card
   const deleteGroup = (groupId) => {
@@ -1461,9 +1566,13 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     }
   };
 
-  // Clear all groups for fresh manual creation
+  // Clear all groups for fresh manual creation (scoped to active slot)
   const clearAllGroups = () => {
-    setTrainingGroups([]);
+    if (step3SlotFilter !== 'ALL' && !editSession) {
+      setTrainingGroups(prev => prev.filter(g => String(g.slotId || slots[0]?.id) !== String(step3SlotFilter)));
+    } else {
+      setTrainingGroups([]);
+    }
     setActiveDropGroupId(null);
   };
 
@@ -1801,6 +1910,11 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           if (onClose) onClose();
           return;
         }
+        const distinctSlotIds = new Set(validGroups.map(g => String(g.slotId || selectedSlotId || 'default')));
+        setPublishedStats({
+          sessionsCount: publishedCount,
+          slotsCount: distinctSlotIds.size
+        });
         setShowSuccessModal(true);
       } else {
         setUiAlert({
@@ -1872,9 +1986,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             {currentStep === 3 ? 'Review' : 'Upcoming'}
           </span>
         </div>
-
-        <div className="ns-header-right">
-          {/* Stepper Navigation */}
+        {/* Center: Stepper Navigation */}
+        <div className="ns-header-center">
           <div className="ns-stepper">
             <div
               className={`ns-step-item ${currentStep === 1 ? 'active' : ''} ${currentStep > 1 ? 'completed' : ''}`}
@@ -1910,7 +2023,10 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
               <span className="ns-step-text">3. Assign Instructors</span>
             </div>
           </div>
+        </div>
 
+        {/* Right: Close Button or Spacer */}
+        <div className="ns-header-right">
           {isModal && (
             <div className="ns-header-close-wrap">
               <button
@@ -1953,7 +2069,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       </header>
 
       {/* Main Form Scrollable Container */}
-      <div className={isModal ? "ns-modal-body-scroll" : ""} style={isModal ? { padding: '24px 28px', overflowY: 'auto', flex: 1, maxHeight: 'calc(90vh - 85px)' } : {}}>
+      <div className={isModal ? "ns-modal-body-scroll" : ""} style={isModal ? { padding: '16px 24px', overflowY: 'auto', overflowX: 'hidden', flex: 1, maxHeight: 'calc(92vh - 72px)', display: 'flex', flexDirection: 'column' } : { display: 'flex', flexDirection: 'column', flex: 1 }}>
 
         {/* ═════════════════════════════════════════════════════════════════ */}
         {/* STEP 1: SESSION SETUP                                           */}
@@ -2212,43 +2328,45 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             </div>
 
           {/* Sticky Floating Bottom Action Bar for Step 1 */}
-          <div className="ns-sticky-bar" style={{ position: 'sticky', bottom: '0px', zIndex: 99, marginTop: '24px' }}>
-            <div className="ns-sb-left">
-              <span className="ns-sb-target-label" style={{ background: '#0D9488', color: '#FFF', padding: '3px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 800 }}>
-                SESSION SETUP
-              </span>
-              <span className="ns-sb-capacity" style={{ fontSize: '13px', fontWeight: 600, color: '#E2E8F0' }}>
-                📅 {formattedSessionDate} &bull; ⏰ {selectedSlot ? (selectedSlot.startTime || selectedSlot.time) : 'Select Time Slot'} &bull; 🎯 Capacity: {capacity} Students
-              </span>
-            </div>
+          <div className="ns-sticky-bar-wrapper">
+            <div className="ns-sticky-bar">
+              <div className="ns-sb-left">
+                <span className="ns-sb-target-label" style={{ background: '#0D9488', color: '#FFF', padding: '3px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 800 }}>
+                  SESSION SETUP
+                </span>
+                <span className="ns-sb-capacity" style={{ fontSize: '13px', fontWeight: 600, color: '#E2E8F0' }}>
+                  📅 {formattedSessionDate} &bull; ⏰ {selectedSlot ? (selectedSlot.startTime || selectedSlot.time) : 'Select Time Slot'} &bull; 🎯 Capacity: {capacity} Students
+                </span>
+              </div>
 
-            <div className="ns-sb-right">
-              <button
-                type="button"
-                className="ns-primary-btn"
-                onClick={() => {
-                  const isSelectedActiveForToday = selectedSlotId && activeSlotsForDay.some(s => s.id === selectedSlotId);
-                  if (!isSelectedActiveForToday) {
-                    const firstActive = activeSlotsForDay[0] || slots.find(s => s.active !== false) || slots[0];
-                    if (firstActive) setSelectedSlotId(firstActive.id);
-                  }
-                  setCurrentStep(2);
-                }}
-                style={{
-                  background: '#00D2B4',
-                  color: '#0F172A',
-                  border: 'none',
-                  padding: '12px 24px',
-                  fontSize: '14px',
-                  fontWeight: 800,
-                  borderRadius: '10px',
-                  cursor: 'pointer',
-                  boxShadow: '0 4px 14px rgba(0, 210, 180, 0.4)',
-                  transition: 'all 0.15s ease'
-                }}
-              >
-                {editSession ? 'Confirm Date & Slot → Review Groups' : 'Save configuration and Next: Import Students »'}
-              </button>
+              <div className="ns-sb-right">
+                <button
+                  type="button"
+                  className="ns-primary-btn"
+                  onClick={() => {
+                    const isSelectedActiveForToday = selectedSlotId && activeSlotsForDay.some(s => s.id === selectedSlotId);
+                    if (!isSelectedActiveForToday) {
+                      const firstActive = activeSlotsForDay[0] || slots.find(s => s.active !== false) || slots[0];
+                      if (firstActive) setSelectedSlotId(firstActive.id);
+                    }
+                    setCurrentStep(2);
+                  }}
+                  style={{
+                    background: '#00D2B4',
+                    color: '#0F172A',
+                    border: 'none',
+                    padding: '12px 24px',
+                    fontSize: '14px',
+                    fontWeight: 800,
+                    borderRadius: '10px',
+                    cursor: 'pointer',
+                    boxShadow: '0 4px 14px rgba(0, 210, 180, 0.4)',
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  {editSession ? 'Confirm Date & Slot → Review Groups' : 'Save configuration and Next: Import Students »'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -2587,20 +2705,26 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                     const isScheduledInDb = isStudentScheduledInDbOnDate(student);
 
                     const cardStyle = () => {
+                      const borderSide = isCurrentSlotStudent
+                        ? (student.isGuest ? '1.5px solid #0284C7' : '1.5px solid #0F172A')
+                        : isOtherSlotStudent
+                        ? '1.5px dashed #CBD5E1'
+                        : student.isGuest
+                        ? '1.5px solid #BAE6FD'
+                        : '1.5px solid #E2E8F0';
+
+                      const leftBorder = student.isGuest
+                        ? (isCurrentSlotStudent ? '4px solid #0284C7' : '4px solid #38BDF8')
+                        : borderSide;
+
                       return {
                         background: student.isGuest
                           ? (isCurrentSlotStudent ? '#F0F9FF' : isOtherSlotStudent ? '#F8FAFC' : '#F8FAFC')
                           : (isCurrentSlotStudent ? '#FFFFFF' : isOtherSlotStudent ? '#F8FAFC' : '#FFFFFF'),
-                        border: isCurrentSlotStudent
-                          ? (student.isGuest ? '1.5px solid #0284C7' : '1.5px solid #0F172A')
-                          : isOtherSlotStudent
-                          ? '1.5px dashed #CBD5E1'
-                          : student.isGuest
-                          ? '1.5px solid #BAE6FD'
-                          : '1.5px solid #E2E8F0',
-                        borderLeft: student.isGuest
-                          ? (isCurrentSlotStudent ? '4px solid #0284C7' : '4px solid #38BDF8')
-                          : undefined,
+                        borderTop: borderSide,
+                        borderRight: borderSide,
+                        borderBottom: borderSide,
+                        borderLeft: leftBorder,
                         boxShadow: isCurrentSlotStudent ? '0 1px 4px rgba(15, 23, 42, 0.08)' : '0 1px 2px rgba(0, 0, 0, 0.02)',
                         opacity: isOtherSlotStudent ? 0.72 : 1,
                         transition: 'all 0.15s ease',
@@ -2871,87 +2995,101 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             </div>
 
             {/* Bottom Sticky Target Bar */}
-            <div className="ns-sticky-bar">
-              {(() => {
-                const activeSlotId = selectedSlotId || activeSlotsForDay[0]?.id || slots[0]?.id;
-                const activeSlot = slots.find(s => s.id === activeSlotId) || selectedSlot;
-                const slotCap = getSlotCapacity(activeSlot);
-                const currentSlotCount = (slotStudentMap[activeSlotId] || []).length;
-                const isOver = currentSlotCount > slotCap;
+            <div className="ns-sticky-bar-wrapper">
+              <div className="ns-sticky-bar">
+                {(() => {
+                  const activeSlotId = selectedSlotId || activeSlotsForDay[0]?.id || slots[0]?.id;
+                  const activeSlot = slots.find(s => s.id === activeSlotId) || selectedSlot;
+                  const slotCap = getSlotCapacity(activeSlot);
+                  const currentSlotCount = (slotStudentMap[activeSlotId] || []).length;
+                  const anySlotOver = slots.some(s => (slotStudentMap[s.id] || []).length > getSlotCapacity(s));
+                  const totalPoolCount = allPoolStudents.length;
+                  const totalSelectedCount = allSelectedStudentIds.length;
 
-                return (
-                  <div className="ns-sb-left">
-                    <span className="ns-sb-target-label ns-hide-mobile" style={isOver ? { background: '#EF4444', color: '#FFFFFF' } : {}}>
-                      {isOver ? 'CAPACITY EXCEEDED' : 'SELECTED ROSTER'}
-                    </span>
-                    <span className="ns-sb-capacity" style={{ fontSize: '14px', fontWeight: 800, color: isOver ? '#FCA5A5' : '#FFFFFF' }}>
-                      <span className="ns-hide-mobile">Total </span>
-                      {allSelectedStudentIds.length}/{slotCap}
-                      <span className="ns-hide-mobile"> Students Selected</span>
-                      <span className="ns-show-mobile"> Selected</span>
-                    </span>
-                  </div>
-                );
-              })()}
-
-              <div className="ns-sb-center ns-hide-mobile">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                  {slots.filter(s => (slotStudentMap[s.id] || []).length > 0).map((s) => {
-                    const theme = getSlotThemeForSlot(s.id);
-                    const count = slotStudentMap[s.id].length;
-                    return (
-                      <span key={s.id} style={{
-                        fontSize: '12px',
-                        fontWeight: 700,
-                        background: 'rgba(255, 255, 255, 0.14)',
-                        color: '#FFFFFF',
-                        border: '1px solid rgba(255, 255, 255, 0.22)',
-                        padding: '4px 12px',
-                        borderRadius: '14px',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '5px'
-                      }}>
-                        ⏰ {s.startTime || s.time}: <strong>{count} {count === 1 ? 'Student' : 'Students'}</strong>
+                  return (
+                    <div className="ns-sb-left">
+                      <span className="ns-sb-target-label ns-hide-mobile" style={anySlotOver ? { background: '#EF4444', color: '#FFFFFF' } : {}}>
+                        {anySlotOver ? 'CAPACITY EXCEEDED' : 'SELECTED ROSTER'}
                       </span>
-                    );
-                  })}
-                </div>
-              </div>
+                      <span className="ns-sb-capacity" style={{ fontSize: '14px', fontWeight: 800, color: anySlotOver ? '#FCA5A5' : '#FFFFFF' }}>
+                        <span className="ns-hide-mobile">Total </span>
+                        {totalSelectedCount}/{totalPoolCount}
+                        <span className="ns-hide-mobile"> Students Selected</span>
+                        <span className="ns-show-mobile"> Selected</span>
+                      </span>
+                    </div>
+                  );
+                })()}
 
-              <div className="ns-sb-right" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <button
-                  type="button"
-                  className="ns-sb-back-btn"
-                  onClick={() => setCurrentStep(1)}
-                  title="Back to Session Setup"
-                  style={{
-                    background: 'rgba(255, 255, 255, 0.12)',
-                    color: '#FFFFFF',
-                    border: '1px solid rgba(255, 255, 255, 0.25)',
-                    borderRadius: '8px',
-                    padding: '8px 14px',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    transition: 'all 0.15s ease'
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)'}
-                  onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)'}
-                >
-                  <span className="ns-hide-mobile">← Back to Session Setup</span>
-                  <span className="ns-show-mobile">← Back</span>
-                </button>
-                <button
-                  className="ns-primary-btn"
-                  onClick={proceedToStep3}
-                >
-                  <span className="ns-hide-mobile">Import Selected in &amp; Next</span>
-                  <span className="ns-show-mobile">Next →</span>
-                </button>
+                <div className="ns-sb-center ns-hide-mobile">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    {slots.filter(s => (slotStudentMap[s.id] || []).length > 0).map((s) => {
+                      const count = (slotStudentMap[s.id] || []).length;
+                      const sCap = getSlotCapacity(s);
+                      const isSlotOver = count > sCap;
+                      const isSlotFull = count === sCap;
+                      const isActive = s.id === (selectedSlotId || activeSlotsForDay[0]?.id || slots[0]?.id);
+
+                      return (
+                        <span
+                          key={s.id}
+                          style={{
+                            fontSize: '12px',
+                            fontWeight: 700,
+                            background: isSlotOver ? 'rgba(239, 68, 68, 0.28)' : (isActive ? 'rgba(255, 255, 255, 0.22)' : 'rgba(255, 255, 255, 0.14)'),
+                            color: isSlotOver ? '#FECACA' : '#FFFFFF',
+                            border: isSlotOver ? '1px solid #EF4444' : (isActive ? '1px solid rgba(255, 255, 255, 0.45)' : '1px solid rgba(255, 255, 255, 0.22)'),
+                            padding: '4px 12px',
+                            borderRadius: '14px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px'
+                          }}
+                        >
+                          <span>⏰ {s.startTime || s.time}:</span>
+                          <strong>{count}/{sCap} {count === 1 ? 'Student' : 'Students'}</strong>
+                          {isSlotOver && <span style={{ fontSize: '10px', background: '#EF4444', color: '#FFF', padding: '1px 5px', borderRadius: '4px' }}>EXCEEDED</span>}
+                          {isSlotFull && !isSlotOver && <span style={{ fontSize: '10px', background: 'rgba(16, 185, 129, 0.3)', color: '#6EE7B7', padding: '1px 5px', borderRadius: '4px' }}>FULL</span>}
+                        </span>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="ns-sb-right" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <button
+                    type="button"
+                    className="ns-sb-back-btn"
+                    onClick={() => setCurrentStep(1)}
+                    title="Back to Session Setup"
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.12)',
+                      color: '#FFFFFF',
+                      border: '1px solid rgba(255, 255, 255, 0.25)',
+                      borderRadius: '8px',
+                      padding: '8px 14px',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      transition: 'all 0.15s ease'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)'}
+                  >
+                    <span className="ns-hide-mobile">← Back to Session Setup</span>
+                    <span className="ns-show-mobile">← Back</span>
+                  </button>
+                  <button
+                    className="ns-primary-btn"
+                    onClick={proceedToStep3}
+                  >
+                    <span className="ns-hide-mobile">Import Selected in &amp; Next</span>
+                    <span className="ns-show-mobile">Next →</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -2962,15 +3100,15 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         {/* ═════════════════════════════════════════════════════════════════ */}
         {currentStep === 3 && (
           <div className="ns-step-content ns-step3-wrap">
-            {/* Selected Session Info Banner */}
-            <div className="ns-selected-banner">
+            {/* Selected Session Info Banner - Compact */}
+            <div className="ns-selected-banner" style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px' }}>
               <span className="ns-banner-icon">📅</span>
               <span className="ns-banner-text">
                 Selected Session: <strong>{formattedSessionDate}</strong> | Active Filter: <strong>{slots.find(s => s.id === step3SlotFilter)?.startTime || slots.find(s => s.id === step3SlotFilter)?.time || 'Selected Slot'}</strong>
               </span>
             </div>
 
-            {/* Stat Summary Cards */}
+            {/* Stat Summary Cards - Compact Slim Layout */}
             <div className="ns-step3-stats-grid">
               <div className="ns-stat-card">
                 <h2 className="ns-sc-value">{importedStudents.length}</h2>
@@ -2982,8 +3120,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
               </div>
             </div>
 
-            {/* Slot Selection Row (Identical to Step 2) */}
-            <div className="ns-filters-card" style={{ marginBottom: '20px' }}>
+            {/* Slot Selection Row - Compact Filter Card */}
+            <div className="ns-filters-card ns-step3-filters-card" style={{ marginBottom: '8px', padding: '10px 16px' }}>
               <div className="ns-filter-row ns-slot-filter-row">
                 <span className="ns-filter-label" style={{ fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <span>⏰</span> Select Time Slot:
@@ -3348,7 +3486,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                             width: 'calc(100% - 24px)',
                             boxSizing: 'border-box',
                             background: isChecked ? '#E0F2FE' : '#F0F9FF',
-                            border: isChecked ? '1.5px solid #0284C7' : '1.5px solid #BAE6FD',
+                            borderTop: isChecked ? '1.5px solid #0284C7' : '1.5px solid #BAE6FD',
+                            borderRight: isChecked ? '1.5px solid #0284C7' : '1.5px solid #BAE6FD',
+                            borderBottom: isChecked ? '1.5px solid #0284C7' : '1.5px solid #BAE6FD',
                             borderLeft: '4px solid #0284C7'
                           } : {}}
                           draggable={true}
@@ -3569,9 +3709,6 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
                 <div className="ns-ws-col-footer">
                   <span className="ns-selected-count">{step3CheckedStudentIds.length} Selected</span>
-                  <button className="ns-create-grp-btn" onClick={handleCreateGroup}>
-                    + Group ({step3CheckedStudentIds.length})
-                  </button>
                 </div>
               </div>
 
@@ -3598,6 +3735,24 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                     </button>
                   </div>
                 </div>
+
+                {isIndividualCoach && (
+                  <div style={{
+                    background: '#F0FDF4',
+                    border: '1px solid #BBF7D0',
+                    borderRadius: '10px',
+                    padding: '8px 12px',
+                    fontSize: '11.5px',
+                    color: '#15803D',
+                    fontWeight: 600,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}>
+                    <span>ℹ️</span>
+                    <span>Individual Coach: <strong>{currentIndividualCoach?.name || currentUser?.name || 'Coach'}</strong> is automatically assigned to every group created.</span>
+                  </div>
+                )}
 
                 <div className="ns-training-groups-list">
                   {displayedTrainingGroups.length === 0 ? (
@@ -3808,55 +3963,101 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                             )}
                           </div>
 
-                          {/* Assigned Coaches (Multiple Coaches Supported) */}
+                          {/* Assigned Coaches (Single auto-assigned for Individual Coach, multi-coach for schools) */}
                           <div className="ns-assigned-instructors-section" style={{ marginTop: '12px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                               <span style={{ fontSize: '11px', fontWeight: 700, color: '#475569' }}>
-                                Assigned Coaches {assignedInstructors.length > 0 ? `(${assignedInstructors.length})` : ''}
+                                Assigned Coach {isIndividualCoach ? '(Auto-Assigned)' : (assignedInstructors.length > 0 ? `(${assignedInstructors.length})` : '')}
                               </span>
                             </div>
 
-                            {assignedInstructors.length > 0 ? (
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                {assignedInstructors.map(coach => (
-                                  <div
-                                    key={coach.id}
-                                    className="ns-assigned-inst-box"
-                                    style={{
-                                      padding: '7px 10px',
-                                      background: '#F0FDF4',
-                                      border: '1.5px solid #86EFAC',
-                                      borderRadius: '8px',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      gap: '8px'
-                                    }}
-                                  >
-                                    <UserAvatar src={coach.avatar} name={coach.name} size={26} className="ns-ai-avatar" />
-                                    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
-                                      <span className="ns-ai-name" style={{ fontSize: '12px', fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                        {coach.name}
-                                      </span>
-                                      <span style={{ fontSize: '10px', color: '#16A34A', fontWeight: 700 }}>
-                                        ✓ Group Coach ({coach.role || 'Instructor'})
-                                      </span>
-                                    </div>
-                                    <button
-                                      type="button"
-                                      className="ns-ai-remove"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        removeInstructorFromGroup(grp.id, coach.id);
-                                      }}
-                                      title={`Remove ${coach.name}`}
-                                      style={{ fontSize: '16px', color: '#94A3B8', cursor: 'pointer', background: 'none', border: 'none', padding: '2px 6px', lineHeight: 1 }}
-                                    >
-                                      &times;
-                                    </button>
-                                  </div>
-                                ))}
+                            {(() => {
+                              const displayCoaches = assignedInstructors.length > 0
+                                ? assignedInstructors
+                                : (isIndividualCoach && currentIndividualCoach ? [currentIndividualCoach] : []);
 
-                                {/* Add Another Coach Dropzone */}
+                              if (displayCoaches.length > 0) {
+                                return (
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                    {displayCoaches.map(coach => (
+                                      <div
+                                        key={coach.id}
+                                        className="ns-assigned-inst-box"
+                                        style={{
+                                          padding: '7px 10px',
+                                          background: '#F0FDF4',
+                                          border: '1.5px solid #86EFAC',
+                                          borderRadius: '8px',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          gap: '8px'
+                                        }}
+                                      >
+                                        <UserAvatar src={coach.avatar} name={coach.name} size={26} className="ns-ai-avatar" />
+                                        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
+                                          <span className="ns-ai-name" style={{ fontSize: '12px', fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                            {coach.name}
+                                          </span>
+                                          <span style={{ fontSize: '10px', color: '#16A34A', fontWeight: 700 }}>
+                                            ✓ Assigned Coach {isIndividualCoach ? '• Individual Account' : `(${coach.role || 'Instructor'})`}
+                                          </span>
+                                        </div>
+                                        {!isIndividualCoach && (
+                                          <button
+                                            type="button"
+                                            className="ns-ai-remove"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              removeInstructorFromGroup(grp.id, coach.id);
+                                            }}
+                                            title={`Remove ${coach.name}`}
+                                            style={{ fontSize: '16px', color: '#94A3B8', cursor: 'pointer', background: 'none', border: 'none', padding: '2px 6px', lineHeight: 1 }}
+                                          >
+                                            &times;
+                                          </button>
+                                        )}
+                                      </div>
+                                    ))}
+
+                                    {/* Add Another Coach Dropzone: ONLY for School accounts */}
+                                    {!isIndividualCoach && (
+                                      <div
+                                        className="ns-dropzone-box"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setActiveDropGroupId(grp.id);
+                                        }}
+                                        onDragOver={(e) => {
+                                          e.preventDefault();
+                                          e.dataTransfer.dropEffect = 'copy';
+                                          if (dragOverGroupId !== grp.id) setDragOverGroupId(grp.id);
+                                        }}
+                                        onDrop={(e) => handleDropOnGroup(e, grp.id)}
+                                        style={{
+                                          border: '1.5px dashed #86EFAC',
+                                          borderRadius: '8px',
+                                          padding: '7px 10px',
+                                          textAlign: 'center',
+                                          background: '#F0FDF4',
+                                          cursor: 'pointer',
+                                          fontSize: '11.5px',
+                                          fontWeight: 700,
+                                          color: '#16A34A',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                          gap: '6px'
+                                        }}
+                                        title="Drag or click another instructor to assign"
+                                      >
+                                        <span>+</span> Drag or click to assign another coach
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              }
+
+                              return (
                                 <div
                                   className="ns-dropzone-box"
                                   onClick={(e) => {
@@ -3870,52 +4071,20 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                   }}
                                   onDrop={(e) => handleDropOnGroup(e, grp.id)}
                                   style={{
-                                    border: '1.5px dashed #86EFAC',
+                                    border: '1.5px dashed #CBD5E1',
                                     borderRadius: '8px',
-                                    padding: '7px 10px',
+                                    padding: '10px',
                                     textAlign: 'center',
-                                    background: '#F0FDF4',
+                                    background: '#F8FAFC',
                                     cursor: 'pointer',
-                                    fontSize: '11.5px',
-                                    fontWeight: 700,
-                                    color: '#16A34A',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    gap: '6px'
+                                    fontSize: '12px',
+                                    color: '#64748B'
                                   }}
-                                  title="Drag or click another instructor to assign"
                                 >
-                                  <span>+</span> Drag or click to assign another coach
+                                  <span>🏄‍♂️ <strong>Assign Coach</strong> (Drag or click instructor)</span>
                                 </div>
-                              </div>
-                            ) : (
-                              <div
-                                className="ns-dropzone-box"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setActiveDropGroupId(grp.id);
-                                }}
-                                onDragOver={(e) => {
-                                  e.preventDefault();
-                                  e.dataTransfer.dropEffect = 'copy';
-                                  if (dragOverGroupId !== grp.id) setDragOverGroupId(grp.id);
-                                }}
-                                onDrop={(e) => handleDropOnGroup(e, grp.id)}
-                                style={{
-                                  border: '1.5px dashed #CBD5E1',
-                                  borderRadius: '8px',
-                                  padding: '10px',
-                                  textAlign: 'center',
-                                  background: '#F8FAFC',
-                                  cursor: 'pointer',
-                                  fontSize: '12px',
-                                  color: '#64748B'
-                                }}
-                              >
-                                <span>🏄‍♂️ <strong>Assign Coach</strong> (Drag or click instructor)</span>
-                              </div>
-                            )}
+                              );
+                            })()}
                           </div>
                         </div>
                       );
@@ -3924,8 +4093,67 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                 </div>
               </div>
 
-              {/* Column 3: Available Instructors (Draggable) */}
-              <div className="ns-ws-col ns-ws-col-instructors">
+              {/* Column 3: Available Instructors (Draggable for School Admins, Locked Auto-Assigned for Individual Coaches) */}
+              {isIndividualCoach ? (
+                <div className="ns-ws-col ns-ws-col-instructors">
+                  <div className="ns-col-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <h3 className="ns-col-title">Assigned Coach</h3>
+                      <span className="ns-col-badge" style={{ background: '#DCFCE7', color: '#16A34A', fontWeight: 700 }}>
+                        Individual Coach
+                      </span>
+                    </div>
+                  </div>
+
+                  <div style={{
+                    background: '#F0FDF4',
+                    border: '1.5px solid #86EFAC',
+                    borderRadius: '14px',
+                    padding: '18px 16px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '14px'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <UserAvatar
+                        src={currentIndividualCoach?.avatar}
+                        name={currentIndividualCoach?.name || currentUser?.name || 'Coach'}
+                        size={48}
+                        style={{ border: '2.5px solid #86EFAC' }}
+                      />
+                      <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        <span style={{ fontSize: '15px', fontWeight: 800, color: '#0F172A' }}>
+                          {currentIndividualCoach?.name || currentUser?.name || 'Coach'}
+                        </span>
+                        <span style={{ fontSize: '12px', fontWeight: 600, color: '#16A34A' }}>
+                          ✓ Head Coach • Individual Account
+                        </span>
+                      </div>
+                    </div>
+
+                    <div style={{
+                      fontSize: '12.5px',
+                      color: '#166534',
+                      lineHeight: 1.5,
+                      background: '#FFFFFF',
+                      padding: '12px 14px',
+                      borderRadius: '10px',
+                      border: '1px solid #DCFCE7',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '4px'
+                    }}>
+                      <div style={{ fontWeight: 800, color: '#15803D', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <span>🔒</span> Auto-Assigned to All Groups
+                      </div>
+                      <p style={{ margin: 0, fontSize: '12px', color: '#475569' }}>
+                        In an Individual Coach account, you are automatically assigned as the instructor for each group once created. Manual drag &amp; drop is not needed.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="ns-ws-col ns-ws-col-instructors">
                 <div className="ns-col-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <h3 className="ns-col-title">Available Instructors</h3>
@@ -4160,64 +4388,67 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                   )}
                 </div>
               </div>
+            )}
             </div>
 
             {/* Finalize Action Bottom Bar (Sticky Bar format like Step 1 & Step 2) */}
-            <div className="ns-sticky-bar" style={{ position: 'sticky', bottom: '0px', zIndex: 99, marginTop: '24px' }}>
-              <div className="ns-sb-left">
-                <span className="ns-sb-target-label" style={{ background: '#10B981', color: '#FFF', padding: '3px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 800 }}>
-                  PUBLISH READY
-                </span>
-                <span className="ns-sb-capacity" style={{ fontSize: '14px', fontWeight: 800, color: '#FFFFFF' }}>
-                  Total {importedStudents.length} Students Ready to Publish
-                </span>
-              </div>
+            <div className="ns-sticky-bar-wrapper">
+              <div className="ns-sticky-bar">
+                <div className="ns-sb-left">
+                  <span className="ns-sb-target-label" style={{ background: '#10B981', color: '#FFF', padding: '3px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 800 }}>
+                    PUBLISH READY
+                  </span>
+                  <span className="ns-sb-capacity" style={{ fontSize: '14px', fontWeight: 800, color: '#FFFFFF' }}>
+                    Total {importedStudents.length} Students Ready to Publish
+                  </span>
+                </div>
 
-              <div className="ns-sb-right" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <button
-                  type="button"
-                  className="ns-sb-back-btn"
-                  onClick={() => setCurrentStep(2)}
-                  style={{
-                    background: 'rgba(255, 255, 255, 0.12)',
-                    color: '#FFFFFF',
-                    border: '1px solid rgba(255, 255, 255, 0.25)',
-                    borderRadius: '8px',
-                    padding: '10px 18px',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    transition: 'all 0.15s ease'
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)'}
-                  onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)'}
-                >
-                  {editSession ? '← Back to Select Students' : '← Back to Import Students'}
-                </button>
-                <button
-                  className="ns-primary-btn finalize-btn"
-                  onClick={handleFinalizeAndPublish}
-                  disabled={isPublishing}
-                  style={{
-                    background: 'linear-gradient(135deg, #00D494 0%, #00B37E 100%)',
-                    color: '#FFFFFF',
-                    fontWeight: 800,
-                    fontSize: '14px',
-                    padding: '10px 22px',
-                    borderRadius: '8px',
-                    border: 'none',
-                    boxShadow: '0 4px 14px rgba(0, 212, 148, 0.4)',
-                    cursor: isPublishing ? 'not-allowed' : 'pointer',
-                    transition: 'all 0.2s ease'
-                  }}
-                >
-                  {isPublishing
-                    ? (editSession ? 'Saving Changes...' : 'Publishing Sessions...')
-                    : (editSession ? '✓ Save Changes' : '🚀 Finalize & Publish')}
-                </button>
+                <div className="ns-sb-right" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <button
+                    type="button"
+                    className="ns-sb-back-btn"
+                    onClick={() => setCurrentStep(2)}
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.12)',
+                      color: '#FFFFFF',
+                      border: '1px solid rgba(255, 255, 255, 0.25)',
+                      borderRadius: '8px',
+                      padding: '10px 18px',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      transition: 'all 0.15s ease'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)'}
+                  >
+                    {editSession ? '← Back to Select Students' : '← Back to Import Students'}
+                  </button>
+                  <button
+                    className="ns-primary-btn finalize-btn"
+                    onClick={handleFinalizeAndPublish}
+                    disabled={isPublishing}
+                    style={{
+                      background: 'linear-gradient(135deg, #00D494 0%, #00B37E 100%)',
+                      color: '#FFFFFF',
+                      fontWeight: 800,
+                      fontSize: '14px',
+                      padding: '10px 22px',
+                      borderRadius: '8px',
+                      border: 'none',
+                      boxShadow: '0 4px 14px rgba(0, 212, 148, 0.4)',
+                      cursor: isPublishing ? 'not-allowed' : 'pointer',
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    {isPublishing
+                      ? (editSession ? 'Saving Changes...' : 'Publishing Sessions...')
+                      : (editSession ? '✓ Save Changes' : '🚀 Finalize & Publish')}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -4477,7 +4708,10 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       <style>{`
         .ns-root {
           display: flex;
-          min-height: 100vh;
+          height: 100vh;
+          max-height: 100vh;
+          max-width: 100vw;
+          overflow: hidden;
           background-color: #F8FAFC;
           font-family: 'Instrument Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
           color: #0F172A;
@@ -4490,13 +4724,32 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
         .ns-container {
           flex: 1;
-          padding: 28px 36px;
+          height: 100vh;
+          padding: 20px 32px;
           display: flex;
           flex-direction: column;
-          gap: 24px;
+          gap: 16px;
           overflow-y: auto;
+          overflow-x: hidden;
           max-width: 1400px;
           margin: 0 auto;
+          -webkit-overflow-scrolling: touch;
+        }
+
+        .ns-step-content {
+          display: flex;
+          flex-direction: column;
+          flex: 1;
+          width: 100%;
+        }
+
+        .ns-modal-body-scroll {
+          overflow-y: auto;
+          overflow-x: hidden;
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          -webkit-overflow-scrolling: touch;
         }
 
         /* ─── Top Header & Stepper ─── */
@@ -4505,12 +4758,23 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           align-items: center;
           justify-content: space-between;
           padding-bottom: 8px;
+          gap: 16px;
         }
 
         .ns-header-left {
           display: flex;
           align-items: center;
           gap: 12px;
+          flex: 1;
+          justify-content: flex-start;
+          min-width: 0;
+        }
+
+        .ns-header-center {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
         }
 
         .ns-title {
@@ -4603,6 +4867,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         .ns-header-right {
           display: flex;
           align-items: center;
+          justify-content: flex-end;
+          flex: 1;
           gap: 16px;
         }
         .ns-header-close-wrap {
@@ -5480,13 +5746,27 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           flex-shrink: 0;
         }
 
+        /* Sticky Bar Centered Floating Wrapper */
+        .ns-sticky-bar-wrapper {
+          position: sticky;
+          bottom: 14px;
+          left: 0;
+          width: 100%;
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          z-index: 99;
+          margin-top: auto;
+          padding-top: 16px;
+          pointer-events: none;
+        }
+
         /* Bottom Sticky Bar */
         .ns-sticky-bar {
-          position: sticky;
-          bottom: 0;
-          left: 0;
-          right: 0;
+          pointer-events: auto;
+          position: relative;
           width: 100%;
+          max-width: 1160px;
           box-sizing: border-box;
           background-color: #0A0F1D;
           color: #FFFFFF;
@@ -5495,24 +5775,23 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           align-items: center;
           justify-content: space-between;
           z-index: 50;
-          box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.08);
+          box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.08);
           border-radius: 14px;
-          margin-top: 16px;
+          margin: 0 auto;
         }
 
         .ns-modal-container .ns-sticky-bar {
-          position: sticky;
-          bottom: 0;
-          left: 0;
-          right: 0;
+          pointer-events: auto;
+          position: relative;
           width: 100%;
+          max-width: 1160px;
           box-sizing: border-box;
           border-radius: 14px;
-          margin-top: 16px;
+          margin: 0 auto;
           padding: 14px 24px;
           background-color: #0A0F1D;
           z-index: 50;
-          box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.08);
+          box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.08);
         }
         .ns-sb-left {
           display: flex;
@@ -5629,48 +5908,64 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         .ns-step3-wrap {
           display: flex;
           flex-direction: column;
-          gap: 20px;
+          gap: 12px;
+          flex: 1;
+          width: 100%;
         }
 
         .ns-step3-stats-grid {
           display: grid;
           grid-template-columns: repeat(2, 1fr);
-          gap: 16px;
+          gap: 10px;
         }
         .ns-stat-card {
           background: #FFFFFF;
           border: 1px solid #E2E8F0;
-          border-radius: 12px;
-          padding: 16px 20px;
+          border-radius: 10px;
+          padding: 8px 16px;
+          display: flex;
+          align-items: center;
+          gap: 12px;
         }
         .ns-sc-value {
           font-family: 'Outfit', sans-serif;
-          font-size: 28px;
+          font-size: 20px;
           font-weight: 700;
           color: #0F172A;
           margin: 0;
+          line-height: 1;
         }
         .ns-sc-label {
-          font-size: 13px;
+          font-size: 12px;
+          font-weight: 600;
           color: #64748B;
+        }
+
+        .ns-step3-filters-card {
+          background: #FFFFFF;
+          border: 1px solid #E2E8F0;
+          border-radius: 10px;
+          padding: 10px 16px !important;
         }
 
         /* 3-Column Workspace */
         .ns-step3-workspace {
           display: grid;
-          grid-template-columns: 1fr 1.2fr 1fr;
-          gap: 20px;
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1fr);
+          gap: 16px;
           align-items: start;
+          max-width: 100%;
+          padding-bottom: 8px;
         }
         .ns-ws-col {
           background: #FFFFFF;
           border: 1px solid #E2E8F0;
           border-radius: 16px;
-          padding: 20px;
+          padding: 18px;
           display: flex;
           flex-direction: column;
-          gap: 16px;
-          min-height: 540px;
+          gap: 14px;
+          min-height: 480px;
         }
         .ns-col-head {
           display: flex;
@@ -6170,15 +6465,17 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         .ns-modal-card {
           background: #FFFFFF;
           border-radius: 20px;
-          padding: 36px;
+          padding: 36px 32px 32px;
           max-width: 480px;
           width: 90%;
           text-align: center;
-          box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+          box-shadow: 0 20px 35px -5px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(226, 232, 240, 0.8);
+          box-sizing: border-box;
         }
         .ns-modal-icon {
           font-size: 48px;
           margin-bottom: 12px;
+          line-height: 1;
         }
         .ns-modal-title {
           font-family: 'Outfit', sans-serif;
@@ -6190,9 +6487,67 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         .ns-modal-desc {
           font-size: 14px;
           color: #64748B;
-          line-height: 1.5;
-          margin: 0 0 24px 0;
+          line-height: 1.55;
+          margin: 0 0 26px 0;
         }
+        .ns-modal-actions {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 12px;
+          width: 100%;
+        }
+        .ns-modal-actions .ns-secondary-btn,
+        .ns-modal-actions .ns-primary-btn {
+          flex: 1;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          padding: 12px 18px;
+          border-radius: 10px;
+          font-size: 14px;
+          font-weight: 700;
+          cursor: pointer;
+          white-space: nowrap;
+          text-align: center;
+          box-sizing: border-box;
+          transition: all 0.15s ease;
+        }
+        .ns-modal-actions .ns-secondary-btn {
+          background: #FFFFFF;
+          color: #334155;
+          border: 1.5px solid #CBD5E1;
+        }
+        .ns-modal-actions .ns-secondary-btn:hover {
+          background: #F8FAFC;
+          border-color: #94A3B8;
+          color: #0F172A;
+        }
+        .ns-modal-actions .ns-primary-btn {
+          background-color: #00D1B2;
+          color: #FFFFFF;
+          border: none;
+          box-shadow: 0 4px 12px rgba(0, 209, 178, 0.35);
+        }
+        .ns-modal-actions .ns-primary-btn:hover {
+          background-color: #00B89C;
+          box-shadow: 0 6px 16px rgba(0, 209, 178, 0.45);
+        }
+        @media (max-width: 480px) {
+          .ns-modal-card {
+            padding: 28px 20px 24px;
+          }
+          .ns-modal-actions {
+            flex-direction: column-reverse;
+            gap: 10px;
+          }
+          .ns-modal-actions .ns-secondary-btn,
+          .ns-modal-actions .ns-primary-btn {
+            width: 100%;
+            flex: none;
+          }
+        }
+
         /* ═════════════════════════════════════════════════════════════════ */
         /* RESPONSIVE & MOBILE STYLES (CHINNA SIMPLE MOBILE UI)             */
         /* ═════════════════════════════════════════════════════════════════ */
@@ -6289,17 +6644,26 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             display: flex !important;
             align-items: center !important;
           }
+          .ns-header-center {
+            order: 2 !important;
+            width: 100% !important;
+            display: flex !important;
+            justify-content: center !important;
+          }
           .ns-header-right {
-            display: contents !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: flex-end !important;
+            order: 1 !important;
+            flex: 0 0 auto !important;
           }
           .ns-header-close-wrap {
             display: flex !important;
             align-items: center !important;
-            order: 1 !important;
           }
           .ns-stepper {
-            order: 2 !important;
             width: 100% !important;
+            justify-content: center !important;
             overflow-x: auto !important;
             -webkit-overflow-scrolling: touch !important;
             scrollbar-width: none !important;
@@ -6550,17 +6914,30 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           }
 
           /* Bottom Sticky Bar: Sleek, compact 44px bar */
+          .ns-sticky-bar-wrapper {
+            position: sticky !important;
+            bottom: 8px !important;
+            left: 0 !important;
+            width: 100% !important;
+            display: flex !important;
+            justify-content: center !important;
+            align-items: center !important;
+            z-index: 99 !important;
+            margin-top: auto !important;
+            pointer-events: none !important;
+          }
           .ns-sticky-bar,
           .ns-modal-container .ns-sticky-bar {
-            position: sticky !important;
-            bottom: 0 !important;
-            left: 0 !important;
-            right: 0 !important;
+            position: relative !important;
+            bottom: auto !important;
+            left: auto !important;
+            right: auto !important;
             width: 100% !important;
+            max-width: 100% !important;
             box-sizing: border-box !important;
             padding: 8px 10px !important;
             border-radius: 10px !important;
-            margin-top: 8px !important;
+            margin: 0 auto !important;
             display: flex !important;
             flex-direction: row !important;
             align-items: center !important;
@@ -6568,6 +6945,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             background-color: #0A0F1D !important;
             z-index: 50 !important;
             gap: 8px !important;
+            pointer-events: auto !important;
           }
           .ns-sb-left {
             display: flex !important;
@@ -6702,12 +7080,17 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             <div className="ns-modal-overlay" style={{ zIndex: 1200 }}>
               <div className="ns-modal-card">
                 <div className="ns-modal-icon">🎉</div>
-                <h2 className="ns-modal-title">Session Created &amp; Published!</h2>
+                <h2 className="ns-modal-title">
+                  {publishedStats.sessionsCount > 1
+                    ? `${publishedStats.sessionsCount} Sessions Created & Published!`
+                    : 'Session Created & Published!'}
+                </h2>
                 <p className="ns-modal-desc">
-                  Your session for <strong>{formattedSessionDate} ({selectedSlot ? (selectedSlot.startTime || selectedSlot.time) : 'Selected Time Slot'})</strong> with {trainingGroups.filter(g => g.studentIds && g.studentIds.length > 0).length} training group(s) has been successfully saved into the schedule.
+                  <strong>{publishedStats.sessionsCount} session{publishedStats.sessionsCount > 1 ? 's' : ''}</strong> created for <strong>{formattedSessionDate}</strong>{publishedStats.slotsCount > 1 ? ` across ${publishedStats.slotsCount} time slots` : ''} have been successfully saved into the schedule.
                 </p>
                 <div className="ns-modal-actions">
                   <button
+                    type="button"
                     className="ns-secondary-btn"
                     onClick={() => {
                       setShowSuccessModal(false);
@@ -6717,6 +7100,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                     Create Another Session
                   </button>
                   <button
+                    type="button"
                     className="ns-primary-btn"
                     onClick={() => {
                       setShowSuccessModal(false);
@@ -6724,7 +7108,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                       if (onClose) onClose();
                     }}
                   >
-                    Done & View Sessions &rarr;
+                    Done &amp; View Sessions &rarr;
                   </button>
                 </div>
               </div>
@@ -6744,15 +7128,20 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
         {/* Success Modal for Standalone Page */}
         {showSuccessModal && (
-          <div className="ns-modal-overlay">
+          <div className="ns-modal-overlay" style={{ zIndex: 1200 }}>
             <div className="ns-modal-card">
               <div className="ns-modal-icon">🎉</div>
-              <h2 className="ns-modal-title">Session Created &amp; Published!</h2>
+              <h2 className="ns-modal-title">
+                {publishedStats.sessionsCount > 1
+                  ? `${publishedStats.sessionsCount} Sessions Created & Published!`
+                  : 'Session Created & Published!'}
+              </h2>
               <p className="ns-modal-desc">
-                Your session for <strong>{formattedSessionDate} ({selectedSlot ? (selectedSlot.startTime || selectedSlot.time) : 'Selected Time Slot'})</strong> with {trainingGroups.filter(g => g.studentIds && g.studentIds.length > 0).length} training group(s) has been successfully saved into the schedule.
+                <strong>{publishedStats.sessionsCount} session{publishedStats.sessionsCount > 1 ? 's' : ''}</strong> created for <strong>{formattedSessionDate}</strong>{publishedStats.slotsCount > 1 ? ` across ${publishedStats.slotsCount} time slots` : ''} have been successfully saved into the schedule.
               </p>
               <div className="ns-modal-actions">
                 <button
+                  type="button"
                   className="ns-secondary-btn"
                   onClick={() => {
                     setShowSuccessModal(false);
@@ -6762,10 +7151,11 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                   Create Another Session
                 </button>
                 <button
+                  type="button"
                   className="ns-primary-btn"
                   onClick={() => navigate('/sessions')}
                 >
-                  View in Sessions List &rarr;
+                  Done &amp; View Sessions &rarr;
                 </button>
               </div>
             </div>

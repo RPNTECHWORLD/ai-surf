@@ -21,6 +21,8 @@ const Analytics = () => {
     { label: 'RED', count: 0 },
   ]);
   const [students, setStudents] = useState([]);
+  const [allStudentsList, setAllStudentsList] = useState([]);
+  const [allSessionsList, setAllSessionsList] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const currentUser = (() => {
@@ -40,8 +42,12 @@ const Analytics = () => {
 
   const userRole = (currentUser?.role || '').toLowerCase().trim();
   const isCoach = userRole === 'coach';
+  const isStudent = userRole === 'athlete' || userRole === 'student' || userRole === 'user';
   const coachId = currentUser?.instructor_id || currentUser?.id;
   const coachName = currentUser?.name || '';
+  const studentId = currentUser?.student_id || currentUser?.id;
+  const studentName = (currentUser?.name || '').toLowerCase().trim();
+  const studentEmail = (currentUser?.email || '').toLowerCase().trim();
 
   useEffect(() => {
     const queryParams = new URLSearchParams();
@@ -53,12 +59,16 @@ const Analytics = () => {
     const qStr = queryParams.toString() ? `?${queryParams.toString()}` : '';
 
     Promise.all([
-      fetch(`${API}/api/analytics/badges${qStr}`).then(r => r.json()),
-      fetch(`${API}/api/analytics/students${qStr}`).then(r => r.json()),
+      fetch(`${API}/api/analytics/badges${qStr}`).then(r => r.json()).catch(() => []),
+      fetch(`${API}/api/analytics/students${qStr}`).then(r => r.json()).catch(() => []),
+      fetch(`${API}/api/students`).then(r => r.json()).catch(() => []),
+      fetch(`${API}/api/sessions`).then(r => r.json()).catch(() => []),
     ])
-      .then(([badges, studs]) => {
+      .then(([badges, studs, stdsList, sessList]) => {
         if (Array.isArray(badges)) setBadgeStats(badges);
         if (Array.isArray(studs)) setStudents(studs);
+        if (Array.isArray(stdsList)) setAllStudentsList(stdsList);
+        if (Array.isArray(sessList)) setAllSessionsList(sessList);
       })
       .catch((err) => {
         console.error('Analytics fetch error:', err);
@@ -66,23 +76,168 @@ const Analytics = () => {
       .finally(() => setLoading(false));
   }, [isCoach, coachId, activeSchool]);
 
+  const getGuestsForStudent = (student) => {
+    if (!student) return [];
+    const guestNames = new Set();
+
+    const parseGuests = (val) => {
+      if (!val) return [];
+      if (Array.isArray(val)) return val;
+      if (typeof val === 'string') {
+        try {
+          const parsed = JSON.parse(val);
+          if (Array.isArray(parsed)) return parsed;
+        } catch (e) {}
+      }
+      return [];
+    };
+
+    // 1. Direct guests_details
+    parseGuests(student.guests_details).forEach(g => {
+      const name = typeof g === 'string' ? g.trim() : (g?.name ? String(g.name).trim() : '');
+      if (name) guestNames.add(name);
+    });
+
+    // 2. Matched student from full students list
+    const matchedStd = allStudentsList.find(s => 
+      (student.id && s.id === student.id) ||
+      ((student.name || '').toLowerCase().trim() === (s.name || '').toLowerCase().trim())
+    );
+    if (matchedStd) {
+      parseGuests(matchedStd.guests_details).forEach(g => {
+        const name = typeof g === 'string' ? g.trim() : (g?.name ? String(g.name).trim() : '');
+        if (name) guestNames.add(name);
+      });
+    }
+
+    // 3. Sessions list matching student
+    allSessionsList.forEach(sess => {
+      const matchId = student.id && (String(sess.student_id) === String(student.id));
+      const matchName = (student.name || '').toLowerCase().trim() === (sess.student || sess.student_name || '').toLowerCase().trim();
+      if (matchId || matchName) {
+        if (sess.guest_name && sess.guest_name.trim()) {
+          guestNames.add(sess.guest_name.trim());
+        } else if (sess.is_guest && sess.student && sess.student.trim()) {
+          guestNames.add(sess.student.trim());
+        }
+      }
+    });
+
+    // 4. Storage fallback
+    if (guestNames.size === 0) {
+      try {
+        const savedUser = JSON.parse(sessionStorage.getItem('user') || '{}');
+        const stNameLower = (student.name || '').toLowerCase().trim();
+        if (stNameLower && (savedUser.name || '').toLowerCase().trim() === stNameLower) {
+          parseGuests(savedUser.guests_details).forEach(g => {
+            const name = typeof g === 'string' ? g.trim() : (g?.name ? String(g.name).trim() : '');
+            if (name) guestNames.add(name);
+          });
+        }
+      } catch (e) {}
+    }
+
+    return Array.from(guestNames);
+  };
+
   const filteredStudents = useMemo(() => {
     if (!students || students.length === 0) return [];
-    return students.filter(s => {
+
+    // STUDENT ROLE: Show only their own record + their own guests
+    if (isStudent) {
+      const me = students.find(s => {
+        if (studentId && (String(s.id) === String(studentId) || String(s.user_id) === String(studentId))) return true;
+        if (studentEmail && (s.email || '').toLowerCase().trim() === studentEmail) return true;
+        if (studentName && (s.name || '').toLowerCase().trim() === studentName) return true;
+        return false;
+      });
+      if (!me) return [];
+      const result = [{ ...me, isGuest: false, displayKey: `student_${me.id}` }];
+      getGuestsForStudent(me).forEach(gName => {
+        result.push({
+          id: `guest_${me.id}_${gName}`,
+          name: gName,
+          isGuest: true,
+          parentName: me.name,
+          parentId: me.id,
+          school: me.school,
+          instructor: me.instructor || '—',
+          badges: 0,
+          badge_levels: [],
+          nextTime: '3 weeks',
+          nextColor: '#64748B',
+          displayKey: `guest_${me.id}_${gName}`
+        });
+      });
+      return result;
+    }
+    
+    // Base filter by coach or school
+    const scoped = students.filter(s => {
       if (isCoach && (coachId || coachName)) {
-        const coachMatches = 
-          (coachId && (s.instructor_id === coachId || String(s.instructor_id) === String(coachId))) ||
-          (coachName && s.instructor && s.instructor.toLowerCase().trim() === coachName.toLowerCase().trim());
-        return coachMatches;
+        const cNameLower = (coachName || '').toLowerCase().trim();
+        const hasSessionWithCoach = allSessionsList.some(sess => {
+          const sessStatus = (sess.status || '').toLowerCase().trim();
+          if (sessStatus === 'cancelled' || sessStatus === 'canceled') return false;
+
+          const sInstLower = (sess.instructor || sess.instructor_name || '').toLowerCase().trim();
+          const instMatch = 
+            (cNameLower && sInstLower && (sInstLower === cNameLower || sInstLower.includes(cNameLower) || cNameLower.includes(sInstLower))) ||
+            (coachId && (sess.instructor_id === coachId || String(sess.instructor_id) === String(coachId) || parseInt(sess.instructor_id) === parseInt(coachId)));
+
+          if (!instMatch) return false;
+
+          const matchId = s.id && (String(sess.student_id) === String(s.id));
+          const sNameLower = (s.name || '').toLowerCase().trim();
+          const matchName = sNameLower && (
+            (sess.student || '').toLowerCase().trim() === sNameLower ||
+            (sess.student_name || '').toLowerCase().trim() === sNameLower
+          );
+
+          return matchId || matchName;
+        });
+
+        return hasSessionWithCoach;
       }
       if (activeSchool && activeSchool.toLowerCase() !== 'super admin' && activeSchool.toLowerCase() !== 'all') {
         const sSchool = (s.school || '').toLowerCase().trim();
         const actSchool = activeSchool.toLowerCase().trim();
-        return !sSchool || sSchool === actSchool;
+        return sSchool === actSchool;
       }
       return true;
     });
-  }, [students, isCoach, coachId, coachName, activeSchool]);
+
+    // Expand students with accompanying guests
+    const expanded = [];
+    scoped.forEach(student => {
+      expanded.push({
+        ...student,
+        isGuest: false,
+        displayKey: `student_${student.id || student.name}`
+      });
+
+      const guests = getGuestsForStudent(student);
+      guests.forEach(gName => {
+        expanded.push({
+          id: `guest_${student.id}_${gName}`,
+          name: gName,
+          isGuest: true,
+          parentName: student.name,
+          parentId: student.id,
+          school: student.school,
+          instructor_id: student.instructor_id,
+          instructor: student.instructor || '—',
+          badges: 0,
+          badge_levels: [],
+          nextTime: '3 weeks',
+          nextColor: '#64748B',
+          displayKey: `guest_${student.id}_${gName}`
+        });
+      });
+    });
+
+    return expanded;
+  }, [students, isCoach, isStudent, coachId, coachName, studentId, studentName, studentEmail, activeSchool, allStudentsList, allSessionsList]);
 
   const maxCount = badgeStats.length > 0 ? Math.max(...badgeStats.map(b => b.count), 1) : 1;
 
@@ -164,8 +319,34 @@ const Analytics = () => {
                 </thead>
                 <tbody>
                   {filteredStudents.map((student, i) => (
-                    <tr key={i} style={{ borderBottom: i === filteredStudents.length - 1 ? 'none' : '1px solid #E2E8F0' }}>
-                      <td className="an-student-name">{student.name}</td>
+                    <tr
+                      key={student.displayKey || i}
+                      style={{
+                        borderBottom: i === filteredStudents.length - 1 ? 'none' : '1px solid #E2E8F0',
+                        backgroundColor: student.isGuest ? 'rgba(240, 249, 255, 0.45)' : 'transparent'
+                      }}
+                    >
+                      <td className="an-student-name">
+                        {student.isGuest ? (
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', paddingLeft: '14px' }}>
+                            <span style={{ color: '#94A3B8', fontSize: '13px' }}>↳</span>
+                            <span style={{ fontWeight: 600, color: '#0F172A' }}>{student.name}</span>
+                            <span style={{
+                              fontSize: '10.5px',
+                              background: '#E0F2FE',
+                              color: '#0369A1',
+                              border: '1px solid #BAE6FD',
+                              padding: '1px 6px',
+                              borderRadius: '4px',
+                              fontWeight: 700
+                            }}>
+                              Guest of {student.parentName}
+                            </span>
+                          </div>
+                        ) : (
+                          <span style={{ fontWeight: 600, color: '#0F172A' }}>{student.name}</span>
+                        )}
+                      </td>
                       <td>
                         <div className="an-badge-history">
                           {BADGE_ORDER.map((badgeLevel, index) => {
@@ -175,7 +356,7 @@ const Analytics = () => {
                               <div
                                 key={index}
                                 className="an-badge-circle"
-                                title={badgeLevel}
+                                title={earned ? `${badgeLevel} Badge (Earned)` : `${badgeLevel} Badge`}
                                 style={{
                                   backgroundColor: earned ? colors.bg : 'transparent',
                                   border: `2px solid ${earned ? colors.bg : '#E2E8F0'}`
@@ -210,7 +391,7 @@ const Analytics = () => {
           height: auto !important;
           background: #F8FAFC;
           font-family: 'Instrument Sans', sans-serif;
-          padding-top: 84px;
+          padding-top: 0px;
           box-sizing: border-box;
           width: 100%;
           overflow-y: auto !important;
@@ -229,9 +410,9 @@ const Analytics = () => {
 
         /* Header */
         .an-header { display: flex; justify-content: space-between; align-items: center; }
-        .an-header-text { display: flex; flex-direction: column; }
-        .an-title { font-family: 'Outfit', sans-serif; font-size: 32px; font-weight: 700; color: #0F172A; margin: 0; line-height: 1.2; }
-        .an-sub { font-size: 15px; color: #64748B; margin: 6px 0 0 0; }
+        .an-header-text { display: flex; flex-direction: column; align-items: flex-start; text-align: left; }
+        .an-title { font-family: 'Outfit', sans-serif; font-size: 24px; font-weight: 700; color: #0F172A; margin: 0; line-height: 1.2; text-align: left; }
+        .an-sub { font-size: 13.5px; color: #64748B; margin: 4px 0 0 0; line-height: 1.4; text-align: left; }
         .an-export-btn {
           background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 8px;
           padding: 10px 20px; font-family: 'Outfit', sans-serif; font-size: 12px; font-weight: 600; color: #0F172A; cursor: pointer;
@@ -289,7 +470,7 @@ const Analytics = () => {
 
         @media (max-width: 768px) {
           .an-page {
-            padding-top: 60px !important;
+            padding-top: 0px !important;
             width: 100% !important;
             max-width: 100% !important;
             overflow-x: hidden !important;

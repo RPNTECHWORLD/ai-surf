@@ -235,3 +235,203 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
       - Removed auto-population of demo schools in /api/schools.
       - Neutralized seed_database() to prevent demo data injection.
       - Deployed updated backend/main.py to AWS EC2 instance via S3 upload and SSM command, and verified active endpoints.
+
+24. **Calendar Date Filter & Daily Creation Count for Invite Links (`StudentsManagement.jsx`)**:
+    - **Requirement**: In the Invite Link modal (`History` tab), add a compact calendar date selector. When a date is picked, show how many links were created on that date and filter the list accordingly.
+    - **Updates**:
+      - **Compact Date Picker Pill**: Added a sleek `📅 [YYYY-MM-DD]` calendar input pill in the top filter row alongside `All Links` and `⚡ Active Only`.
+      - **Daily Creation Count Banner**: When a date is selected, displays a highlighted banner badge showing the exact count: `📅 {count} link(s) created on {formattedDate} ({activeCount} Active)`.
+      - **Instant Reset / Clear**: Added a quick `✕ Show All Dates` action button in the banner and on the date input pill to easily clear the filter.
+      - **Scoped Card List**: Filters the invite list to only cards created on that local calendar date (`inv.created_at`).
+      - **Zero Count State**: If no links were created on the chosen date, displays `0 Links Created on {formattedDate}` with a one-click button to reset.
+
+25. **Removed `+ Schedule on this Date` Button from Day Details Modal Footer (`Sessions.jsx`)**:
+    - **Requirement**: Remove the pink `+ Schedule on this Date` button from the Day Details modal footer.
+    - **Updates**:
+      - Removed the `+ Schedule on this Date` button from the bottom-left of the Day Details modal footer.
+      - Aligned the `Close` action button cleanly to the right (`justifyContent: 'flex-end'`).
+
+26. **Compact Step 3 Header & Smooth Scroll Fix (`NewSession.jsx`)**:
+    - **Problem**: In Step 3 (Instructor Groups Matching), the top session banner, large stat summary cards, and time slot card occupied excessive vertical space (~280px+), pushing the 3-column workspace below the fold. Additionally, wheel scrolling was trapped/blocked on `.ns-step3-workspace` due to conflicting overflow properties and unconstrained container heights.
+    - **Updates**:
+      - **Compact Header Elements**:
+        - Reduced `.ns-selected-banner` padding and font size for a sleek single-line indicator.
+        - Redesigned `.ns-stat-card` into compact horizontal cards (`padding: 8px 16px`, `font-size: 20px`, inline label), reducing stat card height by more than 50%.
+        - Streamlined `.ns-step3-filters-card` with tighter padding (`10px 16px`) and compact gap spacing (`12px` between sections instead of `20px`).
+      - **Restored Smooth Vertical Scrolling**:
+        - Removed `overflow-x: auto` from `.ns-step3-workspace` which was trapping vertical wheel events, replacing fixed min-widths with responsive `minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1fr)`.
+        - Enforced clean 100vh height boundaries on `.ns-root` and `-webkit-overflow-scrolling: touch` with `overflow-y: auto` on `.ns-container` and `.ns-modal-body-scroll`.
+        - Allows the user to smoothly scroll down the entire page/modal across all 3 columns and sticky action bar.
+
+27. **Common Multi-Slot Creation Count in Session Success Modal (`NewSession.jsx`)**:
+    - **Problem**: When a user scheduled sessions across multiple time slots (e.g. 3 slots), the confirmation success modal previously printed a hardcoded single slot string: `Your session for Saturday, Oct 3, 2026 (01:00 PM) with 2 training group(s)...`, ignoring the other slots and causing confusion.
+    - **Updates**:
+      - Removed the misleading single slot timestamp `(01:00 PM)` from the confirmation description.
+      - Added dynamic tracking of total published sessions and distinct scheduled time slots (`publishedStats`).
+      - Updated modal title and message to display the exact overall creation count:
+        - Multiple sessions: **`{count} Sessions Created & Published!`** &rarr; `"{count} sessions created for Saturday, Oct 3, 2026 across {slots} time slots have been successfully saved into the schedule."`
+        - Single session: **`Session Created & Published!`** &rarr; `"1 session created for Saturday, Oct 3, 2026 has been successfully saved into the schedule."`
+
+28. **Removed Subtext Breakdown Lines from Session Hub Metric Cards (`Sessions.jsx`)**:
+    - **Requirement**: Remove the bottom subtext lines (`Days Upcoming`, `Days In Progress`, `Days Pending`, `Days Completed`, and `Students Breakdown`) from the 5 status metric cards in the Sessions Hub.
+    - **Updates**:
+      - Removed `.ses-smc-sub` rows from all 5 cards in `Sessions.jsx`.
+      - Metric cards now display a clean, uncluttered layout showing the uppercase card label and large status count number.
+
+29. **Removed `TYPE` Column from Sessions Table (`Sessions.jsx`)**:
+    - **Requirement**: Remove the `TYPE` column header and `GENERAL` / Beginner type badges from the main Sessions table.
+    - **Updates**:
+      - Removed `<th style={{ width: '10%' }}>TYPE</th>` from the table header.
+      - Removed type `<td>` cells across group parent rows, expanded child athlete rows, and ungrouped session rows.
+      - Rebalanced column widths (`SESSION / STUDENT` to 26%, `INSTRUCTOR` to 16%, `STATUS` to 13%, and `ACTIONS` to 27%) for optimal table readability.
+
+30. **Compact & Cleanly Aligned Students Header (`StudentsManagement.jsx`)**:
+    - **Requirement**: Make the Students page header title and subtitle smaller and cleanly aligned.
+    - **Updates**:
+      - Reduced `.sm-title` from 32px to `24px` (`font-weight: 700; line-height: 1.2`), making it sleek and proportional to other dashboard pages.
+      - Reduced `.sm-sub` from 16px to `13.5px` (`color: #64748B; margin-top: 4px; line-height: 1.4`).
+      - Refined the accompanying guests breakdown indicator to a subtle, smaller inline tag (`12.5px`, semi-bold) that flows naturally without breaking line rhythm.
+      - Enforced left alignment (`display: flex; flex-direction: column; align-items: flex-start; text-align: left;`) on `.sm-header-text`.
+
+31. **Strict School & Coach Assignment Isolation in Athlete Intel (`AthleteIntelligence.jsx`)**:
+    - **Problem**: In the Athlete Intelligence page (`Athlete Intel`), coaches were seeing athletes from other schools as well as all unassigned athletes (30 students globally in the `Logging for:` selector) because school resolution was falling back to null and coach role isolation was not applied.
+    - **Updates**:
+      - **Multi-Tenant School Isolation**: Robustly resolved `activeSchoolName` across `sessionStorage`, `localStorage`, and `currentUser` profiles. Filtered students strictly by the user's school (e.g. `rpn tech ac`), eliminating cross-school leakage.
+      - **Coach Assignment Isolation**: For Coach accounts (`isCoach`), restricted the student list to ONLY students assigned to that coach (via primary instructor ID, coach name match, scheduled training sessions from `allSessions`, or created by that coach).
+      - **Scoped Selectors & Empty States**:
+        - `Level: All Levels (X)` now accurately reflects only the coach's assigned student count.
+        - `Logging for:` dropdown only lists athletes assigned to that coach within their affiliated school.
+        - Shows a graceful fallback `No assigned athletes found` if the coach does not yet have assigned students.
+
+32. **Student Session Resolution & Visibility Fix in Sessions (`Sessions.jsx`)**:
+    - **Problem**: When a student (e.g. `Ericsheldon2604`) navigated to the "My Sessions" tab (`/sessions`), the page showed 0 sessions ("No sessions match your filter criteria - No sessions found for your account"), even though their 3 scheduled sessions were correctly visible under "Pending Sessions (3)" on their Student Profile (`/students/:id`).
+    - **Root Cause**:
+      1. `currentStudentName` in `Sessions.jsx` fell back to hardcoded string `'Eric Sheldon'`, which failed to match the username/student name `'Ericsheldon2604'`.
+      2. `roleScopedSessions` for students only checked `s.student` and `currentUser?.student_id` (which was user table id `194` rather than student table id `94`), missing `student_name`, `guest_name`, notes, and email matching.
+      3. `fetchSessions` appended `?school=${targetSchool}` which could restrict sessions if school context was mismatched.
+    - **Updates**:
+      - Added dynamic student resolution (`loggedInStudent`) by matching `currentUser` against `allStudentsList` via email, student ID, user ID, and username.
+      - Built `studentCandidateNames` and `studentCandidateIds` sets covering all variations (`name`, `username`, `student_name`, email prefix, student ID, user ID).
+      - For student accounts (`isStudent`), `fetchSessions` fetches `/api/sessions` without school parameter restrictions (matching `StudentProfile.jsx`), ensuring no sessions are dropped.
+      - Enhanced `roleScopedSessions` for students to accurately match student IDs, student name, guest name, and group notes.
+      - Added storage synchronization listeners (`storage`, `user_updated`) to keep `currentUser` fresh.
+
+33. **Registration Invite Links for Individual / Freelance Coaches (`StudentsManagement.jsx` & `AuthPage.jsx`)**:
+    - **Problem**: Individual / Freelance Coaches could not send or generate registration invite links because `canCreateInviteLink` was strictly restricted with `isAdminOrSchoolAdmin && !isCoach`, hiding the "🔗 Invite Link" button on their "My Students" dashboard.
+    - **Updates**:
+      - Updated `canCreateInviteLink` permissions in [StudentsManagement.jsx](file:///d:/surfing/ai/frontend/src/pages/StudentsManagement.jsx) to `isAdminOrSchoolAdmin || (isCoach && isCoachFreelance)`.
+      - Enabled the **"🔗 Invite Link"** button for Individual Coaches alongside School Admins.
+      - Dynamic Modal Context: Configured the invite modal to display **"Coach Registration Invite Link"** with the assigned coach's name (`Coach demo1`) and a locked coach assignment indicator (`Coach Assigned on Signup`).
+      - Coach Attribution in Generated Link: Appended `&coach=...&coach_id=...` parameters to generated and copied URLs so registrations are linked directly to that coach.
+      - Auto-assignment on Signup: In [AuthPage.jsx](file:///d:/surfing/ai/frontend/src/pages/AuthPage.jsx), newly registered students arriving via coach invite links are automatically assigned to that coach.
+
+34. **Typography and Alignment Refinement in Instructors Management (`InstructorManagement.jsx`)**:
+    - **Problem**: The page title "Instructors" and its subtitle were overly bulky (`font-size: 32px`, `font-weight: 800`), not aligning with the refined dashboard header proportions seen in Students and Sessions.
+    - **Updates**:
+      - Reduced `.im-title` from 32px to `24px` (`font-weight: 700; line-height: 1.2`), making it clean, modern, and perfectly aligned with the rest of the application.
+      - Tuned `.im-subtitle` to `13.5px` (`color: #64748B; margin: 4px 0 0 0; line-height: 1.4`).
+      - Enforced structured left alignment with `.im-header-text` (`display: flex; flex-direction: column; align-items: flex-start; text-align: left;`).
+      - Refined mobile responsive rules to maintain clean line heights and proportions.
+
+35. **Accompanying Guests Support in Athlete Intelligence (`AthleteIntelligence.jsx`)**:
+    - **Problem**: In the "Athlete Intel" page (`/intel`), the "Logging for:" dropdown only showed primary registered students (e.g. `testing`), omitting accompanying guests (e.g. `kolaru`, `kplaru 34e`) who attend training sessions. Coaches and instructors could not select or log mental, nutrition, technical, or S&C records specifically for guest attendees.
+    - **Updates**:
+      - **Guest Discovery & Aggregation**: Implemented `getGuestsForStudent(student, sessions)` extracting unique guests from `student.guests_details`, `allSessions` (`s.guest_name` / `s.is_guest`), and local storage fallbacks.
+      - **Unified Athlete Registry**: Computed `allAthletes` and `filteredAthletes` containing both primary students and their guests tagged with parent context (`key: "${s.id}__guest__${gName}"`, `isGuest: true`, `parentName`).
+      - **Hierarchical Dropdown UI**: Rendered accompanying guests cleanly indented under their primary student in the "Logging for:" selector:
+        - `testing (Beginner)`
+        - `  ↳ kolaru (Guest of testing)`
+        - `  ↳ kplaru 34e (Guest of testing)`
+      - **Accurate Capacity Counts**: Updated `levelCounts` to reflect total athletes and guest attendees across skill levels.
+      - **Guest-Attributed Performance Logging**: Form submissions for Nutrition, S&C, Technical, and Mental logs automatically route to the underlying student record while prepending `[Guest: <guest_name>]` to notes and details, displaying customized toast notifications confirming guest logs.
+
+36. **Student Metric Cards and Chronological "Next Session" Sorting (`Sessions.jsx` & `StudentProfile.jsx`)**:
+    - **Problem**:
+      1. On the "My Sessions" tab (`/sessions`) for student accounts, a "NUMBER OF STUDENTS: 1" metric card was redundantly shown, which is irrelevant for an individual student.
+      2. In the Student Profile page (`StudentProfile.jsx`), the "NEXT SESSION" top-right banner was showing the last scheduled slot (`Monday, Oct 5, 2026`) instead of the earliest upcoming slot (`Saturday, Oct 3, 2026`). Furthermore, "Pending Sessions" and the sessions list were displayed in reverse creation order rather than chronological order.
+    - **Updates**:
+      - **Hidden Student Metric Card**: In [Sessions.jsx](file:///d:/surfing/ai/frontend/src/pages/Sessions.jsx), hidden the `NUMBER OF STUDENTS` card for students (`!isStudent`), adjusting `.ses-metrics-row.student-view` to an even 4-column layout on desktop.
+      - **Chronological Next Session Determination**: In [StudentProfile.jsx](file:///d:/surfing/ai/frontend/src/pages/StudentProfile.jsx), implemented `sortSessionsAscending` ensuring upcoming sessions are sorted by earliest date and time slot. `nextSession` now correctly identifies the immediate upcoming session (`Saturday, Oct 3, 2026, 10:30 AM - 12:00 PM`).
+      - **Chronological Pending & Sessions List**:
+        - "Pending Sessions" on the profile now lists slots in ascending chronological order (Saturday Oct 3 first, Sunday Oct 4 second, Monday Oct 5 third).
+        - In [Sessions.jsx](file:///d:/surfing/ai/frontend/src/pages/Sessions.jsx), when viewing as a student or filtering by "Upcoming", group and ungrouped sessions sort in chronological ascending order so students see their nearest upcoming sessions first.
+
+37. **Removal of Redundant "X Students + Y Guests" Breakdown Indicator (`StudentsManagement.jsx` & `SchoolDashboard.jsx`)**:
+    - **Problem**: In the "Students" management page (`StudentsManagement.jsx`) and School Dashboard (`SchoolDashboard.jsx`), an inline blue subtext `5 Students + 2 Guests` was displayed under the TOTAL stat card and header subtitle, causing visual clutter.
+    - **Updates**:
+      - **Students Page**:
+        - Removed `sub: ...` from `stats` and completely eliminated the `{s.sub && ...}` span in `.sm-stat-card`.
+        - Reverted card label to a clean, canonical `'TOTAL'` (also fixing level filter reset on click).
+        - Cleaned header subtitle (`sm-sub`) to remove parenthetical guest breakdown text.
+      - **School Dashboard**:
+        - Replaced dynamic guest subtext under "Active Students" stat card with standard clean `'Enrolled Athletes'` micro-text.
+
+38. **Universal Headline & Header Alignment Standardization Across All Pages**:
+    - **Problem**: Headlines across pages were mismatched in typography, size, spacing, and left alignment. Some pages had 32px bulky titles (`AthleteIntelligence.jsx`, `Competitions.jsx`, `Analytics.jsx`), some had 30px (`Sessions.jsx`), and some had 24px (`StudentsManagement.jsx`, `InstructorManagement.jsx`). Additionally, horizontal padding varied widely (80px on Students vs 40px on other pages), causing the headlines to jump and misalign when switching tabs.
+    - **Updates**:
+      - **Unified Title Typography**: Enforced `font-family: 'Outfit', sans-serif`, `font-size: 24px`, `font-weight: 700`, `line-height: 1.2`, `color: #0F172A`, and `margin: 0` across all pages (`.sm-title`, `.im-title`, `.ses-title`, `.ai-title`, `.cmp-title`, `.an-title`).
+      - **Unified Subtitle Typography**: Enforced `font-size: 13.5px`, `color: #64748B`, `line-height: 1.4`, and `margin: 4px 0 0 0` with structured left alignment on all page headers.
+      - **Uniform Horizontal Alignment**: Standardized page main padding across all views (`padding: 28px/32px 40px ...`), eliminating the 80px horizontal gap in `StudentsManagement.jsx` so every page's headline begins at the exact same 40px left-edge alignment.
+
+39. **Accompanying Guests Visibility in Badge Progression & Analytics Table (`Analytics.jsx`, `main.py`, `mockFetch.js`)**:
+    - **Problem**: In the "Badge Progression" page (`/analytics`), the student progress table only listed primary registered students, omitting accompanying registered guests (such as `kolaru` and `kplaru 34e` registered under `testing`).
+    - **Updates**:
+      - **Backend & Mock API Enrichment**: Updated `/api/analytics/students` in [backend/main.py](file:///d:/surfing/ai/backend/main.py) and [mockFetch.js](file:///d:/surfing/ai/frontend/src/mockFetch.js) to return `id`, `school`, `instructor_id`, `guests_details`, and `guests_count`.
+      - **Guest Resolution**: Implemented `getGuestsForStudent` in [Analytics.jsx](file:///d:/surfing/ai/frontend/src/pages/Analytics.jsx) integrating guests from direct student details, `/api/students`, `/api/sessions`, and storage fallbacks.
+      - **Hierarchical Table Presentation**:
+        - Accompanying guests now render immediately under their primary athlete with indentation (`↳ <name>`) and a badge pill (`Guest of <parent>`).
+        - Guests inherit their primary athlete's assigned instructor (e.g. `demo1`), display their badge progression circles starting at White badge level, and reflect estimated progression timing.
+
+40. **Strict Session-Only Assignment Filtering for Coach Views (`StudentsManagement.jsx`, `AthleteIntelligence.jsx`, `Analytics.jsx`)**:
+    - **Problem**: For coaches (e.g. `demo1`), students who did NOT have an active assigned session (e.g. `Liam Torres`, `Maya Chen`, `Nithishwaran RP`) were showing up on the "Students" page because they fell back to matching default primary instructor attributes on the student record. Furthermore, if a session was deleted, the student would remain visible.
+    - **Updates**:
+      - **Strict Active Session Requirement**: In [StudentsManagement.jsx](file:///d:/surfing/ai/frontend/src/pages/StudentsManagement.jsx), [AthleteIntelligence.jsx](file:///d:/surfing/ai/frontend/src/pages/AthleteIntelligence.jsx), and [Analytics.jsx](file:///d:/surfing/ai/frontend/src/pages/Analytics.jsx), eliminated static fallback matching (`idMatch`, `nameMatch`, `createdMatch`).
+      - **Dynamic Session-Linked Visibility**: Coaches ONLY see students who currently have an active, non-cancelled scheduled session with that coach.
+      - **Immediate Removal on Session Deletion**: If a session is deleted or no active sessions remain between that student and the coach, the student is instantly and completely removed from the coach's views.
+
+41. **Removal of Duplicate Top Spacing Gap on Analytics, Competitions, and Athlete Intel (`Analytics.jsx`, `Competitions.jsx`, `AthleteIntelligence.jsx`)**:
+    - **Problem**: In "Analytics" (`/analytics`), "Competitions" (`/competitions`), and "Athlete Intel" (`/intel`), a massive empty gap (~156px) appeared between the top fixed navbar and the page headline.
+    - **Root Cause**: The global fixed navbar height (72px) was already compensated by `margin-top: 72px !important` in `index.css`. However, `.an-page`, `.cmp-page`, and `.ai-page` additionally had `padding-top: 84px;` (and `padding-top: 60px !important` on mobile), causing double navbar offset.
+    - **Updates**: Set `padding-top: 0px` on `.an-page`, `.cmp-page`, and `.ai-page` (matching `Sessions.jsx` and `StudentsManagement.jsx`), completely eliminating the excessive gap and aligning all headlines right below the top navigation bar.
+42. **Removal of Empty "SESSIONS / MONTH" Chart Card (`InstructorProfile.jsx`)**:
+    - **Problem**: In the Instructor/Coach Profile right-hand sidebar (`InstructorProfile.jsx`), an empty `SESSIONS / MONTH` stat card with zero-activity dash bars was occupying space above the assigned students list.
+    - **Updates**:
+      - Removed the `SESSIONS / MONTH` monthly chart card (`ip-stats-row` and `ip-stat-card`) from [InstructorProfile.jsx](file:///d:/surfing/ai/frontend/src/pages/InstructorProfile.jsx).
+      - Cleaned up the unused monthly session count computation loop, allowing the "Assigned Students" card to sit cleanly at the top of the right column.
+43. **Mandatory Location / Region with Asterisk for Individual Coaches (`AuthPage.jsx`, `backend/main.py`, `mockFetch.js`)**:
+    - **Problem**: During Coach account signup on [AuthPage.jsx](file:///d:/surfing/ai/frontend/src/pages/AuthPage.jsx), the "Location / Region" field was optional and lacked a mandatory `*` indicator when registering as an "Individual / Freelance Coach", allowing registrations without a primary coaching location.
+    - **Updates**:
+      - **UI Indicator**: Added a prominent red asterisk (`<span style={{ color: '#EF4444' }}>*</span>`) to `Location / Region *` on [AuthPage.jsx](file:///d:/surfing/ai/frontend/src/pages/AuthPage.jsx) whenever coaching independently.
+      - **Client-Side Form Validation**: Set `required={!isCoachSchoolAffiliated}` on the input and added strict frontend validation in `completeRegistration` alerting `"Please enter your coaching location / region."` if submitted empty.
+      - **Backend & Mock Enforcement**: Added validation in [backend/main.py](file:///d:/surfing/ai/backend/main.py) and [mockFetch.js](file:///d:/surfing/ai/frontend/src/mockFetch.js) returning HTTP 400 if an individual coach tries to register without specifying their coaching location.
+
+44. **Fix Athlete Intel Header Overlapping Under Fixed Navbar (`AthleteIntelligence.jsx`, `index.css`)**:
+    - **Problem**: On the "Athlete Intel" page (`/athlete-intelligence`), the page header ("Athlete Intelligence & Analytics") and subtitle were tucked underneath the fixed 72px top navigation bar because `.ai-main` was missing from the global `margin-top: 72px` panel rules in `index.css`.
+    - **Updates**:
+      - In [index.css](file:///d:/surfing/ai/frontend/src/index.css), added `.ai-page` and `.ai-main` to the global desktop and mobile responsive panel declarations (`margin-top: 72px !important; padding: 32px 40px !important`).
+      - In [AthleteIntelligence.jsx](file:///d:/surfing/ai/frontend/src/pages/AthleteIntelligence.jsx), explicitly defined `margin-top: 72px; min-height: calc(100vh - 72px);` on `.ai-main`, ensuring the title and category tab buttons render clearly with proper top spacing directly beneath the navbar.
+
+### Changes on 03-10-2026
+
+45. **Analytics Page — Student Role Data Isolation (`Analytics.jsx`)**:
+    - **Problem**: When a student (e.g. `kolaru`) opened the Analytics page (`/analytics`), the Badge Progression table displayed ALL other students in the school (`Pradeep Pujar`, `Aadya Singh`, `Saanvi Hegde`, `Praveen`, etc.) — a privacy and data scoping violation.
+    - **Root Cause**: `filteredStudents` had no student-role check. For student users it fell through to the school-level filter, showing all students enrolled in the same school.
+    - **Updates**:
+      - Added `isStudent` flag (`athlete / student / user` roles) alongside `studentId`, `studentName`, and `studentEmail` derived from `currentUser`.
+      - Added a **student-role guard at the top of `filteredStudents`**: when `isStudent` is true, the memo returns only the logged-in student's own record (matched by ID → email → name) plus their own registered guests.
+      - Students still see the school-wide Badge Stat summary cards (WHITE / YELLOW / GREEN / BLUE / RED counts) as these are aggregate, non-personal statistics. Only the per-row progression table is scoped.
+
+46. **Athlete Intel — "Logging for:" Guest Dropdown for Student Accounts (`AthleteIntelligence.jsx`)**:
+    - **Problem**: On the Athlete Intelligence page (`/intel`), students who have accompanying guests (e.g. `testing` with guests `kolaru` and `kplaru 34e`) had no way to switch the logging context to one of their guests. The "Logging for:" selector was exclusively shown for Coach and Admin roles (`currentUser.role !== 'athlete'`), so students could only log data for themselves.
+    - **Updates**:
+      - Added `isStudent` flag (`athlete / student / user`) to `AthleteIntelligence.jsx`.
+      - Implemented `myGuestOptions` useMemo with **3-source fallback strategy**:
+        1. **API `students` list** — most authoritative; finds the student's own record and reads `guests_details`.
+        2. **`currentUser` object from sessionStorage** — available immediately at component mount before the API resolves; reads `currentUser.guests_details` directly.
+        3. **`localStorage school_join_requests`** — last-resort fallback for edge cases where neither source populates yet.
+      - The `"Logging for:"` dropdown renders **only for students with at least 1 guest** (`myGuestOptions.length > 1`):
+        - `testing (Me)`
+        - `↳ kolaru (Guest of testing)`
+        - `↳ kplaru 34e (Guest of testing)`
+      - Coach/Admin users retain the full Level filter + Logging for combo as before; students with no guests see no dropdown (single-person accounts need no switch).
+      - Fixed `selectedAthleteKey` initialization to cover all student role variants (`athlete` / `student` / `user`) and fall back to `currentUser.id` when `student_id` is absent.

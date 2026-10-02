@@ -77,6 +77,7 @@ const InstructorManagement = () => {
   const [photoPreview, setPhotoPreview] = useState('');
   const [deletingId, setDeletingId] = useState(null);
   const [schoolsList, setSchoolsList] = useState([]);
+  const [schoolsData, setSchoolsData] = useState([]);
   const [copiedInviteId, setCopiedInviteId] = useState(null);
   const [inviteModalData, setInviteModalData] = useState(null);
   const [inviteLinkCopied, setInviteLinkCopied] = useState(false);
@@ -148,11 +149,28 @@ const InstructorManagement = () => {
     return '';
   };
 
+  const currentSchool = getActiveSchoolName();
+  const isSuperAdmin = !currentSchool || currentSchool.toLowerCase() === 'super admin' || currentSchool.toLowerCase() === 'school admin';
+
   const [form, setForm] = useState({
     name: '', email: '', password: '', dob: '', age: '', gender: 'Male', fitness_level: 'Elite',
     experience: '', certifications: '', languages: '', biography: '', image: '',
-    school: getActiveSchoolName()
+    school: currentSchool, location: ''
   });
+
+  const getSchoolLocation = (schoolName) => {
+    if (!schoolName || schoolName === 'Individual / Freelance Coach') return '';
+    const cleanName = schoolName.toLowerCase().trim();
+    const found = schoolsData.find(s => (s.name || '').toLowerCase().trim() === cleanName);
+    if (found) {
+      const parts = [found.city, found.country].filter(Boolean);
+      return parts.join(', ') || found.city || found.country || '';
+    }
+    return '';
+  };
+
+  const effectiveCoachSchool = (!isSuperAdmin && currentSchool) ? currentSchool : (form.school || 'Individual / Freelance Coach');
+  const isCoachSchoolAffiliated = Boolean(effectiveCoachSchool) && effectiveCoachSchool !== 'Individual / Freelance Coach';
 
   const currentUser = (() => {
     try {
@@ -234,9 +252,6 @@ const InstructorManagement = () => {
 
   const [allStudents, setAllStudents] = useState([]);
 
-  const currentSchool = getActiveSchoolName();
-  const isSuperAdmin = !currentSchool || currentSchool.toLowerCase() === 'super admin' || currentSchool.toLowerCase() === 'school admin';
-
   const fetchInstructors = () => {
     const url = (!isSuperAdmin && currentSchool)
       ? `${API}/api/instructors?school=${encodeURIComponent(currentSchool)}`
@@ -276,6 +291,7 @@ const InstructorManagement = () => {
       .then(r => r.json())
       .then(data => {
         if (Array.isArray(data) && data.length > 0) {
+          setSchoolsData(data);
           const names = data.map(s => s.name).filter(Boolean);
           setSchoolsList(prev => Array.from(new Set([...names, ...prev])));
         }
@@ -344,6 +360,9 @@ const InstructorManagement = () => {
         : form.certifications;
 
       const safeImage = (form.image && !form.image.startsWith('blob:')) ? form.image : '';
+      const coachLoc = isCoachSchoolAffiliated
+        ? (getSchoolLocation(effectiveCoachSchool) || form.location || '')
+        : (form.location || '');
 
       const res = await fetch(`${API}/api/instructors`, {
         method: 'POST',
@@ -360,13 +379,14 @@ const InstructorManagement = () => {
           certifications: certs,
           image: safeImage,
           school: (!isSuperAdmin && currentSchool) ? currentSchool : (form.school || 'Individual / Freelance Coach'),
+          location: coachLoc,
           languages: Array.isArray(form.languages) ? form.languages.join(', ') : (form.languages || ''),
         }),
       });
       if (res.ok) {
         setShowAddModal(false);
         setPhotoPreview('');
-        setForm({ name: '', email: '', password: '', dob: '', age: '', gender: 'Male', fitness_level: 'Elite', experience: '', certifications: '', languages: [], biography: '', image: '', school: getActiveSchoolName() });
+        setForm({ name: '', email: '', password: '', dob: '', age: '', gender: 'Male', fitness_level: 'Elite', experience: '', certifications: '', languages: [], biography: '', image: '', school: getActiveSchoolName(), location: '' });
         fetchInstructors();
       }
     } catch (err) {}
@@ -383,6 +403,9 @@ const InstructorManagement = () => {
         : form.certifications;
 
       const safeImage = (form.image && !form.image.startsWith('blob:')) ? form.image : '';
+      const coachLoc = isCoachSchoolAffiliated
+        ? (getSchoolLocation(effectiveCoachSchool) || form.location || '')
+        : (form.location || '');
 
       const res = await fetch(`${API}/api/instructors/${selected.id}`, {
         method: 'PUT',
@@ -398,13 +421,14 @@ const InstructorManagement = () => {
           certifications: certs,
           image: safeImage,
           school: form.school || getActiveSchoolName(),
+          location: coachLoc,
         }),
       });
       if (res.ok) {
         setShowAddModal(false);
         setSelected(null);
         setPhotoPreview('');
-        setForm({ name: '', email: '', dob: '', age: '', gender: 'Male', fitness_level: 'Elite', experience: '', certifications: '', languages: '', biography: '', image: '', school: getActiveSchoolName() });
+        setForm({ name: '', email: '', dob: '', age: '', gender: 'Male', fitness_level: 'Elite', experience: '', certifications: '', languages: '', biography: '', image: '', school: getActiveSchoolName(), location: '' });
         fetchInstructors();
       }
     } catch (err) {}
@@ -447,19 +471,21 @@ const InstructorManagement = () => {
       <main className="im-main">
         {/* Header */}
         <div className="im-header">
-          <div>
+          <div className="im-header-text">
             <h1 className="im-title">Instructors</h1>
             <p className="im-subtitle">Manage your school's coaching roster and assignments.</p>
           </div>
           <button
             className="im-btn-add-primary"
             onClick={() => {
+              const currentActiveSchool = getActiveSchoolName();
               setSelected(null);
               setPhotoPreview('');
               setForm({
                 name: '', email: '', password: '', dob: '', age: '', gender: 'Male', fitness_level: 'Elite',
                 experience: '', certifications: '', languages: '', biography: '', image: '',
-                school: getActiveSchoolName()
+                school: currentActiveSchool,
+                location: getSchoolLocation(currentActiveSchool)
               });
               setShowAddModal(true);
             }}
@@ -707,7 +733,7 @@ const InstructorManagement = () => {
                 })()}
 
                 <div className="form-group">
-                  <label>Full Name *</label>
+                  <label>Full Name <span style={{ color: '#EF4444' }}>*</span></label>
                   <input
                     type="text"
                     name="instructor_full_name"
@@ -720,7 +746,7 @@ const InstructorManagement = () => {
                 </div>
 
                 <div className="form-group">
-                  <label>Email Address</label>
+                  <label>Email Address <span style={{ color: '#EF4444' }}>*</span></label>
                   <input
                     type="email"
                     name="coach_registration_email"
@@ -728,6 +754,7 @@ const InstructorManagement = () => {
                     placeholder="e.g. coach@surfclub.com"
                     value={form.email || ''}
                     onChange={e => setForm({...form, email: e.target.value})}
+                    required
                     readOnly
                     onFocus={e => e.target.removeAttribute('readOnly')}
                   />
@@ -769,7 +796,7 @@ const InstructorManagement = () => {
 
                 <div className="form-row" style={{ alignItems: 'flex-end' }}>
                   <div className="form-group" style={{ flex: 1 }}>
-                    <label>Date of Birth (DOB)</label>
+                    <label>Date of Birth (DOB) <span style={{ color: '#EF4444' }}>*</span></label>
                     <input
                       type="date"
                       value={form.dob || ''}
@@ -779,60 +806,72 @@ const InstructorManagement = () => {
                         const calculatedAge = calculateAge(dobVal);
                         setForm({ ...form, dob: dobVal, age: calculatedAge || '' });
                       }}
+                      required
                     />
                   </div>
                   <div className="form-group" style={{ flex: '0 0 110px', maxWidth: '110px' }}>
-                    <label>Age</label>
+                    <label>Age <span style={{ color: '#EF4444' }}>*</span></label>
                     <input
                       type="number"
                       placeholder="e.g. 28"
                       value={form.age !== undefined && form.age !== null ? form.age : ''}
                       onChange={e => setForm({...form, age: e.target.value})}
+                      required
                     />
                   </div>
                 </div>
 
                 <div className="form-row">
                   <div className="form-group">
-                    <label>Gender</label>
-                    <select value={form.gender} onChange={e => setForm({...form, gender: e.target.value})}>
-                      <option>Male</option>
-                      <option>Female</option>
-                      <option>Non-binary</option>
+                    <label>Gender <span style={{ color: '#EF4444' }}>*</span></label>
+                    <select value={form.gender} onChange={e => setForm({...form, gender: e.target.value})} required>
+                      <option value="Male">Male</option>
+                      <option value="Female">Female</option>
+                      <option value="Non-binary">Non-binary</option>
                     </select>
                   </div>
                   <div className="form-group">
-                    <label>Fitness Level</label>
-                    <select value={form.fitness_level} onChange={e => setForm({...form, fitness_level: e.target.value})}>
-                      <option>Beginner</option>
-                      <option>Intermediate</option>
-                      <option>Advanced</option>
-                      <option>Elite</option>
+                    <label>Fitness Level <span style={{ color: '#EF4444' }}>*</span></label>
+                    <select value={form.fitness_level} onChange={e => setForm({...form, fitness_level: e.target.value})} required>
+                      <option value="Beginner">Beginner</option>
+                      <option value="Intermediate">Intermediate</option>
+                      <option value="Advanced">Advanced</option>
+                      <option value="Elite">Elite</option>
                     </select>
                   </div>
                 </div>
 
                 <div className="form-row">
                   <div className="form-group" style={{ flex: '0 0 calc(50% - 6px)', maxWidth: 'calc(50% - 6px)' }}>
-                    <label>Experience (Years)</label>
+                    <label>Experience (Years) <span style={{ color: '#EF4444' }}>*</span></label>
                     <input type="number" min="0" max="60" placeholder="e.g. 5" value={form.experience} onChange={e => setForm({...form, experience: e.target.value})} required />
                   </div>
                 </div>
 
                 <div className="form-group">
-                  <label>Affiliation / Surf School</label>
+                  <label>Affiliation / Surf School <span style={{ color: '#EF4444' }}>*</span></label>
                   {!isSuperAdmin && currentSchool ? (
                     <select
                       value={currentSchool}
                       disabled
                       style={{ background: '#F8FAFC', color: '#0F172A', fontWeight: 700, cursor: 'not-allowed', opacity: 0.9 }}
+                      required
                     >
                       <option value={currentSchool}>🏫 {currentSchool}</option>
                     </select>
                   ) : (
                     <select
                       value={form.school || 'Individual / Freelance Coach'}
-                      onChange={e => setForm({ ...form, school: e.target.value })}
+                      onChange={e => {
+                        const chosen = e.target.value;
+                        const isAff = chosen && chosen !== 'Individual / Freelance Coach';
+                        setForm({
+                          ...form,
+                          school: chosen,
+                          location: isAff ? (getSchoolLocation(chosen) || form.location) : ''
+                        });
+                      }}
+                      required
                     >
                       <option value="Individual / Freelance Coach">👤 Individual / Freelance Coach (Independent)</option>
                       {schoolsList.filter(s => s !== 'Individual / Freelance Coach').map(s => (
@@ -843,13 +882,66 @@ const InstructorManagement = () => {
                 </div>
 
                 <div className="form-group">
-                  <label>Certifications (comma separated)</label>
-                  <input type="text" placeholder="ISA Level 2, Surf Coach Safety" value={form.certifications} onChange={e => setForm({...form, certifications: e.target.value})} />
+                  <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>Location / Region <span style={{ color: '#EF4444' }}>*</span></span>
+                    {isCoachSchoolAffiliated && (
+                      <span style={{ fontSize: '11px', color: '#0F766E', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                        🔒 Locked to School Location
+                      </span>
+                    )}
+                  </label>
+                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                    <input
+                      type="text"
+                      placeholder={isCoachSchoolAffiliated ? 'School location...' : 'e.g. North Shore, Oahu'}
+                      value={isCoachSchoolAffiliated ? (getSchoolLocation(effectiveCoachSchool) || form.location || '') : (form.location || '')}
+                      onChange={e => setForm({ ...form, location: e.target.value })}
+                      readOnly={isCoachSchoolAffiliated}
+                      disabled={isCoachSchoolAffiliated}
+                      required={!isCoachSchoolAffiliated}
+                      style={isCoachSchoolAffiliated ? {
+                        background: '#F1F5F9',
+                        color: '#334155',
+                        borderColor: '#CBD5E1',
+                        fontWeight: 600,
+                        cursor: 'not-allowed',
+                        paddingRight: '36px'
+                      } : {}}
+                    />
+                    {isCoachSchoolAffiliated && (
+                      <span
+                        style={{
+                          position: 'absolute',
+                          right: '12px',
+                          color: '#64748B',
+                          fontSize: '14px',
+                          pointerEvents: 'none'
+                        }}
+                        title="Location is locked to the affiliated surf school"
+                      >
+                        🔒
+                      </span>
+                    )}
+                  </div>
+                  {isCoachSchoolAffiliated ? (
+                    <small style={{ color: '#0F766E', fontSize: '11.5px', marginTop: '3px', display: 'block', fontWeight: 600 }}>
+                      🔒 Location locked to <strong>{effectiveCoachSchool}</strong>'s registered school location.
+                    </small>
+                  ) : (
+                    <small style={{ color: '#64748B', fontSize: '11.5px', marginTop: '3px', display: 'block' }}>
+                      Enter coach's primary region or location.
+                    </small>
+                  )}
+                </div>
+
+                <div className="form-group">
+                  <label>Certifications (comma separated) <span style={{ color: '#EF4444' }}>*</span></label>
+                  <input type="text" placeholder="ISA Level 2, Surf Coach Safety" value={form.certifications} onChange={e => setForm({...form, certifications: e.target.value})} required />
                 </div>
 
                 <div className="form-group">
                   <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                    <span>Languages Spoken</span>
+                    <span>Languages Spoken <span style={{ color: '#EF4444' }}>*</span></span>
                     <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 500 }}>Select tags or type below</span>
                   </label>
 
@@ -952,8 +1044,8 @@ const InstructorManagement = () => {
                 </div>
 
                 <div className="form-group">
-                  <label>Biography</label>
-                  <textarea placeholder="Quick bio for students..." value={form.biography || ''} onChange={e => setForm({...form, biography: e.target.value})} rows={3} />
+                  <label>Biography <span style={{ color: '#EF4444' }}>*</span></label>
+                  <textarea placeholder="Quick bio for students..." value={form.biography || ''} onChange={e => setForm({...form, biography: e.target.value})} rows={3} required />
                 </div>
 
                 <div className="form-actions">
@@ -1364,17 +1456,25 @@ const InstructorManagement = () => {
           align-items: center;
           width: 100%;
         }
+        .im-header-text {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+          text-align: left;
+        }
         .im-title {
           font-family: 'Outfit', sans-serif;
-          font-size: 32px;
-          font-weight: 800;
+          font-size: 24px;
+          font-weight: 700;
           color: #050B1A;
           margin: 0;
+          line-height: 1.2;
         }
         .im-subtitle {
-          font-size: 14px;
+          font-size: 13.5px;
           color: #64748B;
           margin: 4px 0 0 0;
+          line-height: 1.4;
         }
         .im-btn-add-primary {
           display: flex;
@@ -1874,10 +1974,12 @@ const InstructorManagement = () => {
           }
           .im-title {
             font-size: 20px !important;
+            line-height: 1.25 !important;
           }
           .im-subtitle {
-            font-size: 12px !important;
-            margin-top: 2px !important;
+            font-size: 12.5px !important;
+            margin-top: 3px !important;
+            line-height: 1.4 !important;
           }
           .im-btn-add-primary {
             width: 100% !important;

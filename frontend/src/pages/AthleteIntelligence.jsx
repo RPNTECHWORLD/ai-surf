@@ -54,24 +54,35 @@ const AthleteIntelligence = () => {
   const navigate = useNavigate();
   const [currentUser, setCurrentUser] = useState(() => {
     try {
-      const saved = sessionStorage.getItem('user');
+      const saved = sessionStorage.getItem('user') || localStorage.getItem('user');
       return saved ? JSON.parse(saved) : null;
     } catch (e) {
       return null;
     }
   });
 
-  const activeSchoolName = (() => {
+  const activeSchoolName = useMemo(() => {
     try {
-      const savedSchool = sessionStorage.getItem('activeSchool');
+      const savedSchool = sessionStorage.getItem('activeSchool') || localStorage.getItem('activeSchool');
       if (savedSchool) {
-        const parsed = JSON.parse(savedSchool);
-        if (parsed?.name) {
-          return typeof parsed.name === 'string' ? parsed.name : (parsed.name?.name || null);
+        try {
+          const parsed = JSON.parse(savedSchool);
+          if (parsed && typeof parsed === 'object') {
+            if (parsed.name) return typeof parsed.name === 'string' ? parsed.name : (parsed.name?.name || null);
+          } else if (typeof parsed === 'string') {
+            return parsed;
+          }
+        } catch (e) {
+          return savedSchool;
         }
-        if (typeof parsed === 'string') return parsed;
       }
-      const savedUser = sessionStorage.getItem('user');
+      if (currentUser?.school) {
+        return typeof currentUser.school === 'string' ? currentUser.school : (currentUser.school?.name || null);
+      }
+      if (currentUser?.school_name) {
+        return typeof currentUser.school_name === 'string' ? currentUser.school_name : (currentUser.school_name?.name || null);
+      }
+      const savedUser = sessionStorage.getItem('user') || localStorage.getItem('user');
       if (savedUser) {
         const parsed = JSON.parse(savedUser);
         if (parsed?.school) return typeof parsed.school === 'string' ? parsed.school : (parsed.school?.name || null);
@@ -79,25 +90,36 @@ const AthleteIntelligence = () => {
       }
     } catch (e) {}
     return null;
-  })();
+  }, [currentUser]);
 
   const schoolLower = (activeSchoolName || '').toLowerCase().trim();
-  const isSuperAdmin = currentUser?.role === 'superadmin' || schoolLower === 'super admin';
-  const isCoach = currentUser?.role === 'coach' || currentUser?.role === 'instructor';
-  const isFreelance = (
+  const userRole = (currentUser?.role || '').toLowerCase().trim();
+  const isSuperAdmin = userRole === 'superadmin' || schoolLower === 'super admin';
+  const isCoach = userRole === 'coach' || userRole === 'instructor';
+  const isStudent = userRole === 'athlete' || userRole === 'student' || userRole === 'user';
+  const currentCoachName = currentUser?.name || '';
+  const currentCoachId = currentUser?.instructor_id || currentUser?.id || null;
+
+  const coachAffiliatedSchool = (currentUser?.school || currentUser?.school_name || activeSchoolName || '').trim();
+  const isCoachFreelance = isCoach && (
+    coachAffiliatedSchool.toLowerCase() === 'individual / freelance coach' ||
+    (currentUser?.school || '').toLowerCase().trim() === 'individual / freelance coach' ||
     schoolLower.includes('individual') ||
-    schoolLower.includes('freelance') ||
-    (currentUser?.school || currentUser?.school_name || '').toLowerCase().includes('freelance')
+    schoolLower.includes('freelance')
   );
 
-  const effectiveSchool = (isCoach && isFreelance)
+  const effectiveSchool = (isCoach && isCoachFreelance)
     ? 'Individual / Freelance Coach'
     : (activeSchoolName && schoolLower !== 'school admin' && schoolLower !== 'super admin')
       ? activeSchoolName
-      : null;
+      : (coachAffiliatedSchool || null);
 
   const [students, setStudents] = useState([]);
-  const [selectedStudentId, setSelectedStudentId] = useState('');
+  const [allSessions, setAllSessions] = useState([]);
+  const [selectedAthleteKey, setSelectedAthleteKey] = useState('');
+  const isGuestSelected = selectedAthleteKey.includes('__guest__');
+  const selectedStudentId = isGuestSelected ? selectedAthleteKey.split('__guest__')[0] : selectedAthleteKey;
+  const selectedGuestName = isGuestSelected ? selectedAthleteKey.split('__guest__')[1] : null;
   const [levelFilter, setLevelFilter] = useState('ALL'); // 'ALL', 'Beginner', 'Intermediate', 'Advanced', 'Master'
   const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard', 'nutrition', 'sc', 'technical', 'mental'
 
@@ -179,14 +201,26 @@ const AthleteIntelligence = () => {
   };
 
   useEffect(() => {
+    fetch(`${API}/api/sessions`)
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) setAllSessions(data);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
     const updateUserAndSchool = () => {
-      const saved = sessionStorage.getItem('user');
+      const saved = sessionStorage.getItem('user') || localStorage.getItem('user');
       if (saved) {
         try {
           const u = JSON.parse(saved);
           setCurrentUser(u);
-          if (u.role === 'athlete' && u.student_id) {
-            setSelectedStudentId(u.student_id.toString());
+          const uRole = (u.role || '').toLowerCase().trim();
+          const isStudentRole = uRole === 'athlete' || uRole === 'student' || uRole === 'user';
+          if (isStudentRole) {
+            const selfKey = u.student_id || u.id;
+            if (selfKey) setSelectedAthleteKey(String(selfKey));
           }
         } catch (e) { }
       }
@@ -225,22 +259,226 @@ const AthleteIntelligence = () => {
     }
   }, [selectedStudentId]);
 
-  // Strictly filter students by active school unless Super Admin
+  // Strictly filter students by active school & coach assignment
   const schoolStudents = useMemo(() => {
-    if (isSuperAdmin || !effectiveSchool) return students;
-    const targetNorm = (effectiveSchool || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-    return students.filter(s => {
-      const sSchool = s.school || s.school_name || '';
-      const sNorm = sSchool.toLowerCase().replace(/[^a-z0-9]/g, '');
-      return sNorm === targetNorm || sNorm.includes(targetNorm) || targetNorm.includes(sNorm);
-    });
-  }, [students, effectiveSchool, isSuperAdmin]);
+    const targetSchool = (effectiveSchool || coachAffiliatedSchool || activeSchoolName || '').trim();
+    const targetNorm = targetSchool.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-  // Calculate student counts per skill level
-  const levelCounts = useMemo(() => {
-    const counts = { ALL: schoolStudents.length, Beginner: 0, Intermediate: 0, Advanced: 0, Master: 0 };
+    // Step 1: School-level multi-tenant isolation
+    let list = students;
+    if (!isSuperAdmin && targetNorm) {
+      list = list.filter(s => {
+        const sSchool = s.school || s.school_name || '';
+        const sNorm = sSchool.toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (isCoachFreelance) {
+          return sNorm === 'individualfreelancecoach' || (!sSchool && String(s.created_by_user_id) === String(currentCoachId));
+        }
+        return sNorm === targetNorm || sNorm.includes(targetNorm) || targetNorm.includes(sNorm);
+      });
+    }
+
+    // Step 2: Coach Role Isolation - ONLY show students assigned to THIS coach
+    if (isCoach && (currentCoachName || currentCoachId)) {
+      const cNameLower = (currentCoachName || '').toLowerCase().trim();
+
+      const coachStudentIdsFromSessions = new Set();
+      const coachStudentNamesFromSessions = new Set();
+
+      allSessions.forEach(sess => {
+        const sInstLower = (sess.instructor || sess.instructor_name || '').toLowerCase().trim();
+        const instMatch =
+          (cNameLower && sInstLower && (sInstLower === cNameLower || sInstLower.includes(cNameLower) || cNameLower.includes(sInstLower))) ||
+          (currentCoachId && (sess.instructor_id === currentCoachId || String(sess.instructor_id) === String(currentCoachId) || parseInt(sess.instructor_id) === parseInt(currentCoachId)));
+
+        if (instMatch) {
+          if (sess.student_id) coachStudentIdsFromSessions.add(String(sess.student_id));
+          if (sess.student) coachStudentNamesFromSessions.add(sess.student.toLowerCase().trim());
+        }
+      });
+
+      return list.filter(s => {
+        const sNameLower = (s.name || '').toLowerCase().trim();
+
+        // Strict Session Assignment: ONLY students assigned in an active session to this coach are shown
+        // If a student has no session, or if their session is deleted, they will not be shown
+        const sessionMatch = coachStudentIdsFromSessions.has(String(s.id)) || (sNameLower && coachStudentNamesFromSessions.has(sNameLower));
+
+        return sessionMatch;
+      });
+    }
+
+    return list;
+  }, [students, effectiveSchool, coachAffiliatedSchool, activeSchoolName, isSuperAdmin, isCoach, isCoachFreelance, currentCoachName, currentCoachId, allSessions]);
+
+  // For logged-in student: build their own + guest options for the "Logging for" dropdown
+  // Strategy: read guests_details from multiple sources in priority order
+  const myGuestOptions = useMemo(() => {
+    if (!isStudent || !currentUser) return [];
+
+    const parseGuests = (val) => {
+      if (!val) return [];
+      if (Array.isArray(val)) return val;
+      try { const p = JSON.parse(val); return Array.isArray(p) ? p : []; } catch { return []; }
+    };
+
+    const myName = (currentUser?.name || '').toLowerCase().trim();
+    const myEmail = (currentUser?.email || '').toLowerCase().trim();
+    const myUid = currentUser?.student_id || currentUser?.id;
+
+    // Source 1: students list from API (most authoritative)
+    let meStudent = students.find(s => {
+      if (myUid && (String(s.id) === String(myUid) || String(s.user_id) === String(myUid))) return true;
+      if (myEmail && (s.email || '').toLowerCase().trim() === myEmail) return true;
+      if (myName && (s.name || '').toLowerCase().trim() === myName) return true;
+      return false;
+    });
+
+    // Source 2: currentUser object itself (from sessionStorage - available immediately at mount)
+    // Useful when fetchStudents hasn't resolved yet or effectiveSchool scoping excluded self
+    const currentUserGuests = parseGuests(currentUser?.guests_details);
+
+    // Determine display name and id for "Me" option
+    const meName = meStudent?.name || currentUser?.name || 'Me';
+    const meId = meStudent?.id || currentUser?.student_id || currentUser?.id || 'me';
+
+    // Build guests list from API record first, fallback to currentUser
+    let rawGuests = meStudent ? parseGuests(meStudent.guests_details) : [];
+    if (rawGuests.length === 0 && currentUserGuests.length > 0) {
+      rawGuests = currentUserGuests;
+    }
+
+    // Source 3: join_requests in localStorage (last resort)
+    if (rawGuests.length === 0) {
+      try {
+        const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+        const req = reqs.find(r =>
+          (myEmail && (r.student_email || r.email || '').toLowerCase().trim() === myEmail) ||
+          (myName && (r.student_name || r.name || '').toLowerCase().trim() === myName)
+        );
+        if (req) rawGuests = parseGuests(req.guests_details);
+      } catch { /* ignore */ }
+    }
+
+    const opts = [{ key: String(meId), label: `${meName} (Me)`, isGuest: false, studentId: String(meId), guestName: null }];
+    rawGuests.forEach(g => {
+      const name = typeof g === 'string' ? g.trim() : (g?.name ? String(g.name).trim() : '');
+      if (name && name.toLowerCase() !== myName) {
+        opts.push({ key: `${meId}__guest__${name}`, label: `↳ ${name} (Guest of ${meName})`, isGuest: true, studentId: String(meId), guestName: name });
+      }
+    });
+    return opts;
+  }, [isStudent, currentUser, students]);
+
+  // Helper to extract accompanying registered guests for any student
+  const getGuestsForStudent = (student, sessions = []) => {
+    if (!student) return [];
+    const guestNames = new Set();
+
+    const parseGuests = (val) => {
+      if (!val) return [];
+      if (Array.isArray(val)) return val;
+      if (typeof val === 'string') {
+        try {
+          const parsed = JSON.parse(val);
+          if (Array.isArray(parsed)) return parsed;
+        } catch (e) {}
+      }
+      return [];
+    };
+
+    // 1. From student.guests_details
+    parseGuests(student.guests_details).forEach(g => {
+      const name = typeof g === 'string' ? g.trim() : (g?.name ? String(g.name).trim() : '');
+      if (name) guestNames.add(name);
+    });
+
+    // 2. From allSessions matching this student ID
+    (sessions || []).forEach(sess => {
+      if (String(sess.student_id) === String(student.id)) {
+        if (sess.guest_name && sess.guest_name.trim()) {
+          guestNames.add(sess.guest_name.trim());
+        } else if (sess.is_guest && sess.student && sess.student.trim()) {
+          guestNames.add(sess.student.trim());
+        }
+      }
+    });
+
+    // 3. From storage fallback if direct details are missing
+    if (guestNames.size === 0) {
+      try {
+        const emailLower = (student.email || '').toLowerCase().trim();
+        const nameLower = (student.name || '').toLowerCase().trim();
+
+        const savedUser = JSON.parse(sessionStorage.getItem('user') || '{}');
+        if ((emailLower && (savedUser.email || '').toLowerCase().trim() === emailLower) ||
+            (nameLower && (savedUser.name || '').toLowerCase().trim() === nameLower)) {
+          parseGuests(savedUser.guests_details).forEach(g => {
+            const name = typeof g === 'string' ? g.trim() : (g?.name ? String(g.name).trim() : '');
+            if (name) guestNames.add(name);
+          });
+        }
+
+        const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+        const req = reqs.find(r => 
+          (emailLower && (r.student_email || r.email || '').toLowerCase().trim() === emailLower) ||
+          (nameLower && (r.student_name || r.name || '').toLowerCase().trim() === nameLower)
+        );
+        if (req) {
+          parseGuests(req.guests_details).forEach(g => {
+            const name = typeof g === 'string' ? g.trim() : (g?.name ? String(g.name).trim() : '');
+            if (name) guestNames.add(name);
+          });
+        }
+      } catch (e) {}
+    }
+
+    const primaryNameLower = (student.name || '').toLowerCase().trim();
+    return Array.from(guestNames).filter(gName => gName.toLowerCase() !== primaryNameLower);
+  };
+
+  // Build full roster including primary athletes and accompanying guests
+  const allAthletes = useMemo(() => {
+    const list = [];
     schoolStudents.forEach(s => {
-      const lvl = (s.level || 'Beginner').trim();
+      // Primary Athlete
+      list.push({
+        key: String(s.id),
+        studentId: String(s.id),
+        name: s.name,
+        level: s.level || 'Beginner',
+        isGuest: false,
+        guestName: null,
+        parentName: null,
+        label: `${s.name} (${s.level || 'Beginner'})`
+      });
+
+      // Accompanying Guests
+      const guests = getGuestsForStudent(s, allSessions);
+      guests.forEach(gName => {
+        list.push({
+          key: `${s.id}__guest__${gName}`,
+          studentId: String(s.id),
+          name: gName,
+          level: s.level || 'Beginner',
+          isGuest: true,
+          guestName: gName,
+          parentName: s.name,
+          label: `  ↳ ${gName} (Guest of ${s.name})`
+        });
+      });
+    });
+    return list;
+  }, [schoolStudents, allSessions]);
+
+  const activeAthlete = useMemo(() => {
+    return allAthletes.find(a => a.key === selectedAthleteKey) || null;
+  }, [allAthletes, selectedAthleteKey]);
+
+  // Calculate athlete counts per skill level (including accompanying guests)
+  const levelCounts = useMemo(() => {
+    const counts = { ALL: allAthletes.length, Beginner: 0, Intermediate: 0, Advanced: 0, Master: 0 };
+    allAthletes.forEach(a => {
+      const lvl = (a.level || 'Beginner').trim();
       const match = ['Beginner', 'Intermediate', 'Advanced', 'Master'].find(k => k.toLowerCase() === lvl.toLowerCase());
       if (match) {
         counts[match]++;
@@ -249,45 +487,45 @@ const AthleteIntelligence = () => {
       }
     });
     return counts;
-  }, [schoolStudents]);
+  }, [allAthletes]);
 
-  // Filter students by skill level
-  const filteredStudents = useMemo(() => {
-    if (levelFilter === 'ALL') return schoolStudents;
-    return schoolStudents.filter(s => (s.level || 'Beginner').toLowerCase() === levelFilter.toLowerCase());
-  }, [schoolStudents, levelFilter]);
+  // Filter athletes by skill level
+  const filteredAthletes = useMemo(() => {
+    if (levelFilter === 'ALL') return allAthletes;
+    return allAthletes.filter(a => (a.level || 'Beginner').toLowerCase() === levelFilter.toLowerCase());
+  }, [allAthletes, levelFilter]);
 
-  // Auto-select athlete when active list changes or filter updates
+  // Auto-select athlete/guest when active list changes or filter updates
   useEffect(() => {
     if (currentUser?.role === 'athlete') return;
-    if (filteredStudents.length > 0) {
-      const existsInFiltered = filteredStudents.some(s => s.id.toString() === selectedStudentId);
+    if (filteredAthletes.length > 0) {
+      const existsInFiltered = filteredAthletes.some(a => a.key === selectedAthleteKey);
       if (!existsInFiltered) {
-        setSelectedStudentId(filteredStudents[0].id.toString());
+        setSelectedAthleteKey(filteredAthletes[0].key);
       }
-    } else if (schoolStudents.length > 0) {
-      const existsInSchool = schoolStudents.some(s => s.id.toString() === selectedStudentId);
-      if (!existsInSchool) {
-        setSelectedStudentId(schoolStudents[0].id.toString());
+    } else if (allAthletes.length > 0) {
+      const existsInAll = allAthletes.some(a => a.key === selectedAthleteKey);
+      if (!existsInAll) {
+        setSelectedAthleteKey(allAthletes[0].key);
       }
     } else {
-      setSelectedStudentId('');
+      setSelectedAthleteKey('');
     }
-  }, [schoolStudents, filteredStudents, selectedStudentId, currentUser?.role]);
+  }, [allAthletes, filteredAthletes, selectedAthleteKey, currentUser?.role]);
 
   const handleLevelFilterChange = (lvl) => {
     setLevelFilter(lvl);
     const subset = lvl === 'ALL'
-      ? schoolStudents
-      : schoolStudents.filter(s => (s.level || 'Beginner').toLowerCase() === lvl.toLowerCase());
+      ? allAthletes
+      : allAthletes.filter(a => (a.level || 'Beginner').toLowerCase() === lvl.toLowerCase());
     
     if (subset.length > 0) {
-      const stillInSubset = subset.some(s => s.id.toString() === selectedStudentId);
+      const stillInSubset = subset.some(a => a.key === selectedAthleteKey);
       if (!stillInSubset) {
-        setSelectedStudentId(subset[0].id.toString());
+        setSelectedAthleteKey(subset[0].key);
       }
     } else {
-      setSelectedStudentId('');
+      setSelectedAthleteKey('');
     }
   };
 
@@ -425,13 +663,16 @@ const AthleteIntelligence = () => {
     setSubmitting(true);
     const targetDateStr = formatDateForDisplay(logDateInput) || logDateInput;
     try {
+      const payloadMeal = selectedGuestName
+        ? `[Guest: ${selectedGuestName}] ${nutritionForm.meal_timing || ''}`.trim()
+        : nutritionForm.meal_timing;
       const res = await fetch(`${API}/api/students/${selectedStudentId}/logs/nutrition`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...nutritionForm, date: targetDateStr })
+        body: JSON.stringify({ ...nutritionForm, meal_timing: payloadMeal, date: targetDateStr })
       });
       if (res.ok) {
-        showToast(`Nutrition logged successfully for ${targetDateStr}!`);
+        showToast(`Nutrition logged successfully for ${selectedGuestName ? `${selectedGuestName} (Guest)` : targetDateStr}!`);
         setNutritionForm({ calories: 2200, hydration_liters: 2.5, protein_g: 120, carbs_g: 250, fats_g: 65, meal_timing: '' });
         setSelectedDashboardDate(logDateInput);
         fetchStudentData(selectedStudentId);
@@ -453,13 +694,16 @@ const AthleteIntelligence = () => {
     setSubmitting(true);
     const targetDateStr = formatDateForDisplay(logDateInput) || logDateInput;
     try {
+      const payloadDetails = selectedGuestName
+        ? `[Guest: ${selectedGuestName}] ${scForm.workout_details || ''}`.trim()
+        : scForm.workout_details;
       const res = await fetch(`${API}/api/students/${selectedStudentId}/logs/sc`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...scForm, date: targetDateStr })
+        body: JSON.stringify({ ...scForm, workout_details: payloadDetails, date: targetDateStr })
       });
       if (res.ok) {
-        showToast(`S&C session logged successfully for ${targetDateStr}!`);
+        showToast(`S&C session logged successfully for ${selectedGuestName ? `${selectedGuestName} (Guest)` : targetDateStr}!`);
         setScForm({ workout_details: '', mobility_notes: '', sleep_score: 80, recovery_score: 80, injury_notes: '' });
         setSelectedDashboardDate(logDateInput);
         fetchStudentData(selectedStudentId);
@@ -481,13 +725,16 @@ const AthleteIntelligence = () => {
     setSubmitting(true);
     const targetDateStr = formatDateForDisplay(logDateInput) || logDateInput;
     try {
+      const payloadNotes = selectedGuestName
+        ? `[Guest: ${selectedGuestName}] ${technicalForm.session_notes || ''}`.trim()
+        : technicalForm.session_notes;
       const res = await fetch(`${API}/api/students/${selectedStudentId}/logs/technical`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...technicalForm, date: targetDateStr })
+        body: JSON.stringify({ ...technicalForm, session_notes: payloadNotes, date: targetDateStr })
       });
       if (res.ok) {
-        showToast(`Technical training logged successfully for ${targetDateStr}!`);
+        showToast(`Technical training logged successfully for ${selectedGuestName ? `${selectedGuestName} (Guest)` : targetDateStr}!`);
         setTechnicalForm({ session_notes: '', wave_count: 10, board_setup: '', wave_type: '', video_url: '' });
         setSelectedDashboardDate(logDateInput);
         fetchStudentData(selectedStudentId);
@@ -509,13 +756,16 @@ const AthleteIntelligence = () => {
     setSubmitting(true);
     const targetDateStr = formatDateForDisplay(logDateInput) || logDateInput;
     try {
+      const payloadReflect = selectedGuestName
+        ? `[Guest: ${selectedGuestName}] ${mentalForm.reflection_notes || ''}`.trim()
+        : mentalForm.reflection_notes;
       const res = await fetch(`${API}/api/students/${selectedStudentId}/logs/mental`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...mentalForm, date: targetDateStr })
+        body: JSON.stringify({ ...mentalForm, reflection_notes: payloadReflect, date: targetDateStr })
       });
       if (res.ok) {
-        showToast(`Mental performance logged successfully for ${targetDateStr}!`);
+        showToast(`Mental performance logged successfully for ${selectedGuestName ? `${selectedGuestName} (Guest)` : targetDateStr}!`);
         setMentalForm({ pre_heat_anxiety: 5, focus_level: 5, reflection_notes: '' });
         setSelectedDashboardDate(logDateInput);
         fetchStudentData(selectedStudentId);
@@ -546,7 +796,29 @@ const AthleteIntelligence = () => {
             <p className="ai-sub">Log daily vitals, nutrition, surfing training, and mental readiness metrics.</p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-            {currentUser && currentUser.role !== 'athlete' && (
+            {currentUser && isStudent && myGuestOptions.length > 1 && (
+              // Student with guests: show only a "Logging for" dropdown (no level filter)
+              <div className="ai-selector-box">
+                <label>Logging for:</label>
+                <select
+                  value={selectedAthleteKey}
+                  onChange={(e) => setSelectedAthleteKey(e.target.value)}
+                  style={{ fontWeight: 700 }}
+                >
+                  {myGuestOptions.map(a => (
+                    <option
+                      key={a.key}
+                      value={a.key}
+                      style={a.isGuest ? { color: '#0284C7', fontWeight: 600 } : { fontWeight: 700 }}
+                    >
+                      {a.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {currentUser && !isStudent && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                 {/* Level Filter Dropdown */}
                 <div className="ai-selector-box">
@@ -556,7 +828,7 @@ const AthleteIntelligence = () => {
                     onChange={(e) => handleLevelFilterChange(e.target.value)}
                     style={{ fontWeight: 700 }}
                   >
-                    <option value="ALL">All Levels ({schoolStudents.length})</option>
+                    <option value="ALL">All Levels ({allAthletes.length})</option>
                     <option value="Beginner">Beginner ({levelCounts.Beginner})</option>
                     <option value="Intermediate">Intermediate ({levelCounts.Intermediate})</option>
                     <option value="Advanced">Advanced ({levelCounts.Advanced})</option>
@@ -564,19 +836,25 @@ const AthleteIntelligence = () => {
                   </select>
                 </div>
 
-                {/* Athlete Dropdown */}
+                {/* Athlete & Guest Dropdown */}
                 <div className="ai-selector-box">
                   <label>Logging for:</label>
                   <select
-                    value={selectedStudentId}
-                    onChange={(e) => setSelectedStudentId(e.target.value)}
+                    value={selectedAthleteKey}
+                    onChange={(e) => setSelectedAthleteKey(e.target.value)}
                     style={{ fontWeight: 700 }}
                   >
-                    {filteredStudents.length === 0 ? (
-                      <option value="">No athletes in {levelFilter}</option>
+                    {filteredAthletes.length === 0 ? (
+                      <option value="">{isCoach ? 'No assigned athletes found' : `No athletes in ${levelFilter}`}</option>
                     ) : (
-                      filteredStudents.map(s => (
-                        <option key={s.id} value={s.id}>{s.name} ({s.level || 'Beginner'})</option>
+                      filteredAthletes.map(a => (
+                        <option
+                          key={a.key}
+                          value={a.key}
+                          style={a.isGuest ? { color: '#0284C7', fontWeight: 600 } : { fontWeight: 700 }}
+                        >
+                          {a.label}
+                        </option>
                       ))
                     )}
                   </select>
@@ -1324,12 +1602,13 @@ const AthleteIntelligence = () => {
           background: #F8FAFC;
           font-family: 'Instrument Sans', sans-serif;
           color: #0F172A;
-          padding-top: 84px;
           box-sizing: border-box;
           width: 100%;
         }
         .ai-main {
           flex: 1;
+          margin-top: 72px;
+          min-height: calc(100vh - 72px);
           padding: 28px 40px 80px 40px;
           overflow-y: auto;
           display: flex;
@@ -1375,9 +1654,9 @@ const AthleteIntelligence = () => {
 
         /* Header */
         .ai-header { display: flex; justify-content: space-between; align-items: center; gap: 24px; }
-        .ai-header-text { display: flex; flex-direction: column; gap: 8px; }
-        .ai-title { font-family: 'Outfit', sans-serif; font-size: 32px; font-weight: 700; color: #0F172A; margin: 0; }
-        .ai-sub { font-size: 15px; color: #64748B; margin: 0; }
+        .ai-header-text { display: flex; flex-direction: column; align-items: flex-start; text-align: left; }
+        .ai-title { font-family: 'Outfit', sans-serif; font-size: 24px; font-weight: 700; color: #0F172A; margin: 0; line-height: 1.2; text-align: left; }
+        .ai-sub { font-size: 13.5px; color: #64748B; margin: 4px 0 0 0; line-height: 1.4; text-align: left; }
 
         .ai-selector-box { display: flex; align-items: center; gap: 12px; background: #FFFFFF; border: 1px solid #E2E8F0; padding: 10px 18px; border-radius: 12px; box-shadow: 0px 4px 12px rgba(0,0,0,0.03); }
         .ai-selector-box label { font-size: 13px; font-weight: 700; color: #64748B; }

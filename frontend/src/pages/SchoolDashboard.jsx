@@ -30,6 +30,123 @@ const normalizeToYYYYMMDD = (dVal) => {
   return str;
 };
 
+const parseTimeStrToMinutes = (t) => {
+  if (!t) return null;
+  const match = String(t).match(/(\d{1,2}):(\d{2})(?:\s*(AM|PM))?/i);
+  if (!match) return null;
+  let hours = parseInt(match[1], 10);
+  const mins = parseInt(match[2], 10);
+  const ampm = match[3] ? match[3].toUpperCase() : null;
+  if (ampm === 'PM' && hours < 12) hours += 12;
+  if (ampm === 'AM' && hours === 12) hours = 0;
+  return hours * 60 + mins;
+};
+
+const getTodayYYYYMMDD = () => {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+const formatSessionStatus = (s, dateStr, timeStr, durationMins) => {
+  let rawStatus = s;
+  let rawDate = dateStr;
+  let rawTime = timeStr;
+  let rawDuration = durationMins;
+
+  if (typeof s === 'object' && s !== null) {
+    rawStatus = s.status;
+    rawDate = s.date || dateStr;
+    rawTime = s.time || timeStr;
+    rawDuration = s.duration_mins !== undefined ? s.duration_mins : durationMins;
+  }
+
+  const str = String(rawStatus || '').trim();
+  const lower = str.toLowerCase();
+  
+  // Explicitly completed stays Completed
+  if (lower === 'completed') return 'Completed';
+  // Explicitly cancelled stays Cancelled
+  if (lower === 'cancelled' || lower === 'canceled') return 'Cancelled';
+  // Explicitly pending for review
+  if (lower === 'pending for review' || lower === 'pending review' || lower === 'pending_review') {
+    return 'Pending for Review';
+  }
+
+  // Check if session scheduled date & time has ended
+  if (rawDate) {
+    const sessionISO = normalizeToYYYYMMDD(rawDate);
+    const todayISO = getTodayYYYYMMDD();
+    if (sessionISO) {
+      if (sessionISO < todayISO) {
+        // Scheduled date has already passed -> Session time finished, auto Pending for Review!
+        return 'Pending for Review';
+      } else if (sessionISO > todayISO) {
+        // Future date -> Upcoming!
+        return 'Upcoming';
+      } else {
+        // Session date is TODAY! Check time vs current clock:
+        if (rawTime) {
+          const timeParts = String(rawTime).split(/\s*(?:[-–—]|to)\s*/i);
+          const startMins = parseTimeStrToMinutes(timeParts[0]);
+
+          if (startMins !== null) {
+            let endMins = null;
+            if (timeParts.length >= 2) {
+              endMins = parseTimeStrToMinutes(timeParts[1]);
+            }
+            if (endMins === null || endMins <= startMins) {
+              const dur = Number(rawDuration) || 60;
+              endMins = startMins + dur;
+            }
+
+            const now = new Date();
+            const nowMins = now.getHours() * 60 + now.getMinutes();
+
+            if (nowMins < startMins) {
+              // Session start time is in future today -> Upcoming
+              return 'Upcoming';
+            } else if (nowMins >= endMins) {
+              // Scheduled session time is finished -> Automatically Pending for Review!
+              return 'Pending for Review';
+            } else {
+              // Right now in the middle of active session!
+              return 'In Progress';
+            }
+          }
+        }
+
+        // Today with no parseable time
+        if (lower === 'in progress' || lower === 'in_progress') return 'In Progress';
+        return 'In Progress';
+      }
+    }
+  }
+
+  if (lower === 'in progress' || lower === 'pending' || lower === 'in_progress') return 'In Progress';
+  return 'Upcoming';
+};
+
+const statusColor = (s, dateStr, timeStr, durationMins) => {
+  const norm = formatSessionStatus(s, dateStr, timeStr, durationMins);
+  if (norm === 'Upcoming') return '#0284C7';
+  if (norm === 'Completed') return '#0D9488';
+  if (norm === 'Pending for Review' || norm === 'Pending Review') return '#D97706';
+  if (norm === 'IN PROGRESS' || norm === 'In Progress') return '#00D1B2';
+  return '#00D1B2';
+};
+
+const statusBg = (s, dateStr, timeStr, durationMins) => {
+  const norm = formatSessionStatus(s, dateStr, timeStr, durationMins);
+  if (norm === 'Upcoming') return 'rgba(2, 132, 199, 0.12)';
+  if (norm === 'Completed') return 'rgba(13, 148, 136, 0.12)';
+  if (norm === 'Pending for Review' || norm === 'Pending Review') return 'rgba(217, 119, 6, 0.12)';
+  if (norm === 'IN PROGRESS' || norm === 'In Progress') return 'rgba(0, 209, 178, 0.15)';
+  return 'rgba(0, 209, 178, 0.15)';
+};
+
 const buildDashboardTodayGroups = (sessionList) => {
   const buckets = new Map();
 
@@ -51,9 +168,11 @@ const buildDashboardTodayGroups = (sessionList) => {
         id: session.id,
         groupName: explicitGrp || (session.student ? `${session.student}'s Session` : 'Individual Session'),
         isGroup: Boolean(explicitGrp),
+        date: session.date,
         time: session.time || '08:30 AM',
+        duration_mins: session.duration_mins,
         instructor: session.instructor || session.instructor_name || 'Assigned Coach',
-        status: (session.status && session.status.toLowerCase() === 'completed') ? 'Completed' : 'In Progress',
+        status: formatSessionStatus(session),
         location: session.location || '',
         students: []
       });
@@ -68,10 +187,41 @@ const buildDashboardTodayGroups = (sessionList) => {
   });
 };
 
+const countUniqueDashboardSessions = (sessionList) => {
+  const buckets = new Set();
+  (sessionList || []).forEach(session => {
+    let explicitGrp = (session.group_name && session.group_name.trim() !== '') ? session.group_name.trim() : null;
+    if (!explicitGrp && session.notes) {
+      const notesStr = session.notes.trim();
+      const groupMatch = notesStr.match(/\b(Group\s+[A-Za-z0-9]+)\b/i);
+      if (groupMatch) {
+        explicitGrp = groupMatch[1].trim();
+      } else if (notesStr.includes(' - Automated')) {
+        explicitGrp = notesStr.split(' - Automated')[0].trim();
+      } else if (notesStr.includes(' - Coaches:')) {
+        const prefix = notesStr.split(' - Coaches:')[0].trim();
+        explicitGrp = prefix.replace(/\s*\([^)]*\)/g, '').trim() || prefix;
+      }
+    }
+
+    const datePart = (session.date || '').trim();
+    const timePart = (session.time || '').trim();
+    const instPart = (session.instructor || session.instructor_name || '').trim();
+
+    const key = explicitGrp
+      ? `GRP__${explicitGrp}__${datePart}__${timePart}`
+      : (datePart && timePart && instPart ? `AUTO__${datePart}__${timePart}__${instPart}` : `SESS__${session.id}`);
+    buckets.add(key);
+  });
+  return buckets.size;
+};
+
 const SchoolDashboard = () => {
   const navigate = useNavigate();
-  const [stats, setStats] = useState({ active_instructors: 0, active_students: 0, sessions_this_month: 0, upcoming_sessions: 0 });
+  const [stats, setStats] = useState({ active_instructors: 0, active_students: 0, total_guests: 0, total_people: 0, sessions_this_month: 0, upcoming_sessions: 0 });
   const [sessions, setSessions] = useState([]);
+  const [allRawSessions, setAllRawSessions] = useState([]);
+  const [clockTick, setClockTick] = useState(0);
   const [activity, setActivity] = useState([]);
   const [loading, setLoading] = useState(true);
   const [school, setSchool] = useState(null);
@@ -167,13 +317,11 @@ const SchoolDashboard = () => {
         const sessionsList = Array.isArray(allSessions) ? allSessions : [];
         const activitiesList = Array.isArray(act) ? act : [];
 
+        setAllRawSessions(sessionsList);
+
         // Today's local date
-        const now = new Date();
-        const y = now.getFullYear();
-        const m = String(now.getMonth() + 1).padStart(2, '0');
-        const d = String(now.getDate()).padStart(2, '0');
-        const todayISO = `${y}-${m}-${d}`;
-        const currentYearMonth = `${y}-${m}`;
+        const todayISO = getTodayYYYYMMDD();
+        const currentYearMonth = todayISO.substring(0, 7);
 
         // Filter sessions that occur today
         const todaySessions = sessionsList.filter(s => {
@@ -183,19 +331,51 @@ const SchoolDashboard = () => {
 
         const groupedToday = buildDashboardTodayGroups(todaySessions);
 
-        const sessionsThisMonth = sessionsList.filter(s => {
+        const sessionsThisMonthList = sessionsList.filter(s => {
           const sISO = normalizeToYYYYMMDD(s.date);
           return sISO.startsWith(currentYearMonth);
-        }).length;
+        });
+        const sessionsThisMonth = countUniqueDashboardSessions(sessionsThisMonthList);
 
-        const upcomingCount = sessionsList.filter(s => {
-          const sISO = normalizeToYYYYMMDD(s.date);
-          return sISO >= todayISO && s.status !== 'Completed';
-        }).length;
+        const upcomingSessionsList = sessionsList.filter(s => {
+          return formatSessionStatus(s, s.date, s.time, s.duration_mins) === 'Upcoming';
+        });
+        const upcomingCount = countUniqueDashboardSessions(upcomingSessionsList);
+
+        const parseStudentGuestCount = (s) => {
+          if (!s) return 0;
+          if (typeof s.guests_count === 'number') return s.guests_count;
+          if (Array.isArray(s.guests_details) && s.guests_details.length > 0) return s.guests_details.length;
+          if (typeof s.guests_details === 'string') {
+            try {
+              const parsed = JSON.parse(s.guests_details);
+              if (Array.isArray(parsed)) return parsed.length;
+            } catch (e) {}
+          }
+          try {
+            const emailLower = (s.email || '').toLowerCase().trim();
+            const nameLower = (s.name || '').toLowerCase().trim();
+            const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+            const req = reqs.find(r => 
+              (emailLower && (r.student_email || r.email || '').toLowerCase().trim() === emailLower) ||
+              (nameLower && (r.student_name || r.name || '').toLowerCase().trim() === nameLower)
+            );
+            if (req && req.guests_details) {
+              const parsed = Array.isArray(req.guests_details) ? req.guests_details : JSON.parse(req.guests_details);
+              if (Array.isArray(parsed) && parsed.length > 0) return parsed.length;
+            }
+          } catch (e) {}
+          return 0;
+        };
+
+        const totalGuestsCount = studentsList.reduce((sum, s) => sum + parseStudentGuestCount(s), 0);
+        const totalPeopleCount = studentsList.length + totalGuestsCount;
 
         setStats({
           active_instructors: instructorsList.length,
           active_students: studentsList.length,
+          total_guests: totalGuestsCount,
+          total_people: totalPeopleCount,
           sessions_this_month: sessionsThisMonth,
           upcoming_sessions: upcomingCount
         });
@@ -208,6 +388,25 @@ const SchoolDashboard = () => {
       })
       .finally(() => setLoading(false));
   }, []);
+
+  // Live timer tick every 30s to update status transitions (e.g. from In Progress to Pending for Review)
+  useEffect(() => {
+    const timer = setInterval(() => setClockTick(t => t + 1), 30000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!allRawSessions || allRawSessions.length === 0) return;
+    const todayISO = getTodayYYYYMMDD();
+    const todaySessions = allRawSessions.filter(s => normalizeToYYYYMMDD(s.date) === todayISO);
+    setSessions(buildDashboardTodayGroups(todaySessions));
+    const upcomingSessionsList = allRawSessions.filter(s => formatSessionStatus(s, s.date, s.time, s.duration_mins) === 'Upcoming');
+    const upcomingCount = countUniqueDashboardSessions(upcomingSessionsList);
+    setStats(prev => ({
+      ...prev,
+      upcoming_sessions: upcomingCount
+    }));
+  }, [clockTick, allRawSessions]);
 
   const todayFormatted = useMemo(() => {
     return new Date().toLocaleDateString('en-US', {
@@ -287,8 +486,10 @@ const SchoolDashboard = () => {
               <div className="db-stat-card-h" onClick={() => navigate('/students')} style={{ cursor: 'pointer' }} title="View All Students">
                 <div className="stat-card-left">
                   <span className="stat-card-label">Active Students</span>
-                  <span className="stat-card-value">{stats?.active_students || 0}</span>
-                  <span className="stat-card-micro" style={{ color: '#0284C7' }}>Enrolled Athletes</span>
+                  <span className="stat-card-value">{stats?.total_people || stats?.active_students || 0}</span>
+                  <span className="stat-card-micro" style={{ color: '#0284C7' }}>
+                    Enrolled Athletes
+                  </span>
                 </div>
                 <div className="stat-card-right" style={{ color: '#0284C7', background: '#0284C718' }}>
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></svg>
@@ -423,7 +624,25 @@ const SchoolDashboard = () => {
                             <span className="db-sic-coach-label">Coach</span>
                             <span className="db-sic-coach-val">🏄‍♂️ {grp.instructor}</span>
                           </div>
-                          <span className={`db-status-pill ${(grp.status || '').toLowerCase().replace(/\s+/g, '-')}`}>
+                          <span
+                            className={`db-status-pill ${(grp.status || '').toLowerCase().replace(/\s+/g, '-')}`}
+                            style={{
+                              backgroundColor: statusBg(grp.status, grp.date, grp.time, grp.duration_mins),
+                              color: statusColor(grp.status, grp.date, grp.time, grp.duration_mins),
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px'
+                            }}
+                          >
+                            <span
+                              style={{
+                                width: '6px',
+                                height: '6px',
+                                borderRadius: '50%',
+                                backgroundColor: statusColor(grp.status, grp.date, grp.time, grp.duration_mins),
+                                flexShrink: 0
+                              }}
+                            />
                             {grp.status}
                           </span>
                         </div>
@@ -851,16 +1070,20 @@ const SchoolDashboard = () => {
           letter-spacing: 0.4px;
         }
         .db-status-pill.pending, .db-status-pill.upcoming {
-          background: #FEF3C7;
-          color: #D97706;
+          background: rgba(2, 132, 199, 0.12);
+          color: #0284C7;
         }
         .db-status-pill.completed {
-          background: #DCFCE7;
-          color: #15803D;
+          background: rgba(13, 148, 136, 0.12);
+          color: #0D9488;
         }
         .db-status-pill.in-progress, .db-status-pill.in\ progress {
-          background: #CCFBF1;
-          color: #0F766E;
+          background: rgba(0, 209, 178, 0.15);
+          color: #00D1B2;
+        }
+        .db-status-pill.pending-for-review, .db-status-pill.pending\ for\ review {
+          background: rgba(217, 119, 6, 0.12);
+          color: #D97706;
         }
 
         /* Activity Timeline */

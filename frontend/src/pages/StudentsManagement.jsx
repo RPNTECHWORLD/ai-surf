@@ -45,6 +45,7 @@ const StudentsManagement = () => {
   const [copiedSchoolInviteCode, setCopiedSchoolInviteCode] = useState(null);
   const [schoolInvitesList, setSchoolInvitesList] = useState([]);
   const [showActiveInvitesOnly, setShowActiveInvitesOnly] = useState(false);
+  const [inviteHistoryDateFilter, setInviteHistoryDateFilter] = useState('');
   const [showInviteLinksPanel, setShowInviteLinksPanel] = useState(false);
   const [inviteModalTab, setInviteModalTab] = useState('generate'); // 'generate' | 'history'
   const [attendanceModal, setAttendanceModal] = useState(null); // student object to mark attendance
@@ -437,7 +438,6 @@ const StudentsManagement = () => {
   const isAdminOrSchoolAdmin = isSuperAdmin || userRole === 'admin' || userRole === 'school' || userRole === 'school_admin' || userRole === 'schooladmin';
   const canManagePendingRequests = isAdminOrSchoolAdmin && !isCoach;
   const canDeleteStudent = isAdminOrSchoolAdmin && !isCoach;
-  const canCreateInviteLink = isAdminOrSchoolAdmin && !isCoach;
 
   const loggedInCoach = useMemo(() => {
     if (!instructors || instructors.length === 0) return null;
@@ -452,6 +452,9 @@ const StudentsManagement = () => {
     coachAffiliatedSchool.toLowerCase() === 'individual / freelance coach' ||
     (currentUser?.school || '').toLowerCase().trim() === 'individual / freelance coach'
   );
+
+  // Both School Admins and Individual / Freelance Coaches can create and share registration invite links
+  const canCreateInviteLink = isAdminOrSchoolAdmin || (isCoach && isCoachFreelance);
 
   // If coach belongs to a school ("oru schoola irutha"), they cannot add students.
   // Only Admins and Individual / Freelance Coaches can add students.
@@ -597,20 +600,13 @@ const StudentsManagement = () => {
           if (studentSchool === 'individual / freelance coach') return false;
         }
 
-        const sInstLower = (s.instructor || s.instructor_name || '').toLowerCase().trim();
         const sNameLower = (s.name || '').toLowerCase().trim();
 
-        // 1. Match by primary instructor ID or Name
-        const idMatch = currentCoachId && (s.instructor_id === currentCoachId || String(s.instructor_id) === String(currentCoachId) || parseInt(s.instructor_id) === parseInt(currentCoachId));
-        const nameMatch = cNameLower && sInstLower && (sInstLower === cNameLower || sInstLower.includes(cNameLower) || cNameLower.includes(sInstLower));
-        
-        // 2. Match by scheduled session with this coach
+        // Strict Session Assignment: ONLY students assigned in an active session to this coach are shown
+        // If a student has no session, or if their session is deleted, they will not be shown
         const sessionMatch = coachStudentIdsFromSessions.has(String(s.id)) || (sNameLower && coachStudentNamesFromSessions.has(sNameLower));
 
-        // 3. Match by creator ID
-        const createdMatch = s.created_by_user_id && currentCoachId && (String(s.created_by_user_id) === String(currentCoachId));
-
-        return idMatch || nameMatch || sessionMatch || createdMatch;
+        return sessionMatch;
       });
     }
 
@@ -729,8 +725,20 @@ const StudentsManagement = () => {
     return Array.from(dates).sort();
   }, [approvedStudents]);
 
+  const totalApprovedGuests = React.useMemo(() => {
+    return approvedStudents.reduce((sum, s) => sum + getStudentGuestCount(s), 0);
+  }, [approvedStudents]);
+
+  const totalPeopleCount = approvedStudents.length + totalApprovedGuests;
+
   const stats = [
-    { value: approvedStudents.length, label: 'TOTAL', shortLabel: 'TOTAL', color: '#050B1A', active: activeStatFilter === 'TOTAL' },
+    { 
+      value: totalPeopleCount, 
+      label: 'TOTAL', 
+      shortLabel: 'TOTAL', 
+      color: '#050B1A', 
+      active: activeStatFilter === 'TOTAL'
+    },
     { value: approvedStudents.filter(s => s.last_active === 'Today' || s.last_active === 'Yesterday').length, label: 'ACTIVE', shortLabel: 'ACTIVE', color: '#0D9488', active: activeStatFilter === 'ACTIVE' },
     { value: approvedStudents.filter(s => s.level === 'Beginner').length, label: 'BEGINNER', shortLabel: 'BEGINNER', color: '#F59E0B', active: activeStatFilter === 'BEGINNER' },
     { value: approvedStudents.filter(s => s.level === 'Intermediate').length, label: 'INTERMEDIATE', shortLabel: 'INTERMED', color: '#0D9488', active: activeStatFilter === 'INTERMEDIATE' },
@@ -1652,7 +1660,7 @@ const StudentsManagement = () => {
       return;
     }
     if (!canCreateInviteLink) {
-      showToast('Only School Admins can create invite links');
+      showToast('Only School Admins and Individual Coaches can create invite links');
       return;
     }
     let chosenDuration = inviteCourseDuration || '3 Days Course';
@@ -1676,7 +1684,8 @@ const StudentsManagement = () => {
         const data = await res.json();
         const origin = window.location.origin;
         const dur = data.course_duration || chosenDuration;
-        const fullUrl = `${origin}/auth?mode=signup&invite_code=${data.code}&school=${encodeURIComponent(data.school)}&course_duration=${encodeURIComponent(dur)}`;
+        const coachParam = isCoach && currentCoachName ? `&coach=${encodeURIComponent(currentCoachName)}&coach_id=${encodeURIComponent(currentCoachId || '')}` : '';
+        const fullUrl = `${origin}/auth?mode=signup&invite_code=${data.code}&school=${encodeURIComponent(data.school)}&course_duration=${encodeURIComponent(dur)}${coachParam}`;
         const newInviteObj = { ...data, course_duration: dur, fullUrl };
         setCreatedSchoolInvite(newInviteObj);
         setSchoolInvitesList(prev => [newInviteObj, ...prev]);
@@ -1694,7 +1703,8 @@ const StudentsManagement = () => {
       // Local fallback
       const mockCode = `inv_${Date.now().toString(36)}`;
       const origin = window.location.origin;
-      const fullUrl = `${origin}/auth?mode=signup&invite_code=${mockCode}&school=${encodeURIComponent(effectiveSchool)}&course_duration=${encodeURIComponent(chosenDuration)}`;
+      const coachParam = isCoach && currentCoachName ? `&coach=${encodeURIComponent(currentCoachName)}&coach_id=${encodeURIComponent(currentCoachId || '')}` : '';
+      const fullUrl = `${origin}/auth?mode=signup&invite_code=${mockCode}&school=${encodeURIComponent(effectiveSchool)}&course_duration=${encodeURIComponent(chosenDuration)}${coachParam}`;
       const newInviteObj = {
         id: Date.now(),
         code: mockCode,
@@ -1727,7 +1737,8 @@ const StudentsManagement = () => {
   const copySchoolInviteLink = async (inv) => {
     const origin = window.location.origin;
     const durParam = inv.course_duration ? `&course_duration=${encodeURIComponent(inv.course_duration)}` : '';
-    const link = inv.fullUrl || `${origin}/auth?mode=signup&invite_code=${inv.code}&school=${encodeURIComponent(inv.school || effectiveSchool)}${durParam}`;
+    const coachParam = isCoach && currentCoachName ? `&coach=${encodeURIComponent(currentCoachName)}&coach_id=${encodeURIComponent(currentCoachId || '')}` : '';
+    const link = inv.fullUrl || `${origin}/auth?mode=signup&invite_code=${inv.code}&school=${encodeURIComponent(inv.school || effectiveSchool)}${durParam}${coachParam}`;
     if (navigator.clipboard) {
       await navigator.clipboard.writeText(link);
     }
@@ -1745,8 +1756,10 @@ const StudentsManagement = () => {
         {/* Header */}
         <header className="sm-header">
           <div className="sm-header-text">
-            <h1 className="sm-title">Students ({loading ? '…' : approvedStudents.length})</h1>
-            <p className="sm-sub">Manage your student body and track their progression across badge levels.</p>
+            <h1 className="sm-title">Students ({loading ? '…' : totalPeopleCount})</h1>
+            <p className="sm-sub">
+              Manage your student body and track their progression across badge levels.
+            </p>
           </div>
           <div className="sm-actions">
             {canManagePendingRequests && (
@@ -4210,10 +4223,12 @@ const StudentsManagement = () => {
                 </div>
                 <div>
                   <h3 style={{ margin: 0, fontSize: '19px', fontWeight: '800', color: '#0F172A', fontFamily: 'Outfit, sans-serif' }}>
-                    School Invite Link
+                    {isCoach ? 'Coach Registration Invite Link' : 'School Invite Link'}
                   </h3>
                   <p style={{ margin: '3px 0 0 0', fontSize: '13px', color: '#64748B' }}>
-                    Share registration link locked to <strong>{effectiveSchool}</strong> with custom capacity.
+                    {isCoach
+                      ? <>Share registration link assigned to <strong>Coach {currentCoachName || 'Instructor'}</strong> with custom capacity.</>
+                      : <>Share registration link locked to <strong>{effectiveSchool}</strong> with custom capacity.</>}
                   </p>
                 </div>
               </div>
@@ -4317,22 +4332,22 @@ const StudentsManagement = () => {
             {/* TAB 1: GENERATE INVITE LINK */}
             {inviteModalTab === 'generate' && (
               <div>
-                {/* School Locking Card */}
+                {/* School / Coach Locking Card */}
                 <div style={{ background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: '14px', padding: '14px 16px', marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <span style={{ fontSize: '20px' }}>🏫</span>
+                    <span style={{ fontSize: '20px' }}>{isCoach ? '🏄‍♂️' : '🏫'}</span>
                     <div>
                       <div style={{ fontSize: '11px', fontWeight: '800', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                        Active School
+                        {isCoach ? 'Assigned Coach' : 'Active School'}
                       </div>
                       <div style={{ fontSize: '14px', fontWeight: '800', color: '#0F172A', marginTop: '1px' }}>
-                        {effectiveSchool}
+                        {isCoach ? (currentCoachName ? `Coach ${currentCoachName}` : 'Individual / Freelance Coach') : effectiveSchool}
                       </div>
                     </div>
                   </div>
                   <div style={{ background: '#DCFCE7', color: '#15803D', padding: '4px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: '800', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                     <span>🔒</span>
-                    <span>School Locked on Signup</span>
+                    <span>{isCoach ? 'Coach Assigned on Signup' : 'School Locked on Signup'}</span>
                   </div>
                 </div>
 
@@ -4529,7 +4544,7 @@ const StudentsManagement = () => {
               <div>
                 {/* History Header & Filter Pills */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
-                  <div style={{ display: 'flex', gap: '6px' }}>
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
                     <button
                       type="button"
                       onClick={() => setShowActiveInvitesOnly(false)}
@@ -4594,6 +4609,62 @@ const StudentsManagement = () => {
                         }).length}
                       </span>
                     </button>
+
+                    {/* Small Calendar Filter Input */}
+                    <div style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '5px',
+                      background: inviteHistoryDateFilter ? '#F0FDFA' : '#F8FAFC',
+                      border: inviteHistoryDateFilter ? '1.5px solid #0D9488' : '1.5px solid #CBD5E1',
+                      borderRadius: '20px',
+                      padding: '3px 10px',
+                      boxShadow: inviteHistoryDateFilter ? '0 1px 4px rgba(13,148,136,0.15)' : 'none',
+                      transition: 'all 0.2s'
+                    }}>
+                      <span style={{ fontSize: '13px' }}>📅</span>
+                      <input
+                        type="date"
+                        value={inviteHistoryDateFilter}
+                        onChange={e => setInviteHistoryDateFilter(e.target.value)}
+                        style={{
+                          border: 'none',
+                          background: 'transparent',
+                          fontSize: '11.5px',
+                          fontWeight: 700,
+                          color: inviteHistoryDateFilter ? '#0D9488' : '#475569',
+                          outline: 'none',
+                          cursor: 'pointer',
+                          padding: 0
+                        }}
+                        title="Filter invite links by creation date"
+                      />
+                      {inviteHistoryDateFilter && (
+                        <button
+                          type="button"
+                          onClick={() => setInviteHistoryDateFilter('')}
+                          style={{
+                            background: '#0D9488',
+                            color: '#FFFFFF',
+                            border: 'none',
+                            borderRadius: '50%',
+                            width: '16px',
+                            height: '16px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '9px',
+                            cursor: 'pointer',
+                            fontWeight: 800,
+                            lineHeight: 1,
+                            padding: 0
+                          }}
+                          title="Clear date filter"
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   <span style={{ fontSize: '11.5px', color: '#64748B' }}>
@@ -4601,13 +4672,100 @@ const StudentsManagement = () => {
                   </span>
                 </div>
 
+                {/* Date Filter Result Banner */}
+                {inviteHistoryDateFilter && (() => {
+                  const getInviteCreatedDateISO = (createdVal) => {
+                    if (!createdVal) return '';
+                    const d = new Date(createdVal);
+                    if (isNaN(d.getTime())) return '';
+                    const y = d.getFullYear();
+                    const m = String(d.getMonth() + 1).padStart(2, '0');
+                    const day = String(d.getDate()).padStart(2, '0');
+                    return `${y}-${m}-${day}`;
+                  };
+                  const countOnSelectedDate = schoolInvitesList.filter(inv => getInviteCreatedDateISO(inv.created_at) === inviteHistoryDateFilter).length;
+                  const activeOnSelectedDate = schoolInvitesList.filter(inv => {
+                    const matchesDate = getInviteCreatedDateISO(inv.created_at) === inviteHistoryDateFilter;
+                    const rem = inv.remaining !== undefined ? inv.remaining : Math.max(0, inv.max_count - (inv.used_count || 0));
+                    return matchesDate && rem > 0 && inv.is_active;
+                  }).length;
+
+                  return (
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '8px 14px',
+                      background: '#F0FDFA',
+                      border: '1.5px solid #99F6E4',
+                      borderRadius: '12px',
+                      marginBottom: '14px',
+                      fontSize: '12px',
+                      boxShadow: '0 2px 6px rgba(13,148,136,0.08)'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#0F766E', fontWeight: 700 }}>
+                        <span style={{ fontSize: '14px' }}>📅</span>
+                        <span>
+                          <strong>{countOnSelectedDate}</strong> link{countOnSelectedDate === 1 ? '' : 's'} created on{' '}
+                          <u style={{ textDecorationColor: '#0D9488' }}>
+                            {new Date(inviteHistoryDateFilter + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                          </u>
+                          {countOnSelectedDate > 0 && (
+                            <span style={{ marginLeft: '6px', color: '#15803D', fontWeight: 800 }}>
+                              ({activeOnSelectedDate} Active)
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setInviteHistoryDateFilter('')}
+                        style={{
+                          background: '#CCFBF1',
+                          border: '1px solid #5EEAD4',
+                          color: '#0F766E',
+                          borderRadius: '6px',
+                          padding: '3px 10px',
+                          fontSize: '11px',
+                          fontWeight: 800,
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease'
+                        }}
+                      >
+                        Show All Dates ✕
+                      </button>
+                    </div>
+                  );
+                })()}
+
                 {/* List of Previous Invites */}
                 {(() => {
+                  const getInviteCreatedDateISO = (createdVal) => {
+                    if (!createdVal) return '';
+                    const d = new Date(createdVal);
+                    if (isNaN(d.getTime())) return '';
+                    const y = d.getFullYear();
+                    const m = String(d.getMonth() + 1).padStart(2, '0');
+                    const day = String(d.getDate()).padStart(2, '0');
+                    return `${y}-${m}-${day}`;
+                  };
+
                   const activeInvites = schoolInvitesList.filter(inv => {
                     const rem = inv.remaining !== undefined ? inv.remaining : Math.max(0, inv.max_count - (inv.used_count || 0));
                     return rem > 0 && inv.is_active;
                   });
-                  const displayedInvites = showActiveInvitesOnly ? activeInvites : schoolInvitesList;
+
+                  let filteredByDate = schoolInvitesList;
+                  if (inviteHistoryDateFilter) {
+                    filteredByDate = schoolInvitesList.filter(inv => getInviteCreatedDateISO(inv.created_at) === inviteHistoryDateFilter);
+                  }
+
+                  const displayedInvites = showActiveInvitesOnly
+                    ? filteredByDate.filter(inv => {
+                        const rem = inv.remaining !== undefined ? inv.remaining : Math.max(0, inv.max_count - (inv.used_count || 0));
+                        return rem > 0 && inv.is_active;
+                      })
+                    : filteredByDate;
 
                   if (displayedInvites.length === 0) {
                     return (
@@ -4619,31 +4777,56 @@ const StudentsManagement = () => {
                         borderRadius: '14px',
                         color: '#64748B'
                       }}>
-                        <div style={{ fontSize: '32px', marginBottom: '8px' }}>🔗</div>
+                        <div style={{ fontSize: '32px', marginBottom: '8px' }}>
+                          {inviteHistoryDateFilter ? '📅' : '🔗'}
+                        </div>
                         <div style={{ fontWeight: 800, fontSize: '14px', color: '#0F172A', marginBottom: '4px' }}>
-                          {showActiveInvitesOnly ? 'No Active Invite Links' : 'No Invite Links Created Yet'}
+                          {inviteHistoryDateFilter
+                            ? `0 Links Created on ${new Date(inviteHistoryDateFilter + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+                            : (showActiveInvitesOnly ? 'No Active Invite Links' : 'No Invite Links Created Yet')}
                         </div>
-                        <div style={{ fontSize: '12.5px', color: '#64748B', maxWidth: '300px', margin: '0 auto 14px' }}>
-                          {showActiveInvitesOnly
-                            ? 'All previous invite links are currently full or expired.'
-                            : 'Generate a new batch registration link from the Generate Link tab.'}
+                        <div style={{ fontSize: '12.5px', color: '#64748B', maxWidth: '320px', margin: '0 auto 14px' }}>
+                          {inviteHistoryDateFilter
+                            ? 'No registration invite links were created on this date. Select another date or clear the filter.'
+                            : (showActiveInvitesOnly
+                                ? 'All previous invite links are currently full or expired.'
+                                : 'Generate a new batch registration link from the Generate Link tab.')}
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => setInviteModalTab('generate')}
-                          style={{
-                            background: '#0D9488',
-                            color: '#FFFFFF',
-                            border: 'none',
-                            borderRadius: '8px',
-                            padding: '8px 16px',
-                            fontSize: '12.5px',
-                            fontWeight: 700,
-                            cursor: 'pointer'
-                          }}
-                        >
-                          ⚡ Go to Generate Link Tab
-                        </button>
+                        {inviteHistoryDateFilter ? (
+                          <button
+                            type="button"
+                            onClick={() => setInviteHistoryDateFilter('')}
+                            style={{
+                              background: '#0D9488',
+                              color: '#FFFFFF',
+                              border: 'none',
+                              borderRadius: '8px',
+                              padding: '8px 16px',
+                              fontSize: '12.5px',
+                              fontWeight: 700,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            ✕ Clear Date Filter
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setInviteModalTab('generate')}
+                            style={{
+                              background: '#0D9488',
+                              color: '#FFFFFF',
+                              border: 'none',
+                              borderRadius: '8px',
+                              padding: '8px 16px',
+                              fontSize: '12.5px',
+                              fontWeight: 700,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            ⚡ Go to Generate Link Tab
+                          </button>
+                        )}
                       </div>
                     );
                   }
@@ -4889,11 +5072,12 @@ const StudentsManagement = () => {
 
       <style>{`
         .sm-page { display: flex; min-height: 100vh; background: #F8FAFC; font-family: 'Instrument Sans', sans-serif; }
-        .sm-main { flex: 1; padding: 40px 80px; display: flex; flex-direction: column; gap: 32px; overflow-y: auto; }
+        .sm-main { flex: 1; padding: 28px 40px 80px 40px; display: flex; flex-direction: column; gap: 32px; overflow-y: auto; }
         
         .sm-header { display: flex; justify-content: space-between; align-items: center; }
-        .sm-title { font-family: 'Outfit', sans-serif; font-size: 32px; font-weight: 700; color: #0F172A; margin: 0; line-height: 1.2; }
-        .sm-sub { font-size: 16px; color: #64748B; margin: 8px 0 0 0; }
+        .sm-header-text { display: flex; flex-direction: column; align-items: flex-start; text-align: left; }
+        .sm-title { font-family: 'Outfit', sans-serif; font-size: 24px; font-weight: 700; color: #0F172A; margin: 0; line-height: 1.2; text-align: left; }
+        .sm-sub { font-size: 13.5px; color: #64748B; margin: 4px 0 0 0; line-height: 1.4; text-align: left; }
         
         .sm-actions { display: flex; gap: 12px; }
         .sm-btn-secondary {

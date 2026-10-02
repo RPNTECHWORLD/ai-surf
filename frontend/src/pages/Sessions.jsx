@@ -272,15 +272,86 @@ const Sessions = () => {
     }
   });
 
+  // Keep currentUser synchronized on any cross-tab or in-page storage update
+  useEffect(() => {
+    const syncUser = () => {
+      try {
+        const saved = sessionStorage.getItem('user') || localStorage.getItem('user');
+        if (saved) setCurrentUser(JSON.parse(saved));
+      } catch (e) {}
+    };
+    window.addEventListener('storage', syncUser);
+    window.addEventListener('user_updated', syncUser);
+    return () => {
+      window.removeEventListener('storage', syncUser);
+      window.removeEventListener('user_updated', syncUser);
+    };
+  }, []);
+
+  const [allInstructorsList, setAllInstructorsList] = useState([]);
+  const [allStudentsList, setAllStudentsList] = useState([]);
+
   const isStudent = currentUser?.role === 'athlete' || currentUser?.role === 'student' || currentUser?.role === 'user';
   const isCoach = currentUser?.role === 'coach';
-  const currentStudentName = currentUser?.name || 'Eric Sheldon';
+
+  // Automatically resolve the full student profile from allStudentsList
+  const loggedInStudent = useMemo(() => {
+    if (!isStudent) return null;
+    const userEmail = (currentUser?.email || '').toLowerCase().trim();
+    const userName = (currentUser?.name || currentUser?.student_name || currentUser?.username || '').toLowerCase().trim();
+    const userStudentId = currentUser?.student_id || currentUser?.id;
+
+    if (allStudentsList && allStudentsList.length > 0) {
+      const match = allStudentsList.find(st => {
+        if (currentUser?.student_id && (st.id === parseInt(currentUser.student_id) || String(st.id) === String(currentUser.student_id))) return true;
+        if (userEmail && (st.email || '').toLowerCase().trim() === userEmail) return true;
+        if (userName && (st.name || '').toLowerCase().trim() === userName) return true;
+        if (userStudentId && (st.id === parseInt(userStudentId) || st.user_id === parseInt(userStudentId))) return true;
+        return false;
+      });
+      if (match) return match;
+    }
+
+    try {
+      const savedAccs = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
+      const accMatch = savedAccs.find(a => 
+        (userEmail && (a.email || '').toLowerCase().trim() === userEmail) ||
+        (userName && (a.name || '').toLowerCase().trim() === userName)
+      );
+      if (accMatch) return accMatch;
+    } catch (e) {}
+
+    return null;
+  }, [isStudent, allStudentsList, currentUser]);
+
+  const studentCandidateNames = useMemo(() => {
+    const names = new Set();
+    if (currentUser?.name) names.add(currentUser.name.toLowerCase().trim());
+    if (currentUser?.username) names.add(currentUser.username.toLowerCase().trim());
+    if (currentUser?.student_name) names.add(currentUser.student_name.toLowerCase().trim());
+    if (currentUser?.email) {
+      const prefix = currentUser.email.split('@')[0].toLowerCase().trim();
+      if (prefix) names.add(prefix);
+    }
+    if (loggedInStudent?.name) names.add(loggedInStudent.name.toLowerCase().trim());
+    return Array.from(names).filter(Boolean);
+  }, [currentUser, loggedInStudent]);
+
+  const studentCandidateIds = useMemo(() => {
+    const ids = new Set();
+    if (currentUser?.student_id) ids.add(String(currentUser.student_id));
+    if (loggedInStudent?.id) ids.add(String(loggedInStudent.id));
+    if (currentUser?.id) ids.add(String(currentUser.id));
+    return Array.from(ids).filter(Boolean);
+  }, [currentUser, loggedInStudent]);
+
+  const currentStudentName = loggedInStudent?.name || currentUser?.name || currentUser?.student_name || currentUser?.username || 'Student';
   const currentCoachName = currentUser?.name || '';
   const currentCoachId = currentUser?.instructor_id || currentUser?.id || null;
 
   const activeSchoolName = (() => {
     try {
-      const savedSchool = sessionStorage.getItem('activeSchool');
+      const savedSchool = sessionStorage.getItem('activeSchool') || localStorage.getItem('activeSchool');
       if (savedSchool) {
         try {
           const parsed = JSON.parse(savedSchool);
@@ -293,7 +364,7 @@ const Sessions = () => {
           return savedSchool;
         }
       }
-      const savedUser = sessionStorage.getItem('user');
+      const savedUser = sessionStorage.getItem('user') || localStorage.getItem('user');
       if (savedUser) {
         const parsed = JSON.parse(savedUser);
         if (parsed.school) {
@@ -304,11 +375,8 @@ const Sessions = () => {
         }
       }
     } catch (e) {}
-    return null;
+    return loggedInStudent?.school || null;
   })();
-
-  const [allInstructorsList, setAllInstructorsList] = useState([]);
-  const [allStudentsList, setAllStudentsList] = useState([]);
 
   const schoolLower = (activeSchoolName || '').toLowerCase().trim();
   const isSuperAdmin = currentUser?.role === 'superadmin' || schoolLower === 'super admin';
@@ -339,7 +407,8 @@ const Sessions = () => {
 
   // Only Individual/Freelance Surfers/Coaches and Admins can Schedule, Configure & Delete sessions.
   // School Coaches & School Students cannot schedule/configure/delete school sessions.
-  const canManageSessions = Boolean(isAdminOrSuperAdmin || isIndividualSurfer || isCoachFreelance);
+  // Students (athlete/student/user role) can NEVER manage sessions — view only.
+  const canManageSessions = !isStudent && Boolean(isAdminOrSuperAdmin || isIndividualSurfer || isCoachFreelance || isCoach);
 
   // Filter States
   const [dateFilter, setDateFilter] = useState('');
@@ -1213,12 +1282,17 @@ const Sessions = () => {
 
   const fetchSessions = () => {
     setLoading(true);
-    const targetSchool = (isCoach && isCoachFreelance)
-      ? 'Individual / Freelance Coach'
-      : (effectiveSchool && !isSuperAdmin ? effectiveSchool : '');
+    // For students: fetch without school query parameter to prevent accidental school query mismatches, exactly as done in StudentProfile.jsx
+    const targetSchool = isStudent
+      ? ''
+      : (isCoach && isCoachFreelance)
+        ? 'Individual / Freelance Coach'
+        : (effectiveSchool && !isSuperAdmin ? effectiveSchool : '');
+
     const url = targetSchool
       ? `${API}/api/sessions?school=${encodeURIComponent(targetSchool)}`
       : `${API}/api/sessions`;
+
     fetch(url)
       .then(r => r.json())
       .then(data => setSessions(Array.isArray(data) ? data : []))
@@ -1236,14 +1310,15 @@ const Sessions = () => {
       .then(data => { if (Array.isArray(data)) setAllInstructorsList(data); })
       .catch(() => {});
 
-    const stUrl = (activeSchoolName && !isSuperAdmin)
-      ? `${API}/api/students?school=${encodeURIComponent(activeSchoolName)}`
+    // Always fetch student records so loggedInStudent can be resolved immediately
+    const stUrl = (effectiveSchool && !isSuperAdmin && !isStudent)
+      ? `${API}/api/students?school=${encodeURIComponent(effectiveSchool)}`
       : `${API}/api/students`;
     fetch(stUrl)
       .then(r => r.json())
       .then(data => { if (Array.isArray(data)) setAllStudentsList(data); })
       .catch(() => {});
-  }, [activeSchoolName, isSuperAdmin, isCoachFreelance]);
+  }, [activeSchoolName, isSuperAdmin, isCoachFreelance, isStudent]);
 
   // Role-Scoped Base Sessions List
   const roleScopedSessions = useMemo(() => {
@@ -1276,14 +1351,33 @@ const Sessions = () => {
 
     // Student Role: Strictly isolate to ONLY sessions belonging to this specific student
     if (isStudent) {
-      const sNameLower = (currentStudentName || '').toLowerCase().trim();
-      const mySessions = sessions.filter(s => {
-        const itemStudent = (s.student || '').toLowerCase().trim();
-        if (sNameLower && itemStudent && (itemStudent === sNameLower || itemStudent.includes(sNameLower) || sNameLower.includes(itemStudent))) return true;
-        if (currentUser?.student_id && (s.student_id === currentUser.student_id || String(s.student_id) === String(currentUser.student_id))) return true;
+      return sessions.filter(s => {
+        // 1. Direct Student ID match
+        const sid = s.student_id ? String(s.student_id) : '';
+        if (sid && studentCandidateIds.includes(sid)) return true;
+
+        // 2. Direct name, student_name, or guest_name match
+        const sStudent = (s.student || '').toLowerCase().trim();
+        const sStudentName = (s.student_name || '').toLowerCase().trim();
+        const sGuest = (s.guest_name || '').toLowerCase().trim();
+
+        for (const cName of studentCandidateNames) {
+          if (!cName) continue;
+          if (sStudent && (sStudent === cName || sStudent.includes(cName) || cName.includes(sStudent))) return true;
+          if (sStudentName && (sStudentName === cName || sStudentName.includes(cName) || cName.includes(sStudentName))) return true;
+          if (sGuest && (sGuest === cName || sGuest.includes(cName) || cName.includes(sGuest))) return true;
+        }
+
+        // 3. Notes mention match (e.g. Group A - Coaches: demo1 - Ericsheldon2604)
+        if (s.notes) {
+          const notesLower = s.notes.toLowerCase();
+          for (const cName of studentCandidateNames) {
+            if (cName && notesLower.includes(cName)) return true;
+          }
+        }
+
         return false;
       });
-      return mySessions.length > 0 ? mySessions : sessions.filter(s => (s.student || '').toLowerCase().includes(sNameLower));
     }
 
     // Admin / School: Filter by active school
@@ -1296,7 +1390,7 @@ const Sessions = () => {
     }
 
     return sessions;
-  }, [sessions, currentUser, isStudent, isCoach, currentStudentName, currentCoachName, currentCoachId, effectiveSchoolLower, isSuperAdmin]);
+  }, [sessions, currentUser, isStudent, isCoach, currentStudentName, currentCoachName, currentCoachId, effectiveSchoolLower, isSuperAdmin, studentCandidateNames, studentCandidateIds]);
 
   // Extract unique instructors and students for dropdowns
   const availableInstructors = useMemo(() => {
@@ -1486,11 +1580,13 @@ const Sessions = () => {
     };
 
     // Sort groups: Date DESC -> Time Slot ASC -> Group Name ASC (e.g. Group A before Group B)
+    // For students or upcoming filter, sort chronological ASC so earliest next session appears first
+    const isUpcomingSort = isStudent || statusFilter === 'Upcoming';
     groups.sort((a, b) => {
       const dateA = normalizeToYYYYMMDD(a.date) || a.date || '';
       const dateB = normalizeToYYYYMMDD(b.date) || b.date || '';
       if (dateA !== dateB) {
-        return dateB.localeCompare(dateA); // Newer date first
+        return isUpcomingSort ? dateA.localeCompare(dateB) : dateB.localeCompare(dateA);
       }
 
       const timeA = parseTimeToMinutes(a.time);
@@ -1508,7 +1604,7 @@ const Sessions = () => {
     ungrouped.sort((a, b) => {
       const dateA = normalizeToYYYYMMDD(a.date) || a.date || '';
       const dateB = normalizeToYYYYMMDD(b.date) || b.date || '';
-      if (dateA !== dateB) return dateB.localeCompare(dateA);
+      if (dateA !== dateB) return isUpcomingSort ? dateA.localeCompare(dateB) : dateB.localeCompare(dateA);
       const timeA = parseTimeToMinutes(a.time);
       const timeB = parseTimeToMinutes(b.time);
       if (timeA !== timeB) return timeA - timeB;
@@ -1814,7 +1910,7 @@ const Sessions = () => {
                 <span className="ses-pulsing-dot"></span> LIVE SCHEDULE
               </span>
             </div>
-            <p className="ses-subtitle" style={{ margin: '4px 0 0', color: '#64748B', fontSize: '14px' }}>
+            <p className="ses-subtitle" style={{ margin: '4px 0 0', color: '#64748B', fontSize: '13.5px', lineHeight: 1.4, textAlign: 'left' }}>
               {isStudent
                 ? 'Your personalized surf coaching, training logs & scheduled slots'
                 : (isCoach
@@ -2197,7 +2293,7 @@ const Sessions = () => {
         )}
 
         {/* Metric Cards Row - Placed Between Filters & Table */}
-        <div className="ses-metrics-row">
+        <div className={`ses-metrics-row ${isStudent ? 'student-view' : ''}`}>
           <div
             className={`ses-status-metric-card upcoming-card ${statusFilter === 'Upcoming' ? 'active-filter' : ''}`}
             onClick={() => setStatusFilter(prev => prev === 'Upcoming' ? 'All' : 'Upcoming')}
@@ -2206,7 +2302,6 @@ const Sessions = () => {
           >
             <div className="ses-smc-label">UPCOMING SESSIONS</div>
             <div className="ses-smc-value">{loading ? '…' : upcomingCount}</div>
-            <div className="ses-smc-sub">Days Upcoming: {loading ? '…' : upcomingDays}</div>
           </div>
 
           <div
@@ -2217,7 +2312,6 @@ const Sessions = () => {
           >
             <div className="ses-smc-label">IN PROGRESS SESSIONS</div>
             <div className="ses-smc-value">{loading ? '…' : inProgressCount}</div>
-            <div className="ses-smc-sub">Days In Progress: {loading ? '…' : inProgressDays}</div>
           </div>
 
           <div
@@ -2228,7 +2322,6 @@ const Sessions = () => {
           >
             <div className="ses-smc-label">PENDING FOR REVIEW</div>
             <div className="ses-smc-value">{loading ? '…' : pendingReviewCount}</div>
-            <div className="ses-smc-sub">Days Pending: {loading ? '…' : pendingReviewDays}</div>
           </div>
 
           <div
@@ -2239,21 +2332,19 @@ const Sessions = () => {
           >
             <div className="ses-smc-label">SESSIONS COMPLETED</div>
             <div className="ses-smc-value">{loading ? '…' : completedCount}</div>
-            <div className="ses-smc-sub">Days Completed: {loading ? '…' : completedDays}</div>
           </div>
 
-          <div
-            className={`ses-status-metric-card students-card ${statusFilter === 'All' ? '' : ''}`}
-            onClick={() => setStatusFilter('All')}
-            style={{ cursor: 'pointer' }}
-            title="Click to show all students & sessions"
-          >
-            <div className="ses-smc-label">NUMBER OF STUDENTS</div>
-            <div className="ses-smc-value">{loading ? '…' : totalStudentsCount}</div>
-            <div className="ses-smc-sub">
-              Upcoming: {loading ? '…' : upcomingStudentsCount} &bull; In Progress: {loading ? '…' : inProgressStudentsCount} &bull; Pending: {loading ? '…' : pendingReviewStudentsCount} &bull; Completed: {loading ? '…' : completedStudentsCount}
+          {!isStudent && (
+            <div
+              className={`ses-status-metric-card students-card ${statusFilter === 'All' ? '' : ''}`}
+              onClick={() => setStatusFilter('All')}
+              style={{ cursor: 'pointer' }}
+              title="Click to show all students & sessions"
+            >
+              <div className="ses-smc-label">NUMBER OF STUDENTS</div>
+              <div className="ses-smc-value">{loading ? '…' : totalStudentsCount}</div>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Full-Width Sessions Table */}
@@ -2313,11 +2404,10 @@ const Sessions = () => {
                     </th>
                   )}
                   <th style={{ width: '18%', minWidth: '160px' }}>DATE & TIME</th>
-                  <th style={{ width: '22%', minWidth: '180px' }}>SESSION / STUDENT</th>
-                  <th style={{ width: '14%', minWidth: '130px' }}>INSTRUCTOR</th>
-                  <th style={{ width: '10%', minWidth: '95px' }}>TYPE</th>
-                  <th style={{ width: '11%', minWidth: '105px' }}>STATUS</th>
-                  <th style={{ width: '25%', minWidth: '270px', textAlign: 'right' }}>ACTIONS</th>
+                  <th style={{ width: '26%', minWidth: '200px' }}>SESSION / STUDENT</th>
+                  <th style={{ width: '16%', minWidth: '140px' }}>INSTRUCTOR</th>
+                  <th style={{ width: '13%', minWidth: '110px' }}>STATUS</th>
+                  <th style={{ width: '27%', minWidth: '280px', textAlign: 'right' }}>ACTIONS</th>
                 </tr>
               </thead>
               <tbody>
@@ -2412,9 +2502,6 @@ const Sessions = () => {
                         </td>
                         <td>
                           {renderCoachBadge(groupObj.instructor, groupObj.sessions[0]?.instructor_id)}
-                        </td>
-                        <td>
-                          <span className="ses-badge-type">{groupObj.type || 'Beginner'}</span>
                         </td>
                         <td>
                           <span
@@ -2644,9 +2731,6 @@ const Sessions = () => {
                             </td>
                             <td>
                               {renderCoachBadge(session.instructor, session.instructor_id)}
-                            </td>
-                            <td>
-                              <span className="ses-badge-type">{session.type || 'Beginner'}</span>
                             </td>
                             <td>
                               <span
@@ -2882,9 +2966,6 @@ const Sessions = () => {
                       </td>
                       <td>
                         {renderCoachBadge(session.instructor, session.instructor_id)}
-                      </td>
-                      <td>
-                        <span className="ses-badge-type">{session.type || 'Beginner'}</span>
                       </td>
                       <td>
                         <span
@@ -5210,22 +5291,7 @@ const Sessions = () => {
                     </div>
 
                     {/* Modal Footer */}
-                    <div style={{ padding: '12px 20px', borderTop: '1px solid #E2E8F0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#FFFFFF' }}>
-                      {canManageSessions && !isPast ? (
-                        <button
-                          type="button"
-                          className="ses-btn-primary"
-                          style={{ fontSize: '12px', padding: '6px 12px' }}
-                          onClick={() => {
-                            setScheduleModalInitialDate(targetISO);
-                            setShowScheduleModal(true);
-                            setSelectedDayDetailsModal(null);
-                          }}
-                        >
-                          + Schedule on this Date
-                        </button>
-                      ) : <div />}
-
+                    <div style={{ padding: '12px 20px', borderTop: '1px solid #E2E8F0', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', background: '#FFFFFF' }}>
                       <button
                         type="button"
                         className="ses-btn-secondary"
@@ -5555,7 +5621,8 @@ const Sessions = () => {
 
         /* Header */
         .ses-header { display: flex; justify-content: space-between; align-items: center; }
-        .ses-title { font-family: 'Outfit', sans-serif; font-size: 30px; font-weight: 700; color: #050B1A; margin: 0; }
+        .ses-header-info { display: flex; flex-direction: column; align-items: flex-start; text-align: left; }
+        .ses-title { font-family: 'Outfit', sans-serif; font-size: 24px; font-weight: 700; color: #0F172A; margin: 0; line-height: 1.2; text-align: left; }
         .ses-live-pill {
           display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px;
           background: rgba(13, 148, 136, 0.1); border: 1px solid rgba(13, 148, 136, 0.3);
@@ -5810,9 +5877,15 @@ const Sessions = () => {
           grid-template-columns: repeat(5, 1fr);
           gap: 14px;
         }
+        .ses-metrics-row.student-view {
+          grid-template-columns: repeat(4, 1fr);
+        }
         @media (max-width: 1200px) {
           .ses-metrics-row {
             grid-template-columns: repeat(3, 1fr);
+          }
+          .ses-metrics-row.student-view {
+            grid-template-columns: repeat(2, 1fr);
           }
         }
         @media (max-width: 768px) {

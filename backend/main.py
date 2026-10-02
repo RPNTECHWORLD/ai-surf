@@ -1177,6 +1177,7 @@ class InstructorCreate(BaseModel):
     certifications: List[str] = []
     image: Optional[str] = ""
     school: Optional[str] = "Individual / Freelance Coach"
+    location: Optional[str] = ""
 
 
 class StudentCreate(BaseModel):
@@ -1756,6 +1757,10 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
         raise HTTPException(status_code=400, detail=f"This email is already registered as {role_label}. Please log in instead.")
 
     selected_school = (data.school or "").strip()
+    if role == "coach":
+        coach_school = selected_school or "Individual / Freelance Coach"
+        if coach_school == "Individual / Freelance Coach" and not (data.location or "").strip():
+            raise HTTPException(status_code=400, detail="Location / region is required for individual coaches.")
     initial_approval = "approved" if (data.invite_token or data.invite_code or role != "athlete" or not selected_school) else "pending"
 
     # If signup is via school invite link, validate and lock early
@@ -1864,6 +1869,17 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
             elif student.school:
                 db.add(ActivityLog(text=f"{data.name} signed up for {data.course_duration or '3 Days Course'}", type="group", school=student.school))
     elif role == "coach":
+        coach_school = (data.school or "").strip() or "Individual / Freelance Coach"
+        coach_location = (data.location or "").strip()
+        if coach_school and coach_school != "Individual / Freelance Coach":
+            school_record = db.query(School).filter(func.lower(School.name) == coach_school.lower().strip()).first()
+            if school_record:
+                parts = [p for p in [school_record.city, school_record.country] if p]
+                if parts:
+                    coach_location = ", ".join(parts)
+        if not coach_location:
+            coach_location = "North Shore, Oahu"
+
         instructor = Instructor(
             user_id=user.id,
             name=data.name,
@@ -1876,8 +1892,8 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
             bio="Professional surf instructor dedicated to athletic performance.",
             specializations=json.dumps(data.specializations or ["S&C", "Video Analysis"]),
             rates=data.rates or "$75 / hr",
-            location=data.location or "North Shore, Oahu",
-            school=data.school or "Individual / Freelance Coach",
+            location=coach_location,
+            school=coach_school,
             reviews=json.dumps([])
         )
         db.add(instructor)
@@ -2940,15 +2956,36 @@ def dashboard_stats(school: Optional[str] = None, db: OrmSession = Depends(get_d
         instructor_q = instructor_q.filter(func.lower(Instructor.school) == sch_clean)
         session_q = session_q.join(Student, SurfSession.student_id == Student.id).filter(func.lower(Student.school) == sch_clean)
 
+    completed_sessions = session_q.filter(SurfSession.status == "Completed").all()
+    upcoming_sessions = session_q.filter(SurfSession.status == "Upcoming").all()
+
+    def count_unique_backend_sessions(sess_list):
+        unique_keys = set()
+        for s in sess_list:
+            if s.group_name and s.group_name.strip():
+                unique_keys.add(f"GRP__{s.group_name.strip()}__{s.date}__{s.time}")
+            else:
+                unique_keys.add(f"SESS__{s.id}")
+        return len(unique_keys)
+
+    students = student_q.all()
+    total_guests = 0
+    for st in students:
+        if st.guests_details:
+            try:
+                g_list = json.loads(st.guests_details)
+                if isinstance(g_list, list):
+                    total_guests += len(g_list)
+            except Exception:
+                pass
+
     return {
         "active_instructors": instructor_q.count(),
-        "active_students": student_q.count(),
-        "sessions_this_month": session_q.filter(
-            SurfSession.status == "Completed"
-        ).count(),
-        "upcoming_sessions": session_q.filter(
-            SurfSession.status == "Upcoming"
-        ).count(),
+        "active_students": len(students) + total_guests,
+        "enrolled_students": len(students),
+        "total_guests": total_guests,
+        "sessions_this_month": count_unique_backend_sessions(completed_sessions),
+        "upcoming_sessions": count_unique_backend_sessions(upcoming_sessions),
     }
 
 
@@ -3135,6 +3172,17 @@ def create_instructor(data: InstructorCreate, request: Request, db: OrmSession =
             db.flush()
             user_id = new_user.id
 
+    coach_school = data.school or "Individual / Freelance Coach"
+    coach_location = (data.location or "").strip()
+    if coach_school and coach_school != "Individual / Freelance Coach":
+        school_record = db.query(School).filter(func.lower(School.name) == coach_school.lower().strip()).first()
+        if school_record:
+            parts = [p for p in [school_record.city, school_record.country] if p]
+            if parts:
+                coach_location = ", ".join(parts)
+    if not coach_location:
+        coach_location = "Oahu, HI"
+
     instructor = Instructor(
         user_id=user_id,
         name=data.name,
@@ -3146,7 +3194,8 @@ def create_instructor(data: InstructorCreate, request: Request, db: OrmSession =
         experience=data.experience or "2 Years",
         certifications=json.dumps(data.certifications),
         image=data.image or "",
-        school=data.school or "Individual / Freelance Coach",
+        school=coach_school,
+        location=coach_location,
     )
     db.add(instructor)
     db.commit()
@@ -4481,6 +4530,8 @@ def analytics_students(
             "nextTime": next_time,
             "nextColor": next_color,
             "instructor": inst_name,
+            "guests_details": s.guests_details,
+            "guests_count": s.guests_count,
         })
     return result
 

@@ -42,6 +42,19 @@ const InstructorProfile = () => {
   // Auth states
   const [currentUser, setCurrentUser] = useState(null);
   const [schoolsList, setSchoolsList] = useState([]);
+  const [schoolsData, setSchoolsData] = useState([]);
+
+  const getSchoolLocation = (schoolName) => {
+    if (!schoolName || schoolName === 'Individual / Freelance Coach') return '';
+    const cleanName = schoolName.toLowerCase().trim();
+    const found = schoolsData.find(s => (s.name || '').toLowerCase().trim() === cleanName);
+    if (found) {
+      const parts = [found.city, found.country].filter(Boolean);
+      return parts.join(', ') || found.city || found.country || '';
+    }
+    return '';
+  };
+
   const [showEditModal, setShowEditModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
@@ -77,6 +90,8 @@ const InstructorProfile = () => {
     certifications: ''
   });
 
+  const isSchoolAffiliated = Boolean(editForm.school) && editForm.school !== 'Individual / Freelance Coach';
+
   // Password & Credentials State
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [coachEmail, setCoachEmail] = useState('');
@@ -98,6 +113,7 @@ const InstructorProfile = () => {
       .then(r => r.json())
       .then(data => {
         if (Array.isArray(data) && data.length > 0) {
+          setSchoolsData(data);
           const names = data.map(s => s.name).filter(Boolean);
           setSchoolsList(prev => Array.from(new Set([...names, ...prev])));
         }
@@ -448,7 +464,7 @@ const InstructorProfile = () => {
         fitness_level: editForm.fitness_level,
         specializations: editForm.specializations,
         rates: editForm.rates,
-        location: editForm.location,
+        location: isSchoolAffiliated ? (getSchoolLocation(editForm.school) || editForm.location) : editForm.location,
         school: editForm.school || 'Individual / Freelance Coach',
         certifications: editForm.certifications.split('\n').filter(c => c.trim() !== '')
       };
@@ -537,52 +553,6 @@ const InstructorProfile = () => {
   })()).toLowerCase().trim();
   const isStudent = userRole === 'athlete' || userRole === 'student' || userRole === 'user';
 
-  // Group sessions by month (last 8 months) for chart
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const now = new Date();
-  const monthlyStats = [];
-  for (let i = 7; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    monthlyStats.push({
-      month: d.getMonth(),
-      year: d.getFullYear(),
-      label: months[d.getMonth()],
-      count: 0
-    });
-  }
-
-  instructorSessions.forEach(s => {
-    if (!s.date) return;
-    try {
-      let dateObj = null;
-      if (s.date.includes('-')) {
-        dateObj = new Date(s.date);
-      } else {
-        const parts = s.date.split(' ');
-        if (parts.length === 3) {
-          const day = parseInt(parts[0]);
-          const monthStr = parts[1].slice(0, 3).toLowerCase();
-          const year = parseInt(parts[2]);
-          const monthIndex = months.findIndex(m => m.toLowerCase().startsWith(monthStr));
-          if (monthIndex !== -1) {
-            dateObj = new Date(year, monthIndex, day);
-          }
-        }
-      }
-      if (dateObj && !isNaN(dateObj.getTime())) {
-        const mIdx = dateObj.getMonth();
-        const y = dateObj.getFullYear();
-        const match = monthlyStats.find(m => m.month === mIdx && m.year === y);
-        if (match) {
-          match.count++;
-        }
-      }
-    } catch (e) {
-      console.error("Error parsing date:", s.date, e);
-    }
-  });
-
-  const maxCount = Math.max(...monthlyStats.map(m => m.count), 1);
 
   return (
     <div className="ip-page">
@@ -752,24 +722,6 @@ const InstructorProfile = () => {
           {/* Right Column */}
           {(!isStudent || (instructor.reviews && instructor.reviews.length > 0)) && (
             <div className="ip-col-right">
-              {/* Stats Row (Admin & Coach only) */}
-            {!isStudent && (
-              <div className="ip-stats-row">
-                <div className="ip-card ip-stat-card">
-                  <span className="ip-stat-label">SESSIONS / MONTH</span>
-                  <div className="ip-chart">
-                    {monthlyStats.map((m, i) => (
-                      <div 
-                        key={i} 
-                        className="ip-bar" 
-                        style={{ height: `${Math.max((m.count / maxCount) * 60, 4)}px` }} 
-                        title={`${m.label} ${m.year}: ${m.count} sessions`}
-                      />
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
 
             {/* Assigned Students (Admin & Coach only) */}
             {!isStudent && (
@@ -967,14 +919,14 @@ const InstructorProfile = () => {
                   </div>
 
                   <div className="sp-form-field">
-                    <label>Full Name</label>
+                    <label>Full Name <span style={{ color: '#EF4444' }}>*</span></label>
                     <input type="text" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required />
                   </div>
 
                   <div className="sp-form-row">
                     <div className="sp-form-field">
                       <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span>Date of Birth (DOB)</span>
+                        <span>Date of Birth (DOB) <span style={{ color: '#EF4444' }}>*</span></span>
                         {editForm.dob && calculateAge(editForm.dob) && (
                           <span style={{ fontSize: '11px', color: '#0D9488', fontWeight: 700 }}>
                             Age: {calculateAge(editForm.dob)} yrs
@@ -994,13 +946,15 @@ const InstructorProfile = () => {
                           }));
                         }}
                         max={new Date().toISOString().split('T')[0]}
+                        required
                       />
                     </div>
                     <div className="sp-form-field">
-                      <label>Gender</label>
+                      <label>Gender <span style={{ color: '#EF4444' }}>*</span></label>
                       <select
                         value={editForm.gender || 'Male'}
                         onChange={(e) => setEditForm({ ...editForm, gender: e.target.value })}
+                        required
                       >
                         <option value="Male">Male</option>
                         <option value="Female">Female</option>
@@ -1011,12 +965,12 @@ const InstructorProfile = () => {
 
                   <div className="sp-form-row">
                     <div className="sp-form-field">
-                      <label>Experience (Years)</label>
-                      <input type="number" min="0" max="60" value={editForm.experience} onChange={(e) => setEditForm({ ...editForm, experience: e.target.value })} placeholder="e.g. 5" />
+                      <label>Experience (Years) <span style={{ color: '#EF4444' }}>*</span></label>
+                      <input type="number" min="0" max="60" value={editForm.experience} onChange={(e) => setEditForm({ ...editForm, experience: e.target.value })} placeholder="e.g. 5" required />
                     </div>
                     <div className="sp-form-field">
-                      <label>Fitness Level</label>
-                      <select value={editForm.fitness_level} onChange={(e) => setEditForm({ ...editForm, fitness_level: e.target.value })}>
+                      <label>Fitness Level <span style={{ color: '#EF4444' }}>*</span></label>
+                      <select value={editForm.fitness_level} onChange={(e) => setEditForm({ ...editForm, fitness_level: e.target.value })} required>
                         <option value="Elite">Elite</option>
                         <option value="Advanced">Advanced</option>
                         <option value="Intermediate">Intermediate</option>
@@ -1027,20 +981,45 @@ const InstructorProfile = () => {
 
                   <div className="sp-form-row">
                     <div className="sp-form-field">
-                      <label>Hourly Rate</label>
-                      <input type="text" value={editForm.rates} onChange={(e) => setEditForm({ ...editForm, rates: e.target.value })} placeholder="e.g. $100 / hr" />
+                      <label>Hourly Rate <span style={{ color: '#EF4444' }}>*</span></label>
+                      <input type="text" value={editForm.rates} onChange={(e) => setEditForm({ ...editForm, rates: e.target.value })} placeholder="e.g. $100 / hr" required />
                     </div>
                     <div className="sp-form-field">
-                      <label>Location / Region</label>
-                      <input type="text" value={editForm.location} onChange={(e) => setEditForm({ ...editForm, location: e.target.value })} placeholder="e.g. Maui, Hawaii" />
+                      <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>Location / Region <span style={{ color: '#EF4444' }}>*</span></span>
+                        {isSchoolAffiliated && (
+                          <span style={{ fontSize: '11px', color: '#0F766E', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                            🔒 Locked to School
+                          </span>
+                        )}
+                      </label>
+                      <input
+                        type="text"
+                        value={isSchoolAffiliated ? (getSchoolLocation(editForm.school) || editForm.location) : editForm.location}
+                        onChange={(e) => setEditForm({ ...editForm, location: e.target.value })}
+                        placeholder={isSchoolAffiliated ? 'School location...' : 'e.g. Maui, Hawaii'}
+                        readOnly={isSchoolAffiliated}
+                        disabled={isSchoolAffiliated}
+                        required={!isSchoolAffiliated}
+                        style={isSchoolAffiliated ? { background: '#F1F5F9', color: '#334155', cursor: 'not-allowed', fontWeight: 600 } : {}}
+                      />
                     </div>
                   </div>
 
                   <div className="sp-form-field">
-                    <label>Affiliation / Surf School</label>
+                    <label>Affiliation / Surf School <span style={{ color: '#EF4444' }}>*</span></label>
                     <select
                       value={editForm.school || 'Individual / Freelance Coach'}
-                      onChange={(e) => setEditForm({ ...editForm, school: e.target.value })}
+                      onChange={(e) => {
+                        const chosen = e.target.value;
+                        const isAff = chosen && chosen !== 'Individual / Freelance Coach';
+                        setEditForm({
+                          ...editForm,
+                          school: chosen,
+                          location: isAff ? (getSchoolLocation(chosen) || editForm.location) : ''
+                        });
+                      }}
+                      required
                     >
                       <option value="Individual / Freelance Coach">👤 Individual / Freelance Coach (Independent)</option>
                       {schoolsList.filter(s => s !== 'Individual / Freelance Coach').map(s => (
@@ -1050,8 +1029,8 @@ const InstructorProfile = () => {
                   </div>
 
                   <div className="sp-form-field">
-                    <label>Bio</label>
-                    <textarea rows="3" value={editForm.bio} onChange={(e) => setEditForm({ ...editForm, bio: e.target.value })} placeholder="Write your coaching bio..."></textarea>
+                    <label>Bio <span style={{ color: '#EF4444' }}>*</span></label>
+                    <textarea rows="3" value={editForm.bio} onChange={(e) => setEditForm({ ...editForm, bio: e.target.value })} placeholder="Write your coaching bio..." required></textarea>
                   </div>
 
                   <div className="sp-form-field">
@@ -1067,8 +1046,8 @@ const InstructorProfile = () => {
                   </div>
 
                   <div className="sp-form-field">
-                    <label>Certifications (one certification per line)</label>
-                    <textarea rows="3" value={editForm.certifications} onChange={(e) => setEditForm({ ...editForm, certifications: e.target.value })} placeholder="e.g. ISA Level 2 Coach"></textarea>
+                    <label>Certifications (one certification per line) <span style={{ color: '#EF4444' }}>*</span></label>
+                    <textarea rows="3" value={editForm.certifications} onChange={(e) => setEditForm({ ...editForm, certifications: e.target.value })} placeholder="e.g. ISA Level 2 Coach" required></textarea>
                   </div>
                 </div>
                 <div className="sp-modal-footer">

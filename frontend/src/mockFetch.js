@@ -106,7 +106,7 @@ window.fetch = async function (input, init) {
         active_instructors: state.instructors.length,
         active_students: state.students.filter(s => s && s.approval_status !== 'pending' && s.approval_status !== 'rejected').length,
         sessions_this_month: state.sessions.length,
-        upcoming_sessions: state.sessions.filter(s => s.status === 'Upcoming' || s.status === 'IN PROGRESS').length
+        upcoming_sessions: state.sessions.filter(s => s.status === 'Upcoming').length
       });
     }
 
@@ -262,6 +262,20 @@ window.fetch = async function (input, init) {
           state.activityLogs.unshift({ id: Date.now(), text: `${body.name} requested to join ${selectedSchool} (${approvalStatus})`, type: "group", time: "Just now" });
         }
       } else if (role === 'coach') {
+        const coachSchool = (body.school || '').trim() || "Individual / Freelance Coach";
+        if (coachSchool === "Individual / Freelance Coach" && !(body.location || "").trim()) {
+          return errorResponse("Location / region is required for individual coaches.", 400);
+        }
+        let coachLocation = (body.location || "").trim();
+        if (coachSchool && coachSchool !== "Individual / Freelance Coach") {
+          const foundSchool = state.schools.find(s => (s.name || '').toLowerCase().trim() === coachSchool.toLowerCase().trim());
+          if (foundSchool) {
+            const parts = [foundSchool.city, foundSchool.country].filter(Boolean);
+            if (parts.length > 0) coachLocation = parts.join(', ');
+          }
+        }
+        if (!coachLocation) coachLocation = "North Shore, Oahu";
+
         const newInstructor = {
           id: state.instructors.length + 1,
           name: body.name,
@@ -275,7 +289,8 @@ window.fetch = async function (input, init) {
           bio: "",
           specializations: body.specializations || [],
           rates: body.rates || "$50 / hr",
-          location: body.location || "Gold Coast, AUS",
+          location: coachLocation,
+          school: coachSchool,
           reviews: []
         };
         state.instructors.push(newInstructor);
@@ -568,10 +583,25 @@ window.fetch = async function (input, init) {
         if (body.level !== undefined) student.level = body.level;
         if (body.bio !== undefined) student.bio = body.bio;
         if (body.stance !== undefined) student.stance = body.stance;
+        if (body.dob !== undefined) student.dob = body.dob;
         if (body.age !== undefined) student.age = body.age;
+        if (body.email !== undefined) student.email = body.email;
+        if (body.whatsapp_number !== undefined) student.whatsapp_number = body.whatsapp_number;
         if (body.division !== undefined) student.division = body.division;
         if (body.surf_stats !== undefined) student.surf_stats = body.surf_stats;
         if (body.performance_logs !== undefined) student.performance_logs = body.performance_logs;
+        if (body.guests_count !== undefined) student.guests_count = body.guests_count;
+        if (body.guests_details !== undefined) student.guests_details = body.guests_details;
+        if (body.instructor_id !== undefined) student.instructor_id = body.instructor_id;
+        if (body.school !== undefined) student.school = body.school;
+        if (body.approval_status !== undefined) student.approval_status = body.approval_status;
+        if (body.course_duration !== undefined) student.course_duration = body.course_duration;
+        if (body.start_date !== undefined) student.start_date = body.start_date;
+        if (body.end_date !== undefined) student.end_date = body.end_date;
+        if (body.session_time !== undefined) student.session_time = body.session_time;
+        if (body.staying_at_school !== undefined) student.staying_at_school = body.staying_at_school;
+        if (body.reminder_preference !== undefined) student.reminder_preference = body.reminder_preference;
+        if (body.image !== undefined) student.image = body.image;
 
         return jsonResponse(student);
       }
@@ -584,6 +614,16 @@ window.fetch = async function (input, init) {
 
     if (path === '/api/instructors' && method === 'POST') {
       const body = JSON.parse(init.body);
+      const coachSchool = (body.school || '').trim() || "Individual / Freelance Coach";
+      let coachLocation = body.location || "Gold Coast, AUS";
+      if (coachSchool && coachSchool !== "Individual / Freelance Coach") {
+        const foundSchool = state.schools.find(s => (s.name || '').toLowerCase().trim() === coachSchool.toLowerCase().trim());
+        if (foundSchool) {
+          const parts = [foundSchool.city, foundSchool.country].filter(Boolean);
+          if (parts.length > 0) coachLocation = parts.join(', ');
+        }
+      }
+
       const newInst = {
         id: state.instructors.length + 1,
         name: body.name,
@@ -596,7 +636,8 @@ window.fetch = async function (input, init) {
         bio: "",
         specializations: [],
         rates: "$75 / hr",
-        location: "Gold Coast, AUS",
+        school: coachSchool,
+        location: coachLocation,
         reviews: []
       };
       state.instructors.push(newInst);
@@ -813,12 +854,17 @@ window.fetch = async function (input, init) {
         }
 
         return {
+          id: s.id,
           name: s.name,
+          school: s.school,
+          instructor_id: s.instructor_id,
           badges: badgeCount,
           badge_levels: studentBadges,
           nextTime,
           nextColor,
-          instructor: s.instructor
+          instructor: s.instructor,
+          guests_details: s.guests_details,
+          guests_count: s.guests_count
         };
       });
       return jsonResponse(result);

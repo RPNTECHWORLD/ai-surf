@@ -33,6 +33,8 @@ const AuthPage = () => {
   const inviteToken = searchParams.get('invite');
   const inviteCode = searchParams.get('invite_code');
   const urlSchool = searchParams.get('school');
+  const urlCoach = searchParams.get('coach');
+  const urlCoachId = searchParams.get('coach_id');
   const [inviteData, setInviteData] = useState(null);
   const [inviteLoading, setInviteLoading] = useState(!!inviteToken);
   const [inviteError, setInviteError] = useState('');
@@ -124,6 +126,20 @@ const AuthPage = () => {
   });
 
   const [schoolsList, setSchoolsList] = useState([]);
+  const [schoolsData, setSchoolsData] = useState([]);
+
+  const getSchoolLocation = (schoolName) => {
+    if (!schoolName || schoolName === 'Individual / Freelance Coach') return '';
+    const clean = schoolName.toLowerCase().trim();
+    const found = schoolsData.find(s => (s.name || '').toLowerCase().trim() === clean);
+    if (found) {
+      const parts = [found.city, found.country].filter(Boolean);
+      return parts.join(', ') || found.city || found.country || '';
+    }
+    return '';
+  };
+
+  const isCoachSchoolAffiliated = role === 'coach' && Boolean(formData.school) && formData.school !== 'Individual / Freelance Coach';
 
   // Ensure signup passwords are blank whenever switching to registration
   useEffect(() => {
@@ -247,23 +263,39 @@ const AuthPage = () => {
         const deletedNames = new Set(JSON.parse(localStorage.getItem('deleted_school_names') || '[]').map(n => String(n).toLowerCase().trim()));
         const deletedEmails = new Set(JSON.parse(localStorage.getItem('deleted_school_emails') || '[]').map(e => String(e).toLowerCase().trim()));
 
+        let validSchools = [];
         let validNames = [];
         if (Array.isArray(data)) {
-          validNames = data.filter(s => {
+          validSchools = data.filter(s => {
             if (!s) return false;
             if (s.id && deletedIds.has(String(s.id))) return false;
             if (s.name && deletedNames.has(String(s.name).toLowerCase().trim())) return false;
             return true;
-          }).map(s => s.name).filter(Boolean);
+          });
+          validNames = validSchools.map(s => s.name).filter(Boolean);
         }
 
+        setSchoolsData(validSchools);
         const uniqueSchools = Array.from(new Set(validNames));
         setSchoolsList(uniqueSchools);
       })
       .catch(() => {
+        setSchoolsData([]);
         setSchoolsList([]);
       });
   }, []);
+
+  // When school changes for coach, sync and lock location to school's location
+  useEffect(() => {
+    if (role === 'coach') {
+      if (formData.school && formData.school !== 'Individual / Freelance Coach') {
+        const schoolLoc = getSchoolLocation(formData.school);
+        if (schoolLoc && formData.location !== schoolLoc) {
+          setFormData(prev => ({ ...prev, location: schoolLoc }));
+        }
+      }
+    }
+  }, [role, formData.school, schoolsData]);
 
   // Fetch invite info if token present in URL
   useEffect(() => {
@@ -567,6 +599,9 @@ const AuthPage = () => {
     if (role === 'athlete' && !formData.gender) {
       setErrorMsg('Please select your gender.'); return;
     }
+    if (role === 'coach' && !isCoachSchoolAffiliated && !formData.location?.trim()) {
+      setErrorMsg('Please enter your coaching location / region.'); return;
+    }
     setLoading(true);
     try {
       const res = await fetch(`${API}/api/auth/signup`, {
@@ -584,7 +619,9 @@ const AuthPage = () => {
           swimming_ability: formData.swimming_ability || 'Swimmer',
           specializations: formData.specializations,
           rates: formData.rates,
-          location: formData.location,
+          location: isCoachSchoolAffiliated
+            ? (getSchoolLocation(formData.school) || formData.location)
+            : formData.location,
           whatsapp_number: formData.whatsapp_number,
           course_duration: formData.course_duration,
           start_date: formData.start_date,
@@ -611,6 +648,23 @@ const AuthPage = () => {
           approval_status: (inviteToken || inviteCode) ? 'approved' : (chosenSchool ? 'pending' : 'approved')
         };
         userObj.approval_status = (inviteToken || inviteCode) ? 'approved' : (chosenSchool ? 'pending' : 'approved');
+
+        // If invited by coach, assign instructor to student immediately
+        if (urlCoach || urlCoachId) {
+          if (urlCoach) userObj.instructor = urlCoach;
+          if (urlCoachId) userObj.instructor_id = parseInt(urlCoachId);
+          const studentId = data.user?.student_id || userObj.student_id || data.student?.id;
+          if (studentId) {
+            fetch(`${API}/api/students/${studentId}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                instructor: urlCoach,
+                ...(urlCoachId ? { instructor_id: parseInt(urlCoachId) } : {})
+              })
+            }).catch(() => {});
+          }
+        }
 
         // Update local school invite tracking if inviteCode used (single-use: mark fully used)
         if (inviteCode) {
@@ -677,7 +731,9 @@ const AuthPage = () => {
         email: formData.email.toLowerCase().trim(),
         role: role,
         school: chosenSchool,
-        approval_status: (inviteToken || inviteCode) ? 'approved' : (chosenSchool ? 'pending' : 'approved')
+        approval_status: (inviteToken || inviteCode) ? 'approved' : (chosenSchool ? 'pending' : 'approved'),
+        ...(urlCoach ? { instructor: urlCoach } : {}),
+        ...(urlCoachId ? { instructor_id: parseInt(urlCoachId) } : {})
       };
 
       if (!inviteToken && !inviteCode && chosenSchool && (role === 'athlete' || role === 'student' || role === 'user')) {
@@ -2024,7 +2080,16 @@ const AuthPage = () => {
                           <select
                             name="school"
                             value={formData.school || ''}
-                            onChange={handleChange}
+                            onChange={(e) => {
+                              const chosen = e.target.value;
+                              const isAffiliated = chosen && chosen !== 'Individual / Freelance Coach';
+                              const loc = isAffiliated ? getSchoolLocation(chosen) : '';
+                              setFormData(prev => ({
+                                ...prev,
+                                school: chosen,
+                                location: isAffiliated ? (loc || prev.location) : ''
+                              }));
+                            }}
                           >
                             <option value="">-- Select Affiliation / Surf School --</option>
                             <option value="Individual / Freelance Coach">👤 Individual / Freelance Coach (Independent)</option>
@@ -2044,9 +2109,57 @@ const AuthPage = () => {
                               value={formData.rates} onChange={handleChange} />
                           </div>
                           <div className="auth-field">
-                            <label>Location / Region</label>
-                            <input type="text" name="location" placeholder="North Shore, Oahu"
-                              value={formData.location} onChange={handleChange} />
+                            <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <span>Location / Region <span style={{ color: '#EF4444', fontWeight: 700 }}>*</span></span>
+                              {isCoachSchoolAffiliated && (
+                                <span style={{ fontSize: '11px', color: '#0F766E', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                                  🔒 Locked to School
+                                </span>
+                              )}
+                            </label>
+                            <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                              <input
+                                type="text"
+                                name="location"
+                                placeholder={isCoachSchoolAffiliated ? 'School location...' : 'e.g. North Shore, Oahu'}
+                                value={isCoachSchoolAffiliated ? (getSchoolLocation(formData.school) || formData.location) : formData.location}
+                                onChange={handleChange}
+                                readOnly={isCoachSchoolAffiliated}
+                                disabled={isCoachSchoolAffiliated}
+                                required={!isCoachSchoolAffiliated}
+                                style={isCoachSchoolAffiliated ? {
+                                  background: '#F1F5F9',
+                                  color: '#334155',
+                                  borderColor: '#CBD5E1',
+                                  fontWeight: 600,
+                                  cursor: 'not-allowed',
+                                  paddingRight: '36px'
+                                } : {}}
+                              />
+                              {isCoachSchoolAffiliated && (
+                                <span
+                                  style={{
+                                    position: 'absolute',
+                                    right: '12px',
+                                    color: '#64748B',
+                                    fontSize: '14px',
+                                    pointerEvents: 'none'
+                                  }}
+                                  title="Location is locked to the affiliated surf school"
+                                >
+                                  🔒
+                                </span>
+                              )}
+                            </div>
+                            {isCoachSchoolAffiliated ? (
+                              <small style={{ color: '#0F766E', fontSize: '11px', marginTop: '4px', display: 'block', fontWeight: 600 }}>
+                                🔒 Location locked to <strong>{formData.school}</strong>'s registered school location.
+                              </small>
+                            ) : (
+                              <small style={{ color: '#94A3B8', fontSize: '11px', marginTop: '4px', display: 'block' }}>
+                                Enter your primary coaching region or beach location. (Required)
+                              </small>
+                            )}
                           </div>
                         </div>
                         <div className="auth-field">
