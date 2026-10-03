@@ -765,6 +765,8 @@ const Sessions = () => {
   const [hubSaveSuccess, setHubSaveSuccess] = useState(false);
   const [hubHasChanges, setHubHasChanges] = useState(false);
   const [hubZoomImage, setHubZoomImage] = useState(null);
+  // Track which session IDs have been saved (persists across open/close within same page session)
+  const [savedSessionIds, setSavedSessionIds] = useState(new Set());
   const hubVideoFileRef = useRef(null);
   const hubImageFileRef = useRef(null);
 
@@ -830,8 +832,11 @@ const Sessions = () => {
       ? 'Completed'
       : formatSessionStatus(data);
     setHubStatus(resolvedStatus);
-    setHubSaveSuccess(false);
     setHubHasChanges(false);
+    // If this session was already saved in this session, show saved state; else clear
+    const sessionKey = data.id || (data.sessions && data.sessions.map(s => s.id).join('-'));
+    const alreadySaved = savedSessionIds.has(sessionKey);
+    setHubSaveSuccess(alreadySaved);
   };
 
   const handleHubVideoUpload = async (files) => {
@@ -1203,7 +1208,10 @@ const Sessions = () => {
 
       setHubSaveSuccess(true);
       setHubHasChanges(false);
-      setTimeout(() => setHubSaveSuccess(false), 3000);
+      // Remember this session as saved so reopening it still shows saved state
+      const sessionKey = selectedHubSession.id || (selectedHubSession.sessions && selectedHubSession.sessions.map(s => s.id).join('-'));
+      setSavedSessionIds(prev => new Set([...prev, sessionKey]));
+      setTimeout(() => setHubSaveSuccess(false), 4000);
     } catch (err) {
       console.error('Error saving session updates:', err);
     } finally {
@@ -4493,6 +4501,9 @@ const Sessions = () => {
                         <span className="ses-spinner" style={{ width: '13px', height: '13px', borderWidth: '2px', display: 'inline-block' }} />
                         Saving…
                       </>
+                    ) : hubSaveSuccess && !hubHasChanges ? (
+                      // Already saved, no new changes — show Saved label
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>&#10003; Saved</span>
                     ) : (
                       'Save Changes'
                     )}

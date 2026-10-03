@@ -203,15 +203,25 @@ const SuperAdminDashboard = () => {
       if (keysRes.ok) setKeys(await keysRes.json());
 
       // 8. Fetch students for management (Pure AWS Data Only)
-      const studentsRes = await fetch(`${API}/api/students`);
       let allStudents = [];
-      if (studentsRes.ok) {
-        allStudents = await studentsRes.json();
+      try {
+        const studentsRes = await fetch(`${API}/api/superadmin/students?_t=${Date.now()}`);
+        if (studentsRes.ok) {
+          allStudents = await studentsRes.json();
+        } else {
+          const fallbackRes = await fetch(`${API}/api/students?school=all&_t=${Date.now()}`);
+          if (fallbackRes.ok) allStudents = await fallbackRes.json();
+        }
+      } catch (e) {
+        try {
+          const fallbackRes = await fetch(`${API}/api/students?school=all&_t=${Date.now()}`);
+          if (fallbackRes.ok) allStudents = await fallbackRes.json();
+        } catch (err) {}
       }
-      setStudentsList(allStudents);
+      setStudentsList(Array.isArray(allStudents) ? allStudents : []);
 
       // 9. Fetch schools for management (Direct from AWS Backend)
-      const schoolsRes = await fetch(`${API}/api/schools`);
+      const schoolsRes = await fetch(`${API}/api/schools?_t=${Date.now()}`);
       if (schoolsRes.ok) {
         const schoolsData = await schoolsRes.json();
         const schools = Array.isArray(schoolsData) ? schoolsData : [];
@@ -480,6 +490,45 @@ const SuperAdminDashboard = () => {
         }
       }
     );
+  };
+
+  const handleToggleSchoolStatus = async (id, currentActive, name) => {
+    const nextActive = currentActive === false ? true : false;
+    
+    // Optimistic UI update
+    setSchoolsList(prev => prev.map(sc => sc.id === id ? { ...sc, is_active: nextActive } : sc));
+    setSuccessMsg(
+      nextActive 
+        ? `School "${name}" activated! Login & actions enabled.` 
+        : `School "${name}" deactivated. Login & all actions are blocked.`
+    );
+
+    try {
+      const res = await fetch(`${API}/api/schools/${id}/toggle-status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_active: nextActive })
+      });
+      if (!res.ok) {
+        setSchoolsList(prev => prev.map(sc => sc.id === id ? { ...sc, is_active: currentActive } : sc));
+        setError(`Failed to update status for school "${name}".`);
+      }
+    } catch (err) {
+      console.error(err);
+      setSchoolsList(prev => prev.map(sc => sc.id === id ? { ...sc, is_active: currentActive } : sc));
+      setError('Connection error while updating school status.');
+    }
+  };
+
+  const formatJoinedDate = (dateStr) => {
+    if (!dateStr) return '—';
+    try {
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return dateStr;
+      return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+    } catch (e) {
+      return dateStr;
+    }
   };
 
   // Marketplace Actions
@@ -1176,47 +1225,165 @@ const SuperAdminDashboard = () => {
                           )}
                           <th>School Name</th>
                           <th>Owner / Contact</th>
+                          <th>Joined</th>
+                          <th>Password</th>
+                          <th>Status / Actions</th>
                           <th>Location</th>
                           <th>Website</th>
                           <th style={{ textAlign: 'right' }}>Action</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {schoolsList.map((sch) => (
-                          <tr key={sch.id} style={{ background: selectedSchoolIds.includes(sch.id) ? 'rgba(2, 132, 199, 0.05)' : 'transparent' }}>
-                            {isSchoolSelectMode && (
-                              <td style={{ textAlign: 'center' }}>
-                                <input
-                                  type="checkbox"
-                                  checked={selectedSchoolIds.includes(sch.id)}
-                                  onChange={() => toggleSelectSchool(sch.id)}
-                                  style={{ cursor: 'pointer', width: '16px', height: '16px', accentColor: '#0284C7' }}
-                                />
+                        {schoolsList.map((sch) => {
+                          const isActive = sch.is_active !== false;
+                          const schoolPassKey = `school_${sch.id}`;
+                          return (
+                            <tr 
+                              key={sch.id} 
+                              style={{ 
+                                background: selectedSchoolIds.includes(sch.id) 
+                                  ? 'rgba(2, 132, 199, 0.05)' 
+                                  : (!isActive ? 'rgba(239, 68, 68, 0.04)' : 'transparent'),
+                                transition: 'all 0.2s ease'
+                              }}
+                            >
+                              {isSchoolSelectMode && (
+                                <td style={{ textAlign: 'center' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedSchoolIds.includes(sch.id)}
+                                    onChange={() => toggleSelectSchool(sch.id)}
+                                    style={{ cursor: 'pointer', width: '16px', height: '16px', accentColor: '#0284C7' }}
+                                  />
+                                </td>
+                              )}
+                              <td>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                  <div style={{ fontWeight: 700, color: isActive ? '#F8FAFC' : '#94A3B8' }}>{sch.name}</div>
+                                  {!isActive && (
+                                    <span style={{
+                                      fontSize: '10px',
+                                      padding: '2px 6px',
+                                      borderRadius: '4px',
+                                      background: 'rgba(239, 68, 68, 0.15)',
+                                      color: '#EF4444',
+                                      border: '1px solid rgba(239, 68, 68, 0.3)',
+                                      fontWeight: 700,
+                                      letterSpacing: '0.5px'
+                                    }}>
+                                      DISABLED
+                                    </span>
+                                  )}
+                                </div>
+                                <div style={{ fontSize: '12px', color: '#94A3B8' }}>ID: #{sch.id}</div>
                               </td>
-                            )}
-                            <td>
-                              <div style={{ fontWeight: 700, color: '#F8FAFC' }}>{sch.name}</div>
-                              <div style={{ fontSize: '12px', color: '#94A3B8' }}>ID: #{sch.id}</div>
-                            </td>
-                            <td>
-                              <div>{sch.owner || '—'}</div>
-                              <div className="sa-email-cell" style={{ fontSize: '12px' }}>{sch.email}</div>
-                            </td>
-                            <td>{sch.city || sch.country ? `${sch.city || ''}, ${sch.country || ''}` : 'Global'}</td>
-                            <td>{sch.website ? <a href={sch.website} target="_blank" rel="noreferrer" style={{ color: '#6366F1' }}>{sch.website}</a> : '—'}</td>
-                            <td style={{ textAlign: 'right' }}>
-                              <button
-                                className="sa-action-btn"
-                                style={{ background: 'rgba(239, 68, 68, 0.1)', color: '#EF4444', borderColor: 'rgba(239, 68, 68, 0.3)' }}
-                                onClick={() => handleDeleteSchool(sch.id, sch.name)}
-                              >
-                                Delete School
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
+                              <td>
+                                <div style={{ color: isActive ? '#F8FAFC' : '#94A3B8' }}>{sch.owner || '—'}</div>
+                                <div className="sa-email-cell" style={{ fontSize: '12px' }}>{sch.email}</div>
+                              </td>
+                              <td>
+                                <div style={{ fontSize: '12px', color: '#CBD5E1', whiteSpace: 'nowrap' }}>
+                                  📅 {formatJoinedDate(sch.created_at)}
+                                </div>
+                              </td>
+                              <td>
+                                <div className="sa-password-cell">
+                                  <span className="sa-plain-pass">
+                                    {showPasswordMap[schoolPassKey]
+                                      ? (sch.password_plain && sch.password_plain !== '-' ? sch.password_plain : '—')
+                                      : (sch.password_plain && sch.password_plain !== '-' ? '••••••••' : '—')}
+                                  </span>
+                                  <div className="sa-pass-actions">
+                                    <button 
+                                      className="sa-icon-btn" 
+                                      onClick={() => toggleShowPassword(schoolPassKey)}
+                                      title={showPasswordMap[schoolPassKey] ? "Hide Password" : "Show Password"}
+                                    >
+                                      {showPasswordMap[schoolPassKey] ? <IconEyeOff size={13} /> : <IconEye size={13} />}
+                                    </button>
+                                    {sch.password_plain && sch.password_plain !== '-' && (
+                                      <button 
+                                        className="sa-icon-btn"
+                                        onClick={() => copyToClipboard(sch.password_plain, 'plain password')}
+                                        title="Copy Password"
+                                      >
+                                        <IconCopy size={13} />
+                                      </button>
+                                    )}
+                                    {sch.user_id && (
+                                      <button
+                                        className="sa-icon-btn"
+                                        onClick={() => setSelectedUser({ user_id: sch.user_id, name: sch.name, email: sch.email })}
+                                        title="Reset Password"
+                                      >
+                                        <IconLock size={13} />
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              </td>
+                              <td>
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleSchoolStatus(sch.id, sch.is_active, sch.name)}
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    background: isActive ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                                    border: `1px solid ${isActive ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+                                    cursor: 'pointer',
+                                    padding: '4px 10px',
+                                    borderRadius: '20px',
+                                    transition: 'all 0.2s ease'
+                                  }}
+                                  title={isActive ? "Click to Deactivate / Block School" : "Click to Activate School"}
+                                >
+                                  <div style={{
+                                    width: '36px',
+                                    height: '20px',
+                                    backgroundColor: isActive ? '#10B981' : '#64748B',
+                                    borderRadius: '10px',
+                                    position: 'relative',
+                                    transition: 'background-color 0.25s ease'
+                                  }}>
+                                    <div style={{
+                                      width: '14px',
+                                      height: '14px',
+                                      backgroundColor: '#FFFFFF',
+                                      borderRadius: '50%',
+                                      position: 'absolute',
+                                      top: '3px',
+                                      left: isActive ? '19px' : '3px',
+                                      transition: 'left 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                                      boxShadow: '0 1px 3px rgba(0,0,0,0.3)'
+                                    }} />
+                                  </div>
+                                  <span style={{
+                                    fontSize: '12px',
+                                    fontWeight: 700,
+                                    color: isActive ? '#10B981' : '#F87171'
+                                  }}>
+                                    {isActive ? 'Active' : 'Disabled'}
+                                  </span>
+                                </button>
+                              </td>
+                              <td>{sch.city || sch.country ? `${sch.city || ''}, ${sch.country || ''}` : 'Global'}</td>
+                              <td>{sch.website ? <a href={sch.website} target="_blank" rel="noreferrer" style={{ color: '#6366F1' }}>{sch.website}</a> : '—'}</td>
+                              <td style={{ textAlign: 'right' }}>
+                                <button
+                                  className="sa-action-btn"
+                                  style={{ background: 'rgba(239, 68, 68, 0.1)', color: '#EF4444', borderColor: 'rgba(239, 68, 68, 0.3)' }}
+                                  onClick={() => handleDeleteSchool(sch.id, sch.name)}
+                                >
+                                  Delete School
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
                         {schoolsList.length === 0 && (
-                          <tr><td colSpan={isSchoolSelectMode ? "6" : "5"} style={{ textAlign: 'center', padding: '30px', color: '#94A3B8' }}>No surf schools registered yet.</td></tr>
+                          <tr><td colSpan={isSchoolSelectMode ? "9" : "8"} style={{ textAlign: 'center', padding: '30px', color: '#94A3B8' }}>No surf schools registered yet.</td></tr>
                         )}
                       </tbody>
                     </table>

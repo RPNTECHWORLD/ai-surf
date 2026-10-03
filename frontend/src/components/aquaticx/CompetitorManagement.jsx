@@ -5,7 +5,7 @@ import { useToast } from './ToastContext';
 import * as XLSX from 'xlsx';
 import axios from 'axios';
 
-const API_BASE = 'http://54.84.243.251/api';
+const API_BASE = import.meta.env.VITE_AQUATICX_API_URL || 'http://localhost:5000/api';
 
 const POINTS_TABLE = {
     1: 1000, 2: 860, 3: 730, 4: 670, 5: 610, 6: 583, 7: 555, 8: 528,
@@ -122,8 +122,13 @@ const calculateCurrentCourseDay = (s) => {
     return { which_day: s.which_day || 1, total_days: totalDays };
 };
 
-const CompetitorManagement = () => {
+const CompetitorManagement = ({ currentUser }) => {
     const { showToast } = useToast();
+    const savedUser = JSON.parse(sessionStorage.getItem('user') || localStorage.getItem('user') || '{}');
+    const activeUser = (currentUser && currentUser.email) ? currentUser : savedUser;
+    const userRole = (activeUser.role || '').toLowerCase();
+    const userSchool = (activeUser.school_name || activeUser.school || activeUser.school_details?.name || '').toLowerCase().trim();
+
     const [surfers, setSurfers] = useState(globalCompetitorCache.surfers);
     const [searchTerm, setSearchTerm] = useState('');
     const [isLoading, setIsLoading] = useState(!globalCompetitorCache.hasLoaded);
@@ -296,7 +301,7 @@ const CompetitorManagement = () => {
     });
 
     useEffect(() => {
-        fetchSurfers(globalCompetitorCache.hasLoaded);
+        fetchSurfers(false);
         fetchEvents(globalCompetitorCache.hasLoaded);
 
         const handleClickOutside = (event) => {
@@ -363,11 +368,44 @@ const CompetitorManagement = () => {
             let registeredStudents = null;
             try {
                 const SURF_API = import.meta.env.VITE_API_URL || '';
-                const stRes = await fetch(`${SURF_API}/api/students`);
+                const studentUrl = (userSchool && userRole !== 'superadmin' && userRole !== 'super_admin')
+                    ? `${SURF_API}/api/students?school=${encodeURIComponent(userSchool)}`
+                    : `${SURF_API}/api/students?school=all`;
+                const stRes = await fetch(studentUrl);
                 if (stRes.ok) {
                     const allSt = await stRes.json();
                     if (Array.isArray(allSt) && allSt.length > 0) {
                         registeredStudents = allSt;
+                    }
+                }
+            } catch (e) {}
+
+            // Fetch scheduled sessions to strictly isolate students assigned to sessions
+            let sessionAssignedStudentNames = new Set();
+            let sessionAssignedStudentIds = new Set();
+            const studentSessionMap = {};
+            try {
+                const SURF_API = import.meta.env.VITE_API_URL || '';
+                const sessionUrl = (userSchool && userRole !== 'superadmin' && userRole !== 'super_admin')
+                    ? `${SURF_API}/api/sessions?school=${encodeURIComponent(userSchool)}`
+                    : `${SURF_API}/api/sessions`;
+                const sessRes = await fetch(sessionUrl);
+                if (sessRes.ok) {
+                    const sessData = await sessRes.json();
+                    if (Array.isArray(sessData)) {
+                        sessData.forEach(s => {
+                            const sName = (s.student_name || s.student || '').toLowerCase().trim();
+                            const sId = String(s.student_id || '');
+                            if (sName) sessionAssignedStudentNames.add(sName);
+                            if (sId) sessionAssignedStudentIds.add(sId);
+                            const slotInfo = {
+                                slot: s.time || '',
+                                date: s.date || '',
+                                school: s.school || ''
+                            };
+                            if (sName) studentSessionMap[sName] = slotInfo;
+                            if (sId) studentSessionMap[sId] = slotInfo;
+                        });
                     }
                 }
             } catch (e) {}
@@ -466,9 +504,35 @@ const CompetitorManagement = () => {
                 });
             }
 
-            setSurfers(uniqueSurfers);
+            // Strict Isolation: ONLY show students who are assigned to a session
+            let finalSurfers = uniqueSurfers.filter(s => {
+                const sName = (s.name || '').toLowerCase().trim();
+                const sId = String(s.id || '');
+                const isAssigned = sessionAssignedStudentNames.has(sName) || sessionAssignedStudentIds.has(sId);
+                if (!isAssigned) return false;
+
+                // Sync exact session slot and booking date
+                const slotInfo = studentSessionMap[sName] || studentSessionMap[sId];
+                if (slotInfo) {
+                    if (slotInfo.slot) s.session_time = slotInfo.slot;
+                    if (slotInfo.date) s.start_date = slotInfo.date;
+                    if (slotInfo.school) s.school_name = slotInfo.school;
+                }
+
+                // If School Admin, ensure student belongs to this school
+                if (userSchool && userRole !== 'superadmin' && userRole !== 'super_admin') {
+                    const sSchool = (s.school_name || s.school || '').toLowerCase().trim();
+                    if (sSchool && sSchool !== userSchool.toLowerCase()) {
+                        return false;
+                    }
+                }
+
+                return true;
+            });
+
+            setSurfers(finalSurfers);
             
-            globalCompetitorCache.surfers = uniqueSurfers;
+            globalCompetitorCache.surfers = finalSurfers;
             globalCompetitorCache.hasLoaded = true;
             
             setError(null);
@@ -712,10 +776,38 @@ const CompetitorManagement = () => {
             let virtualEvents = [];
             try {
                 const SURF_API = import.meta.env.VITE_API_URL || '';
-                const sessionsRes = await fetch(`${SURF_API}/api/sessions`);
+                const savedUser = JSON.parse(sessionStorage.getItem('user') || localStorage.getItem('user') || '{}');
+                const activeUser = (currentUser && currentUser.email) ? currentUser : savedUser;
+                const userRole = (activeUser.role || '').toLowerCase();
+                const userSchool = (activeUser.school_name || activeUser.school || activeUser.school_details?.name || '').toLowerCase().trim();
+
+                const sessionUrl = (userSchool && userRole !== 'superadmin' && userRole !== 'super_admin')
+                    ? `${SURF_API}/api/sessions?school=${encodeURIComponent(userSchool)}`
+                    : `${SURF_API}/api/sessions`;
+
+                const sessionsRes = await fetch(sessionUrl);
                 if (sessionsRes.ok) {
                     const sessionsData = await sessionsRes.json();
                     let sessions = Array.isArray(sessionsData) ? sessionsData : [];
+
+                    // Strict school isolation
+                    if (userSchool && userRole !== 'superadmin' && userRole !== 'super_admin') {
+                        sessions = sessions.filter(s => {
+                            const sSchool = (s.school || '').toLowerCase().trim();
+                            return sSchool === userSchool;
+                        });
+                    }
+
+                    // Coach isolation
+                    if (userRole === 'coach' && activeUser.name) {
+                        const coachName = activeUser.name.toLowerCase();
+                        const coachId = activeUser.instructor_id || activeUser.id;
+                        sessions = sessions.filter(s => {
+                            const nameMatch = s.instructor && s.instructor.toLowerCase() === coachName;
+                            const idMatch = coachId && (String(s.instructor_id) === String(coachId));
+                            return nameMatch || idMatch;
+                        });
+                    }
 
                     // Group sessions by date and slot time
                     const grouped = {};

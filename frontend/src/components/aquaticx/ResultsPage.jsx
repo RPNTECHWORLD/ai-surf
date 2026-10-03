@@ -4,7 +4,7 @@ import axios from 'axios';
 const useAnalyticsTracker = () => {};
 const useAdminTheme = () => ({ adminTheme: 'light' });
 
-const API_BASE = 'http://54.84.243.251/api';
+const API_BASE = import.meta.env.VITE_AQUATICX_API_URL || 'http://localhost:5000/api';
 
 const useServerTimeOffset = () => {
     const [offset, setOffset] = useState(0);

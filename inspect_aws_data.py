@@ -43,8 +43,18 @@ cursor.execute("SELECT id, name, email FROM students;")
 for row in cursor.fetchall():
     print(row)
 
-print("\n--- USERS ---")
-cursor.execute("SELECT id, email, role FROM users;")
+print("\n--- SCHOOLS ---")
+cursor.execute("SELECT id, name, owner, email, created_at FROM schools;")
+for row in cursor.fetchall():
+    print(row)
+
+print("\n--- SCHOOLS COLUMNS ---")
+cursor.execute("SELECT column_name, data_type FROM information_schema.columns WHERE table_name='schools';")
+for row in cursor.fetchall():
+    print(row)
+
+print("\n--- USERS DETAILS (ADMIN) ---")
+cursor.execute("SELECT id, email, role, password_plain, created_at FROM users WHERE role='admin';")
 for row in cursor.fetchall():
     print(row)
 

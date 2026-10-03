@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import './aquaticx.css';
-import { Plus, Calendar as CalendarIcon, X, Check, Loader2, AlertCircle, MapPin, Edit, Trash2, Copy, Clock } from 'lucide-react';
+import { Plus, Calendar as CalendarIcon, X, Check, Loader2, AlertCircle, MapPin, Edit, Trash2, Copy, Clock, Zap } from 'lucide-react';
 import { useToast } from './ToastContext';
 import { useConfirm } from './ConfirmContext';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 
-const API_BASE = 'http://54.84.243.251/api';
+const API_BASE = import.meta.env.VITE_AQUATICX_API_URL || 'http://localhost:5000/api';
 
 /**
  * Safely parse a value that should be an array.
@@ -86,7 +86,7 @@ const formatDivisionName = (name, event = null) => {
     return name;
 };
 
-const EventManagement = () => {
+const EventManagement = ({ currentUser }) => {
     const navigate = useNavigate();
     const { showToast } = useToast();
     const { showConfirm } = useConfirm();
@@ -131,7 +131,10 @@ const EventManagement = () => {
     const bannerInputRef = React.useRef(null);
 
     useEffect(() => {
-        fetchEvents(globalEventCache.hasLoaded);
+        // Always re-fetch to ensure school isolation is applied fresh
+        globalEventCache.hasLoaded = false;
+        globalEventCache.events = [];
+        fetchEvents(false);
     }, []);
 
     const fetchEvents = async (silent = false) => {
@@ -142,7 +145,24 @@ const EventManagement = () => {
             const response = await axios.get(`${API_BASE}/events`, {
                 params: { admin_id: adminId }
             });
-            const realEvents = Array.isArray(response.data) ? response.data : [];
+            let realEvents = Array.isArray(response.data) ? response.data : [];
+
+            // --- School isolation for real events ---
+            // The legacy 'admin' account contains events from many schools.
+            // Only keep events that belong to this user's school.
+            const _savedUser2 = JSON.parse(sessionStorage.getItem('user') || localStorage.getItem('user') || '{}');
+            const _activeUser2 = (currentUser && currentUser.email) ? currentUser : _savedUser2;
+            const _userSchool2 = (_activeUser2.school_name || _activeUser2.school || _activeUser2.school_details?.name || '').toLowerCase().trim();
+            const _userRole2 = (_activeUser2.role || '').toLowerCase();
+            if (_userSchool2 && _userRole2 !== 'superadmin' && _userRole2 !== 'super_admin') {
+                realEvents = realEvents.filter(ev => {
+                    if (ev.event_type === 'Scheduled Session') return true;
+                    const evSchool = (ev.school_name || '').toLowerCase().trim();
+                    return evSchool === _userSchool2 || (evSchool.includes('indica') && _userSchool2.includes('indica'));
+                });
+            }
+            // --- End school isolation ---
+
             const savedEventSlots = JSON.parse(localStorage.getItem('event_session_slots') || '{}');
             const hydratedRealEvents = realEvents.map(ev => ({
                 ...ev,
@@ -153,15 +173,31 @@ const EventManagement = () => {
             let virtualEvents = [];
             try {
                 const SURF_API = import.meta.env.VITE_API_URL || '';
-                const res = await fetch(`${SURF_API}/api/sessions`);
+                const savedUser = JSON.parse(sessionStorage.getItem('user') || localStorage.getItem('user') || '{}');
+                const activeUser = (currentUser && currentUser.email) ? currentUser : savedUser;
+                const userRole = (activeUser.role || '').toLowerCase();
+                const userSchool = (activeUser.school_name || activeUser.school || activeUser.school_details?.name || '').toLowerCase().trim();
+
+                const sessionUrl = (userSchool && userRole !== 'superadmin' && userRole !== 'super_admin')
+                    ? `${SURF_API}/api/sessions?school=${encodeURIComponent(userSchool)}`
+                    : `${SURF_API}/api/sessions`;
+
+                const res = await fetch(sessionUrl);
                 const data = res.ok ? await res.json() : [];
                 let sessions = Array.isArray(data) ? data : [];
 
+                // Strict school isolation: only show sessions of this school
+                if (userSchool && userRole !== 'superadmin' && userRole !== 'super_admin') {
+                    sessions = sessions.filter(s => {
+                        const sSchool = (s.school || '').toLowerCase().trim();
+                        return sSchool === userSchool;
+                    });
+                }
+
                 // If logged in as a coach, only show sessions assigned to this coach
-                const savedUser = JSON.parse(sessionStorage.getItem('user') || localStorage.getItem('user') || '{}');
-                if (savedUser.role === 'coach' && savedUser.name) {
-                    const coachName = savedUser.name.toLowerCase();
-                    const coachId = savedUser.instructor_id || savedUser.id;
+                if (userRole === 'coach' && activeUser.name) {
+                    const coachName = activeUser.name.toLowerCase();
+                    const coachId = activeUser.instructor_id || activeUser.id;
                     sessions = sessions.filter(s => {
                         const nameMatch = s.instructor && s.instructor.toLowerCase() === coachName;
                         const idMatch = coachId && (String(s.instructor_id) === String(coachId));
@@ -537,6 +573,129 @@ const EventManagement = () => {
 
     const actualEventsCount = events.filter(ev => !ev.isSessionEvent).length;
 
+    // One-click: create 1 heat from a session event (all students in one heat)
+    const [generatingHeatFor, setGeneratingHeatFor] = useState(null);
+    const handleAutoCreateSessionHeat = async (event) => {
+        const studentIds = event.student_ids || [];
+        const studentNames = event.student_names || [];
+        if (studentIds.length === 0 && studentNames.length === 0) {
+            showToast('No students found in this session.', 'error');
+            return;
+        }
+
+        setGeneratingHeatFor(event.id);
+        try {
+            // 1. Persist virtual event to DB if needed
+            let targetEventId = event.id;
+            if (String(event.id).startsWith('session-slot-')) {
+                const existingEventsRes = await axios.get(`${API_BASE}/events`, { params: { admin_id: adminId } });
+                const existing = (existingEventsRes.data || []).find(e => e.name === event.name);
+                if (existing) {
+                    targetEventId = existing.id;
+                } else {
+                    const eventPayload = {
+                        name: event.name,
+                        location: event.location || 'Indica Surf School',
+                        start_date: event.start_date,
+                        end_date: event.end_date,
+                        divisions: JSON.stringify(['General']),
+                        status: 'Active',
+                        event_type: 'Scheduled Session',
+                        session_slot: event.session_slot || '',
+                        min_score: 0, max_score: 10, score_decimals: 1,
+                        judge_count: 3, drop_high_low: 0, best_waves_count: 2, max_waves: 10,
+                        sponsors: JSON.stringify([]),
+                        title_sponsors: JSON.stringify([]),
+                        admin_id: adminId
+                    };
+                    const newEventRes = await axios.post(`${API_BASE}/events`, eventPayload);
+                    targetEventId = newEventRes.data.id;
+                }
+            }
+
+            // 2. Resolve Node.js surfer IDs (NOT FastAPI student IDs — FK constraint requires Node.js surfers table)
+            const nameSet = new Set(studentNames.map(n => (n || '').toLowerCase().trim()).filter(Boolean));
+
+            // Fetch all existing surfers from Node.js
+            const surfersRes = await axios.get(`${API_BASE}/surfers`);
+            const allNodeSurfers = Array.isArray(surfersRes.data) ? surfersRes.data : [];
+
+            // Match by name
+            let matched = allNodeSurfers.filter(s => {
+                const sName = (s.name || '').toLowerCase().trim();
+                return nameSet.has(sName);
+            });
+
+            // Auto-create any missing surfers in Node.js surfers table
+            const matchedNames = new Set(matched.map(s => (s.name || '').toLowerCase().trim()));
+            const missingNames = studentNames.filter(n => !matchedNames.has((n || '').toLowerCase().trim()));
+
+            for (const name of missingNames) {
+                try {
+                    const createRes = await axios.post(`${API_BASE}/surfers`, {
+                        name: name.trim(),
+                        admin_id: adminId,
+                        country: '',
+                        dob: null,
+                        gender: 'Male',
+                        stance: 'Regular',
+                        manual_seed_points: 0
+                    });
+                    if (createRes.data && createRes.data.id) {
+                        matched.push(createRes.data);
+                    }
+                } catch (e) {
+                    console.warn(`Could not auto-create surfer "${name}":`, e);
+                }
+            }
+
+            if (matched.length === 0) {
+                showToast('No students could be found or created. Please add them as competitors first.', 'error');
+                return;
+            }
+
+            // 3. Assign jersey colors
+            const COLORS = ['#FF0000','#FFFFFF','#FFD700','#0000FF','#00FF00','#FF69B4','#FF8C00','#800080'];
+            const surferColorsMap = {};
+            matched.forEach((s, idx) => {
+                surferColorsMap[s.id] = COLORS[idx % COLORS.length];
+            });
+
+            // Check existing heats for this event
+            const existingHeatsRes = await axios.get(`${API_BASE}/heats`, { params: { event_id: targetEventId } });
+            const nextHeatNumber = (Array.isArray(existingHeatsRes.data) && existingHeatsRes.data.length > 0)
+                ? existingHeatsRes.data.length + 1
+                : 1;
+
+            // 4. Create 1 heat with ALL session students
+            const heatPayload = {
+                event_id: targetEventId,
+                division: 'General',
+                round: 'Round 1',
+                heat_number: nextHeatNumber,
+                surfer_count: matched.length,
+                qualified_count: Math.max(1, Math.floor(matched.length / 2)),
+                duration: 30,
+                status: 'Scheduled',
+                surfer_ids: matched.map(s => s.id),
+                surfer_colors: surferColorsMap,
+                auto_scoring_mode: false
+            };
+            await axios.post(`${API_BASE}/heats`, heatPayload);
+
+            localStorage.setItem('heat_management_event_filter', targetEventId);
+            localStorage.setItem('heat_management_division_filter', 'all');
+            localStorage.setItem('heat_management_round_filter', 'all');
+            showToast(`✅ Heat created with ${matched.length} students! Go to Heats tab to view.`, 'success');
+            fetchEvents(true);
+        } catch (err) {
+            console.error('Error creating session heat:', err);
+            showToast(err?.response?.data?.error || 'Failed to create heat.', 'error');
+        } finally {
+            setGeneratingHeatFor(null);
+        }
+    };
+
     return (
         <>
             <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
@@ -551,18 +710,7 @@ const EventManagement = () => {
                                 {MAX_EVENTS}/{MAX_EVENTS} events — limit reached
                             </span>
                         )}
-                        {!isStudent && (
-                            <button
-                                onClick={() => handleOpenModal()}
-                                className="btn btn-primary"
-                                disabled={actualEventsCount >= MAX_EVENTS || !canConductEvents}
-                                title={!canConductEvents ? 'Event creation disabled by super admin' : actualEventsCount >= MAX_EVENTS ? `Maximum ${MAX_EVENTS} events allowed` : 'Create a new event'}
-                                style={(actualEventsCount >= MAX_EVENTS || !canConductEvents) ? { opacity: 0.45, cursor: 'not-allowed' } : {}}
-                            >
-                                <Plus size={20} />
-                                Create Event
-                            </button>
-                        )}
+
                     </div>
                 </div>
 
@@ -651,21 +799,43 @@ const EventManagement = () => {
                                 {!isStudent && (
                                     <div className="flex gap-3" style={{ marginTop: 'auto', paddingTop: '8px' }}>
                                         {event.isSessionEvent ? (
-                                            <button
-                                                onClick={() => navigate('/sessions')}
-                                                className="btn btn-secondary"
-                                                style={{
-                                                    flex: 1,
-                                                    justifyContent: 'center',
-                                                    padding: '10px',
-                                                    fontSize: '14px',
-                                                    background: 'var(--surface-hover)',
-                                                    borderColor: 'var(--border-dim)',
-                                                    borderRadius: '8px'
-                                                }}
-                                            >
-                                                Manage Session
-                                            </button>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                                <button
+                                                    onClick={() => handleAutoCreateSessionHeat(event)}
+                                                    disabled={generatingHeatFor === event.id}
+                                                    style={{
+                                                        width: '100%',
+                                                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                                                        padding: '11px', borderRadius: '8px', fontSize: '13px',
+                                                        fontWeight: '700', border: 'none', cursor: generatingHeatFor === event.id ? 'not-allowed' : 'pointer',
+                                                        background: generatingHeatFor === event.id
+                                                            ? '#e2e8f0'
+                                                            : 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                                                        color: generatingHeatFor === event.id ? '#94a3b8' : '#fff',
+                                                        boxShadow: generatingHeatFor === event.id ? 'none' : '0 4px 12px rgba(99,102,241,0.3)',
+                                                        transition: 'all 0.2s'
+                                                    }}
+                                                >
+                                                    {generatingHeatFor === event.id
+                                                        ? <><Loader2 size={14} className="animate-spin" /> Creating Heat...</>
+                                                        : <><Zap size={14} /> Generate Heat ({(event.student_ids || event.student_names || []).length} students)</>}
+                                                </button>
+                                                <button
+                                                    onClick={() => navigate('/sessions')}
+                                                    className="btn btn-secondary"
+                                                    style={{
+                                                        flex: 1,
+                                                        justifyContent: 'center',
+                                                        padding: '8px',
+                                                        fontSize: '13px',
+                                                        background: 'var(--surface-hover)',
+                                                        borderColor: 'var(--border-dim)',
+                                                        borderRadius: '8px'
+                                                    }}
+                                                >
+                                                    Manage Session
+                                                </button>
+                                            </div>
                                         ) : (
                                             <>
                                                 {/* Add Session Competitors button - one-click sync */}

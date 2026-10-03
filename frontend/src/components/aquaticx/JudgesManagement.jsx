@@ -4,7 +4,7 @@ import { useToast } from './ToastContext';
 import { useConfirm } from './ConfirmContext';
 import axios from 'axios';
 
-const API_BASE = 'http://54.84.243.251/api';
+const API_BASE = import.meta.env.VITE_AQUATICX_API_URL || 'http://localhost:5000/api';
 const SURF_API = import.meta.env.VITE_API_URL || '';
 
 // Global cache for instant tab-switching
@@ -17,7 +17,7 @@ let globalJudgeCache = {
     hasLoaded: false
 };
 
-const JudgesManagement = () => {
+const JudgesManagement = ({ currentUser }) => {
     const { showToast } = useToast();
     const { showConfirm } = useConfirm();
     const [activeJudges, setActiveJudges] = useState(globalJudgeCache.activeJudges);
@@ -44,7 +44,7 @@ const JudgesManagement = () => {
         fetchData();
         const interval = setInterval(fetchData, 5000); // Auto-refresh every 5 seconds
         return () => clearInterval(interval);
-    }, []);
+    }, [currentUser]);
 
     // Effect to auto-reset role when availability changes
     useEffect(() => {
@@ -74,12 +74,34 @@ const JudgesManagement = () => {
             const adminInfo = JSON.parse(sessionStorage.getItem('adminInfo') || '{}');
             const adminId = adminInfo.adminId || 'admin';
 
+            // User context & school isolation
+            const savedUser = (currentUser && currentUser.email)
+                ? currentUser
+                : JSON.parse(sessionStorage.getItem('user') || localStorage.getItem('user') || '{}');
+            const userRole = (savedUser.role || '').toLowerCase();
+            const isSuperAdmin = userRole === 'superadmin' || userRole === 'super_admin';
+            const activeSchool = sessionStorage.getItem('activeSchool');
+            let activeSchoolName = '';
+            if (activeSchool) {
+                try {
+                    const parsed = JSON.parse(activeSchool);
+                    activeSchoolName = parsed?.name || (typeof parsed === 'string' ? parsed : '');
+                } catch {
+                    activeSchoolName = activeSchool;
+                }
+            }
+            const userSchool = (savedUser.school_name || savedUser.school || savedUser.school_details?.name || activeSchoolName || '').trim();
+
+            const instUrl = (!isSuperAdmin && userSchool)
+                ? `${SURF_API}/api/instructors?school=${encodeURIComponent(userSchool)}`
+                : (isSuperAdmin ? `${SURF_API}/api/instructors?school=all` : `${SURF_API}/api/instructors`);
+
             const [judgesRes, heatsRes, eventsRes, recentProcessedRes, instructorsRes] = await Promise.all([
                 axios.get(`${API_BASE}/judges`, { params: { admin_id: adminId } }).catch(() => ({ data: [] })),
                 axios.get(`${API_BASE}/heats`, { params: { admin_id: adminId } }).catch(() => ({ data: [] })),
                 axios.get(`${API_BASE}/events`, { params: { admin_id: adminId } }).catch(() => ({ data: [] })),
                 axios.get(`${API_BASE}/judges/recent-processed`, { params: { admin_id: adminId } }).catch(() => ({ data: [] })),
-                axios.get(`${SURF_API}/api/instructors`).catch(() => ({ data: [] }))
+                axios.get(instUrl).catch(() => ({ data: [] }))
             ]);
 
             const existingJudges = judgesRes.data || [];
@@ -107,6 +129,7 @@ const JudgesManagement = () => {
                         axios.post(`${API_BASE}/judges/join`, {
                             name: inst.name,
                             email,
+                            admin_id: adminId,
                             invite_id: null
                         }).then(joinRes => {
                             if (joinRes.data?.id) {
@@ -140,8 +163,18 @@ const JudgesManagement = () => {
                 });
             });
 
+            // If user is a school admin, only allow their own school instructors or judges who joined via invite link
             activeAdmitted.forEach((adj) => {
                 const normName = (adj.name || '').toLowerCase().trim();
+                if (!isSuperAdmin) {
+                    const isSchoolCoach = instructors.some(inst => (inst.name || '').toLowerCase().trim() === normName);
+                    if (!isSchoolCoach && !adj.invite_id) {
+                        return;
+                    }
+                    if (normName === 'head 1' || normName === 'head_judge_name' || normName === 'priority_judge_name') {
+                        return;
+                    }
+                }
                 if (!allActiveMap.has(normName)) {
                     allActiveMap.set(normName, {
                         ...adj,

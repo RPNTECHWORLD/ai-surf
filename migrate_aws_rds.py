@@ -43,9 +43,13 @@ try:
     print("[INFO] Applying migration to users table...")
     # Add created_by_school to users table
     cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_by_school BOOLEAN DEFAULT FALSE;")
-    
-    # Also add password_plain if not exists (to match SQLite columns)
     cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_plain VARCHAR;")
+    cursor.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;")
+    cursor.execute("UPDATE users SET is_active = TRUE WHERE is_active IS NULL;")
+    
+    print("[INFO] Applying migration to schools table...")
+    cursor.execute("ALTER TABLE schools ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;")
+    cursor.execute("UPDATE schools SET is_active = TRUE WHERE is_active IS NULL;")
     
     conn.commit()
     print("[SUCCESS] Migrations successfully applied to AWS RDS PostgreSQL!")

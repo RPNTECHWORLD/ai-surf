@@ -9,7 +9,7 @@ import bgImage from '../../assets/bg.jpeg';
 import { shareHeatCardAsImage } from './shareHeatCard';
 import HeatScheduleView from './HeatScheduleView';
 
-const API_BASE = 'http://54.84.243.251/api';
+const API_BASE = import.meta.env.VITE_AQUATICX_API_URL || 'http://localhost:5000/api';
 
 // Available jersey colors for surfers
 const JERSEY_COLORS = [
@@ -91,6 +91,8 @@ const HeatManagement = ({ currentUser }) => {
 
     // User context & role detection
     const savedUser = currentUser || JSON.parse(sessionStorage.getItem('user') || '{}');
+    const userRole = (savedUser.role || '').toLowerCase();
+    const userSchool = (savedUser.school_name || savedUser.school || savedUser.school_details?.name || '').toLowerCase().trim();
     const isStudent = savedUser.role === 'athlete' || savedUser.role === 'student';
     const studentName = (savedUser.name || '').toLowerCase().trim();
     const studentEmail = (savedUser.email || '').toLowerCase().trim();
@@ -110,6 +112,15 @@ const HeatManagement = ({ currentUser }) => {
     const [eliminatorEnabled, setEliminatorEnabled] = useState(false);
     const [isEliminatorPromptOpen, setIsEliminatorPromptOpen] = useState(false);
     const [isProgressionLoading, setIsProgressionLoading] = useState(false);
+
+    // Session auto-generate heats modal
+    const [sessionAutoGenModal, setSessionAutoGenModal] = useState({
+        isOpen: false,
+        event: null,
+        heatSize: 4,
+        divisionName: 'General',
+        isGenerating: false
+    });
 
     // Judge assignment state
     const [activeJudges, setActiveJudges] = useState(globalHeatCache.activeJudges);
@@ -164,6 +175,23 @@ const HeatManagement = ({ currentUser }) => {
     useEffect(() => {
         localStorage.setItem('heat_management_sup_category_filter', selectedSupCategoryFilter);
     }, [selectedSupCategoryFilter]);
+
+    // Auto-sanitize event filter if stored event no longer exists
+    useEffect(() => {
+        if (selectedEventFilter !== 'all' && events.length > 0) {
+            const exists = events.some(e => String(e.id) === String(selectedEventFilter));
+            if (!exists) {
+                const byName = events.find(e => e.name === selectedEventFilter);
+                if (byName) {
+                    setSelectedEventFilter(byName.id);
+                } else {
+                    setSelectedEventFilter('all');
+                    setSelectedDivisionFilter('all');
+                    setSelectedRoundFilter('all');
+                }
+            }
+        }
+    }, [events, selectedEventFilter]);
 
     const isTimerActive = (h) => {
         if (!h?.timer_start_time || !h?.timer_duration) return false;
@@ -554,11 +582,14 @@ const HeatManagement = ({ currentUser }) => {
                 const localTime = Date.now();
                 setServerTimeOffset(serverTime - localTime);
             }
-            // Fetch SuperAdmin instructors (Ironman etc.) — ONLY SuperAdmin instructors are valid judges
+            // Fetch school/authorized instructors — ONLY matching school instructors are valid judges
             const SURF_API = import.meta.env.VITE_API_URL || '';
             let superAdminInstructors = [];
             try {
-                const instRes = await fetch(`${SURF_API}/api/instructors`);
+                const instUrl = (!isSuperAdmin && userSchool)
+                    ? `${SURF_API}/api/instructors?school=${encodeURIComponent(userSchool)}`
+                    : (isSuperAdmin ? `${SURF_API}/api/instructors?school=all` : `${SURF_API}/api/instructors`);
+                const instRes = await fetch(instUrl);
                 if (instRes.ok) {
                     superAdminInstructors = await instRes.json();
                 }
@@ -609,14 +640,43 @@ const HeatManagement = ({ currentUser }) => {
 
             const activeJ = uniqueActiveJudges;
             
-            // Fetch registered students from SuperAdmin to filter out un-registered / dummy surfers
+            const savedUser = JSON.parse(sessionStorage.getItem('user') || localStorage.getItem('user') || '{}');
+            const activeUser = (currentUser && currentUser.email) ? currentUser : savedUser;
+            const userRole = (activeUser.role || '').toLowerCase();
+            const userSchool = (activeUser.school_name || activeUser.school || activeUser.school_details?.name || '').toLowerCase().trim();
+
+            // Fetch registered students scoped to this school
             let registeredStudents = [];
             try {
-                const stRes = await fetch(`${SURF_API}/api/students`);
+                const studentUrl = (userSchool && userRole !== 'superadmin' && userRole !== 'super_admin')
+                    ? `${SURF_API}/api/students?school=${encodeURIComponent(userSchool)}`
+                    : `${SURF_API}/api/students?school=all`;
+                const stRes = await fetch(studentUrl);
                 if (stRes.ok) {
                     const data = await stRes.json();
                     if (Array.isArray(data)) {
                         registeredStudents = data;
+                    }
+                }
+            } catch (e) {}
+
+            // Fetch scheduled sessions to strictly identify session-assigned students
+            let sessionAssignedStudentNames = new Set();
+            let sessionAssignedStudentIds = new Set();
+            try {
+                const sessionUrl = (userSchool && userRole !== 'superadmin' && userRole !== 'super_admin')
+                    ? `${SURF_API}/api/sessions?school=${encodeURIComponent(userSchool)}`
+                    : `${SURF_API}/api/sessions`;
+                const sessRes = await fetch(sessionUrl);
+                if (sessRes.ok) {
+                    const sessData = await sessRes.json();
+                    if (Array.isArray(sessData)) {
+                        sessData.forEach(s => {
+                            const sName = (s.student_name || s.student || '').toLowerCase().trim();
+                            const sId = String(s.student_id || '');
+                            if (sName) sessionAssignedStudentNames.add(sName);
+                            if (sId) sessionAssignedStudentIds.add(sId);
+                        });
                     }
                 }
             } catch (e) {}
@@ -650,7 +710,7 @@ const HeatManagement = ({ currentUser }) => {
             const regNames = new Set((registeredStudents || []).map(s => (s.name || '').toLowerCase().trim()).filter(Boolean));
 
             // Deduplicate surfers list to ONLY include SuperAdmin registered students
-            const uniqueSurfers = [];
+            let uniqueSurfers = [];
             const seenSurferKeys = new Set();
 
             // First include verified SuperAdmin students
@@ -710,10 +770,38 @@ const HeatManagement = ({ currentUser }) => {
             // 2. Fetch scheduled sessions virtual events
             let virtualEvents = [];
             try {
-                const sessionsRes = await fetch(`${SURF_API}/api/sessions`);
+                const savedUser = JSON.parse(sessionStorage.getItem('user') || localStorage.getItem('user') || '{}');
+                const activeUser = (currentUser && currentUser.email) ? currentUser : savedUser;
+                const userRole = (activeUser.role || '').toLowerCase();
+                const userSchool = (activeUser.school_name || activeUser.school || activeUser.school_details?.name || '').toLowerCase().trim();
+
+                const sessionUrl = (userSchool && userRole !== 'superadmin' && userRole !== 'super_admin')
+                    ? `${SURF_API}/api/sessions?school=${encodeURIComponent(userSchool)}`
+                    : `${SURF_API}/api/sessions`;
+
+                const sessionsRes = await fetch(sessionUrl);
                 if (sessionsRes.ok) {
                     const sessionsData = await sessionsRes.json();
                     let sessions = Array.isArray(sessionsData) ? sessionsData : [];
+
+                    // Strict school isolation
+                    if (userSchool && userRole !== 'superadmin' && userRole !== 'super_admin') {
+                        sessions = sessions.filter(s => {
+                            const sSchool = (s.school || '').toLowerCase().trim();
+                            return sSchool === userSchool;
+                        });
+                    }
+
+                    // Coach isolation
+                    if (userRole === 'coach' && activeUser.name) {
+                        const coachName = activeUser.name.toLowerCase();
+                        const coachId = activeUser.instructor_id || activeUser.id;
+                        sessions = sessions.filter(s => {
+                            const nameMatch = s.instructor && s.instructor.toLowerCase() === coachName;
+                            const idMatch = coachId && (String(s.instructor_id) === String(coachId));
+                            return nameMatch || idMatch;
+                        });
+                    }
 
                     // Group sessions by date and slot time
                     const grouped = {};
@@ -789,7 +877,7 @@ const HeatManagement = ({ currentUser }) => {
             }
 
             // Attach student_ids and student_names to the matching real session events from virtual sessions data
-            const combinedDbEvents = eventsRes.data.map(event => {
+            let combinedDbEvents = eventsRes.data.map(event => {
                 if (event.event_type === 'Scheduled Session') {
                     const match = virtualEvents.find(ve => ve.name === event.name);
                     if (match) {
@@ -803,15 +891,39 @@ const HeatManagement = ({ currentUser }) => {
                 return event;
             });
 
+            // School isolation for real DB events (same logic as EventManagement)
+            // The legacy 'admin' account has events from many schools — filter to this school only
+            if (userSchool && userRole !== 'superadmin' && userRole !== 'super_admin') {
+                combinedDbEvents = combinedDbEvents.filter(ev => {
+                    if (ev.event_type === 'Scheduled Session') return true;
+                    const evSchool = (ev.school_name || '').toLowerCase().trim();
+                    return evSchool === userSchool || (evSchool.includes('indica') && userSchool.includes('indica'));
+                });
+            }
+
             // Filter out virtual events that have already been created in the database
-            const dbEventNames = new Set(eventsRes.data.map(e => e.name));
+            const dbEventNames = new Set(combinedDbEvents.map(e => e.name));
             const filteredVirtualEvents = virtualEvents.filter(ve => !dbEventNames.has(ve.name));
 
             const combinedEvents = [...combinedDbEvents, ...filteredVirtualEvents].sort((a, b) => {
                 return new Date(a.created_at) - new Date(b.created_at);
             });
 
+            // Strict School Isolation: If logged in as School Admin, strictly filter uniqueSurfers to session-assigned students of this school
+            if (userSchool && userRole !== 'superadmin' && userRole !== 'super_admin') {
+                const schoolLower = userSchool.toLowerCase();
+                uniqueSurfers = uniqueSurfers.filter(s => {
+                    const sSchool = (s.school_name || s.school || '').toLowerCase().trim();
+                    const sName = (s.name || '').toLowerCase().trim();
+                    const sId = String(s.id || '');
+                    const isAssigned = sessionAssignedStudentNames.has(sName) || sessionAssignedStudentIds.has(sId);
+                    const isSchoolMatch = sSchool === schoolLower || !sSchool;
+                    return isAssigned && isSchoolMatch;
+                });
+            }
+
             setEvents(combinedEvents);
+
             setAllSurfers(uniqueSurfers);
             setHeats(heatsRes.data);
             setActiveJudges(activeJ);
@@ -1285,6 +1397,118 @@ const HeatManagement = ({ currentUser }) => {
         }
     };
 
+    // ── Auto-generate heats from session students ──────────────────────────────
+    const handleAutoGenerateSessionHeats = async () => {
+        const { event, heatSize, divisionName } = sessionAutoGenModal;
+        if (!event) return;
+
+        setSessionAutoGenModal(prev => ({ ...prev, isGenerating: true }));
+
+        try {
+            const adminInfo = JSON.parse(sessionStorage.getItem('adminInfo') || '{}');
+            const adminId = adminInfo.adminId || 'admin';
+
+            // 1. Resolve or create the real event in DB
+            let targetEventId = event.id;
+            if (String(event.id).startsWith('session-slot-')) {
+                // Virtual event — persist to DB first
+                const eventPayload = {
+                    name: event.name,
+                    location: event.location || 'Indica Surf School',
+                    start_date: event.start_date,
+                    end_date: event.end_date,
+                    divisions: JSON.stringify([divisionName]),
+                    status: 'Active',
+                    event_type: 'Scheduled Session',
+                    session_slot: event.session_slot || '',
+                    min_score: 0, max_score: 10, score_decimals: 1,
+                    judge_count: 3, drop_high_low: 0, best_waves_count: 2, max_waves: 10,
+                    sponsors: JSON.stringify([]),
+                    title_sponsors: JSON.stringify([]),
+                    admin_id: adminId
+                };
+                const newEventRes = await axios.post(`${API_BASE}/events`, eventPayload);
+                targetEventId = newEventRes.data.id;
+            }
+
+            // 2. Identify session students
+            // Match student names/ids from the session event against allSurfers
+            const sessionStudentNames = new Set(
+                (event.student_names || []).map(n => (n || '').toLowerCase().trim()).filter(Boolean)
+            );
+            const sessionStudentIds = new Set(
+                (event.student_ids || []).map(id => String(id)).filter(Boolean)
+            );
+
+            let pool = allSurfers.filter(s => {
+                const sName = (s.name || '').toLowerCase().trim();
+                const sId = String(s.id || '');
+                return sessionStudentNames.has(sName) || sessionStudentIds.has(sId);
+            });
+
+            // Fallback: if no match, use ALL allSurfers (school-scoped)
+            if (pool.length === 0) {
+                pool = [...allSurfers];
+            }
+
+            if (pool.length === 0) {
+                showToast('No students found for this session.', 'error');
+                setSessionAutoGenModal(prev => ({ ...prev, isGenerating: false }));
+                return;
+            }
+
+            // 3. Divide into heats
+            const totalStudents = pool.length;
+            const numHeats = Math.ceil(totalStudents / heatSize);
+
+            // Shuffle for fair distribution
+            const shuffled = [...pool].sort(() => Math.random() - 0.5);
+
+            for (let h = 1; h <= numHeats; h++) {
+                const start = (h - 1) * heatSize;
+                const heatStudents = shuffled.slice(start, start + heatSize);
+                const selectedIds = heatStudents.map(s => s.id);
+
+                // Assign jersey colors
+                const surferColors = {};
+                selectedIds.forEach((id, idx) => {
+                    if (idx < JERSEY_COLORS.length) surferColors[id] = JERSEY_COLORS[idx].hex;
+                });
+
+                const dataToSubmit = {
+                    event_id: targetEventId,
+                    division: divisionName,
+                    round: 'Round 1',
+                    heat_number: h,
+                    surfer_count: heatStudents.length,
+                    qualified_count: Math.max(1, Math.floor(heatStudents.length / 2)),
+                    duration: 30,
+                    status: 'Scheduled',
+                    surfer_ids: selectedIds,
+                    surfer_colors: surferColors,
+                    auto_scoring_mode: false
+                };
+
+                await axios.post(`${API_BASE}/heats`, dataToSubmit);
+            }
+
+            showToast(`✅ Created ${numHeats} heat${numHeats > 1 ? 's' : ''} for ${totalStudents} students!`, 'success');
+            setSessionAutoGenModal({ isOpen: false, event: null, heatSize: 4, divisionName: 'General', isGenerating: false });
+
+            // Switch filter to the new event
+            setSelectedEventFilter(String(targetEventId));
+            setSelectedDivisionFilter(divisionName);
+            fetchInitialData(true);
+
+        } catch (err) {
+            console.error('Error auto-generating session heats:', err);
+            const msg = err?.response?.data?.error || 'Failed to generate heats.';
+            showToast(msg, 'error');
+        } finally {
+            setSessionAutoGenModal(prev => ({ ...prev, isGenerating: false }));
+        }
+    };
+
     const handleReschedule = async (heatId, newStartTime, newEndTime, skipRefresh = false, customMessage = null) => {
         try {
             const existingHeat = heats.find(h => h.id === heatId);
@@ -1475,6 +1699,19 @@ const HeatManagement = ({ currentUser }) => {
             console.log('  - Surfers from backend:', tournamentProgressionData.surfers.length);
             let surfers = filterAndDeduplicateSurfers(tournamentProgressionData.surfers);
 
+            const savedUser = JSON.parse(sessionStorage.getItem('user') || localStorage.getItem('user') || '{}');
+            const activeUser = (currentUser && currentUser.email) ? currentUser : savedUser;
+            const userRole = (activeUser.role || '').toLowerCase();
+            const userSchool = (activeUser.school_name || activeUser.school || activeUser.school_details?.name || '').toLowerCase().trim();
+
+            if (userSchool && userRole !== 'superadmin' && userRole !== 'super_admin') {
+                const schoolLower = userSchool.toLowerCase();
+                surfers = surfers.filter(s => {
+                    const sSchool = (s.school_name || s.school || '').toLowerCase().trim();
+                    return sSchool === schoolLower;
+                });
+            }
+
             // Still apply division rules (gender & age) as additional filter
             if (formData.division) {
                 const div = formData.division.toLowerCase();
@@ -1552,6 +1789,19 @@ const HeatManagement = ({ currentUser }) => {
 
         // Fallback: use allSurfers
         let surfers = filterAndDeduplicateSurfers(allSurfers);
+
+        const savedUser = JSON.parse(sessionStorage.getItem('user') || localStorage.getItem('user') || '{}');
+        const activeUser = (currentUser && currentUser.email) ? currentUser : savedUser;
+        const userRole = (activeUser.role || '').toLowerCase();
+        const userSchool = (activeUser.school_name || activeUser.school || activeUser.school_details?.name || '').toLowerCase().trim();
+
+        if (userSchool && userRole !== 'superadmin' && userRole !== 'super_admin') {
+            const schoolLower = userSchool.toLowerCase();
+            surfers = surfers.filter(s => {
+                const sSchool = (s.school_name || s.school || '').toLowerCase().trim();
+                return sSchool === schoolLower;
+            });
+        }
 
         // Filter by Division Rules (Gender & Age)
         if (formData.division) {
@@ -2699,9 +2949,34 @@ const HeatManagement = ({ currentUser }) => {
 
     // Filtered heats for the table
     const filteredHeats = heats.filter(h => {
-        if (selectedEventFilter !== 'all' && String(h.event_id) !== String(selectedEventFilter)) return false;
-        if (selectedDivisionFilter !== 'all' && h.division !== selectedDivisionFilter) return false;
-        if (selectedRoundFilter !== 'all' && h.round !== selectedRoundFilter) return false;
+        // Match heat to its event
+        const matchingEvent = events.find(e =>
+            String(e.id) === String(h.event_id) ||
+            (e.name && h.event_name && e.name.trim().toLowerCase() === h.event_name.trim().toLowerCase())
+        );
+
+        // School isolation: if logged in with a school, only show heats from that school's events
+        if (userSchool && userRole !== 'superadmin' && userRole !== 'super_admin') {
+            if (!matchingEvent) return false;
+        }
+
+        // Event filter
+        if (selectedEventFilter !== 'all') {
+            const matchesId = String(h.event_id) === String(selectedEventFilter);
+            const matchesName = matchingEvent && String(matchingEvent.id) === String(selectedEventFilter);
+            if (!matchesId && !matchesName) return false;
+        }
+
+        // Division/Section filter: only apply if an event is selected
+        if (selectedEventFilter !== 'all' && selectedDivisionFilter !== 'all' && h.division !== selectedDivisionFilter) {
+            return false;
+        }
+
+        // Round filter: only apply if an event is selected
+        if (selectedEventFilter !== 'all' && selectedRoundFilter !== 'all' && h.round !== selectedRoundFilter) {
+            return false;
+        }
+
         // SUP category filter: match heat's saved sup_category column directly
         if (isSupEventSelected && selectedSupCategoryFilter !== 'all') {
             if (h.sup_category !== selectedSupCategoryFilter) return false;
@@ -3332,27 +3607,223 @@ const HeatManagement = ({ currentUser }) => {
                         </table>
                     </div>
                 ) : (
-                    <div className="card" style={{ height: '200px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', borderStyle: 'dashed', textAlign: 'center', gap: '16px' }}>
+                    <div className="card" style={{ padding: '40px 32px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', borderStyle: 'dashed', textAlign: 'center', gap: '16px' }}>
                         <p className="text-secondary" style={{ fontWeight: '500' }}>
                             {heats.length === 0
                                 ? (events.length === 0 ? 'Please create an event first before adding heats' : 'No heats scheduled yet')
                                 : 'No heats found for the selected filters'}
                         </p>
-                        {heats.length === 0 && events.length > 0 && (
-                            <button onClick={() => {
-                                setSelectedSurferIds([]);
-                                setSurferColors({});
-                                setIsModalOpen(true);
-                            }} className="btn btn-primary">
-                                <Plus size={20} />
-                                Schedule First Heat
-                            </button>
-                        )}
+                        {heats.length === 0 && events.length > 0 && (() => {
+                            // Check if the selected event (or any event) is a session event with students
+                            const sessionEventsWithStudents = events.filter(ev =>
+                                ev.isSessionEvent && ((ev.student_ids && ev.student_ids.length > 0) || (ev.student_names && ev.student_names.length > 0))
+                            );
+                            const firstSession = selectedEventFilter !== 'all'
+                                ? events.find(ev => String(ev.id) === String(selectedEventFilter) && ev.isSessionEvent)
+                                : sessionEventsWithStudents[0];
+
+                            return (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', alignItems: 'center' }}>
+                                    {firstSession && (
+                                        <button
+                                            onClick={() => setSessionAutoGenModal({
+                                                isOpen: true,
+                                                event: firstSession,
+                                                heatSize: 4,
+                                                divisionName: 'General',
+                                                isGenerating: false
+                                            })}
+                                            style={{
+                                                display: 'flex', alignItems: 'center', gap: '8px',
+                                                padding: '12px 24px', borderRadius: '12px', fontSize: '14px',
+                                                fontWeight: '700', border: 'none', cursor: 'pointer',
+                                                background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                                                color: '#fff', boxShadow: '0 4px 12px rgba(99,102,241,0.35)',
+                                                transition: 'all 0.2s'
+                                            }}
+                                            onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
+                                            onMouseLeave={e => e.currentTarget.style.transform = 'translateY(0)'}
+                                        >
+                                            <Zap size={16} />
+                                            Auto-Generate Heats from Session
+                                        </button>
+                                    )}
+                                    <button onClick={() => {
+                                        setSelectedSurferIds([]);
+                                        setSurferColors({});
+                                        setIsModalOpen(true);
+                                    }} className="btn btn-secondary" style={{ fontSize: '13px' }}>
+                                        <Plus size={16} />
+                                        Manual Heat
+                                    </button>
+                                </div>
+                            );
+                        })()}
                     </div>
                 )}
                 </>
             )}
             </div>
+
+            {/* ── Session Auto-Generate Heats Modal ── */}
+            {sessionAutoGenModal.isOpen && (
+                <div
+                    style={{
+                        position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                        background: 'rgba(0,0,0,0.72)', display: 'flex',
+                        alignItems: 'center', justifyContent: 'center',
+                        zIndex: 10000, backdropFilter: 'blur(8px)', padding: '20px'
+                    }}
+                >
+                    <div style={{
+                        background: '#ffffff', borderRadius: '20px', maxWidth: '460px',
+                        width: '100%', boxShadow: '0 24px 64px rgba(0,0,0,0.2)',
+                        border: '1px solid #e2e8f0', overflow: 'hidden'
+                    }}>
+                        {/* Header */}
+                        <div style={{
+                            padding: '20px 24px', borderBottom: '1px solid #e2e8f0',
+                            background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <div style={{
+                                    width: '40px', height: '40px', borderRadius: '12px',
+                                    background: 'rgba(255,255,255,0.2)',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                }}>
+                                    <Zap size={20} color="white" />
+                                </div>
+                                <div>
+                                    <h3 style={{ fontSize: '17px', fontWeight: '800', color: '#fff', margin: 0 }}>Auto-Generate Heats</h3>
+                                    <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.8)', margin: 0, marginTop: '2px' }}>
+                                        {sessionAutoGenModal.event?.name}
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => setSessionAutoGenModal(prev => ({ ...prev, isOpen: false }))}
+                                style={{ background: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '50%', cursor: 'pointer', color: '#fff', padding: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                            >
+                                <X size={18} />
+                            </button>
+                        </div>
+
+                        {/* Body */}
+                        <div style={{ padding: '24px' }}>
+                            {/* Student count preview */}
+                            {(() => {
+                                const ev = sessionAutoGenModal.event;
+                                const names = ev?.student_names || [];
+                                const ids = ev?.student_ids || [];
+                                const count = Math.max(names.length, ids.length);
+                                const numHeats = Math.ceil(count / Math.max(1, sessionAutoGenModal.heatSize));
+                                return (
+                                    <div style={{
+                                        display: 'flex', gap: '12px', marginBottom: '24px'
+                                    }}>
+                                        <div style={{
+                                            flex: 1, padding: '16px', borderRadius: '12px',
+                                            background: 'linear-gradient(135deg, rgba(99,102,241,0.08), rgba(139,92,246,0.08))',
+                                            border: '1px solid rgba(99,102,241,0.15)', textAlign: 'center'
+                                        }}>
+                                            <div style={{ fontSize: '28px', fontWeight: '800', color: '#6366f1' }}>{count}</div>
+                                            <div style={{ fontSize: '12px', color: '#64748b', fontWeight: '600', marginTop: '2px' }}>Students</div>
+                                        </div>
+                                        <div style={{ display: 'flex', alignItems: 'center', color: '#94a3b8', fontWeight: '700', fontSize: '20px' }}>÷</div>
+                                        <div style={{
+                                            flex: 1, padding: '16px', borderRadius: '12px',
+                                            background: '#f8fafc', border: '1px solid #e2e8f0', textAlign: 'center'
+                                        }}>
+                                            <div style={{ fontSize: '28px', fontWeight: '800', color: '#334155' }}>{sessionAutoGenModal.heatSize}</div>
+                                            <div style={{ fontSize: '12px', color: '#64748b', fontWeight: '600', marginTop: '2px' }}>Per Heat</div>
+                                        </div>
+                                        <div style={{ display: 'flex', alignItems: 'center', color: '#94a3b8', fontWeight: '700', fontSize: '20px' }}>=</div>
+                                        <div style={{
+                                            flex: 1, padding: '16px', borderRadius: '12px',
+                                            background: 'linear-gradient(135deg, rgba(34,197,94,0.08), rgba(16,185,129,0.08))',
+                                            border: '1px solid rgba(34,197,94,0.15)', textAlign: 'center'
+                                        }}>
+                                            <div style={{ fontSize: '28px', fontWeight: '800', color: '#16a34a' }}>{numHeats}</div>
+                                            <div style={{ fontSize: '12px', color: '#64748b', fontWeight: '600', marginTop: '2px' }}>Heats</div>
+                                        </div>
+                                    </div>
+                                );
+                            })()}
+
+                            {/* Heat size selector */}
+                            <div style={{ marginBottom: '16px' }}>
+                                <label style={{ fontSize: '13px', fontWeight: '700', color: '#374151', display: 'block', marginBottom: '8px' }}>
+                                    Students per Heat
+                                </label>
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                    {[2, 3, 4, 5, 6].map(n => (
+                                        <button
+                                            key={n}
+                                            onClick={() => setSessionAutoGenModal(prev => ({ ...prev, heatSize: n }))}
+                                            style={{
+                                                flex: 1, padding: '10px 0', borderRadius: '10px', fontSize: '16px',
+                                                fontWeight: '800', border: '2px solid',
+                                                borderColor: sessionAutoGenModal.heatSize === n ? '#6366f1' : '#e2e8f0',
+                                                background: sessionAutoGenModal.heatSize === n ? 'rgba(99,102,241,0.1)' : '#fff',
+                                                color: sessionAutoGenModal.heatSize === n ? '#6366f1' : '#64748b',
+                                                cursor: 'pointer', transition: 'all 0.15s'
+                                            }}
+                                        >
+                                            {n}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Division name */}
+                            <div style={{ marginBottom: '24px' }}>
+                                <label style={{ fontSize: '13px', fontWeight: '700', color: '#374151', display: 'block', marginBottom: '8px' }}>
+                                    Division / Section Name
+                                </label>
+                                <input
+                                    type="text"
+                                    className="form-control"
+                                    value={sessionAutoGenModal.divisionName}
+                                    onChange={e => setSessionAutoGenModal(prev => ({ ...prev, divisionName: e.target.value }))}
+                                    placeholder="e.g. General, Beginners, U14..."
+                                    style={{ padding: '10px 14px' }}
+                                />
+                            </div>
+
+                            {/* Action buttons */}
+                            <div style={{ display: 'flex', gap: '12px' }}>
+                                <button
+                                    onClick={() => setSessionAutoGenModal(prev => ({ ...prev, isOpen: false }))}
+                                    disabled={sessionAutoGenModal.isGenerating}
+                                    style={{ flex: 1, padding: '12px', borderRadius: '10px', background: '#f1f5f9', border: '1px solid #e2e8f0', color: '#475569', fontWeight: '600', cursor: 'pointer' }}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={handleAutoGenerateSessionHeats}
+                                    disabled={sessionAutoGenModal.isGenerating || !sessionAutoGenModal.divisionName.trim()}
+                                    style={{
+                                        flex: 2, padding: '12px', borderRadius: '10px',
+                                        background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                                        border: 'none', color: '#fff', fontWeight: '700', fontSize: '14px',
+                                        cursor: sessionAutoGenModal.isGenerating ? 'not-allowed' : 'pointer',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                                        opacity: sessionAutoGenModal.isGenerating ? 0.7 : 1,
+                                        boxShadow: '0 4px 12px rgba(99,102,241,0.35)'
+                                    }}
+                                >
+                                    {sessionAutoGenModal.isGenerating
+                                        ? <><Loader2 size={16} className="animate-spin" /> Generating...
+                                        </>
+                                        : <><Zap size={16} /> Generate Heats Now</>
+                                    }
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* ── Auto-Generate Rounds Confirmation Modal ── */}
             {isAutoGenModalOpen && autoGenPreview && (

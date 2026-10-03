@@ -99,6 +99,7 @@ class User(Base):
     social_id = Column(String, nullable=True)
     approval_status = Column(String, default="approved")
     created_by_school = Column(Boolean, default=False)
+    is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -117,6 +118,7 @@ class School(Base):
     city = Column(String)
     instructor_count = Column(String)
     website = Column(String)
+    is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -493,6 +495,13 @@ try:
         db_migrate.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider VARCHAR(50) DEFAULT 'email'"))
         db_migrate.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS social_id VARCHAR(255)"))
         db_migrate.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_plain VARCHAR(255)"))
+        db_migrate.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"))
+        db_migrate.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"))
+        try:
+            db_migrate.execute(text("UPDATE users SET is_active = TRUE WHERE is_active IS NULL"))
+            db_migrate.execute(text("UPDATE schools SET is_active = TRUE WHERE is_active IS NULL"))
+        except Exception:
+            pass
         db_migrate.execute(text("ALTER TABLE activity_log ADD COLUMN IF NOT EXISTS school VARCHAR(150) DEFAULT ''"))
         try:
             db_migrate.execute(text("""
@@ -688,9 +697,10 @@ try:
     # Seed Integration Keys
     keys_count = db.execute(text("SELECT COUNT(*) FROM integration_keys")).fetchone()[0]
     if keys_count == 0:
-        db.execute(text("""
+        app_base = os.getenv("APP_URL", "http://127.0.0.1:8000")
+        db.execute(text(f"""
             INSERT INTO integration_keys (app_name, client_id, api_key, webhook_url, status) VALUES 
-            ('LiveHeats Integration Hub', 'client_liveheats_8992', 'sk_liveheats_xyz992181abc', 'http://54.242.160.238:8000/api/mock-heats/webhook', 'Active'),
+            ('LiveHeats Integration Hub', 'client_liveheats_8992', 'sk_liveheats_xyz992181abc', '{app_base}/api/mock-heats/webhook', 'Active'),
             ('WSL Scoring Stream Engine', 'client_wsl_stream_7721', 'sk_wsl_scoring_90021_key', '', 'Active'),
             ('Surfline Forecast Widget Plugin', 'client_surfline_0012', 'sk_surfline_widget_88217', 'https://surfline.com/webhooks/forecast', 'Inactive')
         """))
@@ -1637,10 +1647,15 @@ def get_current_user(authorization: Optional[str] = Header(None), db: OrmSession
     payload = verify_token(token)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
-    user_id = payload.get("user_id")
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+    if user.is_active is False:
+        raise HTTPException(status_code=403, detail="Your account has been deactivated by administrator.")
+    if user.role == "admin" and user.email:
+        sch = db.query(School).filter(func.lower(School.email) == user.email.lower()).first()
+        if sch and sch.is_active is False:
+            raise HTTPException(status_code=403, detail="This school account has been deactivated. Actions are disabled.")
     return user
 
 
@@ -2225,6 +2240,14 @@ def auth_login(data: UserLogin, db: OrmSession = Depends(get_db)):
 
     if not matched_user:
         raise HTTPException(status_code=400, detail="Invalid email or password")
+
+    if matched_user.is_active is False:
+        raise HTTPException(status_code=403, detail="Your account has been deactivated by Super Admin. Please contact support.")
+
+    if matched_user.role == "admin" and matched_user.email:
+        sch = db.query(School).filter(func.lower(School.email) == matched_user.email.lower()).first()
+        if sch and sch.is_active is False:
+            raise HTTPException(status_code=403, detail="This school account has been deactivated by Super Admin. Login and actions are disabled.")
 
     token = generate_token({"user_id": matched_user.id, "email": matched_user.email, "role": matched_user.role})
     return {
@@ -3033,8 +3056,20 @@ def dashboard_activity(school: Optional[str] = None, db: OrmSession = Depends(ge
 @app.get("/api/instructors")
 def get_instructors(school: Optional[str] = None, db: OrmSession = Depends(get_db)):
     query = db.query(Instructor)
-    if school and school.lower().strip() not in ["all", "super admin", "school admin"]:
-        query = query.filter(func.lower(Instructor.school) == school.lower().strip())
+    school_clean = (school or "").lower().strip()
+
+    if school_clean in ["all", "super admin", "school admin", "superadmin"]:
+        # Super admin — can see all instructors across all schools
+        pass
+    elif school_clean:
+        # Scoped to a specific school — only return coaches of that school
+        query = query.filter(func.lower(Instructor.school) == school_clean)
+    else:
+        # ❌ No school param — block to prevent full data leak
+        # Only return instructors that are Individual / Freelance Coach
+        query = query.filter(
+            func.lower(Instructor.school) == "individual / freelance coach"
+        )
     return [instructor_to_dict(i) for i in query.all()]
 
 
@@ -3060,13 +3095,26 @@ def get_instructor(instructor_id: int, db: OrmSession = Depends(get_db)):
         for s in i.sessions
     ]
     # Collect unique assigned students (from direct assignment + sessions)
+    # SECURITY: Only return students from the same school as this instructor
+    instructor_school = (i.school or "").strip()
     assigned_students_map = {}
     direct_students = db.query(Student).filter(Student.instructor_id == instructor_id).all()
     for ds in direct_students:
-        assigned_students_map[ds.id] = student_to_dict(ds)
+        # Cross-school check: student's school must match instructor's school
+        student_school = (ds.school or "").strip()
+        if instructor_school.lower() == "individual / freelance coach":
+            # Freelance coach: only show students directly assigned (no school match needed)
+            assigned_students_map[ds.id] = student_to_dict(ds)
+        elif student_school.lower() == instructor_school.lower():
+            # School coach: only show students from the SAME school
+            assigned_students_map[ds.id] = student_to_dict(ds)
     for s in i.sessions:
         if s.student_rel and s.student_rel.id not in assigned_students_map:
-            assigned_students_map[s.student_rel.id] = student_to_dict(s.student_rel)
+            sess_student_school = (s.student_rel.school or "").strip()
+            if instructor_school.lower() == "individual / freelance coach":
+                assigned_students_map[s.student_rel.id] = student_to_dict(s.student_rel)
+            elif sess_student_school.lower() == instructor_school.lower():
+                assigned_students_map[s.student_rel.id] = student_to_dict(s.student_rel)
 
     d["assigned_students"] = list(assigned_students_map.values())
     d["student_count"] = len(assigned_students_map)
@@ -3333,12 +3381,30 @@ def delete_instructor(instructor_id: int, db: OrmSession = Depends(get_db)):
 
 # ─── Students ─────────────────────────────────────────────────────────────────
 
+@app.get("/api/superadmin/students")
+def get_superadmin_students(db: OrmSession = Depends(get_db)):
+    students = db.query(Student).order_by(Student.id.desc()).all()
+    return JSONResponse(
+        content=[student_to_dict(s) for s in students],
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+    )
+
+
 @app.get("/api/students")
 def get_students(school: Optional[str] = None, db: OrmSession = Depends(get_db)):
-    query = db.query(Student)
-    if school and school.lower().strip() not in ["all", "super admin", "school admin"]:
-        sch_clean = school.lower().strip()
-        query = query.filter(func.trim(func.lower(Student.school)) == sch_clean)
+    query = db.query(Student).order_by(Student.id.desc())
+    school_clean = (school or "").lower().strip()
+
+    if school_clean in ["all", "super admin", "school admin", "superadmin"]:
+        # Super admin — can see all students across all schools
+        pass
+    elif school_clean:
+        # Scoped to a specific school or freelance coach
+        query = query.filter(func.trim(func.lower(Student.school)) == school_clean)
+    else:
+        # ❌ No school param — block to prevent full data leak
+        # Return empty list — caller must always pass a school
+        return []
     return [student_to_dict(s) for s in query.all()]
 
 
@@ -4540,16 +4606,79 @@ def analytics_students(
 
 @app.get("/api/schools")
 def get_schools(db: OrmSession = Depends(get_db)):
-    schools = db.query(School).all()
-    return [
-        {
-            "id": s.id, "name": s.name, "owner": s.owner,
-            "email": s.email, "phone": s.phone,
-            "country": s.country, "city": s.city,
-            "instructor_count": s.instructor_count, "website": s.website,
-        }
-        for s in schools
-    ]
+    schools = db.query(School).order_by(School.id.desc()).all()
+    results = []
+    for s in schools:
+        user = None
+        if s.email:
+            user = db.query(User).filter(func.lower(User.email) == s.email.lower(), User.role == "admin").first()
+            if not user:
+                user = db.query(User).filter(func.lower(User.email) == s.email.lower()).first()
+
+        is_active = s.is_active if s.is_active is not None else True
+        if user and user.is_active is False:
+            is_active = False
+
+        created_dt = s.created_at or (user.created_at if user else None)
+        created_str = created_dt.isoformat() if created_dt else None
+
+        results.append({
+            "id": s.id,
+            "name": s.name,
+            "owner": s.owner,
+            "email": s.email,
+            "phone": s.phone,
+            "country": s.country,
+            "city": s.city,
+            "instructor_count": s.instructor_count,
+            "website": s.website,
+            "is_active": is_active,
+            "created_at": created_str,
+            "user_id": user.id if user else None,
+            "password_plain": user.password_plain if (user and user.password_plain) else "-",
+            "password_hash": user.password_hash if (user and user.password_hash) else "-",
+        })
+    return JSONResponse(content=results, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
+
+@app.patch("/api/schools/{school_id}/toggle-status")
+@app.patch("/api/superadmin/schools/{school_id}/toggle-status")
+@app.put("/api/schools/{school_id}/status")
+@app.put("/api/superadmin/schools/{school_id}/status")
+async def toggle_school_status(school_id: int, request: Request, db: OrmSession = Depends(get_db)):
+    school = db.query(School).filter(School.id == school_id).first()
+    if not school:
+        raise HTTPException(status_code=404, detail="School not found")
+
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+
+    if "is_active" in body:
+        new_active = bool(body["is_active"])
+    else:
+        current_active = school.is_active if school.is_active is not None else True
+        new_active = not current_active
+
+    school.is_active = new_active
+    
+    # Also sync linked User
+    if school.email:
+        user = db.query(User).filter(func.lower(User.email) == school.email.lower()).first()
+        if user:
+            user.is_active = new_active
+
+    db.commit()
+    db.refresh(school)
+    status_str = "active" if school.is_active else "disabled"
+    return {
+        "id": school.id,
+        "is_active": school.is_active,
+        "status": status_str,
+        "message": f"School '{school.name}' is now {status_str}."
+    }
 
 
 @app.post("/api/schools")

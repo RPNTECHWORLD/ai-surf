@@ -930,7 +930,7 @@ const Competitions = () => {
             <div className="cmp-subtabs-wrapper">
               <div className="cmp-subtabs-pill">
                 {[
-                  { id: 'events', label: '📅 Events' },
+                  { id: 'events', label: '📅 Sessions' },
                   ...((currentUser?.role !== 'athlete' && currentUser?.role !== 'student') ? [{ id: 'competitors', label: '👥 Competitors' }] : []),
                   { id: 'heats', label: '🕒 Heats' },
                   ...((currentUser?.role !== 'athlete' && currentUser?.role !== 'student') ? [{ id: 'scoring', label: '🎯 Scoring' }] : []),

@@ -6,7 +6,7 @@ import axios from 'axios';
 import bgImage from '../../assets/bg.jpeg';
 const useAdminTheme = () => ({ adminTheme: 'light' });
 
-const API_BASE = 'http://54.84.243.251/api';
+const API_BASE = import.meta.env.VITE_AQUATICX_API_URL || 'http://localhost:5000/api';
 
 const formatDivisionName = (name, event = null) => {
     if (!name) return name;

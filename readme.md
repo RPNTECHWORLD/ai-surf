@@ -413,7 +413,7 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
 
 ### Changes on 03-10-2026
 
-45. **Analytics Page — Student Role Data Isolation (`Analytics.jsx`)**:
+01. **Analytics Page — Student Role Data Isolation (`Analytics.jsx`)**:
     - **Problem**: When a student (e.g. `kolaru`) opened the Analytics page (`/analytics`), the Badge Progression table displayed ALL other students in the school (`Pradeep Pujar`, `Aadya Singh`, `Saanvi Hegde`, `Praveen`, etc.) — a privacy and data scoping violation.
     - **Root Cause**: `filteredStudents` had no student-role check. For student users it fell through to the school-level filter, showing all students enrolled in the same school.
     - **Updates**:
@@ -421,7 +421,7 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
       - Added a **student-role guard at the top of `filteredStudents`**: when `isStudent` is true, the memo returns only the logged-in student's own record (matched by ID → email → name) plus their own registered guests.
       - Students still see the school-wide Badge Stat summary cards (WHITE / YELLOW / GREEN / BLUE / RED counts) as these are aggregate, non-personal statistics. Only the per-row progression table is scoped.
 
-46. **Athlete Intel — "Logging for:" Guest Dropdown for Student Accounts (`AthleteIntelligence.jsx`)**:
+02. **Athlete Intel — "Logging for:" Guest Dropdown for Student Accounts (`AthleteIntelligence.jsx`)**:
     - **Problem**: On the Athlete Intelligence page (`/intel`), students who have accompanying guests (e.g. `testing` with guests `kolaru` and `kplaru 34e`) had no way to switch the logging context to one of their guests. The "Logging for:" selector was exclusively shown for Coach and Admin roles (`currentUser.role !== 'athlete'`), so students could only log data for themselves.
     - **Updates**:
       - Added `isStudent` flag (`athlete / student / user`) to `AthleteIntelligence.jsx`.
@@ -435,3 +435,18 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
         - `↳ kplaru 34e (Guest of testing)`
       - Coach/Admin users retain the full Level filter + Logging for combo as before; students with no guests see no dropdown (single-person accounts need no switch).
       - Fixed `selectedAthleteKey` initialization to cover all student role variants (`athlete` / `student` / `user`) and fall back to `currentUser.id` when `student_id` is absent.
+
+03. **Multi-School Data Isolation & Leak Prevention (`backend/main.py`, `StudentsManagement.jsx`, `Sessions.jsx`)**:
+    - **Problem**: In multi-school deployments, coach or student names could accidentally appear across schools or in freelance coach dropdowns if requests lacked school filtering.
+    - **Updates**:
+      - Enforced strict school isolation in backend routes: `GET /api/students?school=...` and `GET /api/instructors?school=...` strictly filter by school name. Unscoped calls are prevented from leaking cross-school records.
+      - Performed read-only audit across AWS RDS PostgreSQL: verified **0% overlap** (`overlap = set()`) between `Aquatic Indica Surf School - Mulki` (20 students, 21 coaches), `rpn tech ac` (5 students, 1 coach), and `Individual / Freelance Coach` (5 students, 4 coaches).
+
+04. **Sessions Hub — "✓ Saved" Persistent State (`Sessions.jsx`)**:
+    - **Problem**: When a session was saved and then reopened, the save button appeared as a blank disabled button without indication whether changes were already saved.
+    - **Updates**:
+      - Added a `savedSessionIds` state tracking sessions saved during the browser session.
+      - When reopening a previously saved session with no pending modifications, the button renders a clear **`✓ Saved`** label.
+      - Editing any field or media instantly switches the button back to the active green **`Save Changes`** state.
+ 
+

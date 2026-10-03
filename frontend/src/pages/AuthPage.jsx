@@ -116,6 +116,7 @@ const AuthPage = () => {
     rates: '',
     location: '',
     school: '',
+    schoolLocation: '',
     whatsapp_number: '',
     course_duration: '',
     start_date: '',
@@ -602,6 +603,9 @@ const AuthPage = () => {
     if (role === 'coach' && !isCoachSchoolAffiliated && !formData.location?.trim()) {
       setErrorMsg('Please enter your coaching location / region.'); return;
     }
+    if (role === 'admin' && !formData.schoolLocation?.trim()) {
+      setErrorMsg('Please enter your school location.'); return;
+    }
     setLoading(true);
     try {
       const res = await fetch(`${API}/api/auth/signup`, {
@@ -631,6 +635,7 @@ const AuthPage = () => {
           guests_count: schoolInviteData ? Math.max(0, (schoolInviteData.max_count || 1) - 1) : (parseInt(formData.guests_count) || 0),
           guests_details: formData.guests_details || [],
           school: (schoolInviteData?.school) || formData.school,
+          school_location: formData.schoolLocation?.trim() || '',
           // Pass individual invite token or school batch invite code
           ...(inviteToken ? { invite_token: inviteToken } : {}),
           ...(inviteCode ? { invite_code: inviteCode } : {}),
@@ -2189,8 +2194,17 @@ const AuthPage = () => {
                             This name will be saved dynamically as your official school dashboard name.
                           </small>
                         </div>
+                        <div className="auth-field">
+                          <label>School Location <span style={{ color: '#EF4444' }}>*</span></label>
+                          <input type="text" name="schoolLocation" placeholder="e.g. Kovalam, Tamil Nadu"
+                            value={formData.schoolLocation || ''} onChange={handleChange} required />
+                          <small style={{ color: '#94A3B8', fontSize: '11px', marginTop: '4px', display: 'block' }}>
+                            Enter your surf school's city or beach location.
+                          </small>
+                        </div>
                       </div>
                     )}
+
 
                     <button 
                       type="submit" 

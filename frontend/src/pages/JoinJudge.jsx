@@ -4,7 +4,7 @@ import { Send, Loader2, Clock } from 'lucide-react';
 import axios from 'axios';
 import bgImage from '../assets/bg.jpeg';
 
-const API_BASE = 'http://54.84.243.251/api';
+const API_BASE = import.meta.env.VITE_AQUATICX_API_URL || 'http://localhost:5000/api';
 
 const JoinJudge = () => {
     const [formData, setFormData] = useState({ name: '', email: '' });

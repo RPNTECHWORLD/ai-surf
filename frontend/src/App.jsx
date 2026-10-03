@@ -58,8 +58,11 @@ function App() {
         <Route path="/analysis" element={<PrivateRoute><VideoAnalysis /></PrivateRoute>} />
         <Route path="/sessions/report" element={<PrivateRoute><CoachingReport /></PrivateRoute>} />
         <Route path="/athlete-intelligence" element={<PrivateRoute><AthleteIntelligence /></PrivateRoute>} />
-        <Route path="/rpnsuperadmin" element={<SuperAdminDashboard />} />
-        <Route path="/superadmin" element={<SuperAdminDashboard />} />
+        <Route path="/rpnsa" element={<SuperAdminDashboard />} />
+        <Route path="/srpnsa" element={<Navigate to="/rpnsa" replace />} />
+        <Route path="/superadmin" element={<Navigate to="/rpnsa" replace />} />
+        <Route path="/rpnsuperadmin" element={<Navigate to="/rpnsa" replace />} />
+        <Route path="*" element={<Navigate to="/competitions" replace />} />
       </Routes>
     </Router>
   );
