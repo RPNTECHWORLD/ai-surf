@@ -96,6 +96,55 @@ const InstructorManagement = () => {
   const [showFormPass, setShowFormPass] = useState(false);
   const [showModalPass, setShowModalPass] = useState(false);
 
+  // Leave Requests State for School Admin
+  const [showLeaveModal, setShowLeaveModal] = useState(false);
+  const [leaveRequests, setLeaveRequests] = useState([]);
+  const [leaveLoading, setLeaveLoading] = useState(false);
+  const [leaveFilterStatus, setLeaveFilterStatus] = useState('All'); // 'All' | 'Pending' | 'Approved' | 'Rejected'
+  const [leaveSearch, setLeaveSearch] = useState('');
+  const [actionLoadingId, setActionLoadingId] = useState(null);
+  const [changeApprovalLeave, setChangeApprovalLeave] = useState(null);
+
+  const fetchLeaveRequests = () => {
+    setLeaveLoading(true);
+    const url = (!isSuperAdmin && currentSchool)
+      ? `${API}/api/leave-requests?school=${encodeURIComponent(currentSchool)}`
+      : `${API}/api/leave-requests`;
+
+    fetch(url)
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          setLeaveRequests(data);
+        }
+      })
+      .catch(err => console.error('Error fetching leave requests:', err))
+      .finally(() => setLeaveLoading(false));
+  };
+
+  const handleUpdateLeaveStatus = async (leaveId, status, adminNotes = '') => {
+    setActionLoadingId(leaveId);
+    try {
+      const res = await fetch(`${API}/api/leave-requests/${leaveId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status: status,
+          admin_notes: adminNotes
+        })
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setLeaveRequests(prev => prev.map(l => l.id === leaveId ? updated : l));
+        fetchInstructors();
+      }
+    } catch (err) {
+      console.error('Error updating leave status:', err);
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
   // In-App Confirmation Dialog State (Replaces native browser window.confirm)
   const [confirmDialog, setConfirmDialog] = useState({
     isOpen: false,
@@ -153,7 +202,7 @@ const InstructorManagement = () => {
   const isSuperAdmin = !currentSchool || currentSchool.toLowerCase() === 'super admin' || currentSchool.toLowerCase() === 'school admin';
 
   const [form, setForm] = useState({
-    name: '', email: '', password: '', dob: '', age: '', gender: 'Male', fitness_level: 'Elite',
+    name: '', email: '', phone: '', password: '', dob: '', age: '', gender: 'Male', fitness_level: 'Elite',
     experience: '', certifications: '', languages: '', biography: '', image: '',
     school: currentSchool, location: ''
   });
@@ -287,6 +336,7 @@ const InstructorManagement = () => {
 
   useEffect(() => {
     fetchInstructors();
+    fetchLeaveRequests();
     fetch(`${API}/api/schools`)
       .then(r => r.json())
       .then(data => {
@@ -309,6 +359,22 @@ const InstructorManagement = () => {
       i.fitness_level.toLowerCase().includes(search.toLowerCase()) ||
       (i.certifications && i.certifications.some(c => c.toLowerCase().includes(search.toLowerCase())))
     );
+  });
+
+  const pendingLeavesCount = leaveRequests.filter(l => (l.status || '').toLowerCase() === 'pending').length;
+
+  const filteredLeaves = leaveRequests.filter(l => {
+    if (leaveFilterStatus !== 'All' && (l.status || '').toLowerCase() !== leaveFilterStatus.toLowerCase()) {
+      return false;
+    }
+    if (leaveSearch) {
+      const q = leaveSearch.toLowerCase();
+      const name = (l.instructor_name || '').toLowerCase();
+      const type = (l.leave_type || '').toLowerCase();
+      const reason = (l.reason || '').toLowerCase();
+      return name.includes(q) || type.includes(q) || reason.includes(q);
+    }
+    return true;
   });
 
   const handleSaveCoachPassword = async (e) => {
@@ -370,6 +436,7 @@ const InstructorManagement = () => {
         body: JSON.stringify({
           name: form.name,
           email: form.email || '',
+          phone: form.phone || '',
           password: form.password || '',
           dob: form.dob || '',
           age: form.age ? parseInt(form.age) : (form.dob ? (calculateAge(form.dob) || null) : null),
@@ -386,7 +453,7 @@ const InstructorManagement = () => {
       if (res.ok) {
         setShowAddModal(false);
         setPhotoPreview('');
-        setForm({ name: '', email: '', password: '', dob: '', age: '', gender: 'Male', fitness_level: 'Elite', experience: '', certifications: '', languages: [], biography: '', image: '', school: getActiveSchoolName(), location: '' });
+        setForm({ name: '', email: '', phone: '', password: '', dob: '', age: '', gender: 'Male', fitness_level: 'Elite', experience: '', certifications: '', languages: [], biography: '', image: '', school: getActiveSchoolName(), location: '' });
         fetchInstructors();
       }
     } catch (err) {}
@@ -413,6 +480,7 @@ const InstructorManagement = () => {
         body: JSON.stringify({
           name: form.name,
           email: form.email || '',
+          phone: form.phone || '',
           dob: form.dob || '',
           age: form.age ? parseInt(form.age) : (form.dob ? (calculateAge(form.dob) || null) : null),
           gender: form.gender,
@@ -428,7 +496,7 @@ const InstructorManagement = () => {
         setShowAddModal(false);
         setSelected(null);
         setPhotoPreview('');
-        setForm({ name: '', email: '', dob: '', age: '', gender: 'Male', fitness_level: 'Elite', experience: '', certifications: '', languages: '', biography: '', image: '', school: getActiveSchoolName(), location: '' });
+        setForm({ name: '', email: '', phone: '', dob: '', age: '', gender: 'Male', fitness_level: 'Elite', experience: '', certifications: '', languages: '', biography: '', image: '', school: getActiveSchoolName(), location: '' });
         fetchInstructors();
       }
     } catch (err) {}
@@ -462,6 +530,36 @@ const InstructorManagement = () => {
     );
   };
 
+  const handleOpenEditModal = (instructor) => {
+    setSelected(instructor);
+    setPhotoPreview(instructor.image || '');
+    const certsStr = Array.isArray(instructor.certifications)
+      ? instructor.certifications.join(', ')
+      : (instructor.certifications || '');
+    const langsArr = Array.isArray(instructor.languages)
+      ? instructor.languages
+      : (instructor.languages ? (typeof instructor.languages === 'string' ? instructor.languages.split(',').map(s => s.trim()) : []) : []);
+
+    setForm({
+      name: instructor.name || '',
+      email: instructor.email || '',
+      phone: instructor.phone || '',
+      password: '',
+      dob: instructor.dob || '',
+      age: instructor.age || (instructor.dob ? calculateAge(instructor.dob) : '') || '',
+      gender: instructor.gender || 'Male',
+      fitness_level: instructor.fitness_level || 'Elite',
+      experience: instructor.experience || '',
+      certifications: certsStr,
+      languages: langsArr,
+      biography: instructor.bio || '',
+      image: instructor.image || '',
+      school: instructor.school || currentSchool || getActiveSchoolName(),
+      location: instructor.location || ''
+    });
+    setShowAddModal(true);
+  };
+
   const hasInstructors = instructors.length > 0;
 
   return (
@@ -475,28 +573,98 @@ const InstructorManagement = () => {
             <h1 className="im-title">Instructors</h1>
             <p className="im-subtitle">Manage your school's coaching roster and assignments.</p>
           </div>
-          <button
-            className="im-btn-add-primary"
-            onClick={() => {
-              const currentActiveSchool = getActiveSchoolName();
-              setSelected(null);
-              setPhotoPreview('');
-              setForm({
-                name: '', email: '', password: '', dob: '', age: '', gender: 'Male', fitness_level: 'Elite',
-                experience: '', certifications: '', languages: '', biography: '', image: '',
-                school: currentActiveSchool,
-                location: getSchoolLocation(currentActiveSchool)
-              });
-              setShowAddModal(true);
-            }}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
-            Add Instructor
-          </button>
-        </div>
 
-        {/* Search Bar */}
-        <div className="im-search-bar">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <button
+              type="button"
+              className="im-btn-leave-requests"
+              onClick={() => {
+                setShowLeaveModal(true);
+                fetchLeaveRequests();
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '11px 18px',
+                borderRadius: '12px',
+                border: '1.5px solid #CBD5E1',
+                background: '#FFFFFF',
+                color: '#0F172A',
+                fontWeight: 700,
+                fontSize: '13.5px',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                boxShadow: '0 2px 6px rgba(0,0,0,0.03)'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = '#0D9488';
+                e.currentTarget.style.color = '#0D9488';
+                e.currentTarget.style.boxShadow = '0 4px 12px rgba(13, 148, 136, 0.15)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = '#CBD5E1';
+                e.currentTarget.style.color = '#0F172A';
+                e.currentTarget.style.boxShadow = '0 2px 6px rgba(0,0,0,0.03)';
+              }}
+            >
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#0D9488" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                <line x1="16" y1="2" x2="16" y2="6"></line>
+                <line x1="8" y1="2" x2="8" y2="6"></line>
+                <line x1="3" y1="10" x2="21" y2="10"></line>
+              </svg>
+              <span>Leave Requests</span>
+              {pendingLeavesCount > 0 ? (
+                <span style={{
+                  background: '#EF4444',
+                  color: '#FFFFFF',
+                  padding: '2px 8px',
+                  borderRadius: '10px',
+                  fontSize: '11.5px',
+                  fontWeight: 800,
+                  boxShadow: '0 2px 6px rgba(239, 68, 68, 0.4)'
+                }}>
+                  {pendingLeavesCount}
+                </span>
+              ) : (
+                leaveRequests.length > 0 && (
+                  <span style={{
+                    background: '#F1F5F9',
+                    color: '#64748B',
+                    padding: '2px 8px',
+                    borderRadius: '10px',
+                    fontSize: '11px',
+                    fontWeight: 700
+                  }}>
+                    {leaveRequests.length}
+                  </span>
+                )
+              )}
+            </button>
+
+            <button
+              className="im-btn-add-primary"
+              onClick={() => {
+                const currentActiveSchool = getActiveSchoolName();
+                setSelected(null);
+                setPhotoPreview('');
+                setForm({
+                  name: '', email: '', phone: '', password: '', dob: '', age: '', gender: 'Male', fitness_level: 'Elite',
+                  experience: '', certifications: '', languages: '', biography: '', image: '',
+                  school: currentActiveSchool,
+                  location: getSchoolLocation(currentActiveSchool)
+                });
+                setShowAddModal(true);
+              }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+              Add Instructor
+            </button>
+          </div>
+        </div>
+            {/* Search Bar */}
+            <div className="im-search-bar">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
           <input
             type="text"
@@ -562,6 +730,11 @@ const InstructorManagement = () => {
                         <p className="im-card-details">
                           {instructor.age} years • {instructor.location || 'Oahu, HI'}
                         </p>
+                        {instructor.phone && (
+                          <p style={{ margin: '3px 0 0 0', fontSize: '12px', color: '#0D9488', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                            <span>📞</span> {instructor.phone}
+                          </p>
+                        )}
                         
                         <div className="im-card-badges">
                           <span className="im-badge-cert">
@@ -572,6 +745,25 @@ const InstructorManagement = () => {
                           <span className="im-badge-level" style={{ background: instructor.school && instructor.school !== 'Individual / Freelance Coach' ? 'rgba(13, 148, 136, 0.12)' : 'rgba(59, 130, 246, 0.12)', color: instructor.school && instructor.school !== 'Individual / Freelance Coach' ? '#0D9488' : '#2563EB', borderColor: 'transparent' }}>
                             {instructor.school ? (instructor.school.length > 20 ? instructor.school.slice(0, 18) + '...' : instructor.school) : 'Individual Coach'}
                           </span>
+                          {(instructor.is_on_leave || instructor.active_leave) && (
+                            <span 
+                              style={{ 
+                                background: '#FEE2E2', 
+                                color: '#DC2626', 
+                                border: '1px solid #FCA5A5', 
+                                padding: '3px 8px', 
+                                borderRadius: '12px', 
+                                fontSize: '11px', 
+                                fontWeight: 800,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '3px'
+                              }}
+                              title={instructor.active_leave ? `On Leave: ${instructor.active_leave.start_date} to ${instructor.active_leave.end_date}` : 'Currently On Leave'}
+                            >
+                              🏖️ On Leave
+                            </span>
+                          )}
                         </div>
 
                         <div className="im-card-divider" />
@@ -599,6 +791,7 @@ const InstructorManagement = () => {
                           <button className="im-card-view-profile" onClick={() => navigate(`/instructors/${instructor.id}`)}>
                             View Profile
                           </button>
+
 
                           <button
                             type="button"
@@ -757,6 +950,18 @@ const InstructorManagement = () => {
                     required
                     readOnly
                     onFocus={e => e.target.removeAttribute('readOnly')}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Phone Number (WhatsApp) <span style={{ color: '#EF4444' }}>*</span></label>
+                  <input
+                    type="tel"
+                    name="coach_registration_phone"
+                    placeholder="e.g. +91 98765 43210"
+                    value={form.phone || ''}
+                    onChange={e => setForm({...form, phone: e.target.value})}
+                    required
                   />
                 </div>
 
@@ -1059,7 +1264,487 @@ const InstructorManagement = () => {
           )}
         </div>
 
-        {/* ── Direct Coach / Instructor Invite Link Modal ── */}
+        {/* LEAVE REQUESTS POPUP MODAL FOR SCHOOL ADMIN */}
+        {showLeaveModal && (
+          <div
+            className="im-modal-overlay"
+            onClick={() => setShowLeaveModal(false)}
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(5, 11, 26, 0.65)',
+              backdropFilter: 'blur(6px)',
+              zIndex: 9990,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '20px',
+              animation: 'imFadeIn 0.2s ease-out'
+            }}
+          >
+            <div
+              className="im-leave-modal"
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                maxWidth: '960px',
+                width: '100%',
+                maxHeight: '90vh',
+                backgroundColor: '#F8FAFC',
+                borderRadius: '24px',
+                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.35)',
+                border: '1px solid #E2E8F0',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden'
+              }}
+            >
+              {/* Modal Header */}
+              <div
+                style={{
+                  padding: '20px 28px',
+                  backgroundColor: '#FFFFFF',
+                  borderBottom: '1px solid #E2E8F0',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  flexShrink: 0
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                  <div
+                    style={{
+                      width: '46px',
+                      height: '46px',
+                      borderRadius: '14px',
+                      background: 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)',
+                      color: '#FFFFFF',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '22px',
+                      boxShadow: '0 4px 12px rgba(13, 148, 136, 0.25)'
+                    }}
+                  >
+                    📅
+                  </div>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 800, color: '#0F172A', fontFamily: 'Outfit, sans-serif' }}>
+                        Instructor Leave Requests
+                      </h2>
+                      {pendingLeavesCount > 0 && (
+                        <span
+                          style={{
+                            background: '#FEE2E2',
+                            color: '#DC2626',
+                            fontSize: '12px',
+                            fontWeight: 800,
+                            padding: '2px 9px',
+                            borderRadius: '8px',
+                            border: '1px solid #FECDD3'
+                          }}
+                        >
+                          {pendingLeavesCount} Pending
+                        </span>
+                      )}
+                    </div>
+                    <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#64748B' }}>
+                      Review and approve leave applications submitted by coaches and instructors.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowLeaveModal(false)}
+                  style={{
+                    width: '38px',
+                    height: '38px',
+                    borderRadius: '12px',
+                    border: '1px solid #E2E8F0',
+                    backgroundColor: '#F8FAFC',
+                    color: '#64748B',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    fontSize: '18px',
+                    fontWeight: 700,
+                    transition: 'all 0.15s ease'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = '#EF4444';
+                    e.currentTarget.style.color = '#FFFFFF';
+                    e.currentTarget.style.borderColor = '#EF4444';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = '#F8FAFC';
+                    e.currentTarget.style.color = '#64748B';
+                    e.currentTarget.style.borderColor = '#E2E8F0';
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Modal Scrollable Body */}
+              <div
+                style={{
+                  padding: '24px 28px',
+                  overflowY: 'auto',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '20px',
+                  flex: 1
+                }}
+              >
+        {/* Metric Cards Row */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
+          <div style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '14px', padding: '18px 20px', display: 'flex', alignItems: 'center', gap: '14px', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }}>
+            <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(15, 23, 42, 0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px' }}>
+              📋
+            </div>
+            <div>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Total Requests</div>
+              <div style={{ fontSize: '24px', fontWeight: 800, color: '#0F172A', fontFamily: 'Outfit, sans-serif' }}>{leaveRequests.length}</div>
+            </div>
+          </div>
+
+          <div style={{ background: '#FFFFFF', border: '1px solid #FDE68A', borderRadius: '14px', padding: '18px 20px', display: 'flex', alignItems: 'center', gap: '14px', boxShadow: '0 2px 8px rgba(245, 158, 11, 0.08)' }}>
+            <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: '#FEF3C7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px', color: '#D97706' }}>
+              ⏳
+            </div>
+            <div>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: '#D97706', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Pending Review</div>
+              <div style={{ fontSize: '24px', fontWeight: 800, color: '#B45309', fontFamily: 'Outfit, sans-serif' }}>
+                {leaveRequests.filter(l => (l.status || '').toLowerCase() === 'pending').length}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ background: '#FFFFFF', border: '1px solid #A7F3D0', borderRadius: '14px', padding: '18px 20px', display: 'flex', alignItems: 'center', gap: '14px', boxShadow: '0 2px 8px rgba(16, 185, 129, 0.08)' }}>
+            <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: '#DCFCE7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px', color: '#10B981' }}>
+              ✅
+            </div>
+            <div>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: '#15803D', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Approved</div>
+              <div style={{ fontSize: '24px', fontWeight: 800, color: '#166534', fontFamily: 'Outfit, sans-serif' }}>
+                {leaveRequests.filter(l => (l.status || '').toLowerCase() === 'approved').length}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ background: '#FFFFFF', border: '1px solid #FECDD3', borderRadius: '14px', padding: '18px 20px', display: 'flex', alignItems: 'center', gap: '14px', boxShadow: '0 2px 8px rgba(239, 68, 68, 0.08)' }}>
+            <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: '#FFE4E6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px', color: '#F43F5E' }}>
+              ❌
+            </div>
+            <div>
+              <div style={{ fontSize: '12px', fontWeight: 700, color: '#BE123C', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Rejected</div>
+              <div style={{ fontSize: '24px', fontWeight: 800, color: '#9F1239', fontFamily: 'Outfit, sans-serif' }}>
+                {leaveRequests.filter(l => (l.status || '').toLowerCase() === 'rejected').length}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Filter and Search Bar */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap', background: '#FFFFFF', padding: '14px 18px', borderRadius: '14px', border: '1px solid #E2E8F0' }}>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {['All', 'Pending', 'Approved', 'Rejected'].map(st => (
+              <button
+                key={st}
+                type="button"
+                onClick={() => setLeaveFilterStatus(st)}
+                style={{
+                  padding: '7px 16px',
+                  borderRadius: '10px',
+                  border: '1px solid',
+                  borderColor: leaveFilterStatus === st ? '#0F172A' : '#E2E8F0',
+                  background: leaveFilterStatus === st ? '#0F172A' : '#F8FAFC',
+                  color: leaveFilterStatus === st ? '#FFFFFF' : '#475569',
+                  fontWeight: 700,
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                {st === 'All' ? 'All Requests' : st}
+                {st === 'Pending' && pendingLeavesCount > 0 && ` (${pendingLeavesCount})`}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, maxWidth: '360px', minWidth: '240px' }}>
+            <input
+              type="text"
+              placeholder="Search coach, leave type, reason..."
+              value={leaveSearch}
+              onChange={(e) => setLeaveSearch(e.target.value)}
+              style={{
+                width: '100%',
+                padding: '9px 14px',
+                borderRadius: '10px',
+                border: '1.5px solid #CBD5E1',
+                fontSize: '13.5px',
+                outline: 'none',
+                fontFamily: 'inherit'
+              }}
+            />
+            <button
+              type="button"
+              onClick={fetchLeaveRequests}
+              style={{
+                padding: '9px 14px',
+                borderRadius: '10px',
+                border: '1px solid #CBD5E1',
+                background: '#F8FAFC',
+                cursor: 'pointer',
+                fontSize: '13px',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px'
+              }}
+              title="Refresh leave requests"
+            >
+              🔄
+            </button>
+          </div>
+        </div>
+
+        {/* Leave Requests Cards List */}
+        {leaveLoading ? (
+          <div className="db-loading"><div className="db-spinner" /></div>
+        ) : filteredLeaves.length === 0 ? (
+          <div style={{ background: '#FFFFFF', border: '1px dashed #CBD5E1', borderRadius: '16px', padding: '60px 20px', textAlign: 'center', color: '#64748B' }}>
+            <div style={{ fontSize: '48px', marginBottom: '12px' }}>🏖️</div>
+            <h3 style={{ margin: '0 0 6px 0', color: '#0F172A', fontSize: '18px', fontWeight: 700 }}>No Leave Requests Found</h3>
+            <p style={{ margin: 0, fontSize: '13.5px' }}>
+              {leaveFilterStatus !== 'All' ? `No ${leaveFilterStatus.toLowerCase()} requests match your filter.` : "Instructors from your school haven't submitted any leave requests yet."}
+            </p>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            {filteredLeaves.map(leave => {
+              const isPending = (leave.status || '').toLowerCase() === 'pending';
+              const isApproved = (leave.status || '').toLowerCase() === 'approved';
+              const isRejected = (leave.status || '').toLowerCase() === 'rejected';
+
+              return (
+                <div
+                  key={leave.id}
+                  style={{
+                    background: '#FFFFFF',
+                    border: '1px solid',
+                    borderColor: isPending ? '#FDE68A' : (isApproved ? '#A7F3D0' : '#E2E8F0'),
+                    borderRadius: '16px',
+                    padding: '20px 24px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '14px',
+                    boxShadow: '0 2px 10px rgba(0,0,0,0.03)',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  {/* Top Row: Coach Info + Leave Type + Status */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                      {leave.instructor_avatar ? (
+                        <img
+                          src={leave.instructor_avatar}
+                          alt={leave.instructor_name}
+                          style={{ width: '48px', height: '48px', borderRadius: '24px', objectFit: 'cover' }}
+                        />
+                      ) : (
+                        <div style={{ width: '48px', height: '48px', borderRadius: '24px', background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)', color: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', fontWeight: 800 }}>
+                          {(leave.instructor_name || 'C')[0].toUpperCase()}
+                        </div>
+                      )}
+
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <h3
+                            onClick={() => navigate(`/instructors/${leave.instructor_id}`)}
+                            style={{ margin: 0, fontSize: '16px', fontWeight: 800, color: '#0F172A', cursor: 'pointer', textDecoration: 'none' }}
+                            title="Click to view coach profile"
+                          >
+                            {leave.instructor_name}
+                          </h3>
+                          <span style={{ fontSize: '11px', background: '#F1F5F9', color: '#475569', padding: '2px 8px', borderRadius: '10px', fontWeight: 600 }}>
+                            {leave.school || 'Freelance Coach'}
+                          </span>
+                        </div>
+                        <p style={{ margin: '2px 0 0 0', fontSize: '12.5px', color: '#64748B' }}>
+                          {leave.instructor_email || 'Coach'} • Applied on {leave.created_at || 'Recently'}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Status & Type Pills */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span
+                        style={{
+                          padding: '5px 12px',
+                          borderRadius: '20px',
+                          fontSize: '12px',
+                          fontWeight: 700,
+                          background: '#F0FDF4',
+                          color: '#15803D',
+                          border: '1px solid #BBF7D0'
+                        }}
+                      >
+                        {leave.leave_type}
+                      </span>
+
+                      <span
+                        style={{
+                          padding: '5px 14px',
+                          borderRadius: '20px',
+                          fontSize: '12px',
+                          fontWeight: 800,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '5px',
+                          background: isApproved ? '#DCFCE7' : (isRejected ? '#FEE2E2' : '#FEF3C7'),
+                          color: isApproved ? '#15803D' : (isRejected ? '#B91C1C' : '#B45309'),
+                          border: '1px solid',
+                          borderColor: isApproved ? '#86EFAC' : (isRejected ? '#FCA5A5' : '#FCD34D')
+                        }}
+                      >
+                        {isApproved ? '✅ Approved' : (isRejected ? '❌ Rejected' : '⏳ Pending Review')}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Middle Row: Date Range + Total Days + Reason */}
+                  <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '14px', background: '#F8FAFC', padding: '12px 16px', borderRadius: '12px', border: '1px solid #F1F5F9' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '16px' }}>📅</span>
+                      <div>
+                        <span style={{ fontSize: '11px', textTransform: 'uppercase', color: '#64748B', fontWeight: 700 }}>Leave Period</span>
+                        <div style={{ fontSize: '14px', fontWeight: 800, color: '#0F172A' }}>
+                          {leave.start_date} {leave.end_date && leave.end_date !== leave.start_date ? `➔ ${leave.end_date}` : ''}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ height: '24px', width: '1px', background: '#CBD5E1' }} />
+
+                    <div>
+                      <span style={{ fontSize: '11px', textTransform: 'uppercase', color: '#64748B', fontWeight: 700 }}>Total Duration</span>
+                      <div style={{ fontSize: '14px', fontWeight: 800, color: '#0D9488' }}>
+                        {leave.total_days} Day{leave.total_days > 1 ? 's' : ''}
+                      </div>
+                    </div>
+
+                    {leave.reason && (
+                      <>
+                        <div style={{ height: '24px', width: '1px', background: '#CBD5E1' }} />
+                        <div style={{ flex: 1, minWidth: '200px' }}>
+                          <span style={{ fontSize: '11px', textTransform: 'uppercase', color: '#64748B', fontWeight: 700 }}>Coach Reason / Notes</span>
+                          <div style={{ fontSize: '13px', color: '#334155', fontStyle: 'italic' }}>
+                            "{leave.reason}"
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Admin Remarks if present */}
+                  {leave.admin_notes && (
+                    <div style={{ padding: '8px 14px', background: 'rgba(13, 148, 136, 0.08)', borderRadius: '10px', border: '1px solid rgba(13, 148, 136, 0.2)', fontSize: '13px', color: '#0F766E' }}>
+                      <strong>Admin Feedback:</strong> {leave.admin_notes}
+                    </div>
+                  )}
+
+                  {/* Action Buttons Row: Direct 1-click Approve or Reject */}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '10px', paddingTop: '4px' }}>
+                    {isPending ? (
+                      <>
+                        <button
+                          type="button"
+                          disabled={actionLoadingId === leave.id}
+                          onClick={() => handleUpdateLeaveStatus(leave.id, 'Rejected')}
+                          style={{
+                            padding: '8px 18px',
+                            borderRadius: '10px',
+                            border: '1.5px solid #FCA5A5',
+                            background: '#FFF',
+                            color: '#DC2626',
+                            fontWeight: 700,
+                            fontSize: '13px',
+                            cursor: actionLoadingId === leave.id ? 'not-allowed' : 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          <span>{actionLoadingId === leave.id ? 'Rejecting...' : '❌ Reject'}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={actionLoadingId === leave.id}
+                          onClick={() => handleUpdateLeaveStatus(leave.id, 'Approved')}
+                          style={{
+                            padding: '8px 20px',
+                            borderRadius: '10px',
+                            border: 'none',
+                            background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
+                            color: '#FFFFFF',
+                            fontWeight: 700,
+                            fontSize: '13px',
+                            cursor: actionLoadingId === leave.id ? 'not-allowed' : 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)',
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          <span>{actionLoadingId === leave.id ? 'Approving...' : '✓ Approve'}</span>
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={actionLoadingId === leave.id}
+                        onClick={() => setChangeApprovalLeave(leave)}
+                        style={{
+                          padding: '7px 16px',
+                          borderRadius: '8px',
+                          border: '1.5px solid #CBD5E1',
+                          background: '#FFFFFF',
+                          color: '#334155',
+                          fontSize: '12.5px',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                          transition: 'all 0.15s ease'
+                        }}
+                      >
+                        <span>✏️ Change Approval</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            </div>
+          )}
+              </div>
+            </div>
+          </div>
+        )}
+
+    {/* ── Direct Coach / Instructor Invite Link Modal ── */}
         {inviteModalData && (
           <div
             className="im-modal-overlay"
@@ -1428,6 +2113,151 @@ const InstructorManagement = () => {
                   }}
                 >
                   {confirmDialog.confirmText || 'Confirm'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* CHANGE APPROVAL MODAL (Clean 1-Click Approve / Reject, No Remarks) */}
+        {changeApprovalLeave && (
+          <div
+            className="im-modal-overlay"
+            onClick={() => setChangeApprovalLeave(null)}
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: 'rgba(5, 11, 26, 0.65)',
+              backdropFilter: 'blur(6px)',
+              zIndex: 10050,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '20px'
+            }}
+          >
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{
+                width: '100%',
+                maxWidth: '440px',
+                background: '#FFFFFF',
+                borderRadius: '20px',
+                padding: '24px',
+                boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '16px'
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: '#0F172A', fontFamily: 'Outfit, sans-serif' }}>
+                  Change Approval
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setChangeApprovalLeave(null)}
+                  style={{ background: 'none', border: 'none', fontSize: '22px', cursor: 'pointer', color: '#64748B' }}
+                >
+                  &times;
+                </button>
+              </div>
+
+              <div style={{ padding: '12px 14px', background: '#F8FAFC', borderRadius: '12px', border: '1px solid #E2E8F0', fontSize: '13px', color: '#334155' }}>
+                <div><strong>Coach:</strong> {changeApprovalLeave.instructor_name}</div>
+                <div style={{ marginTop: '4px' }}><strong>Period:</strong> {changeApprovalLeave.start_date} to {changeApprovalLeave.end_date} ({changeApprovalLeave.total_days} Day{changeApprovalLeave.total_days === 1 ? '' : 's'})</div>
+                <div style={{ marginTop: '4px' }}><strong>Type:</strong> {changeApprovalLeave.leave_type}</div>
+                <div style={{ marginTop: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <strong>Current Status:</strong>
+                  <span style={{
+                    padding: '2px 8px',
+                    borderRadius: '6px',
+                    fontSize: '11.5px',
+                    fontWeight: 700,
+                    background: changeApprovalLeave.status === 'Approved' ? '#DCFCE7' : '#FEE2E2',
+                    color: changeApprovalLeave.status === 'Approved' ? '#15803D' : '#B91C1C'
+                  }}>
+                    {changeApprovalLeave.status}
+                  </span>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', marginTop: '4px' }}>
+                <button
+                  type="button"
+                  disabled={actionLoadingId === changeApprovalLeave.id}
+                  onClick={async () => {
+                    await handleUpdateLeaveStatus(changeApprovalLeave.id, 'Approved');
+                    setChangeApprovalLeave(null);
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '12px 16px',
+                    borderRadius: '12px',
+                    border: 'none',
+                    background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
+                    color: '#FFFFFF',
+                    fontWeight: 700,
+                    fontSize: '14px',
+                    cursor: actionLoadingId === changeApprovalLeave.id ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                    boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)',
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  <span>{actionLoadingId === changeApprovalLeave.id ? 'Saving...' : '✓ Approve'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={actionLoadingId === changeApprovalLeave.id}
+                  onClick={async () => {
+                    await handleUpdateLeaveStatus(changeApprovalLeave.id, 'Rejected');
+                    setChangeApprovalLeave(null);
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '12px 16px',
+                    borderRadius: '12px',
+                    border: '1.5px solid #FCA5A5',
+                    background: '#FEF2F2',
+                    color: '#DC2626',
+                    fontWeight: 700,
+                    fontSize: '14px',
+                    cursor: actionLoadingId === changeApprovalLeave.id ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '8px',
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  <span>{actionLoadingId === changeApprovalLeave.id ? 'Saving...' : '❌ Reject'}</span>
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '2px' }}>
+                <button
+                  type="button"
+                  onClick={() => setChangeApprovalLeave(null)}
+                  style={{
+                    padding: '7px 16px',
+                    borderRadius: '8px',
+                    border: '1px solid #CBD5E1',
+                    background: '#F8FAFC',
+                    color: '#64748B',
+                    fontWeight: 600,
+                    fontSize: '13px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Cancel
                 </button>
               </div>
             </div>

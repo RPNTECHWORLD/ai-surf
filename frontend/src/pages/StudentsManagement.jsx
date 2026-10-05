@@ -40,6 +40,7 @@ const StudentsManagement = () => {
   const [showSchoolInviteModal, setShowSchoolInviteModal] = useState(false);
   const [inviteCapacityCount, setInviteCapacityCount] = useState(3);
   const [inviteCourseDuration, setInviteCourseDuration] = useState('3 Days Course');
+  const [inviteStartDate, setInviteStartDate] = useState('');
   const [createdSchoolInvite, setCreatedSchoolInvite] = useState(null);
   const [schoolInviteLoading, setSchoolInviteLoading] = useState(false);
   const [copiedSchoolInviteCode, setCopiedSchoolInviteCode] = useState(null);
@@ -1669,6 +1670,7 @@ const StudentsManagement = () => {
       const n = parseInt(matchNum[1], 10);
       chosenDuration = n === 1 ? '1 Day Crash Course' : `${n} Days Course`;
     }
+    const sDate = inviteStartDate ? inviteStartDate.trim() : null;
     setSchoolInviteLoading(true);
     try {
       const res = await fetch(`${API}/api/school-invites`, {
@@ -1677,16 +1679,19 @@ const StudentsManagement = () => {
         body: JSON.stringify({
           school: effectiveSchool,
           max_count: count,
-          course_duration: chosenDuration
+          course_duration: chosenDuration,
+          start_date: sDate
         })
       });
       if (res.ok) {
         const data = await res.json();
         const origin = window.location.origin;
         const dur = data.course_duration || chosenDuration;
+        const sDateVal = data.start_date || sDate;
+        const startDateParam = sDateVal ? `&start_date=${encodeURIComponent(sDateVal)}` : '';
         const coachParam = isCoach && currentCoachName ? `&coach=${encodeURIComponent(currentCoachName)}&coach_id=${encodeURIComponent(currentCoachId || '')}` : '';
-        const fullUrl = `${origin}/auth?mode=signup&invite_code=${data.code}&school=${encodeURIComponent(data.school)}&course_duration=${encodeURIComponent(dur)}${coachParam}`;
-        const newInviteObj = { ...data, course_duration: dur, fullUrl };
+        const fullUrl = `${origin}/auth?mode=signup&invite_code=${data.code}&school=${encodeURIComponent(data.school)}&course_duration=${encodeURIComponent(dur)}${startDateParam}${coachParam}`;
+        const newInviteObj = { ...data, course_duration: dur, start_date: sDateVal, fullUrl };
         setCreatedSchoolInvite(newInviteObj);
         setSchoolInvitesList(prev => [newInviteObj, ...prev]);
 
@@ -1694,7 +1699,7 @@ const StudentsManagement = () => {
           await navigator.clipboard.writeText(fullUrl);
         }
         setCopiedSchoolInviteCode(data.code);
-        showToast(`✓ Invite link for ${count} student(s) (${dur}) copied to clipboard!`);
+        showToast(`✓ Invite link for ${count} student(s) (${dur}${sDateVal ? ` • Starts ${sDateVal}` : ''}) copied to clipboard!`);
       } else {
         const err = await res.json();
         showToast(err.detail || 'Failed to generate invite link');
@@ -1703,14 +1708,17 @@ const StudentsManagement = () => {
       // Local fallback
       const mockCode = `inv_${Date.now().toString(36)}`;
       const origin = window.location.origin;
+      const sDateVal = sDate;
+      const startDateParam = sDateVal ? `&start_date=${encodeURIComponent(sDateVal)}` : '';
       const coachParam = isCoach && currentCoachName ? `&coach=${encodeURIComponent(currentCoachName)}&coach_id=${encodeURIComponent(currentCoachId || '')}` : '';
-      const fullUrl = `${origin}/auth?mode=signup&invite_code=${mockCode}&school=${encodeURIComponent(effectiveSchool)}&course_duration=${encodeURIComponent(chosenDuration)}${coachParam}`;
+      const fullUrl = `${origin}/auth?mode=signup&invite_code=${mockCode}&school=${encodeURIComponent(effectiveSchool)}&course_duration=${encodeURIComponent(chosenDuration)}${startDateParam}${coachParam}`;
       const newInviteObj = {
         id: Date.now(),
         code: mockCode,
         school: effectiveSchool,
         max_count: count,
         course_duration: chosenDuration,
+        start_date: sDateVal,
         used_count: 0,
         remaining: count,
         is_active: true,
@@ -1728,7 +1736,7 @@ const StudentsManagement = () => {
         await navigator.clipboard.writeText(fullUrl);
       }
       setCopiedSchoolInviteCode(mockCode);
-      showToast(`✓ Invite link for ${count} student(s) (${chosenDuration}) copied to clipboard!`);
+      showToast(`✓ Invite link for ${count} student(s) (${chosenDuration}${sDateVal ? ` • Starts ${sDateVal}` : ''}) copied to clipboard!`);
     } finally {
       setSchoolInviteLoading(false);
     }
@@ -1737,8 +1745,9 @@ const StudentsManagement = () => {
   const copySchoolInviteLink = async (inv) => {
     const origin = window.location.origin;
     const durParam = inv.course_duration ? `&course_duration=${encodeURIComponent(inv.course_duration)}` : '';
+    const startDateParam = inv.start_date ? `&start_date=${encodeURIComponent(inv.start_date)}` : '';
     const coachParam = isCoach && currentCoachName ? `&coach=${encodeURIComponent(currentCoachName)}&coach_id=${encodeURIComponent(currentCoachId || '')}` : '';
-    const link = inv.fullUrl || `${origin}/auth?mode=signup&invite_code=${inv.code}&school=${encodeURIComponent(inv.school || effectiveSchool)}${durParam}${coachParam}`;
+    const link = inv.fullUrl || `${origin}/auth?mode=signup&invite_code=${inv.code}&school=${encodeURIComponent(inv.school || effectiveSchool)}${durParam}${startDateParam}${coachParam}`;
     if (navigator.clipboard) {
       await navigator.clipboard.writeText(link);
     }
@@ -2167,44 +2176,144 @@ const StudentsManagement = () => {
               className="sm-search-input"
             />
           </div>
-          {/* 1. Calendar Date Picker */}
-          <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
-            <input
-              type="date"
-              className="sm-select"
-              value={dateFilter === 'All' ? '' : dateFilter}
-              onChange={e => setDateFilter(e.target.value || 'All')}
-              style={{
-                cursor: 'pointer',
-                paddingRight: dateFilter !== 'All' ? '28px' : '10px',
-                fontWeight: dateFilter !== 'All' ? 700 : 500,
-                color: dateFilter !== 'All' ? '#0D9488' : '#334155',
-                borderColor: dateFilter !== 'All' ? '#0D9488' : '#CBD5E1',
-                background: dateFilter !== 'All' ? '#E6F9F5' : '#FFFFFF'
-              }}
-              title="Click to select date from calendar"
-            />
-            {dateFilter !== 'All' && (
-              <button
-                type="button"
-                onClick={() => setDateFilter('All')}
-                style={{
-                  position: 'absolute',
-                  right: '8px',
-                  background: 'none',
-                  border: 'none',
-                  color: '#0D9488',
-                  cursor: 'pointer',
-                  fontSize: '14px',
-                  fontWeight: 700,
-                  lineHeight: 1
-                }}
-                title="Clear date filter (Show All Dates)"
-              >
-                ✕
-              </button>
-            )}
-          </div>
+          {/* Quick Date Filters: Yesterday - Today - Tomorrow - [Date Calendar] */}
+          {(() => {
+            const getIsoDate = (offset = 0) => {
+              const d = new Date();
+              if (offset !== 0) d.setDate(d.getDate() + offset);
+              const y = d.getFullYear();
+              const m = String(d.getMonth() + 1).padStart(2, '0');
+              const day = String(d.getDate()).padStart(2, '0');
+              return `${y}-${m}-${day}`;
+            };
+            const yestIso = getIsoDate(-1);
+            const todayIso = getIsoDate(0);
+            const tomIso = getIsoDate(1);
+            const isCustomDate = dateFilter !== 'All' && dateFilter !== yestIso && dateFilter !== todayIso && dateFilter !== tomIso;
+
+            return (
+              <div className="sm-date-quick-bar" style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                background: '#F8FAFC',
+                border: '1.5px solid #CBD5E1',
+                borderRadius: '12px',
+                padding: '3px 4px',
+                gap: '4px',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                flexShrink: 0
+              }}>
+                <button
+                  type="button"
+                  onClick={() => setDateFilter(prev => prev === yestIso ? 'All' : yestIso)}
+                  style={{
+                    padding: '8px 14px',
+                    borderRadius: '8px',
+                    border: dateFilter === yestIso ? '1.5px solid #0D9488' : '1px solid transparent',
+                    background: dateFilter === yestIso ? 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)' : '#FFFFFF',
+                    color: dateFilter === yestIso ? '#FFFFFF' : '#334155',
+                    fontWeight: 700,
+                    fontSize: '12.5px',
+                    fontFamily: "'Outfit', sans-serif",
+                    cursor: 'pointer',
+                    boxShadow: dateFilter === yestIso ? '0 2px 8px rgba(13, 148, 136, 0.35)' : '0 1px 2px rgba(0,0,0,0.04)',
+                    transition: 'all 0.15s ease',
+                    whiteSpace: 'nowrap'
+                  }}
+                  title="Filter students starting yesterday"
+                >
+                  Yesterday
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDateFilter(prev => prev === todayIso ? 'All' : todayIso)}
+                  style={{
+                    padding: '8px 14px',
+                    borderRadius: '8px',
+                    border: dateFilter === todayIso ? '1.5px solid #0D9488' : '1px solid transparent',
+                    background: dateFilter === todayIso ? 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)' : '#FFFFFF',
+                    color: dateFilter === todayIso ? '#FFFFFF' : '#334155',
+                    fontWeight: 700,
+                    fontSize: '12.5px',
+                    fontFamily: "'Outfit', sans-serif",
+                    cursor: 'pointer',
+                    boxShadow: dateFilter === todayIso ? '0 2px 8px rgba(13, 148, 136, 0.35)' : '0 1px 2px rgba(0,0,0,0.04)',
+                    transition: 'all 0.15s ease',
+                    whiteSpace: 'nowrap'
+                  }}
+                  title="Filter students starting today"
+                >
+                  Today
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDateFilter(prev => prev === tomIso ? 'All' : tomIso)}
+                  style={{
+                    padding: '8px 14px',
+                    borderRadius: '8px',
+                    border: dateFilter === tomIso ? '1.5px solid #0D9488' : '1px solid transparent',
+                    background: dateFilter === tomIso ? 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)' : '#FFFFFF',
+                    color: dateFilter === tomIso ? '#FFFFFF' : '#334155',
+                    fontWeight: 700,
+                    fontSize: '12.5px',
+                    fontFamily: "'Outfit', sans-serif",
+                    cursor: 'pointer',
+                    boxShadow: dateFilter === tomIso ? '0 2px 8px rgba(13, 148, 136, 0.35)' : '0 1px 2px rgba(0,0,0,0.04)',
+                    transition: 'all 0.15s ease',
+                    whiteSpace: 'nowrap'
+                  }}
+                  title="Filter students starting tomorrow"
+                >
+                  Tomorrow
+                </button>
+
+                {/* Calendar Date Picker Input */}
+                <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+                  <input
+                    type="date"
+                    value={dateFilter === 'All' ? '' : dateFilter}
+                    onChange={e => setDateFilter(e.target.value || 'All')}
+                    style={{
+                      height: '36px',
+                      padding: '0 26px 0 10px',
+                      borderRadius: '8px',
+                      border: isCustomDate ? '1.5px solid #0D9488' : '1px solid #CBD5E1',
+                      background: isCustomDate ? '#E6F9F5' : '#FFFFFF',
+                      color: dateFilter !== 'All' ? '#0D9488' : '#64748B',
+                      fontWeight: dateFilter !== 'All' ? 700 : 500,
+                      fontSize: '12.5px',
+                      cursor: 'pointer',
+                      outline: 'none',
+                      boxShadow: isCustomDate ? '0 2px 8px rgba(13, 148, 136, 0.25)' : '0 1px 2px rgba(0,0,0,0.04)',
+                      transition: 'all 0.15s ease'
+                    }}
+                    title="Click to select specific date from calendar"
+                  />
+                  {dateFilter !== 'All' && (
+                    <button
+                      type="button"
+                      onClick={() => setDateFilter('All')}
+                      style={{
+                        position: 'absolute',
+                        right: '7px',
+                        background: 'none',
+                        border: 'none',
+                        color: '#0D9488',
+                        cursor: 'pointer',
+                        fontSize: '14px',
+                        fontWeight: 800,
+                        lineHeight: 1,
+                        padding: '2px'
+                      }}
+                      title="Clear date filter (Show All Dates)"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* 2. Swimming Ability Filter */}
           <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
@@ -4471,6 +4580,69 @@ const StudentsManagement = () => {
                   </div>
                 </div>
 
+                {/* Course Start Date Block (Optional Lock) */}
+                <div style={{ marginBottom: '20px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: '800', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      Course Start Date <span style={{ fontSize: '11px', fontWeight: 600, color: '#94A3B8', textTransform: 'none' }}>(Optional)</span>
+                    </label>
+                    <span style={{
+                      fontSize: '11px',
+                      fontWeight: '800',
+                      background: inviteStartDate ? '#DCFCE7' : '#F1F5F9',
+                      color: inviteStartDate ? '#15803D' : '#64748B',
+                      padding: '2px 8px',
+                      borderRadius: '6px'
+                    }}>
+                      {inviteStartDate ? `🔒 Locked to ${inviteStartDate}` : '🔓 Student Selects Date'}
+                    </span>
+                  </div>
+                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <input
+                      type="date"
+                      value={inviteStartDate}
+                      onChange={e => setInviteStartDate(e.target.value)}
+                      style={{
+                        flex: 1,
+                        padding: '10px 14px',
+                        borderRadius: '10px',
+                        border: inviteStartDate ? '1.5px solid #10B981' : '1.5px solid #CBD5E1',
+                        fontSize: '14px',
+                        fontWeight: '700',
+                        color: '#0F172A',
+                        background: inviteStartDate ? '#F0FDF4' : '#F8FAFC',
+                        outline: 'none',
+                        boxSizing: 'border-box'
+                      }}
+                    />
+                    {inviteStartDate && (
+                      <button
+                        type="button"
+                        onClick={() => setInviteStartDate('')}
+                        style={{
+                          background: '#FEE2E2',
+                          border: '1px solid #FCA5A5',
+                          color: '#DC2626',
+                          borderRadius: '8px',
+                          padding: '10px 12px',
+                          fontSize: '12px',
+                          fontWeight: '800',
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap'
+                        }}
+                        title="Clear start date to let student choose on signup"
+                      >
+                        ✕ Clear
+                      </button>
+                    )}
+                  </div>
+                  <p style={{ margin: '6px 0 0 0', fontSize: '11.5px', color: '#64748B', lineHeight: '1.4' }}>
+                    {inviteStartDate
+                      ? '🔒 Start date will be strictly locked in the student onboarding form.'
+                      : '💡 Leave empty so student can choose their start date on onboarding (Start date will be mandatory).'}
+                  </p>
+                </div>
+
                 {/* Generate Button */}
                 <button
                   type="button"
@@ -4610,61 +4782,124 @@ const StudentsManagement = () => {
                       </span>
                     </button>
 
-                    {/* Small Calendar Filter Input */}
-                    <div style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '5px',
-                      background: inviteHistoryDateFilter ? '#F0FDFA' : '#F8FAFC',
-                      border: inviteHistoryDateFilter ? '1.5px solid #0D9488' : '1.5px solid #CBD5E1',
-                      borderRadius: '20px',
-                      padding: '3px 10px',
-                      boxShadow: inviteHistoryDateFilter ? '0 1px 4px rgba(13,148,136,0.15)' : 'none',
-                      transition: 'all 0.2s'
-                    }}>
-                      <span style={{ fontSize: '13px' }}>📅</span>
-                      <input
-                        type="date"
-                        value={inviteHistoryDateFilter}
-                        onChange={e => setInviteHistoryDateFilter(e.target.value)}
-                        style={{
-                          border: 'none',
-                          background: 'transparent',
-                          fontSize: '11.5px',
-                          fontWeight: 700,
-                          color: inviteHistoryDateFilter ? '#0D9488' : '#475569',
-                          outline: 'none',
-                          cursor: 'pointer',
-                          padding: 0
-                        }}
-                        title="Filter invite links by creation date"
-                      />
-                      {inviteHistoryDateFilter && (
-                        <button
-                          type="button"
-                          onClick={() => setInviteHistoryDateFilter('')}
-                          style={{
-                            background: '#0D9488',
-                            color: '#FFFFFF',
-                            border: 'none',
-                            borderRadius: '50%',
-                            width: '16px',
-                            height: '16px',
+                    {/* History Quick Date Filters: Yesterday - Today - Tomorrow + Calendar */}
+                    {(() => {
+                      const getIsoDate = (offset = 0) => {
+                        const d = new Date();
+                        if (offset !== 0) d.setDate(d.getDate() + offset);
+                        const y = d.getFullYear();
+                        const m = String(d.getMonth() + 1).padStart(2, '0');
+                        const day = String(d.getDate()).padStart(2, '0');
+                        return `${y}-${m}-${day}`;
+                      };
+                      const yestIso = getIsoDate(-1);
+                      const todayIso = getIsoDate(0);
+                      const tomIso = getIsoDate(1);
+
+                      return (
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#F1F5F9', padding: '2px 4px', borderRadius: '20px', border: '1px solid #E2E8F0' }}>
+                          <button
+                            type="button"
+                            onClick={() => setInviteHistoryDateFilter(prev => prev === yestIso ? '' : yestIso)}
+                            style={{
+                              padding: '3px 8px',
+                              borderRadius: '14px',
+                              border: 'none',
+                              background: inviteHistoryDateFilter === yestIso ? '#0D9488' : 'transparent',
+                              color: inviteHistoryDateFilter === yestIso ? '#FFFFFF' : '#475569',
+                              fontWeight: 700,
+                              fontSize: '11px',
+                              cursor: 'pointer',
+                              boxShadow: inviteHistoryDateFilter === yestIso ? '0 1px 4px rgba(13,148,136,0.3)' : 'none',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            Yesterday
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setInviteHistoryDateFilter(prev => prev === todayIso ? '' : todayIso)}
+                            style={{
+                              padding: '3px 8px',
+                              borderRadius: '14px',
+                              border: 'none',
+                              background: inviteHistoryDateFilter === todayIso ? '#0D9488' : 'transparent',
+                              color: inviteHistoryDateFilter === todayIso ? '#FFFFFF' : '#475569',
+                              fontWeight: 700,
+                              fontSize: '11px',
+                              cursor: 'pointer',
+                              boxShadow: inviteHistoryDateFilter === todayIso ? '0 1px 4px rgba(13,148,136,0.3)' : 'none',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            Today
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setInviteHistoryDateFilter(prev => prev === tomIso ? '' : tomIso)}
+                            style={{
+                              padding: '3px 8px',
+                              borderRadius: '14px',
+                              border: 'none',
+                              background: inviteHistoryDateFilter === tomIso ? '#0D9488' : 'transparent',
+                              color: inviteHistoryDateFilter === tomIso ? '#FFFFFF' : '#475569',
+                              fontWeight: 700,
+                              fontSize: '11px',
+                              cursor: 'pointer',
+                              boxShadow: inviteHistoryDateFilter === tomIso ? '0 1px 4px rgba(13,148,136,0.3)' : 'none',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            Tomorrow
+                          </button>
+                          <div style={{
                             display: 'inline-flex',
                             alignItems: 'center',
-                            justifyContent: 'center',
-                            fontSize: '9px',
-                            cursor: 'pointer',
-                            fontWeight: 800,
-                            lineHeight: 1,
-                            padding: 0
-                          }}
-                          title="Clear date filter"
-                        >
-                          ✕
-                        </button>
-                      )}
-                    </div>
+                            gap: '4px',
+                            background: inviteHistoryDateFilter ? '#F0FDFA' : '#FFFFFF',
+                            border: inviteHistoryDateFilter ? '1px solid #0D9488' : '1px solid #CBD5E1',
+                            borderRadius: '14px',
+                            padding: '2px 8px'
+                          }}>
+                            <span style={{ fontSize: '11px' }}>📅</span>
+                            <input
+                              type="date"
+                              value={inviteHistoryDateFilter}
+                              onChange={e => setInviteHistoryDateFilter(e.target.value)}
+                              style={{
+                                border: 'none',
+                                background: 'transparent',
+                                fontSize: '11px',
+                                fontWeight: 700,
+                                color: inviteHistoryDateFilter ? '#0D9488' : '#475569',
+                                outline: 'none',
+                                cursor: 'pointer',
+                                padding: 0
+                              }}
+                              title="Filter by creation date"
+                            />
+                            {inviteHistoryDateFilter && (
+                              <button
+                                type="button"
+                                onClick={() => setInviteHistoryDateFilter('')}
+                                style={{
+                                  background: 'none',
+                                  border: 'none',
+                                  color: '#0D9488',
+                                  cursor: 'pointer',
+                                  fontSize: '11px',
+                                  fontWeight: 800,
+                                  padding: 0
+                                }}
+                                title="Clear date"
+                              >
+                                ✕
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   <span style={{ fontSize: '11.5px', color: '#64748B' }}>
@@ -4880,6 +5115,31 @@ const StudentsManagement = () => {
                                 }}>
                                   🗓️ {inv.course_duration || '3 Days Course'}
                                 </span>
+                                {inv.start_date ? (
+                                  <span style={{
+                                    fontSize: '11px',
+                                    color: '#15803D',
+                                    fontWeight: 700,
+                                    background: '#DCFCE7',
+                                    padding: '1px 7px',
+                                    borderRadius: '6px',
+                                    border: '1px solid #BBF7D0'
+                                  }}>
+                                    🔒 Starts: {inv.start_date}
+                                  </span>
+                                ) : (
+                                  <span style={{
+                                    fontSize: '11px',
+                                    color: '#64748B',
+                                    fontWeight: 600,
+                                    background: '#F1F5F9',
+                                    padding: '1px 7px',
+                                    borderRadius: '6px',
+                                    border: '1px solid #E2E8F0'
+                                  }}>
+                                    🔓 Flexible Start Date
+                                  </span>
+                                )}
                               </div>
 
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', fontSize: '11.5px' }}>

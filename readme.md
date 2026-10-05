@@ -448,5 +448,72 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
       - Added a `savedSessionIds` state tracking sessions saved during the browser session.
       - When reopening a previously saved session with no pending modifications, the button renders a clear **`✓ Saved`** label.
       - Editing any field or media instantly switches the button back to the active green **`Save Changes`** state.
- 
 
+05. **Competition Hub & Judges Management School Isolation (`JudgesManagement.jsx`, `HeatManagement.jsx`)**:
+    - **Problem**: When opening the "Judge" tab in Competitions Hub, freelance coaches (`demo11`, `Coach Surfer`, `Eric Sheldon RS co`, `Bharath G`) and dummy legacy judges (`Head 1`) were showing up under Active Judges for all schools instead of only the school's own instructors.
+    - **Root Cause**:
+      1. `/api/instructors` called without the `?school=` query parameter defaulted on the backend to returning only "Individual / Freelance Coach" profiles to prevent full unscoped data leaks.
+      2. `activeAdmitted` loop in `JudgesManagement.jsx` was merging existing judges indiscriminately into the active panel.
+    - **Updates**:
+      - Configured both `JudgesManagement.jsx` and `HeatManagement.jsx` to pass the logged-in user's school parameter (`/api/instructors?school=<userSchool>`).
+      - Added strict filtering in `activeAdmitted` so non-superadmin accounts only see instructors belonging to their school or guests admitted via competition invite links.
+      - Removed auto-synced dummy and freelance records from the local judging table.
+      - Implemented safe fallback handlers for `handleRemove` and `handleResyncNumbers`.
+
+06. **Session Heats Surfer Integrity & Routing Resiliency (`EventManagement.jsx`, `heats.js`, `App.jsx`)**:
+    - **Foreign Key Constraint**: Fixed SQLite/PostgreSQL `FOREIGN KEY constraint failed` when generating session heats by verifying and registering missing students into the surfers registry before heat creation.
+    - **Atomic Transactions**: Wrapped heat and heat-surfer batch creation in atomic database transactions.
+    - **Routing Fallback**: Added `/srpnsa` redirect alias and a wildcard (`*`) route in `App.jsx` pointing to `/competitions` to prevent blank screens on mistyped URLs.
+
+07. **Production Deployments (AWS EC2 & Vercel)**:
+    - **AWS EC2**: Deployed updated FastAPI backend (`backend/main.py`) to AWS EC2 (`i-0c62e04f44a9ea237`) via S3 & SSM with verified 200 OK live health checks.
+    - **Vercel Production**: Deployed latest frontend build to production at `https://www.athnexlive.com`.
+    - **Git**: Pushed all changes to branch `03-10-26`.
+
+### Changes on 05-10-2026
+
+01. **Coach Leave Management & School Admin Review Modal (`InstructorProfile.jsx`, `InstructorManagement.jsx`, `backend/main.py`)**:
+    - **Unified Admin Modal**: Streamlined the School Admin instructor management page by replacing fragmented buttons with a single, high-impact **"Leave Requests"** button that triggers a responsive Popup Modal dialog.
+    - **Review Metrics & Filters**: Added summary metric pills (`Pending`, `Approved`, `Rejected`), status filters, coach profile tags, and date range badges inside the review modal.
+    - **Stable Modal Height**: Fixed layout shifting and resizing when switching between "Apply Leave" and "My Requests" tabs in `InstructorProfile.jsx` by establishing a consistent modal height (`min(720px, 90vh)`).
+    - **Streamlined Decision Workflow**: Removed redundant "Withdraw" buttons and eliminated the secondary "Admin Remarks / Feedback" input field. For already decided leave requests (Approved or Rejected), cards display a dedicated **"✏️ Change Approval"** button. Clicking this triggers a clean, focused dialog with coach summary details and direct **`✓ Approve`** / **`❌ Reject`** action buttons, enabling frictionless status updates without remarks.
+    - **Status Reply Notifications**: Added real-time leave status indicators on the "Apply Leave" trigger button and an alert notification banner on the coach profile when leaves are reviewed or updated.
+
+02. **Student Performance Report Card & Session Notes Redesign (`Sessions.jsx`)**:
+    - **Executive Performance UI**: Replaced raw textarea form fields and 1-10 disabled rating buttons for students (`isStudent === true`) with a dedicated, presentation-ready **Student Performance Report Card**.
+    - **Wave Count & Scoring Visuals**: Displays wave counts (`🌊 X Waves Ridden`), "🌟 What You Did Well" (with a vibrant score badge and coach remarks card), and "🎯 What to Improve" (with score pill and structured coaching advice).
+    - **Student Safety & Read-Only Scoping**: Removed editable controls and the `Save Changes` button for student accounts, ensuring athletes have a focused, clean read-only evaluation view.
+
+03. **Student Profile Coach Remarks Notification & Evaluation Modal (`StudentProfile.jsx`, `Sessions.jsx`)**:
+    - **Session History Notification**: In `StudentProfile.jsx` ("Session History" -> "Recent Completed Sessions"), automatically identifies when a coach has recorded feedback or notes for a session.
+    - **Visual Attention Cues**:
+      - Header renders a `💬 Coach Remarks Available` badge when any completed session contains feedback.
+      - Top row of session cards features a **`💬 See your remarks ★`** notification badge next to `✓ Completed`.
+      - Session card body displays a prominent notification banner callout (*"Coach [Name] added evaluation scores & feedback for this session. [View Remarks →]"*).
+      - Bottom row includes a quick-action `💬 See your remarks` pill button.
+    - **Direct Full Session Opening on Notes Tab**: Clicking any remarks button or banner immediately opens the **Full Session Hub** modal directly on the **Notes & Feedback** tab in `/sessions`, presenting the athlete's complete **Performance Report Card** (Wave Count, What You Did Well with score, What to Improve with score, and navigation to full video analysis and photos) without intermediate mini modals.
+    - **Deep Linking Query Support**: Configured `Sessions.jsx` to parse `?openSession=${id}&tab=notes` (or `?sessionId=${id}`), automatically resolving the session and opening the full session modal directly on the Notes tab.
+
+04. **Calendar Modal & Roster Scheduler Stability (`Sessions.jsx`)**:
+    - **Reliable Close & Backdrop Interaction**: Resolved issues where clicking the close button (`✕`) or modal backdrop in the Surf Sessions Calendar & Roster modal failed to dismiss. Added smooth closing animation state (`isDismissingCalendarModal`) with safe cleanup.
+    - **Date Cell Quick Actions**: Restored the quick `+ Create` button on calendar date boxes and the bottom drawer `+ Schedule on this Date` trigger for School Admins to schedule training groups directly from any calendar date.
+
+05. **Date-Aware Coach Leave Detection & Clean Badge UI (`backend/main.py`, `NewSession.jsx`)**:
+    - **Backend Approved Leaves Endpoint**: Updated `instructor_to_dict` and `GET /api/instructors` in FastAPI to include `approved_leaves` list and support date-based querying (`?date=YYYY-MM-DD`).
+    - **Calendar Date-Matched Leave Status**: Dynamically calculates whether an instructor has approved leave for the session date selected in the Schedule Session wizard (e.g. October 6).
+    - **Single Badge UI**: Replaced redundant and duplicated "On Leave" labels in the instructor list with a clean layout: instructor role appears under the name, and a single prominent status badge (`🏖️ On Leave` in red or `✓ Active` in green) appears on the right.
+
+06. **School Coach Session Management Restrictions & Route Protection (`Sessions.jsx`, `NewSession.jsx`, `SessionConfigure.jsx`)**:
+    - **Business Rule Enforcement**: Coaches assigned to a school are strictly restricted to coaching and cannot create, schedule, or configure school sessions. Full session management permissions remain with School Admins and Super Admins.
+    - **UI Element Hiding**: For school coaches (`isCoach && !isCoachFreelance`), the following controls are automatically hidden:
+      - `+ Schedule Session` button in the Sessions page header.
+      - `Configure Sessions` button in the Sessions page header.
+      - `+ Create` quick buttons in the Calendar date cells.
+      - `+ Schedule on this Date` buttons in the Calendar drawer.
+      - Bulk session selection checkboxes and delete action bars.
+    - **Route Redirection Guards**: Direct navigation to `/new-session` or `/sessions/configure` by a school coach or student immediately redirects them back to `/sessions`.
+    - **Freelance Independence**: Individual and Freelance Coaches retain permissions to manage their own personal training rosters.
+
+07. **Production Backend Deployment (AWS EC2)**:
+    - **FastAPI Backend on EC2**: Deployed updated `backend/main.py` containing `approved_leaves` and date filter handling to AWS EC2 (`i-0c62e04f44a9ea237`) via S3 bucket `aisurf-media-uploads-149051628601` and AWS Systems Manager (Latest SSM Command ID: `f9073e65-1cd5-46d8-a7a1-a1f74875f25c`).
+    - **Service Restart & Health Verification**: Restarted `aisurf-backend` systemd service with verified 200 OK live status, confirming active `approved_leaves` payload support on production.

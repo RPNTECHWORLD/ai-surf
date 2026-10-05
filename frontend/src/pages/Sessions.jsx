@@ -378,13 +378,24 @@ const Sessions = () => {
     return loggedInStudent?.school || null;
   })();
 
+  const resolveSchoolStr = (val) => {
+    if (!val) return '';
+    if (typeof val === 'string') return val;
+    if (typeof val === 'object') {
+      if (typeof val.name === 'string') return val.name;
+      if (typeof val.school_name === 'string') return val.school_name;
+    }
+    return String(val || '');
+  };
+
   const schoolLower = (activeSchoolName || '').toLowerCase().trim();
   const isSuperAdmin = currentUser?.role === 'superadmin' || schoolLower === 'super admin';
   const isAdminOrSuperAdmin = isSuperAdmin || currentUser?.role === 'admin' || currentUser?.role === 'school_admin' || currentUser?.role === 'schooladmin' || schoolLower === 'school admin';
 
+  const userSchoolStr = resolveSchoolStr(currentUser?.school || currentUser?.school_name).trim();
   const isIndividualSurfer = (
-    (currentUser?.school || currentUser?.school_name || '').toLowerCase().trim().includes('individual') ||
-    (currentUser?.school || currentUser?.school_name || '').toLowerCase().trim().includes('freelance') ||
+    userSchoolStr.toLowerCase().includes('individual') ||
+    userSchoolStr.toLowerCase().includes('freelance') ||
     currentUser?.is_individual === true ||
     schoolLower.includes('individual') ||
     schoolLower.includes('freelance')
@@ -398,17 +409,18 @@ const Sessions = () => {
     );
   }, [allInstructorsList, currentCoachId, currentCoachName]);
 
-  const coachAffiliatedSchool = (loggedInCoach?.school || currentUser?.school || currentUser?.school_name || activeSchoolName || '').trim();
+  const coachAffiliatedSchool = resolveSchoolStr(loggedInCoach?.school || userSchoolStr || activeSchoolName).trim();
   const isCoachFreelance = isCoach && (
     coachAffiliatedSchool.toLowerCase() === 'individual / freelance coach' ||
-    (currentUser?.school || '').toLowerCase().trim() === 'individual / freelance coach' ||
+    userSchoolStr.toLowerCase() === 'individual / freelance coach' ||
     isIndividualSurfer
   );
 
   // Only Individual/Freelance Surfers/Coaches and Admins can Schedule, Configure & Delete sessions.
   // School Coaches & School Students cannot schedule/configure/delete school sessions.
   // Students (athlete/student/user role) can NEVER manage sessions — view only.
-  const canManageSessions = !isStudent && Boolean(isAdminOrSuperAdmin || isIndividualSurfer || isCoachFreelance || isCoach);
+  const isSchoolCoach = isCoach && !isCoachFreelance;
+  const canManageSessions = !isStudent && !isSchoolCoach && Boolean(isAdminOrSuperAdmin || isCoachFreelance || (!isCoach && isIndividualSurfer));
 
   // Filter States
   const [dateFilter, setDateFilter] = useState('');
@@ -838,6 +850,37 @@ const Sessions = () => {
     const alreadySaved = savedSessionIds.has(sessionKey);
     setHubSaveSuccess(alreadySaved);
   };
+
+  // Deep-link to a specific session and tab from URL query params (e.g. ?openSession=123&tab=notes)
+  const lastOpenedSessionParamRef = useRef(null);
+
+  const closeSessionHub = () => {
+    setSelectedHubSession(null);
+    setHubZoomImage(null);
+    lastOpenedSessionParamRef.current = null;
+    if (searchParams.get('openSession') || searchParams.get('sessionId') || searchParams.get('tab')) {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete('openSession');
+      nextParams.delete('sessionId');
+      nextParams.delete('tab');
+      setSearchParams(nextParams, { replace: true });
+    }
+  };
+
+  useEffect(() => {
+    const targetSessionId = searchParams.get('sessionId') || searchParams.get('openSession');
+    const targetTab = searchParams.get('tab') || 'notes';
+    if (targetSessionId && sessions.length > 0) {
+      const paramKey = `${targetSessionId}-${targetTab}`;
+      if (lastOpenedSessionParamRef.current !== paramKey) {
+        const found = sessions.find(s => String(s.id) === String(targetSessionId));
+        if (found) {
+          lastOpenedSessionParamRef.current = paramKey;
+          openSessionHub(found, targetTab);
+        }
+      }
+    }
+  }, [searchParams, sessions]);
 
   const handleHubVideoUpload = async (files) => {
     if (!files || files.length === 0) return;
@@ -1276,7 +1319,7 @@ const Sessions = () => {
 
   // Calendar Modal State
   const [showCalendarModal, setShowCalendarModal] = useState(false);
-  const [currentDate, setCurrentDate] = useState(() => new Date(2026, 8, 15)); // Default September 2026
+  const [currentDate, setCurrentDate] = useState(() => new Date()); // Default to current active month
   const [selectedCalendarDate, setSelectedCalendarDate] = useState('');
   const [selectedSessionDetail, setSelectedSessionDetail] = useState(null);
   const [selectedDayDetailsModal, setSelectedDayDetailsModal] = useState(null);
@@ -1671,6 +1714,39 @@ const Sessions = () => {
   const totalSessions = getGroupSessionCount(roleScopedSessions);
   const filteredSessionsCount = getGroupSessionCount(filteredSessions);
 
+  // Session count per time slot for tab badges
+  const slotSessionCounts = useMemo(() => {
+    const map = {};
+    availableSlots.forEach(slotTime => {
+      const fTimeLower = slotTime.toLowerCase();
+      const matchingSessions = roleScopedSessions.filter(s => {
+        if (dateFilter) {
+          const sessionDateISO = normalizeToYYYYMMDD(s.date);
+          const filterISO = normalizeToYYYYMMDD(dateFilter);
+          if (sessionDateISO !== filterISO && !String(s.date || '').toLowerCase().includes(dateFilter.toLowerCase())) {
+            return false;
+          }
+        }
+        const sTimeLower = (s.time || '').toLowerCase();
+        return sTimeLower.includes(fTimeLower) || fTimeLower.includes(sTimeLower);
+      });
+      map[slotTime] = getGroupSessionCount(matchingSessions);
+    });
+    return map;
+  }, [availableSlots, roleScopedSessions, dateFilter]);
+
+  const allSlotsCount = useMemo(() => {
+    if (dateFilter) {
+      const dateFiltered = roleScopedSessions.filter(s => {
+        const sessionDateISO = normalizeToYYYYMMDD(s.date);
+        const filterISO = normalizeToYYYYMMDD(dateFilter);
+        return sessionDateISO === filterISO || String(s.date || '').toLowerCase().includes(dateFilter.toLowerCase());
+      });
+      return getGroupSessionCount(dateFiltered);
+    }
+    return totalSessions;
+  }, [dateFilter, roleScopedSessions, totalSessions]);
+
   // Multi-Selection Helper Functions (Properly placed after filteredSessions)
   const allFilteredSessionIds = useMemo(() => {
     return filteredSessions.map(s => s.id);
@@ -1930,13 +2006,18 @@ const Sessions = () => {
             <button
               className="ses-btn-secondary"
               onClick={() => {
-                if (assignedDatesList.length > 0) {
-                  const first = assignedDatesList[0];
-                  const parts = first.iso.split('-');
+                const todayIso = getTodayYYYYMMDD();
+                const futureOrToday = assignedDatesList.find(d => d.iso >= todayIso);
+                const targetIso = futureOrToday ? futureOrToday.iso : (assignedDatesList.length > 0 ? assignedDatesList[assignedDatesList.length - 1].iso : todayIso);
+                if (targetIso) {
+                  const parts = targetIso.split('-');
                   if (parts.length === 3) {
                     setCurrentDate(new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10)));
-                    setSelectedCalendarDate(first.iso);
+                    setSelectedCalendarDate(targetIso);
                   }
+                } else {
+                  setCurrentDate(new Date());
+                  setSelectedCalendarDate(todayIso);
                 }
                 setShowCalendarModal(true);
               }}
@@ -1999,46 +2080,148 @@ const Sessions = () => {
               )}
             </div>
 
-            {/* Date Filter */}
-            <div className="ses-select-wrap ses-date-filter-wrap">
-              <label className="ses-select-label">Date</label>
-              <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-                <input
-                  type="date"
-                  className="ses-select"
-                  value={dateFilter}
-                  onChange={(e) => setDateFilter(e.target.value)}
-                  style={{
-                    width: '100%',
-                    paddingRight: dateFilter ? '26px' : '10px',
-                    fontWeight: dateFilter ? 700 : 500,
-                    color: dateFilter ? '#0D9488' : '#0F172A',
-                    borderColor: dateFilter ? '#0D9488' : '#E2E8F0',
-                    background: dateFilter ? '#E6F9F5' : '#F8FAFC'
-                  }}
-                />
-                {dateFilter && (
-                  <button
-                    type="button"
-                    onClick={() => setDateFilter('')}
-                    style={{
-                      position: 'absolute',
-                      right: '6px',
-                      background: 'none',
-                      border: 'none',
-                      color: '#0D9488',
-                      cursor: 'pointer',
-                      fontSize: '15px',
-                      fontWeight: 800,
-                      padding: '2px 4px'
-                    }}
-                    title="Clear date filter"
-                  >
-                    ×
-                  </button>
-                )}
-              </div>
-            </div>
+            {/* Quick Date Filters: Yesterday - Today - Tomorrow - [Date Calendar] */}
+            {(() => {
+              const getIsoDate = (offset = 0) => {
+                const d = new Date();
+                if (offset !== 0) d.setDate(d.getDate() + offset);
+                const y = d.getFullYear();
+                const m = String(d.getMonth() + 1).padStart(2, '0');
+                const day = String(d.getDate()).padStart(2, '0');
+                return `${y}-${m}-${day}`;
+              };
+              const yestIso = getIsoDate(-1);
+              const todayIso = getIsoDate(0);
+              const tomIso = getIsoDate(1);
+              const isCustomDate = Boolean(dateFilter && dateFilter !== yestIso && dateFilter !== todayIso && dateFilter !== tomIso);
+
+              return (
+                <div className="ses-select-wrap ses-date-quick-wrap" style={{ minWidth: 'auto' }}>
+                  <label className="ses-select-label">Date Filter</label>
+                  <div style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    background: '#F8FAFC',
+                    border: '1.5px solid #E2E8F0',
+                    borderRadius: '12px',
+                    padding: '3px 4px',
+                    gap: '4px',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                    height: '42px',
+                    boxSizing: 'border-box'
+                  }}>
+                    <button
+                      type="button"
+                      onClick={() => setDateFilter(prev => prev === yestIso ? '' : yestIso)}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: '8px',
+                        border: dateFilter === yestIso ? '1.5px solid #0D9488' : '1px solid transparent',
+                        background: dateFilter === yestIso ? 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)' : '#FFFFFF',
+                        color: dateFilter === yestIso ? '#FFFFFF' : '#334155',
+                        fontWeight: 700,
+                        fontSize: '12px',
+                        fontFamily: "'Outfit', sans-serif",
+                        cursor: 'pointer',
+                        boxShadow: dateFilter === yestIso ? '0 2px 8px rgba(13, 148, 136, 0.35)' : '0 1px 2px rgba(0,0,0,0.04)',
+                        transition: 'all 0.15s ease',
+                        whiteSpace: 'nowrap'
+                      }}
+                      title="Filter sessions from yesterday"
+                    >
+                      Yesterday
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDateFilter(prev => prev === todayIso ? '' : todayIso)}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: '8px',
+                        border: dateFilter === todayIso ? '1.5px solid #0D9488' : '1px solid transparent',
+                        background: dateFilter === todayIso ? 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)' : '#FFFFFF',
+                        color: dateFilter === todayIso ? '#FFFFFF' : '#334155',
+                        fontWeight: 700,
+                        fontSize: '12px',
+                        fontFamily: "'Outfit', sans-serif",
+                        cursor: 'pointer',
+                        boxShadow: dateFilter === todayIso ? '0 2px 8px rgba(13, 148, 136, 0.35)' : '0 1px 2px rgba(0,0,0,0.04)',
+                        transition: 'all 0.15s ease',
+                        whiteSpace: 'nowrap'
+                      }}
+                      title="Filter sessions for today"
+                    >
+                      Today
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDateFilter(prev => prev === tomIso ? '' : tomIso)}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: '8px',
+                        border: dateFilter === tomIso ? '1.5px solid #0D9488' : '1px solid transparent',
+                        background: dateFilter === tomIso ? 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)' : '#FFFFFF',
+                        color: dateFilter === tomIso ? '#FFFFFF' : '#334155',
+                        fontWeight: 700,
+                        fontSize: '12px',
+                        fontFamily: "'Outfit', sans-serif",
+                        cursor: 'pointer',
+                        boxShadow: dateFilter === tomIso ? '0 2px 8px rgba(13, 148, 136, 0.35)' : '0 1px 2px rgba(0,0,0,0.04)',
+                        transition: 'all 0.15s ease',
+                        whiteSpace: 'nowrap'
+                      }}
+                      title="Filter sessions for tomorrow"
+                    >
+                      Tomorrow
+                    </button>
+
+                    {/* Calendar Date Picker Input */}
+                    <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+                      <input
+                        type="date"
+                        value={dateFilter || ''}
+                        onChange={(e) => setDateFilter(e.target.value)}
+                        style={{
+                          height: '32px',
+                          padding: '0 24px 0 8px',
+                          borderRadius: '8px',
+                          border: isCustomDate ? '1.5px solid #0D9488' : '1px solid #CBD5E1',
+                          background: isCustomDate ? '#E6F9F5' : '#FFFFFF',
+                          color: dateFilter ? '#0D9488' : '#64748B',
+                          fontWeight: dateFilter ? 700 : 500,
+                          fontSize: '12px',
+                          cursor: 'pointer',
+                          outline: 'none',
+                          boxShadow: isCustomDate ? '0 2px 6px rgba(13, 148, 136, 0.25)' : '0 1px 2px rgba(0,0,0,0.04)',
+                          transition: 'all 0.15s ease'
+                        }}
+                        title="Pick custom date"
+                      />
+                      {dateFilter && (
+                        <button
+                          type="button"
+                          onClick={() => setDateFilter('')}
+                          style={{
+                            position: 'absolute',
+                            right: '6px',
+                            background: 'none',
+                            border: 'none',
+                            color: '#0D9488',
+                            cursor: 'pointer',
+                            fontSize: '13px',
+                            fontWeight: 800,
+                            lineHeight: 1,
+                            padding: '2px'
+                          }}
+                          title="Clear date filter"
+                        >
+                          ×
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Instructor Filter (Hidden for Coach & Student roles) */}
             {!isCoach && !isStudent && (
@@ -2101,124 +2284,49 @@ const Sessions = () => {
           {!isStudent && (
             <div className="ses-slot-tabs-bar">
               <div className="ses-slot-tabs-label">
-                <span style={{ fontSize: '15px' }}>⏰</span> Select Time Slot:
+                <span className="ses-slot-tabs-icon">⏰</span>
+                <span>Select Time Slot:</span>
               </div>
 
               <div className="ses-slot-tabs-scroll">
                 {/* All Slots Tab */}
-              {(() => {
-                const isSelected = slotFilter === 'All';
-                const count = getGroupSessionCount(roleScopedSessions);
-                return (
-                  <button
-                    type="button"
-                    key="All"
-                    onClick={() => setSlotFilter('All')}
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      padding: '6px 14px',
-                      borderRadius: '24px',
-                      cursor: 'pointer',
-                      fontSize: '12.5px',
-                      fontWeight: 700,
-                      whiteSpace: 'nowrap',
-                      transition: 'all 0.2s ease',
-                      border: isSelected ? '2px solid #0D9488' : '1px solid #CBD5E1',
-                      background: isSelected ? '#ECFDF5' : '#FFFFFF',
-                      color: isSelected ? '#0D9488' : '#475569',
-                      boxShadow: isSelected ? '0 2px 8px rgba(13, 148, 136, 0.15)' : 'none'
-                    }}
-                  >
-                    <span style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      width: '20px',
-                      height: '20px',
-                      borderRadius: '50%',
-                      background: isSelected ? '#0D9488' : '#94A3B8',
-                      color: '#FFFFFF',
-                      fontSize: '11px',
-                      fontWeight: 800
-                    }}>
-                      ★
-                    </span>
-                    <span>All Slots</span>
-                    {isSelected && (
-                      <span style={{
-                        background: '#0D9488',
-                        color: '#FFFFFF',
-                        padding: '2px 8px',
-                        borderRadius: '10px',
-                        fontSize: '10.5px',
-                        fontWeight: 800
-                      }}>
-                        ✓ SELECTED TAB
-                      </span>
-                    )}
-                  </button>
-                );
-              })()}
+                {(() => {
+                  const isSelected = slotFilter === 'All';
+                  return (
+                    <button
+                      type="button"
+                      key="All"
+                      onClick={() => setSlotFilter('All')}
+                      className={`ses-slot-tab-btn ${isSelected ? 'active' : ''}`}
+                      title="Show all sessions across all slots"
+                    >
+                      <span className="ses-slot-tab-num">★</span>
+                      <span>All Slots</span>
+                      <span className="ses-slot-tab-badge">{allSlotsCount}</span>
+                    </button>
+                  );
+                })()}
 
-              {/* Dynamic Slot Tabs */}
-              {availableSlots.map((slotTime, index) => {
-                const isSelected = slotFilter === slotTime || (slotFilter !== 'All' && (slotTime.includes(slotFilter) || slotFilter.includes(slotTime)));
+                {/* Dynamic Slot Tabs */}
+                {availableSlots.map((slotTime, index) => {
+                  const isSelected = slotFilter === slotTime || (slotFilter !== 'All' && (slotTime.includes(slotFilter) || slotFilter.includes(slotTime)));
+                  const count = slotSessionCounts[slotTime] ?? 0;
 
-                return (
-                  <button
-                    type="button"
-                    key={slotTime}
-                    onClick={() => setSlotFilter(slotTime)}
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      padding: '6px 14px',
-                      borderRadius: '24px',
-                      cursor: 'pointer',
-                      fontSize: '12.5px',
-                      fontWeight: 700,
-                      whiteSpace: 'nowrap',
-                      transition: 'all 0.2s ease',
-                      border: isSelected ? '2px solid #0D9488' : '1px solid #CBD5E1',
-                      background: isSelected ? '#ECFDF5' : '#FFFFFF',
-                      color: isSelected ? '#0D9488' : '#475569',
-                      boxShadow: isSelected ? '0 2px 8px rgba(13, 148, 136, 0.15)' : 'none'
-                    }}
-                  >
-                    <span style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      width: '20px',
-                      height: '20px',
-                      borderRadius: '50%',
-                      background: isSelected ? '#0D9488' : '#94A3B8',
-                      color: '#FFFFFF',
-                      fontSize: '11px',
-                      fontWeight: 800
-                    }}>
-                      {index + 1}
-                    </span>
-                    <span>{slotTime}</span>
-                    {isSelected && (
-                      <span style={{
-                        background: '#0D9488',
-                        color: '#FFFFFF',
-                        padding: '2px 8px',
-                        borderRadius: '10px',
-                        fontSize: '10.5px',
-                        fontWeight: 800
-                      }}>
-                        ✓ SELECTED TAB
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
+                  return (
+                    <button
+                      type="button"
+                      key={slotTime}
+                      onClick={() => setSlotFilter(isSelected && slotFilter === slotTime ? 'All' : slotTime)}
+                      className={`ses-slot-tab-btn ${isSelected ? 'active' : ''}`}
+                      title={`Filter by ${slotTime} (${count} session${count === 1 ? '' : 's'})`}
+                    >
+                      <span className="ses-slot-tab-num">{index + 1}</span>
+                      <span>{slotTime}</span>
+                      <span className="ses-slot-tab-badge">{count}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
 
@@ -3108,7 +3216,7 @@ const Sessions = () => {
 
         {/* ─── COMPREHENSIVE SESSION & GROUP MEDIA HUB MODAL ─── */}
         {selectedHubSession && (
-          <div className="ses-modal-overlay" onClick={() => setSelectedHubSession(null)}>
+          <div className="ses-modal-overlay" onClick={closeSessionHub}>
             <div
               className="ses-modal-box ses-hub-modal"
               style={{
@@ -3238,7 +3346,7 @@ const Sessions = () => {
 
                   <button
                     className="ses-modal-close"
-                    onClick={() => setSelectedHubSession(null)}
+                    onClick={closeSessionHub}
                   >
                     ✕
                   </button>
@@ -4099,318 +4207,557 @@ const Sessions = () => {
                       </div>
                     )}
 
-                    {/* CARD 1: Wave Count */}
-                    <div style={{ background: '#FFFFFF', border: '1.5px solid #E2E8F0', borderRadius: '14px', padding: '16px 18px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-                        <span style={{ fontSize: '13.5px', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span style={{ fontSize: '16px' }}>🌊</span> Wave Count:
-                        </span>
-                        <span style={{ fontSize: '12px', color: '#64748B' }}>
-                          {isStudent ? 'Total waves surfed during session' : 'Number of waves caught'}
-                        </span>
-                      </div>
-
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                        {!isStudent && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const curr = parseInt(hubWaveCount) || 0;
-                              handleUpdateNotesField({ waveCount: Math.max(0, curr - 1).toString() });
-                            }}
-                            style={{
-                              width: '36px',
-                              height: '36px',
-                              borderRadius: '8px',
-                              border: '1.5px solid #CBD5E1',
-                              background: '#F8FAFC',
-                              fontSize: '18px',
-                              fontWeight: 700,
-                              color: '#334155',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              userSelect: 'none'
-                            }}
-                            title="Decrease wave count"
-                          >
-                            −
-                          </button>
-                        )}
-
-                        <input
-                          type="number"
-                          min="0"
-                          max="100"
-                          placeholder="0"
-                          value={hubWaveCount}
-                          readOnly={isStudent}
-                          onChange={(e) => handleUpdateNotesField({ waveCount: e.target.value })}
+                    {/* ─── CONDITIONAL: STUDENT VIEW (REPORT CARD) vs COACH VIEW (INTERACTIVE EDITING) ─── */}
+                    {isStudent ? (
+                      /* ─── STUDENT PERFORMANCE REPORT CARD ─── */
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                        
+                        {/* Overall Session Evaluation Banner */}
+                        <div
                           style={{
-                            width: '90px',
-                            height: '36px',
-                            padding: '0 10px',
-                            border: '1.5px solid #0D9488',
-                            borderRadius: '8px',
-                            fontSize: '16px',
-                            fontWeight: 800,
-                            color: '#0F766E',
-                            textAlign: 'center',
-                            background: isStudent ? '#F8FAFC' : '#F0FDFA',
-                            boxSizing: 'border-box'
+                            background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)',
+                            borderRadius: '16px',
+                            padding: '18px 22px',
+                            color: '#FFFFFF',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            flexWrap: 'wrap',
+                            gap: '16px',
+                            boxShadow: '0 6px 20px rgba(15, 23, 42, 0.12)'
                           }}
-                        />
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                            <div
+                              style={{
+                                width: '48px',
+                                height: '48px',
+                                borderRadius: '14px',
+                                background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '24px',
+                                flexShrink: 0,
+                                boxShadow: '0 4px 12px rgba(13, 148, 136, 0.35)'
+                              }}
+                            >
+                              🏄‍♂️
+                            </div>
+                            <div>
+                              <div style={{ fontSize: '11px', fontWeight: 800, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.6px' }}>
+                                Session Evaluation
+                              </div>
+                              <h3 style={{ margin: '2px 0 0', fontSize: '17px', fontWeight: 800, color: '#FFFFFF', fontFamily: 'Outfit, sans-serif' }}>
+                                Performance & Coach Tactical Feedback
+                              </h3>
+                              <p style={{ margin: '2px 0 0', fontSize: '12.5px', color: '#CBD5E1' }}>
+                                Coach: <strong>{selectedHubSession?.coach || 'demo1'}</strong>
+                              </p>
+                            </div>
+                          </div>
 
-                        {!isStudent && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const curr = parseInt(hubWaveCount) || 0;
-                              handleUpdateNotesField({ waveCount: (curr + 1).toString() });
-                            }}
+                          {/* Wave Count Metric Box */}
+                          <div
                             style={{
-                              width: '36px',
-                              height: '36px',
-                              borderRadius: '8px',
-                              border: '1.5px solid #CBD5E1',
-                              background: '#F8FAFC',
-                              fontSize: '18px',
-                              fontWeight: 700,
-                              color: '#334155',
-                              cursor: 'pointer',
+                              background: 'rgba(255, 255, 255, 0.08)',
+                              border: '1px solid rgba(255, 255, 255, 0.18)',
+                              borderRadius: '12px',
+                              padding: '10px 18px',
                               display: 'flex',
                               alignItems: 'center',
-                              justifyContent: 'center',
-                              userSelect: 'none'
+                              gap: '12px'
                             }}
-                            title="Increase wave count"
                           >
-                            +
-                          </button>
-                        )}
-
-                        {!isStudent && (
-                          <div style={{ display: 'flex', gap: '6px', marginLeft: '6px' }}>
-                            {[1, 2, 3, 5, 8, 10].map(cnt => (
-                              <button
-                                key={cnt}
-                                type="button"
-                                onClick={() => handleUpdateNotesField({ waveCount: cnt.toString() })}
-                                style={{
-                                  padding: '5px 10px',
-                                  borderRadius: '6px',
-                                  fontSize: '12px',
-                                  fontWeight: 700,
-                                  border: hubWaveCount === cnt.toString() ? '1.5px solid #0D9488' : '1px solid #E2E8F0',
-                                  background: hubWaveCount === cnt.toString() ? '#0D9488' : '#F8FAFC',
-                                  color: hubWaveCount === cnt.toString() ? '#FFFFFF' : '#475569',
-                                  cursor: 'pointer'
-                                }}
-                              >
-                                {cnt}
-                              </button>
-                            ))}
+                            <span style={{ fontSize: '26px' }}>🌊</span>
+                            <div>
+                              <div style={{ fontSize: '11px', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                                Waves Caught
+                              </div>
+                              <div style={{ fontSize: '20px', fontWeight: 900, color: '#38BDF8', fontFamily: 'Outfit, sans-serif' }}>
+                                {parseInt(hubWaveCount) > 0 ? `${hubWaveCount} Waves` : '0 Logged'}
+                              </div>
+                            </div>
                           </div>
-                        )}
+                        </div>
 
-                        {isStudent && (
-                          <span style={{ fontSize: '14px', fontWeight: 700, color: '#0F766E' }}>
-                            {hubWaveCount ? `${hubWaveCount} waves logged` : 'No waves logged'}
-                          </span>
-                        )}
-                      </div>
-                    </div>
+                        {/* SECTION 1: What You Did Well */}
+                        <div
+                          style={{
+                            background: '#FFFFFF',
+                            border: '1.5px solid #86EFAC',
+                            borderRadius: '16px',
+                            padding: '18px 20px',
+                            boxShadow: '0 4px 14px rgba(16, 185, 129, 0.07)'
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: '#DCFCE7', color: '#15803D', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>
+                                🌟
+                              </div>
+                              <div>
+                                <h4 style={{ margin: 0, fontSize: '16px', fontWeight: 800, color: '#0F172A', fontFamily: 'Outfit, sans-serif' }}>
+                                  What You Did Well
+                                </h4>
+                                <span style={{ fontSize: '12px', color: '#64748B' }}>Strengths & Key Highlights</span>
+                              </div>
+                            </div>
 
-                    {/* CARD 2: What You did Well */}
-                    <div style={{ background: '#FFFFFF', border: '1.5px solid #E2E8F0', borderRadius: '14px', padding: '16px 18px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                        <span style={{ fontSize: '13.5px', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span style={{ fontSize: '16px' }}>🌟</span> What You did Well:
-                        </span>
-                        {hubWhatDidWellScore ? (
-                          <span style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            fontSize: '12px',
-                            fontWeight: 800,
-                            color: '#065F46',
-                            background: '#D1FAE5',
-                            border: '1px solid #A7F3D0',
-                            padding: '3px 9px',
-                            borderRadius: '6px'
-                          }}>
-                            ★ Score: {hubWhatDidWellScore} out of 10
-                          </span>
-                        ) : (
-                          <span style={{ fontSize: '12px', color: '#94A3B8' }}>Rate 1 to 10</span>
-                        )}
-                      </div>
+                            {/* Score Display */}
+                            {hubWhatDidWellScore ? (
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '8px',
+                                  background: 'linear-gradient(135deg, #ECFDF5 0%, #D1FAE5 100%)',
+                                  border: '1.5px solid #86EFAC',
+                                  borderRadius: '12px',
+                                  padding: '6px 16px',
+                                  boxShadow: '0 2px 8px rgba(16, 185, 129, 0.2)'
+                                }}
+                              >
+                                <span style={{ fontSize: '16px', color: '#F59E0B' }}>★</span>
+                                <span style={{ fontSize: '13px', fontWeight: 700, color: '#065F46' }}>Score:</span>
+                                <span style={{ fontSize: '20px', fontWeight: 900, color: '#047857', fontFamily: 'Outfit, sans-serif' }}>
+                                  {hubWhatDidWellScore}
+                                </span>
+                                <span style={{ fontSize: '13px', fontWeight: 700, color: '#059669' }}>/ 10</span>
+                              </div>
+                            ) : (
+                              <span style={{ fontSize: '12px', color: '#94A3B8', fontWeight: 600, background: '#F1F5F9', padding: '4px 10px', borderRadius: '8px' }}>
+                                Score Pending
+                              </span>
+                            )}
+                          </div>
 
-                      <input
-                        type="text"
-                        placeholder={isStudent ? "No feedback recorded..." : "e.g. Good Take off (Pop Up), clean bottom turn..."}
-                        value={hubWhatDidWell}
-                        readOnly={isStudent}
-                        onChange={(e) => handleUpdateNotesField({ whatDidWell: e.target.value })}
-                        style={{
-                          width: '100%',
-                          padding: '10px 14px',
-                          border: '1.5px solid #CBD5E1',
-                          borderRadius: '8px',
-                          fontSize: '14px',
-                          color: '#0F172A',
-                          boxSizing: 'border-box',
-                          background: isStudent ? '#F8FAFC' : '#FFFFFF',
-                          marginBottom: '12px',
-                          outline: 'none'
-                        }}
-                      />
-
-                      {/* 1 to 10 Score Selector */}
-                      <div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                          <span style={{ fontSize: '11.5px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
-                            Score (1 to 10):
-                          </span>
-                          {!isStudent && hubWhatDidWellScore && (
-                            <button
-                              type="button"
-                              onClick={() => handleUpdateNotesField({ whatDidWellScore: '' })}
-                              style={{ background: 'none', border: 'none', color: '#EF4444', fontSize: '11px', fontWeight: 600, cursor: 'pointer', padding: 0 }}
+                          {/* Coach Comments */}
+                          {hubWhatDidWell ? (
+                            <div
+                              style={{
+                                background: '#F0FDF4',
+                                border: '1.5px solid #BBF7D0',
+                                borderLeft: '5px solid #10B981',
+                                borderRadius: '12px',
+                                padding: '16px 20px',
+                                position: 'relative'
+                              }}
                             >
-                              Clear Score ✕
-                            </button>
+                              <div style={{ fontSize: '11px', fontWeight: 800, color: '#059669', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span>💬</span>
+                                <span>Coach Remarks</span>
+                              </div>
+                              <p style={{ margin: 0, fontSize: '15px', color: '#0F172A', lineHeight: '1.6', fontWeight: 600 }}>
+                                "{hubWhatDidWell}"
+                              </p>
+                            </div>
+                          ) : (
+                            <div
+                              style={{
+                                background: '#F8FAFC',
+                                border: '1.5px dashed #CBD5E1',
+                                borderRadius: '12px',
+                                padding: '16px',
+                                textAlign: 'center',
+                                color: '#64748B',
+                                fontSize: '13.5px'
+                              }}
+                            >
+                              No positive remarks recorded yet by coach for this session.
+                            </div>
                           )}
                         </div>
 
-                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((score) => {
-                            const isSelected = hubWhatDidWellScore === score.toString();
-                            return (
-                              <button
-                                key={score}
-                                type="button"
-                                disabled={isStudent}
-                                onClick={() => handleUpdateNotesField({ whatDidWellScore: score.toString() })}
+                        {/* SECTION 2: What to Improve */}
+                        <div
+                          style={{
+                            background: '#FFFFFF',
+                            border: '1.5px solid #FDBA74',
+                            borderRadius: '16px',
+                            padding: '18px 20px',
+                            boxShadow: '0 4px 14px rgba(234, 88, 12, 0.07)'
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: '#FFEDD5', color: '#C2410C', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>
+                                🎯
+                              </div>
+                              <div>
+                                <h4 style={{ margin: 0, fontSize: '16px', fontWeight: 800, color: '#0F172A', fontFamily: 'Outfit, sans-serif' }}>
+                                  What to Improve
+                                </h4>
+                                <span style={{ fontSize: '12px', color: '#64748B' }}>Target Focus Areas & Technique Advice</span>
+                              </div>
+                            </div>
+
+                            {/* Score Display */}
+                            {hubWhatToImproveScore ? (
+                              <div
                                 style={{
-                                  flex: '1 0 30px',
-                                  maxWidth: '48px',
-                                  height: '34px',
-                                  borderRadius: '8px',
-                                  fontSize: '13px',
-                                  fontWeight: isSelected ? 800 : 600,
-                                  border: isSelected ? '2px solid #0D9488' : '1px solid #CBD5E1',
-                                  background: isSelected ? 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)' : '#F8FAFC',
-                                  color: isSelected ? '#FFFFFF' : '#334155',
-                                  cursor: isStudent ? 'default' : 'pointer',
-                                  transition: 'all 0.15s ease',
-                                  boxShadow: isSelected ? '0 2px 8px rgba(13, 148, 136, 0.35)' : 'none'
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '8px',
+                                  background: 'linear-gradient(135deg, #FFF7ED 0%, #FFEDD5 100%)',
+                                  border: '1.5px solid #FDBA74',
+                                  borderRadius: '12px',
+                                  padding: '6px 16px',
+                                  boxShadow: '0 2px 8px rgba(234, 88, 12, 0.2)'
                                 }}
                               >
-                                {score}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
+                                <span style={{ fontSize: '16px', color: '#EA580C' }}>🎯</span>
+                                <span style={{ fontSize: '13px', fontWeight: 700, color: '#9A3412' }}>Score:</span>
+                                <span style={{ fontSize: '20px', fontWeight: 900, color: '#C2410C', fontFamily: 'Outfit, sans-serif' }}>
+                                  {hubWhatToImproveScore}
+                                </span>
+                                <span style={{ fontSize: '13px', fontWeight: 700, color: '#EA580C' }}>/ 10</span>
+                              </div>
+                            ) : (
+                              <span style={{ fontSize: '12px', color: '#94A3B8', fontWeight: 600, background: '#F1F5F9', padding: '4px 10px', borderRadius: '8px' }}>
+                                Score Pending
+                              </span>
+                            )}
+                          </div>
 
-                    {/* CARD 3: What to Improve */}
-                    <div style={{ background: '#FFFFFF', border: '1.5px solid #E2E8F0', borderRadius: '14px', padding: '16px 18px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                        <span style={{ fontSize: '13.5px', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span style={{ fontSize: '16px' }}>🎯</span> What to Improve:
-                        </span>
-                        {hubWhatToImproveScore ? (
-                          <span style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            fontSize: '12px',
-                            fontWeight: 800,
-                            color: '#9A3412',
-                            background: '#FFEDD5',
-                            border: '1px solid #FED7AA',
-                            padding: '3px 9px',
-                            borderRadius: '6px'
-                          }}>
-                            ★ Score: {hubWhatToImproveScore} out of 10
-                          </span>
-                        ) : (
-                          <span style={{ fontSize: '12px', color: '#94A3B8' }}>Rate 1 to 10</span>
-                        )}
-                      </div>
-
-                      <input
-                        type="text"
-                        placeholder={isStudent ? "No improvement areas noted..." : "e.g. Paddling Strength, head position, wave anticipation..."}
-                        value={hubWhatToImprove}
-                        readOnly={isStudent}
-                        onChange={(e) => handleUpdateNotesField({ whatToImprove: e.target.value })}
-                        style={{
-                          width: '100%',
-                          padding: '10px 14px',
-                          border: '1.5px solid #CBD5E1',
-                          borderRadius: '8px',
-                          fontSize: '14px',
-                          color: '#0F172A',
-                          boxSizing: 'border-box',
-                          background: isStudent ? '#F8FAFC' : '#FFFFFF',
-                          marginBottom: '12px',
-                          outline: 'none'
-                        }}
-                      />
-
-                      {/* 1 to 10 Score Selector */}
-                      <div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                          <span style={{ fontSize: '11.5px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
-                            Score (1 to 10):
-                          </span>
-                          {!isStudent && hubWhatToImproveScore && (
-                            <button
-                              type="button"
-                              onClick={() => handleUpdateNotesField({ whatToImproveScore: '' })}
-                              style={{ background: 'none', border: 'none', color: '#EF4444', fontSize: '11px', fontWeight: 600, cursor: 'pointer', padding: 0 }}
+                          {/* Coach Comments */}
+                          {hubWhatToImprove ? (
+                            <div
+                              style={{
+                                background: '#FFF7ED',
+                                border: '1.5px solid #FED7AA',
+                                borderLeft: '5px solid #EA580C',
+                                borderRadius: '12px',
+                                padding: '16px 20px',
+                                position: 'relative'
+                              }}
                             >
-                              Clear Score ✕
-                            </button>
+                              <div style={{ fontSize: '11px', fontWeight: 800, color: '#C2410C', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span>🎯</span>
+                                <span>Coaching Advice</span>
+                              </div>
+                              <p style={{ margin: 0, fontSize: '15px', color: '#0F172A', lineHeight: '1.6', fontWeight: 600 }}>
+                                "{hubWhatToImprove}"
+                              </p>
+                            </div>
+                          ) : (
+                            <div
+                              style={{
+                                background: '#F8FAFC',
+                                border: '1.5px dashed #CBD5E1',
+                                borderRadius: '12px',
+                                padding: '16px',
+                                textAlign: 'center',
+                                color: '#64748B',
+                                fontSize: '13.5px'
+                              }}
+                            >
+                              No improvement areas recorded yet by coach.
+                            </div>
                           )}
                         </div>
 
-                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((score) => {
-                            const isSelected = hubWhatToImproveScore === score.toString();
-                            return (
-                              <button
-                                key={score}
-                                type="button"
-                                disabled={isStudent}
-                                onClick={() => handleUpdateNotesField({ whatToImproveScore: score.toString() })}
-                                style={{
-                                  flex: '1 0 30px',
-                                  maxWidth: '48px',
-                                  height: '34px',
-                                  borderRadius: '8px',
-                                  fontSize: '13px',
-                                  fontWeight: isSelected ? 800 : 600,
-                                  border: isSelected ? '2px solid #EA580C' : '1px solid #CBD5E1',
-                                  background: isSelected ? 'linear-gradient(135deg, #EA580C 0%, #F59E0B 100%)' : '#F8FAFC',
-                                  color: isSelected ? '#FFFFFF' : '#334155',
-                                  cursor: isStudent ? 'default' : 'pointer',
-                                  transition: 'all 0.15s ease',
-                                  boxShadow: isSelected ? '0 2px 8px rgba(234, 88, 12, 0.35)' : 'none'
-                                }}
-                              >
-                                {score}
-                              </button>
-                            );
-                          })}
-                        </div>
                       </div>
-                    </div>
+                    ) : (
+                      /* ─── COACH EDITING & SCORING VIEW ─── */
+                      <>
+                        {/* CARD 1: Wave Count */}
+                        <div style={{ background: '#FFFFFF', border: '1.5px solid #E2E8F0', borderRadius: '14px', padding: '16px 18px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                            <span style={{ fontSize: '13.5px', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <span style={{ fontSize: '16px' }}>🌊</span> Wave Count:
+                            </span>
+                            <span style={{ fontSize: '12px', color: '#64748B' }}>
+                              Number of waves caught
+                            </span>
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const curr = parseInt(hubWaveCount) || 0;
+                                handleUpdateNotesField({ waveCount: Math.max(0, curr - 1).toString() });
+                              }}
+                              style={{
+                                width: '36px',
+                                height: '36px',
+                                borderRadius: '8px',
+                                border: '1.5px solid #CBD5E1',
+                                background: '#F8FAFC',
+                                fontSize: '18px',
+                                fontWeight: 700,
+                                color: '#334155',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                userSelect: 'none'
+                              }}
+                              title="Decrease wave count"
+                            >
+                              −
+                            </button>
+
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              placeholder="0"
+                              value={hubWaveCount}
+                              onChange={(e) => handleUpdateNotesField({ waveCount: e.target.value })}
+                              style={{
+                                width: '90px',
+                                height: '36px',
+                                padding: '0 10px',
+                                border: '1.5px solid #0D9488',
+                                borderRadius: '8px',
+                                fontSize: '16px',
+                                fontWeight: 800,
+                                color: '#0F766E',
+                                textAlign: 'center',
+                                background: '#F0FDFA',
+                                boxSizing: 'border-box'
+                              }}
+                            />
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const curr = parseInt(hubWaveCount) || 0;
+                                handleUpdateNotesField({ waveCount: (curr + 1).toString() });
+                              }}
+                              style={{
+                                width: '36px',
+                                height: '36px',
+                                borderRadius: '8px',
+                                border: '1.5px solid #CBD5E1',
+                                background: '#F8FAFC',
+                                fontSize: '18px',
+                                fontWeight: 700,
+                                color: '#334155',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                userSelect: 'none'
+                              }}
+                              title="Increase wave count"
+                            >
+                              +
+                            </button>
+
+                            <div style={{ display: 'flex', gap: '6px', marginLeft: '6px' }}>
+                              {[1, 2, 3, 5, 8, 10].map(cnt => (
+                                <button
+                                  key={cnt}
+                                  type="button"
+                                  onClick={() => handleUpdateNotesField({ waveCount: cnt.toString() })}
+                                  style={{
+                                    padding: '5px 10px',
+                                    borderRadius: '6px',
+                                    fontSize: '12px',
+                                    fontWeight: 700,
+                                    border: hubWaveCount === cnt.toString() ? '1.5px solid #0D9488' : '1px solid #E2E8F0',
+                                    background: hubWaveCount === cnt.toString() ? '#0D9488' : '#F8FAFC',
+                                    color: hubWaveCount === cnt.toString() ? '#FFFFFF' : '#475569',
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  {cnt}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* CARD 2: What You did Well */}
+                        <div style={{ background: '#FFFFFF', border: '1.5px solid #E2E8F0', borderRadius: '14px', padding: '16px 18px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                            <span style={{ fontSize: '13.5px', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <span style={{ fontSize: '16px' }}>🌟</span> What You did Well:
+                            </span>
+                            {hubWhatDidWellScore ? (
+                              <span style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                fontSize: '12px',
+                                fontWeight: 800,
+                                color: '#065F46',
+                                background: '#D1FAE5',
+                                border: '1px solid #A7F3D0',
+                                padding: '3px 9px',
+                                borderRadius: '6px'
+                              }}>
+                                ★ Score: {hubWhatDidWellScore} out of 10
+                              </span>
+                            ) : (
+                              <span style={{ fontSize: '12px', color: '#94A3B8' }}>Rate 1 to 10</span>
+                            )}
+                          </div>
+
+                          <input
+                            type="text"
+                            placeholder="e.g. Good Take off (Pop Up), clean bottom turn..."
+                            value={hubWhatDidWell}
+                            onChange={(e) => handleUpdateNotesField({ whatDidWell: e.target.value })}
+                            style={{
+                              width: '100%',
+                              padding: '10px 14px',
+                              border: '1.5px solid #CBD5E1',
+                              borderRadius: '8px',
+                              fontSize: '14px',
+                              color: '#0F172A',
+                              boxSizing: 'border-box',
+                              background: '#FFFFFF',
+                              marginBottom: '12px',
+                              outline: 'none'
+                            }}
+                          />
+
+                          {/* 1 to 10 Score Selector */}
+                          <div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                              <span style={{ fontSize: '11.5px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                                Score (1 to 10):
+                              </span>
+                              {hubWhatDidWellScore && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateNotesField({ whatDidWellScore: '' })}
+                                  style={{ background: 'none', border: 'none', color: '#EF4444', fontSize: '11px', fontWeight: 600, cursor: 'pointer', padding: 0 }}
+                                >
+                                  Clear Score ✕
+                                </button>
+                              )}
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((score) => {
+                                const isSelected = hubWhatDidWellScore === score.toString();
+                                return (
+                                  <button
+                                    key={score}
+                                    type="button"
+                                    onClick={() => handleUpdateNotesField({ whatDidWellScore: score.toString() })}
+                                    style={{
+                                      flex: '1 0 30px',
+                                      maxWidth: '48px',
+                                      height: '34px',
+                                      borderRadius: '8px',
+                                      fontSize: '13px',
+                                      fontWeight: isSelected ? 800 : 600,
+                                      border: isSelected ? '2px solid #0D9488' : '1px solid #CBD5E1',
+                                      background: isSelected ? 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)' : '#F8FAFC',
+                                      color: isSelected ? '#FFFFFF' : '#334155',
+                                      cursor: 'pointer',
+                                      transition: 'all 0.15s ease',
+                                      boxShadow: isSelected ? '0 2px 8px rgba(13, 148, 136, 0.35)' : 'none'
+                                    }}
+                                  >
+                                    {score}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* CARD 3: What to Improve */}
+                        <div style={{ background: '#FFFFFF', border: '1.5px solid #E2E8F0', borderRadius: '14px', padding: '16px 18px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                            <span style={{ fontSize: '13.5px', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <span style={{ fontSize: '16px' }}>🎯</span> What to Improve:
+                            </span>
+                            {hubWhatToImproveScore ? (
+                              <span style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                fontSize: '12px',
+                                fontWeight: 800,
+                                color: '#9A3412',
+                                background: '#FFEDD5',
+                                border: '1px solid #FED7AA',
+                                padding: '3px 9px',
+                                borderRadius: '6px'
+                              }}>
+                                ★ Score: {hubWhatToImproveScore} out of 10
+                              </span>
+                            ) : (
+                              <span style={{ fontSize: '12px', color: '#94A3B8' }}>Rate 1 to 10</span>
+                            )}
+                          </div>
+
+                          <input
+                            type="text"
+                            placeholder="e.g. Paddling Strength, head position, wave anticipation..."
+                            value={hubWhatToImprove}
+                            onChange={(e) => handleUpdateNotesField({ whatToImprove: e.target.value })}
+                            style={{
+                              width: '100%',
+                              padding: '10px 14px',
+                              border: '1.5px solid #CBD5E1',
+                              borderRadius: '8px',
+                              fontSize: '14px',
+                              color: '#0F172A',
+                              boxSizing: 'border-box',
+                              background: '#FFFFFF',
+                              marginBottom: '12px',
+                              outline: 'none'
+                            }}
+                          />
+
+                          {/* 1 to 10 Score Selector */}
+                          <div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                              <span style={{ fontSize: '11.5px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                                Score (1 to 10):
+                              </span>
+                              {hubWhatToImproveScore && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateNotesField({ whatToImproveScore: '' })}
+                                  style={{ background: 'none', border: 'none', color: '#EF4444', fontSize: '11px', fontWeight: 600, cursor: 'pointer', padding: 0 }}
+                                >
+                                  Clear Score ✕
+                                </button>
+                              )}
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((score) => {
+                                const isSelected = hubWhatToImproveScore === score.toString();
+                                return (
+                                  <button
+                                    key={score}
+                                    type="button"
+                                    onClick={() => handleUpdateNotesField({ whatToImproveScore: score.toString() })}
+                                    style={{
+                                      flex: '1 0 30px',
+                                      maxWidth: '48px',
+                                      height: '34px',
+                                      borderRadius: '8px',
+                                      fontSize: '13px',
+                                      fontWeight: isSelected ? 800 : 600,
+                                      border: isSelected ? '2px solid #EA580C' : '1px solid #CBD5E1',
+                                      background: isSelected ? 'linear-gradient(135deg, #EA580C 0%, #F59E0B 100%)' : '#F8FAFC',
+                                      color: isSelected ? '#FFFFFF' : '#334155',
+                                      cursor: 'pointer',
+                                      transition: 'all 0.15s ease',
+                                      boxShadow: isSelected ? '0 2px 8px rgba(234, 88, 12, 0.35)' : 'none'
+                                    }}
+                                  >
+                                    {score}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -4453,7 +4800,7 @@ const Sessions = () => {
                             const targetSessionId = selectedHubSession.sessions ? selectedHubSession.sessions[0]?.id : selectedHubSession.id;
                             handleDeleteSingleSession(targetSessionId, selectedHubSession.student);
                           }
-                          setSelectedHubSession(null);
+                          closeSessionHub();
                         }}
                       >
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
@@ -4470,32 +4817,33 @@ const Sessions = () => {
                   <button
                     type="button"
                     style={{ padding: '7px 16px', borderRadius: '8px', border: '1px solid #CBD5E1', background: '#FFFFFF', color: '#475569', fontWeight: 600, fontSize: '13px', cursor: 'pointer' }}
-                    onClick={() => setSelectedHubSession(null)}
+                    onClick={closeSessionHub}
                     disabled={hubIsSaving}
                   >
                     Close
                   </button>
 
-                  <button
-                    type="button"
-                    style={{
-                      padding: '7px 20px',
-                      borderRadius: '8px',
-                      border: 'none',
-                      background: hubHasChanges ? '#0D9488' : '#CBD5E1',
-                      color: hubHasChanges ? '#FFFFFF' : '#64748B',
-                      fontWeight: 700,
-                      fontSize: '13px',
-                      cursor: hubHasChanges ? 'pointer' : 'default',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                      transition: 'all 0.2s ease',
-                      boxShadow: hubHasChanges ? '0 2px 10px rgba(13, 148, 136, 0.3)' : 'none'
-                    }}
-                    onClick={hubHasChanges ? handleSaveHubChanges : undefined}
-                    disabled={hubIsSaving || !hubHasChanges}
-                  >
+                  {!isStudent && (
+                    <button
+                      type="button"
+                      style={{
+                        padding: '7px 20px',
+                        borderRadius: '8px',
+                        border: 'none',
+                        background: hubHasChanges ? '#0D9488' : '#CBD5E1',
+                        color: hubHasChanges ? '#FFFFFF' : '#64748B',
+                        fontWeight: 700,
+                        fontSize: '13px',
+                        cursor: hubHasChanges ? 'pointer' : 'default',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        transition: 'all 0.2s ease',
+                        boxShadow: hubHasChanges ? '0 2px 10px rgba(13, 148, 136, 0.3)' : 'none'
+                      }}
+                      onClick={hubHasChanges ? handleSaveHubChanges : undefined}
+                      disabled={hubIsSaving || !hubHasChanges}
+                    >
                     {hubIsSaving ? (
                       <>
                         <span className="ses-spinner" style={{ width: '13px', height: '13px', borderWidth: '2px', display: 'inline-block' }} />
@@ -4508,6 +4856,7 @@ const Sessions = () => {
                       'Save Changes'
                     )}
                   </button>
+                )}
                 </div>
               </div>
             </div>
@@ -4683,16 +5032,9 @@ const Sessions = () => {
                       <button
                         className="ses-cal-nav-btn"
                         onClick={() => {
-                          if (assignedDatesList.length > 0) {
-                            const first = assignedDatesList[0];
-                            const parts = first.iso.split('-');
-                            if (parts.length === 3) {
-                              setCurrentDate(new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10)));
-                              setSelectedCalendarDate(first.iso);
-                            }
-                          } else {
-                            setCurrentDate(new Date());
-                          }
+                          const todayIso = getTodayYYYYMMDD();
+                          setCurrentDate(new Date());
+                          setSelectedCalendarDate(todayIso);
                         }}
                       >
                         Active Month
@@ -4762,10 +5104,10 @@ const Sessions = () => {
                                         ? '#E2E8F0'
                                         : (hasSessions ? '#5EEAD4' : '#CBD5E1'),
                                   boxShadow: isToday ? '0 0 0 2px rgba(37, 99, 235, 0.25)' : undefined,
-                                  opacity: isPastDate && !hasSessions ? 0.65 : 1,
-                                  cursor: isPastDate && !hasSessions ? 'default' : 'pointer'
+                                  opacity: isPastDate && !hasSessions ? 0.85 : 1,
+                                  cursor: 'pointer'
                                 }}
-                                title={isPastDate ? `${cellISO} (Past Date - Cannot create session)` : `Date: ${cellISO}`}
+                                title={isPastDate ? `${cellISO} (Past Date)` : `Date: ${cellISO}`}
                                 onClick={() => {
                                   setSelectedCalendarDate(cellISO);
                                   setSelectedDayDetailsModal(cellISO);
@@ -4854,8 +5196,8 @@ const Sessions = () => {
                                   )}
                                 </div>
 
-                                {/* Quick + Create Button for Future/Today Dates */}
-                                {!isPastDate && canManageSessions && (
+                                {/* Quick + Create Button in Date Box */}
+                                {canManageSessions && (
                                   <button
                                     type="button"
                                     className="ses-cal-add-btn"
@@ -4913,7 +5255,7 @@ const Sessions = () => {
                       </div>
 
                       <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                        {canManageSessions && normalizeToYYYYMMDD(selectedCalendarDate) >= getTodayYYYYMMDD() && (
+                        {canManageSessions && (
                           <button
                             type="button"
                             className="ses-btn-primary"
@@ -4944,7 +5286,20 @@ const Sessions = () => {
                       <div style={{ textAlign: 'center', padding: '28px 16px', background: '#FFFFFF', borderRadius: '10px', border: '1px dashed #CBD5E1', color: '#64748B' }}>
                         <div style={{ fontSize: '24px', marginBottom: '6px' }}>🏄‍♂️</div>
                         <div style={{ fontWeight: 600, color: '#334155' }}>No surf sessions scheduled on this date</div>
-                        <div style={{ fontSize: '12px', marginTop: '2px' }}>Click "+ Schedule on this Date" to organize training groups.</div>
+                        <div style={{ fontSize: '12px', marginTop: '2px', marginBottom: canManageSessions ? '14px' : '0' }}>Click "+ Schedule on this Date" to organize training groups.</div>
+                        {canManageSessions && (
+                          <button
+                            type="button"
+                            className="ses-btn-primary"
+                            style={{ margin: '0 auto', padding: '7px 16px', fontSize: '12.5px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                            onClick={() => {
+                              setScheduleModalInitialDate(selectedCalendarDate);
+                              setShowScheduleModal(true);
+                            }}
+                          >
+                            <span>➕</span> Schedule Session on this Date
+                          </button>
+                        )}
                       </div>
                     ) : (
                       <div className="ses-cal-drawer-cards">
@@ -5433,7 +5788,7 @@ const Sessions = () => {
             }}
             onSessionCreated={() => {
               setEditSessionData(null);
-              setSelectedHubSession(null);
+              closeSessionHub();
               showToast('Session updated successfully', 'success');
               fetchSessions();
             }}
@@ -6150,35 +6505,121 @@ const Sessions = () => {
         .ses-slot-tabs-bar {
           display: flex;
           align-items: center;
-          gap: 12px;
-          padding: 12px 16px;
+          gap: 14px;
+          padding: 10px 16px;
           background: #FFFFFF;
-          border-radius: 12px;
+          border-radius: 14px;
           border: 1px solid #E2E8F0;
-          box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
           margin: 12px 0 16px 0;
-          overflow-x: auto;
-          scrollbar-width: thin;
+          min-width: 0;
         }
         .ses-slot-tabs-label {
           display: flex;
           align-items: center;
-          gap: 6px;
+          gap: 8px;
           white-space: nowrap;
           font-weight: 700;
           font-size: 13px;
           color: #0F172A;
-          margin-right: 4px;
           flex-shrink: 0;
+        }
+        .ses-slot-tabs-icon {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 26px;
+          height: 26px;
+          border-radius: 8px;
+          background: #F1F5F9;
+          font-size: 13px;
         }
         .ses-slot-tabs-scroll {
           display: flex;
           align-items: center;
-          gap: 10px;
+          gap: 8px;
           flex-wrap: nowrap;
           overflow-x: auto;
           -webkit-overflow-scrolling: touch;
-          scrollbar-width: thin;
+          scrollbar-width: none;
+          -ms-overflow-style: none;
+          padding: 4px 2px;
+          flex: 1;
+          min-width: 0;
+        }
+        .ses-slot-tabs-scroll::-webkit-scrollbar {
+          display: none;
+        }
+        .ses-slot-tab-btn {
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          padding: 6px 14px;
+          border-radius: 20px;
+          cursor: pointer;
+          font-size: 12.5px;
+          font-weight: 600;
+          white-space: nowrap;
+          transition: all 0.18s ease;
+          border: 1px solid #E2E8F0;
+          background: #F8FAFC;
+          color: #475569;
+          user-select: none;
+        }
+        .ses-slot-tab-btn:hover {
+          background: #F1F5F9;
+          border-color: #CBD5E1;
+          color: #0F172A;
+          transform: translateY(-1px);
+        }
+        .ses-slot-tab-btn.active {
+          background: linear-gradient(135deg, #0D9488 0%, #0F766E 100%);
+          border-color: #0D9488;
+          color: #FFFFFF;
+          font-weight: 700;
+          box-shadow: 0 3px 10px rgba(13, 148, 136, 0.28);
+          transform: translateY(-1px);
+        }
+        .ses-slot-tab-num {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 20px;
+          height: 20px;
+          border-radius: 50%;
+          background: #E2E8F0;
+          color: #64748B;
+          font-size: 11px;
+          font-weight: 700;
+          transition: all 0.18s ease;
+        }
+        .ses-slot-tab-btn:hover .ses-slot-tab-num {
+          background: #CBD5E1;
+          color: #0F172A;
+        }
+        .ses-slot-tab-btn.active .ses-slot-tab-num {
+          background: rgba(255, 255, 255, 0.24);
+          color: #FFFFFF;
+        }
+        .ses-slot-tab-badge {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          padding: 2px 7px;
+          border-radius: 10px;
+          font-size: 11px;
+          font-weight: 700;
+          background: #E2E8F0;
+          color: #475569;
+          transition: all 0.18s ease;
+        }
+        .ses-slot-tab-btn:hover .ses-slot-tab-badge {
+          background: #CBD5E1;
+          color: #0F172A;
+        }
+        .ses-slot-tab-btn.active .ses-slot-tab-badge {
+          background: rgba(255, 255, 255, 0.24);
+          color: #FFFFFF;
         }
 
         /* Responsive Media Queries */
@@ -6249,13 +6690,12 @@ const Sessions = () => {
           .ses-slot-tabs-bar {
             flex-direction: column !important;
             align-items: flex-start !important;
-            gap: 8px !important;
-            padding: 10px 12px !important;
-            overflow-x: hidden !important;
+            gap: 10px !important;
+            padding: 12px 14px !important;
           }
           .ses-slot-tabs-scroll {
             width: 100% !important;
-            padding-bottom: 4px !important;
+            padding: 2px 0 6px 0 !important;
           }
           .ses-metrics-row {
             grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)) !important;

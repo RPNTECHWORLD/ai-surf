@@ -117,6 +117,7 @@ const AuthPage = () => {
     location: '',
     school: '',
     schoolLocation: '',
+    phone: '',
     whatsapp_number: '',
     course_duration: '',
     start_date: '',
@@ -195,11 +196,13 @@ const AuthPage = () => {
           setSchoolInviteData(safeData);
           const lockedSchool = data.school || urlSchool || '';
           const lockedCourse = data.course_duration || searchParams.get('course_duration');
+          const lockedStartDate = data.start_date || searchParams.get('start_date') || '';
           const lockedGuests = data.locked_guests !== undefined ? data.locked_guests : Math.max(0, (data.max_count || 1) - 1);
           setFormData(prev => ({
             ...prev,
             school: lockedSchool,
             course_duration: lockedCourse || prev.course_duration,
+            start_date: lockedStartDate || prev.start_date,
             guests_count: lockedGuests,
             guests_details: Array.from({ length: lockedGuests }).map((_, i) => (prev.guests_details || [])[i] || { name: '', whatsapp_number: '', email: '' }),
             password: '',
@@ -236,10 +239,12 @@ const AuthPage = () => {
             };
             setSchoolInviteData(mockData);
             const lockedCourse = match.course_duration || searchParams.get('course_duration');
+            const lockedStartDate = match.start_date || searchParams.get('start_date') || '';
             setFormData(prev => ({
               ...prev,
               school: match.school,
               course_duration: lockedCourse || prev.course_duration,
+              start_date: lockedStartDate || prev.start_date,
               guests_count: lockedGuests,
               guests_details: Array.from({ length: lockedGuests }).map((_, i) => (prev.guests_details || [])[i] || { name: '', whatsapp_number: '', email: '' })
             }));
@@ -600,8 +605,18 @@ const AuthPage = () => {
     if (role === 'athlete' && !formData.gender) {
       setErrorMsg('Please select your gender.'); return;
     }
-    if (role === 'coach' && !isCoachSchoolAffiliated && !formData.location?.trim()) {
-      setErrorMsg('Please enter your coaching location / region.'); return;
+    const effectiveStartDate = (schoolInviteData?.start_date || searchParams.get('start_date')) || formData.start_date;
+    if (role === 'athlete' && !effectiveStartDate) {
+      setErrorMsg('Please select your course start date.'); return;
+    }
+    if (role === 'coach') {
+      const coachPhone = (formData.phone || formData.whatsapp_number || '').trim();
+      if (!coachPhone) {
+        setErrorMsg('Please enter your phone number.'); return;
+      }
+      if (!isCoachSchoolAffiliated && !formData.location?.trim()) {
+        setErrorMsg('Please enter your coaching location / region.'); return;
+      }
     }
     if (role === 'admin' && !formData.schoolLocation?.trim()) {
       setErrorMsg('Please enter your school location.'); return;
@@ -626,9 +641,10 @@ const AuthPage = () => {
           location: isCoachSchoolAffiliated
             ? (getSchoolLocation(formData.school) || formData.location)
             : formData.location,
-          whatsapp_number: formData.whatsapp_number,
+          phone: (formData.phone || formData.whatsapp_number || '').trim(),
+          whatsapp_number: (formData.phone || formData.whatsapp_number || '').trim(),
           course_duration: formData.course_duration,
-          start_date: formData.start_date,
+          start_date: (schoolInviteData?.start_date || searchParams.get('start_date')) || formData.start_date,
           session_time: formData.session_time,
           staying_at_school: formData.staying_at_school,
           reminder_preference: formData.reminder_preference,
@@ -1810,15 +1826,47 @@ const AuthPage = () => {
                           </div>
 
                           <div className="auth-field">
-                            <label style={{ display: 'flex', alignItems: 'center', height: '22px', margin: '0 0 6px 0' }}>
-                              <span>🗓️ Start Date</span>
+                            <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '22px', margin: '0 0 6px 0' }}>
+                              <span>🗓️ Start Date <span style={{ color: '#EF4444' }}>*</span></span>
+                              {(schoolInviteData?.start_date || searchParams.get('start_date')) ? (
+                                <span style={{
+                                  fontSize: '10px',
+                                  color: '#10B981',
+                                  fontWeight: 800,
+                                  background: 'rgba(16, 185, 129, 0.15)',
+                                  border: '1px solid rgba(16, 185, 129, 0.35)',
+                                  padding: '1px 6px',
+                                  borderRadius: '4px',
+                                  whiteSpace: 'nowrap'
+                                }}>
+                                  🔒 Locked
+                                </span>
+                              ) : (
+                                <span style={{
+                                  fontSize: '10px',
+                                  color: '#EF4444',
+                                  fontWeight: 700
+                                }}>
+                                  Required *
+                                </span>
+                              )}
                             </label>
                             <input 
                               type="date" 
                               name="start_date" 
-                              value={formData.start_date || ''} 
+                              value={(schoolInviteData?.start_date || searchParams.get('start_date')) || formData.start_date || ''} 
                               onChange={handleChange} 
-                              style={{ colorScheme: 'dark' }} 
+                              required
+                              disabled={Boolean(schoolInviteData?.start_date || searchParams.get('start_date'))}
+                              style={{ 
+                                colorScheme: 'dark',
+                                ...(Boolean(schoolInviteData?.start_date || searchParams.get('start_date')) ? {
+                                  opacity: 0.9, 
+                                  cursor: 'not-allowed', 
+                                  borderColor: '#10B981', 
+                                  background: 'rgba(16, 185, 129, 0.08)'
+                                } : {})
+                              }} 
                             />
                           </div>
                         </div>
@@ -2105,6 +2153,22 @@ const AuthPage = () => {
                           <small style={{ color: '#94A3B8', fontSize: '11px', marginTop: '4px', display: 'block' }}>
                             Select your affiliated surf school, or choose 'Individual / Freelance Coach' if you coach independently.
                           </small>
+                        </div>
+
+                        {/* Coach Phone Number */}
+                        <div className="auth-field" style={{ marginBottom: '12px' }}>
+                          <label>Phone Number (WhatsApp) <span style={{ color: '#EF4444', fontWeight: 700 }}>*</span></label>
+                          <input
+                            type="tel"
+                            name="phone"
+                            placeholder="e.g. +91 98765 43210"
+                            value={formData.phone || formData.whatsapp_number || ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setFormData(prev => ({ ...prev, phone: val, whatsapp_number: val }));
+                            }}
+                            required
+                          />
                         </div>
 
                         <div className="auth-fields-row">

@@ -279,42 +279,42 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const isSuperAdmin = currentUser?.role === 'superadmin' || schoolLower === 'super admin';
   const isAdminOrSuperAdmin = isSuperAdmin || currentUser?.role === 'admin' || currentUser?.role === 'school_admin' || currentUser?.role === 'schooladmin' || schoolLower === 'school admin';
 
+  const resolveSchoolStr = (val) => {
+    if (!val) return '';
+    if (typeof val === 'string') return val;
+    if (typeof val === 'object') {
+      if (typeof val.name === 'string') return val.name;
+      if (typeof val.school_name === 'string') return val.school_name;
+    }
+    return String(val || '');
+  };
+
+  const isStudent = currentUser?.role === 'athlete' || currentUser?.role === 'student' || currentUser?.role === 'user';
   const isCoach = currentUser?.role === 'coach' || currentUser?.role === 'instructor';
+
+  const userSchoolStr = resolveSchoolStr(currentUser?.school || currentUser?.school_name).trim();
   const isIndividualSurfer = (
-    (currentUser?.school || currentUser?.school_name || '').toLowerCase().trim().includes('individual') ||
-    (currentUser?.school || currentUser?.school_name || '').toLowerCase().trim().includes('freelance') ||
+    userSchoolStr.toLowerCase().includes('individual') ||
+    userSchoolStr.toLowerCase().includes('freelance') ||
     currentUser?.is_individual === true ||
     schoolLower.includes('individual') ||
     schoolLower.includes('freelance')
   );
 
   const isCoachFreelance = isCoach && (
-    (currentUser?.school || currentUser?.school_name || '').toLowerCase().trim().includes('individual') ||
-    (currentUser?.school || currentUser?.school_name || '').toLowerCase().trim().includes('freelance') ||
+    userSchoolStr.toLowerCase().includes('individual') ||
+    userSchoolStr.toLowerCase().includes('freelance') ||
     schoolLower.includes('individual') ||
     schoolLower.includes('freelance') ||
     isIndividualSurfer
   );
 
-  const isIndividualCoach = Boolean(
-    isCoachFreelance ||
-    (isCoach && isIndividualSurfer) ||
-    (isCoach && (
-      !activeSchoolName ||
-      schoolLower === 'coach portal' ||
-      schoolLower.includes('individual') ||
-      schoolLower.includes('freelance') ||
-      schoolLower === 'no school selected' ||
-      (typeof currentUser?.school === 'string' && currentUser.school.toLowerCase().includes('individual')) ||
-      (typeof currentUser?.school_name === 'string' && currentUser.school_name.toLowerCase().includes('individual')) ||
-      currentUser?.school === 'Individual / Freelance Coach' ||
-      currentUser?.is_individual === true
-    ))
-  );
+  const isIndividualCoach = Boolean(isCoachFreelance);
+  const isSchoolCoach = isCoach && !isCoachFreelance;
 
   // Only School Admins and Individual/Freelance Surfers/Coaches can Schedule sessions
   // Coaches assigned to a school cannot schedule sessions
-  const canManageSessions = Boolean(isAdminOrSuperAdmin || isIndividualSurfer || isCoachFreelance || isIndividualCoach);
+  const canManageSessions = !isStudent && !isSchoolCoach && Boolean(isAdminOrSuperAdmin || isCoachFreelance || (!isCoach && isIndividualSurfer));
 
   useEffect(() => {
     if (currentUser && !canManageSessions) {
@@ -458,6 +458,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const [publishedStats, setPublishedStats] = useState({ sessionsCount: 1, slotsCount: 1 });
   const [uiAlert, setUiAlert] = useState(null);
   const [existingDbSessions, setExistingDbSessions] = useState([]);
+  const [dbLeaveRequests, setDbLeaveRequests] = useState([]);
 
   // Formatted Date String
   const formattedSessionDate = useMemo(() => {
@@ -466,6 +467,56 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     const dayName = new Date(year, currentCalendarDate.getMonth(), selectedDayNumber).toLocaleString('default', { weekday: 'long' });
     return `${dayName}, ${monthName} ${selectedDayNumber}, ${year}`;
   }, [currentCalendarDate, selectedDayNumber]);
+
+  // Normalized Session Date in YYYY-MM-DD
+  const selectedSessionDateYYYYMMDD = useMemo(() => {
+    const year = currentCalendarDate.getFullYear();
+    const month = String(currentCalendarDate.getMonth() + 1).padStart(2, '0');
+    const day = String(selectedDayNumber).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }, [currentCalendarDate, selectedDayNumber]);
+
+  // Check if an instructor is on approved leave on a given date (or current selected session date)
+  const getInstructorLeaveOnDate = useCallback((inst, dateStr) => {
+    if (!inst) return null;
+    const targetDate = String(dateStr || selectedSessionDateYYYYMMDD).trim().substring(0, 10);
+    if (!targetDate) return null;
+
+    // 1. Check from dbLeaveRequests
+    if (Array.isArray(dbLeaveRequests) && dbLeaveRequests.length > 0) {
+      const found = dbLeaveRequests.find(l => {
+        if ((l.status || '').toLowerCase() !== 'approved') return false;
+        const lInstId = l.instructor_id || l.instructorId;
+        const lInstName = (l.instructor_name || l.instructor || '').toLowerCase().trim();
+        const instName = (inst.name || '').toLowerCase().trim();
+        const isSame = (lInstId && String(lInstId) === String(inst.id)) || (instName && lInstName && lInstName === instName);
+        if (!isSame) return false;
+        const start = (l.start_date || '').trim().substring(0, 10);
+        const end = (l.end_date || l.start_date || '').trim().substring(0, 10);
+        return targetDate >= start && targetDate <= end;
+      });
+      if (found) return found;
+    }
+
+    // 2. Check from inst.approved_leaves (from backend /api/instructors)
+    if (Array.isArray(inst.approved_leaves)) {
+      const found = inst.approved_leaves.find(l => {
+        const start = (l.start_date || '').trim().substring(0, 10);
+        const end = (l.end_date || l.start_date || '').trim().substring(0, 10);
+        return targetDate >= start && targetDate <= end;
+      });
+      if (found) return found;
+    }
+
+    // 3. Fallback to active_leave if matches
+    if (inst.active_leave) {
+      const start = (inst.active_leave.start_date || '').trim().substring(0, 10);
+      const end = (inst.active_leave.end_date || inst.active_leave.start_date || '').trim().substring(0, 10);
+      if (targetDate >= start && targetDate <= end) return inst.active_leave;
+    }
+
+    return null;
+  }, [dbLeaveRequests, selectedSessionDateYYYYMMDD]);
 
   // Match existing DB sessions on selected session date
   const existingScheduledStudentNamesOnDate = useMemo(() => {
@@ -627,6 +678,14 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       })
       .catch(() => {});
 
+    // Fetch leave requests for current school to cross-check coach availability
+    fetch(`${API}/api/leave-requests${schoolParam}`)
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data)) setDbLeaveRequests(data);
+      })
+      .catch(() => {});
+
     fetch(`${API}/api/instructors${schoolParam}`)
       .then(r => r.json())
       .then(data => {
@@ -650,7 +709,10 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
               role: roleStr,
               status: i.status || 'Available',
               avatar: (i.image && !i.image.includes('unsplash.com') && !i.image.includes('1500648767791')) ? i.image : '',
-              isReal: true
+              isReal: true,
+              approved_leaves: i.approved_leaves || [],
+              is_on_leave: i.is_on_leave,
+              active_leave: i.active_leave
             };
           });
 
@@ -665,7 +727,10 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                 role: 'Head Coach',
                 status: 'Available',
                 avatar: currentUser.image || '',
-                isReal: true
+                isReal: true,
+                approved_leaves: currentUser.approved_leaves || [],
+                is_on_leave: currentUser.is_on_leave,
+                active_leave: currentUser.active_leave
               });
             }
           }
@@ -757,6 +822,15 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       return g === step3CoachGenderFilter.toLowerCase();
     });
   }, [allInstructors, step3CoachGenderFilter]);
+
+  // Track active vs on-leave coaches on selected session date
+  const onLeaveInstructorsCount = useMemo(() => {
+    return allInstructors.filter(i => Boolean(getInstructorLeaveOnDate(i, selectedSessionDateYYYYMMDD))).length;
+  }, [allInstructors, getInstructorLeaveOnDate, selectedSessionDateYYYYMMDD]);
+
+  const activeInstructorsCount = useMemo(() => {
+    return Math.max(0, allInstructors.length - onLeaveInstructorsCount);
+  }, [allInstructors.length, onLeaveInstructorsCount]);
 
   // ─── Pre-fill from editSession (edit mode) ───
   // When editSession is passed, pre-select date, slot, and students and jump to Step 3.
@@ -1248,13 +1322,14 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
               level: 'General',
               slotId: slot.id,
               studentIds: slotStudents,
-              assignedInstructorId: (isIndividualCoach && currentIndividualCoach?.id) ? currentIndividualCoach.id : ((isCoachFreelance && (currentUser?.instructor_id || currentUser?.id)) ? (currentUser?.instructor_id || currentUser?.id) : null),
-              assignedInstructorIds: (isIndividualCoach && currentIndividualCoach?.id) ? [currentIndividualCoach.id] : ((isCoachFreelance && (currentUser?.instructor_id || currentUser?.id)) ? [(currentUser?.instructor_id || currentUser?.id)] : []),
+              assignedInstructorId: (isIndividualCoach && currentIndividualCoach?.id && !getInstructorLeaveOnDate(currentIndividualCoach, selectedSessionDateYYYYMMDD)) ? currentIndividualCoach.id : ((isCoachFreelance && (currentUser?.instructor_id || currentUser?.id) && !getInstructorLeaveOnDate({ id: currentUser?.instructor_id || currentUser?.id, name: currentUser?.name }, selectedSessionDateYYYYMMDD)) ? (currentUser?.instructor_id || currentUser?.id) : null),
+              assignedInstructorIds: (isIndividualCoach && currentIndividualCoach?.id && !getInstructorLeaveOnDate(currentIndividualCoach, selectedSessionDateYYYYMMDD)) ? [currentIndividualCoach.id] : ((isCoachFreelance && (currentUser?.instructor_id || currentUser?.id) && !getInstructorLeaveOnDate({ id: currentUser?.instructor_id || currentUser?.id, name: currentUser?.name }, selectedSessionDateYYYYMMDD)) ? [(currentUser?.instructor_id || currentUser?.id)] : []),
             };
           });
           setTrainingGroups(newGroups);
           setActiveDropGroupId(newGroups[0]?.id || null);
         } else {
+          const singleCoachId = (isIndividualCoach && currentIndividualCoach?.id && !getInstructorLeaveOnDate(currentIndividualCoach, selectedSessionDateYYYYMMDD)) ? currentIndividualCoach.id : ((isCoachFreelance && (currentUser?.instructor_id || currentUser?.id) && !getInstructorLeaveOnDate({ id: currentUser?.instructor_id || currentUser?.id, name: currentUser?.name }, selectedSessionDateYYYYMMDD)) ? (currentUser?.instructor_id || currentUser?.id) : null);
           setTrainingGroups([
             {
               id: `group-1`,
@@ -1263,8 +1338,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
               level: 'General',
               slotId: initialSlot?.id || null,
               studentIds: targetIds,
-              assignedInstructorId: (isIndividualCoach && currentIndividualCoach?.id) ? currentIndividualCoach.id : ((isCoachFreelance && (currentUser?.instructor_id || currentUser?.id)) ? (currentUser?.instructor_id || currentUser?.id) : null),
-              assignedInstructorIds: (isIndividualCoach && currentIndividualCoach?.id) ? [currentIndividualCoach.id] : ((isCoachFreelance && (currentUser?.instructor_id || currentUser?.id)) ? [(currentUser?.instructor_id || currentUser?.id)] : []),
+              assignedInstructorId: singleCoachId,
+              assignedInstructorIds: singleCoachId ? [singleCoachId] : [],
             }
           ]);
           setActiveDropGroupId('group-1');
@@ -1408,6 +1483,28 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     if (editSession || step3SlotFilter === 'ALL') return trainingGroups;
     return trainingGroups.filter(g => String(g.slotId || slots[0]?.id) === String(step3SlotFilter));
   }, [trainingGroups, step3SlotFilter, slots, editSession]);
+
+  // Step 3: Current slot students count and assigned instructors count for Ratio display
+  const currentSlotStudentsCount = useMemo(() => {
+    if (step3SlotFilter === 'ALL') return importedStudents.length;
+    if (slotStudentMap && Array.isArray(slotStudentMap[step3SlotFilter])) {
+      return slotStudentMap[step3SlotFilter].length;
+    }
+    return slotImportedStudents.length;
+  }, [step3SlotFilter, slotStudentMap, importedStudents, slotImportedStudents]);
+
+  const currentSlotAssignedInstructorsCount = useMemo(() => {
+    const coachIdSet = new Set();
+    displayedTrainingGroups.forEach(grp => {
+      const ids = grp.assignedInstructorIds && grp.assignedInstructorIds.length > 0
+        ? grp.assignedInstructorIds
+        : (grp.assignedInstructorId ? [grp.assignedInstructorId] : (grp.instructorId ? [grp.instructorId] : []));
+      ids.forEach(id => {
+        if (id) coachIdSet.add(String(id));
+      });
+    });
+    return coachIdSet.size;
+  }, [displayedTrainingGroups]);
 
   // Set of student IDs that belong to the active slot in Step 3
   const activeSlotStudentIdSet = useMemo(() => {
@@ -1616,9 +1713,20 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
   // Assign Instructor to Group (Supports Multiple Coaches with Same-Time Conflict Prevention)
   const assignInstructorToGroup = (groupId, instructorId) => {
+    const coach = allInstructors.find(i => String(i.id) === String(instructorId));
+    const leaveOnDate = getInstructorLeaveOnDate(coach, selectedSessionDateYYYYMMDD);
+    if (leaveOnDate) {
+      setUiAlert({
+        title: 'Staff On Leave',
+        message: `${coach?.name || 'This coach'} is on approved leave on ${formattedSessionDate}${leaveOnDate?.leave_type ? ` (${leaveOnDate.leave_type})` : ''}. You cannot assign this coach to training groups on this date.`,
+        type: 'warning',
+        icon: '🏖️'
+      });
+      return false;
+    }
+
     const conflict = getCoachSlotConflict(groupId, instructorId);
     if (conflict) {
-      const coach = allInstructors.find(i => String(i.id) === String(instructorId));
       const coachName = coach ? coach.name : 'This coach';
       setUiAlert({
         title: 'Coach Schedule Conflict',
@@ -1740,6 +1848,24 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         icon: '🏄‍♂️'
       });
       return;
+    }
+
+    // Check if any assigned coach is on approved leave on selected session date
+    for (const grp of validGroups) {
+      const coachIds = grp.assignedInstructorIds || (grp.assignedInstructorId ? [grp.assignedInstructorId] : []);
+      for (const cid of coachIds) {
+        const coach = allInstructors.find(ins => String(ins.id) === String(cid));
+        const leave = getInstructorLeaveOnDate(coach, selectedSessionDateYYYYMMDD);
+        if (leave) {
+          setUiAlert({
+            title: 'Assigned Coach On Leave',
+            message: `Coach ${coach?.name || 'Assigned coach'} is on approved leave on ${formattedSessionDate}${leave.leave_type ? ` (${leave.leave_type})` : ''}. Please remove or replace this coach in ${grp.name} before publishing.`,
+            type: 'warning',
+            icon: '🏖️'
+          });
+          return;
+        }
+      }
     }
 
     // Check for same-time coach conflict across all groups
@@ -3115,8 +3241,14 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                 <span className="ns-sc-label">Students Imported</span>
               </div>
               <div className="ns-stat-card">
-                <h2 className="ns-sc-value">{allInstructors.length}</h2>
-                <span className="ns-sc-label">Active Instructors</span>
+                <h2 className="ns-sc-value">{activeInstructorsCount}</h2>
+                <span className="ns-sc-label">
+                  Active Instructors {onLeaveInstructorsCount > 0 && <span style={{ color: '#DC2626', fontWeight: 700 }}>({onLeaveInstructorsCount} on leave)</span>}
+                </span>
+              </div>
+              <div className="ns-stat-card">
+                <h2 className="ns-sc-value">{currentSlotStudentsCount} : {currentSlotAssignedInstructorsCount}</h2>
+                <span className="ns-sc-label">Students : Instructor Ratio</span>
               </div>
             </div>
 
@@ -3248,13 +3380,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                 </div>
 
                 {/* Filter Toolbar: Day, Status, Level, Gender, Swimming */}
-                <div style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(5, 1fr)',
-                  gap: '6px',
-                  width: '100%',
-                  boxSizing: 'border-box'
-                }}>
+                <div className="ns-step3-filters-grid">
                   {/* Day Filter */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
                     <label style={{ fontSize: '10px', fontWeight: 700, color: '#64748B', display: 'flex', alignItems: 'center', gap: '3px', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
@@ -3482,8 +3608,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                           key={student.id}
                           className={`ns-ws-student-item ${isChecked ? 'active' : ''} ${student.isGuest ? 'ns-ws-guest-item' : ''}`}
                           style={student.isGuest ? {
-                            marginLeft: '24px',
-                            width: 'calc(100% - 24px)',
+                            marginLeft: '16px',
+                            minWidth: 'calc(100% - 16px)',
+                            width: 'max-content',
                             boxSizing: 'border-box',
                             background: isChecked ? '#E0F2FE' : '#F0F9FF',
                             borderTop: isChecked ? '1.5px solid #0284C7' : '1.5px solid #BAE6FD',
@@ -3708,7 +3835,28 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                 </div>
 
                 <div className="ns-ws-col-footer">
-                  <span className="ns-selected-count">{step3CheckedStudentIds.length} Selected</span>
+                  <span className="ns-selected-count">
+                    <strong>{step3CheckedStudentIds.length}</strong> Selected
+                  </span>
+                  <button
+                    type="button"
+                    className="ns-create-grp-btn"
+                    onClick={handleCreateGroup}
+                    title={step3CheckedStudentIds.length > 0 ? `Create group with ${step3CheckedStudentIds.length} selected student(s)` : "Create a new group card"}
+                  >
+                    <span>+ Add Group</span>
+                    {step3CheckedStudentIds.length > 0 && (
+                      <span style={{
+                        background: 'rgba(255, 255, 255, 0.25)',
+                        padding: '1px 6px',
+                        borderRadius: '10px',
+                        fontSize: '11px',
+                        fontWeight: 800
+                      }}>
+                        {step3CheckedStudentIds.length}
+                      </span>
+                    )}
+                  </button>
                 </div>
               </div>
 
@@ -3979,45 +4127,55 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                               if (displayCoaches.length > 0) {
                                 return (
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                    {displayCoaches.map(coach => (
-                                      <div
-                                        key={coach.id}
-                                        className="ns-assigned-inst-box"
-                                        style={{
-                                          padding: '7px 10px',
-                                          background: '#F0FDF4',
-                                          border: '1.5px solid #86EFAC',
-                                          borderRadius: '8px',
-                                          display: 'flex',
-                                          alignItems: 'center',
-                                          gap: '8px'
-                                        }}
-                                      >
-                                        <UserAvatar src={coach.avatar} name={coach.name} size={26} className="ns-ai-avatar" />
-                                        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
-                                          <span className="ns-ai-name" style={{ fontSize: '12px', fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                            {coach.name}
-                                          </span>
-                                          <span style={{ fontSize: '10px', color: '#16A34A', fontWeight: 700 }}>
-                                            ✓ Assigned Coach {isIndividualCoach ? '• Individual Account' : `(${coach.role || 'Instructor'})`}
-                                          </span>
+                                    {displayCoaches.map(coach => {
+                                      const coachLeave = getInstructorLeaveOnDate(coach, selectedSessionDateYYYYMMDD);
+                                      const isCoachOnLeave = Boolean(coachLeave);
+                                      return (
+                                        <div
+                                          key={coach.id}
+                                          className={`ns-assigned-inst-box ${isCoachOnLeave ? 'ns-coach-on-leave-box' : ''}`}
+                                          style={{
+                                            padding: '7px 10px',
+                                            background: isCoachOnLeave ? '#FEF2F2' : '#F0FDF4',
+                                            border: isCoachOnLeave ? '1.5px solid #F87171' : '1.5px solid #86EFAC',
+                                            borderRadius: '8px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '8px'
+                                          }}
+                                        >
+                                          <UserAvatar src={coach.avatar} name={coach.name} size={26} className="ns-ai-avatar" />
+                                          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
+                                            <span className="ns-ai-name" style={{ fontSize: '12px', fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                              {coach.name}
+                                            </span>
+                                            {isCoachOnLeave ? (
+                                              <span style={{ fontSize: '10.5px', color: '#DC2626', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                                <span>⚠️</span> On Leave on this date ({coachLeave?.leave_type || 'Leave'})
+                                              </span>
+                                            ) : (
+                                              <span style={{ fontSize: '10px', color: '#16A34A', fontWeight: 700 }}>
+                                                ✓ Assigned Coach {isIndividualCoach ? '• Individual Account' : `(${coach.role || 'Instructor'})`}
+                                              </span>
+                                            )}
+                                          </div>
+                                          {!isIndividualCoach && (
+                                            <button
+                                              type="button"
+                                              className="ns-ai-remove"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                removeInstructorFromGroup(grp.id, coach.id);
+                                              }}
+                                              title={`Remove ${coach.name}`}
+                                              style={{ fontSize: '16px', color: isCoachOnLeave ? '#DC2626' : '#94A3B8', cursor: 'pointer', background: 'none', border: 'none', padding: '2px 6px', lineHeight: 1 }}
+                                            >
+                                              &times;
+                                            </button>
+                                          )}
                                         </div>
-                                        {!isIndividualCoach && (
-                                          <button
-                                            type="button"
-                                            className="ns-ai-remove"
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              removeInstructorFromGroup(grp.id, coach.id);
-                                            }}
-                                            title={`Remove ${coach.name}`}
-                                            style={{ fontSize: '16px', color: '#94A3B8', cursor: 'pointer', background: 'none', border: 'none', padding: '2px 6px', lineHeight: 1 }}
-                                          >
-                                            &times;
-                                          </button>
-                                        )}
-                                      </div>
-                                    ))}
+                                      );
+                                    })}
 
                                     {/* Add Another Coach Dropzone: ONLY for School accounts */}
                                     {!isIndividualCoach && (
@@ -4157,7 +4315,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                 <div className="ns-col-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <h3 className="ns-col-title">Available Instructors</h3>
-                    <span className="ns-col-badge">{filteredInstructors.length} Staff</span>
+                    <span className="ns-col-badge">
+                      {filteredInstructors.length} Staff {onLeaveInstructorsCount > 0 ? `(${onLeaveInstructorsCount} On Leave)` : ''}
+                    </span>
                   </div>
                   {step3CoachGenderFilter !== 'all' && (
                     <button
@@ -4256,14 +4416,15 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                         return ids.map(String).includes(String(inst.id));
                       }).length;
 
-                      const isOnLeave = inst.status === 'On Leave';
+                      const leaveOnDate = getInstructorLeaveOnDate(inst, selectedSessionDateYYYYMMDD);
+                      const isOnLeave = Boolean(leaveOnDate) || inst.status === 'On Leave';
 
                       const activeConflict = currentActiveGroup
                         ? getCoachSlotConflict(currentActiveGroup.id, inst.id)
                         : getCoachSlotConflict(null, inst.id, currentSlotId);
 
                       const badgeText = isOnLeave
-                        ? 'On Leave'
+                        ? '🏖️ On Leave'
                         : activeConflict
                           ? `Busy (${activeConflict.conflictingGroup.name})`
                           : isAssignedInCurrentSlot
@@ -4283,6 +4444,12 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                         <div
                           key={inst.id}
                           className={`ns-inst-card ${isAssignedInCurrentSlot ? 'assigned' : ''} ${isOnLeave ? 'leave' : ''} ${activeConflict ? 'conflict-busy' : ''}`}
+                          style={isOnLeave ? {
+                            background: '#FFF5F5',
+                            borderColor: '#FECACA',
+                            cursor: 'not-allowed',
+                            opacity: 0.85
+                          } : {}}
                           draggable={!isOnLeave}
                           onDragStart={(e) => {
                             if (isOnLeave) return;
@@ -4301,8 +4468,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                             if (isOnLeave) {
                               setUiAlert({
                                 title: 'Staff On Leave',
-                                message: `${inst.name} is currently marked as On Leave.`,
-                                type: 'info',
+                                message: `${inst.name} is on approved leave on ${formattedSessionDate}${leaveOnDate?.leave_type ? ` (${leaveOnDate.leave_type})` : ''}. Cannot assign to sessions on this date.`,
+                                type: 'warning',
                                 icon: '🏖️'
                               });
                               return;
@@ -4347,14 +4514,16 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                               setActiveDropGroupId(newGroup.id);
                             }
                           }}
-                          title={isOnLeave ? 'On Leave' : activeConflict ? `Already coaching ${activeConflict.conflictingGroup.name} at ${activeConflict.time}` : 'Drag into a group or click to assign'}
+                          title={isOnLeave ? `On Leave on ${formattedSessionDate}${leaveOnDate?.leave_type ? ` (${leaveOnDate.leave_type})` : ''}` : activeConflict ? `Already coaching ${activeConflict.conflictingGroup.name} at ${activeConflict.time}` : 'Drag into a group or click to assign'}
                         >
-                          <span className="ns-drag-grip" style={{ color: '#0D9488', fontSize: '13px' }}>⠿</span>
+                          <span className="ns-drag-grip" style={{ color: isOnLeave ? '#CBD5E1' : '#0D9488', fontSize: '13px' }}>⠿</span>
                           <UserAvatar src={inst.avatar} name={inst.name} size={36} className="ns-inst-avatar" />
                           <div className="ns-inst-info">
                             <h4 className="ns-inst-name">{inst.name}</h4>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                              <span className="ns-inst-role">{inst.role}</span>
+                              <span className="ns-inst-role">
+                                {inst.role || 'Instructor'}
+                              </span>
                               <span
                                 style={{
                                   fontSize: '9.5px',
@@ -4373,12 +4542,17 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                           </div>
                           <span
                             className={`ns-inst-badge ${badgeClass}`}
-                            style={activeConflict ? {
+                            style={isOnLeave ? {
+                              background: '#FEE2E2',
+                              color: '#B91C1C',
+                              border: '1px solid #FECACA',
+                              fontWeight: 700
+                            } : (activeConflict ? {
                               background: '#FEF2F2',
                               color: '#DC2626',
                               border: '1px solid #FECACA',
                               fontWeight: 700
-                            } : {}}
+                            } : {})}
                           >
                             {badgeText}
                           </span>
@@ -4708,13 +4882,15 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       <style>{`
         .ns-root {
           display: flex;
-          height: 100vh;
-          max-height: 100vh;
+          flex-direction: column;
+          min-height: 100vh;
+          width: 100%;
           max-width: 100vw;
-          overflow: hidden;
+          overflow-x: hidden;
           background-color: #F8FAFC;
           font-family: 'Instrument Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
           color: #0F172A;
+          box-sizing: border-box;
         }
 
         .ns-container, .ns-modal-container {
@@ -4724,15 +4900,20 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
         .ns-container {
           flex: 1;
-          height: 100vh;
-          padding: 20px 32px;
+          margin-top: 72px;
+          min-height: calc(100vh - 72px);
+          height: auto;
+          padding: 24px 32px 120px 32px;
           display: flex;
           flex-direction: column;
           gap: 16px;
-          overflow-y: auto;
+          overflow-y: visible;
           overflow-x: hidden;
           max-width: 1400px;
-          margin: 0 auto;
+          width: 100%;
+          margin-left: auto;
+          margin-right: auto;
+          box-sizing: border-box;
           -webkit-overflow-scrolling: touch;
         }
 
@@ -5915,8 +6096,13 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
         .ns-step3-stats-grid {
           display: grid;
-          grid-template-columns: repeat(2, 1fr);
+          grid-template-columns: repeat(3, 1fr);
           gap: 10px;
+        }
+        @media (max-width: 900px) {
+          .ns-step3-stats-grid {
+            grid-template-columns: 1fr;
+          }
         }
         .ns-stat-card {
           background: #FFFFFF;
@@ -5951,11 +6137,31 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         /* 3-Column Workspace */
         .ns-step3-workspace {
           display: grid;
-          grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1fr);
+          grid-template-columns: minmax(320px, 1fr) minmax(360px, 1.2fr) minmax(300px, 1fr);
           gap: 16px;
           align-items: start;
           max-width: 100%;
-          padding-bottom: 8px;
+          overflow-x: auto;
+          -webkit-overflow-scrolling: touch;
+          padding-bottom: 12px;
+        }
+        .ns-step3-workspace::-webkit-scrollbar {
+          height: 6px;
+        }
+        .ns-step3-workspace::-webkit-scrollbar-track {
+          background: #F1F5F9;
+          border-radius: 4px;
+        }
+        .ns-step3-workspace::-webkit-scrollbar-thumb {
+          background: #CBD5E1;
+          border-radius: 4px;
+        }
+        .ns-step3-filters-grid {
+          display: grid;
+          grid-template-columns: repeat(5, 1fr);
+          gap: 6px;
+          width: 100%;
+          box-sizing: border-box;
         }
         .ns-ws-col {
           background: #FFFFFF;
@@ -6032,21 +6238,43 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           display: flex;
           flex-direction: column;
           gap: 8px;
-          max-height: 380px;
+          max-height: 400px;
           overflow-y: auto;
+          overflow-x: auto;
+          -webkit-overflow-scrolling: touch;
           padding-right: 4px;
+          padding-bottom: 8px;
+        }
+        .ns-ws-student-list::-webkit-scrollbar {
+          height: 6px;
+          width: 6px;
+        }
+        .ns-ws-student-list::-webkit-scrollbar-track {
+          background: #F1F5F9;
+          border-radius: 4px;
+        }
+        .ns-ws-student-list::-webkit-scrollbar-thumb {
+          background: #CBD5E1;
+          border-radius: 4px;
+        }
+        .ns-ws-student-list::-webkit-scrollbar-thumb:hover {
+          background: #94A3B8;
         }
         .ns-ws-student-item {
           display: flex;
           align-items: center;
           gap: 10px;
-          padding: 9px 11px;
+          padding: 8px 12px;
           border-radius: 10px;
           background: #FFFFFF;
           border: 1px solid #E2E8F0;
           cursor: pointer;
-          transition: all 0.15s ease;
+          transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
           user-select: none;
+          width: max-content;
+          min-width: 100%;
+          box-sizing: border-box;
+          position: relative;
         }
         .ns-ws-student-item:hover {
           background-color: #F8FAFC;
@@ -6058,8 +6286,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           box-shadow: 0 0 0 1px #0284C7;
         }
         .ns-ws-student-item.ns-ws-guest-item {
-          margin-left: 24px;
-          width: calc(100% - 24px);
+          margin-left: 16px;
+          width: max-content;
+          min-width: calc(100% - 16px);
           box-sizing: border-box;
           background-color: #F0F9FF;
           border-color: #BAE6FD;
@@ -6076,12 +6305,14 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           border-left: 4px solid #0284C7;
           box-shadow: 0 0 0 1px #0284C7;
         }
+
         .ns-ws-student-left {
           display: flex;
           align-items: center;
           gap: 8px;
           flex-shrink: 0;
         }
+
         .ns-checkbox-box {
           width: 16px;
           height: 16px;
@@ -6107,7 +6338,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         }
         .ns-ws-student-body {
           flex: 1;
-          min-width: 0;
+          min-width: max-content;
           display: flex;
           flex-direction: column;
           gap: 4px;
@@ -6115,26 +6346,24 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         .ns-ws-student-top {
           display: flex;
           align-items: center;
-          justify-content: space-between;
-          gap: 8px;
-          min-width: 0;
+          gap: 7px;
+          min-width: max-content;
+          white-space: nowrap;
         }
         .ns-ws-name {
-          font-size: 13px;
-          font-weight: 600;
+          font-size: 13.5px;
+          font-weight: 700;
           color: #0F172A;
           white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          min-width: 0;
-          flex: 1;
+          flex-shrink: 0;
+          min-width: max-content;
         }
         .ns-ws-student-meta {
           display: flex;
           align-items: center;
           gap: 5px;
-          flex-wrap: wrap;
-          min-width: 0;
+          min-width: max-content;
+          white-space: nowrap;
         }
         .ns-ws-group-badge {
           white-space: nowrap;
@@ -6164,14 +6393,27 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           color: #0F172A;
         }
         .ns-create-grp-btn {
-          background: #10B981;
+          background: linear-gradient(135deg, #0D9488 0%, #0F766E 100%);
           color: #FFFFFF;
           border: none;
           border-radius: 8px;
-          padding: 8px 16px;
-          font-size: 13px;
-          font-weight: 600;
+          padding: 7px 14px;
+          font-size: 12.5px;
+          font-weight: 700;
           cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          transition: all 0.2s ease;
+          box-shadow: 0 2px 6px rgba(13, 148, 136, 0.25);
+        }
+        .ns-create-grp-btn:hover {
+          background: linear-gradient(135deg, #0F766E 0%, #115E59 100%);
+          transform: translateY(-1px);
+          box-shadow: 0 4px 10px rgba(13, 148, 136, 0.35);
+        }
+        .ns-create-grp-btn:active {
+          transform: translateY(0);
         }
 
         /* Column 2: Groups */
@@ -6978,6 +7220,55 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             font-size: 11.5px !important;
             border-radius: 6px !important;
             white-space: nowrap !important;
+          }
+        }
+
+        @media (max-width: 900px) {
+          .ns-root {
+            min-height: 100vh !important;
+            height: auto !important;
+            overflow-x: hidden !important;
+          }
+          .ns-container {
+            margin-top: 64px !important;
+            padding: 14px 12px 100px 12px !important;
+            min-height: calc(100vh - 64px) !important;
+            height: auto !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
+          }
+          .ns-card, .ns-pool-card {
+            padding: 16px 14px !important;
+            border-radius: 12px !important;
+          }
+          .ns-step3-workspace {
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 16px !important;
+            overflow-x: hidden !important;
+          }
+          .ns-ws-col {
+            width: 100% !important;
+            box-sizing: border-box !important;
+            min-height: auto !important;
+          }
+          .ns-ws-student-list {
+            max-height: 360px !important;
+          }
+          .ns-training-groups-list {
+            max-height: 400px !important;
+          }
+          .ns-step3-filters-grid {
+            grid-template-columns: repeat(3, 1fr) !important;
+            gap: 6px !important;
+          }
+        }
+
+        @media (max-width: 540px) {
+          .ns-step3-filters-grid {
+            grid-template-columns: repeat(2, 1fr) !important;
+            gap: 6px !important;
           }
         }
 

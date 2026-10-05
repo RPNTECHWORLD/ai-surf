@@ -387,18 +387,21 @@ const Analytics = () => {
       <style>{`
         .an-page {
           display: flex;
+          flex-direction: column;
           min-height: 100vh;
           height: auto !important;
-          background: #F8FAFC;
+          background: #F8F6F2;
           font-family: 'Instrument Sans', sans-serif;
-          padding-top: 0px;
           box-sizing: border-box;
           width: 100%;
           overflow-y: auto !important;
         }
         .an-main {
           flex: 1;
-          padding: 32px 40px 80px 40px;
+          margin-top: 72px !important;
+          min-height: calc(100vh - 72px) !important;
+          height: auto !important;
+          padding: 32px 40px 120px 40px !important;
           display: flex;
           flex-direction: column;
           gap: 28px;
@@ -455,7 +458,7 @@ const Analytics = () => {
         .an-funnel-value { font-size: 12px; font-weight: 700; color: #FFFFFF; }
 
         /* Table */
-        .an-table-container { background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 16px; overflow: hidden; width: 100%; }
+        .an-table-container { background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 16px; overflow-x: auto; width: 100%; -webkit-overflow-scrolling: touch; }
         .an-table { width: 100%; border-collapse: collapse; }
         .an-table th {
           text-align: left; padding: 16px 20px; font-size: 12px; font-weight: 700;

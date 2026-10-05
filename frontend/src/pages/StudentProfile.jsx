@@ -23,6 +23,62 @@ const calculateAge = (dobString) => {
   }
 };
 
+const parseCoachNotes = (raw) => {
+  if (!raw || typeof raw !== 'string') return null;
+  const clean = raw.trim();
+  if (!clean || clean.toLowerCase() === 'no notes recorded' || clean.toLowerCase() === 'no notes yet' || clean.toLowerCase() === 'no notes') {
+    return null;
+  }
+
+  let waveCount = '';
+  const waveMatch = clean.match(/Wave Count:\s*(\d+)/i);
+  if (waveMatch) waveCount = waveMatch[1];
+
+  let whatDidWell = '';
+  let whatDidWellScore = '';
+  const wellBlockMatch = clean.match(/What You did Well:\s*\n?([\s\S]*?)(?=(?:What to Improve:|$))/i);
+  if (wellBlockMatch) {
+    const block = wellBlockMatch[1];
+    const scoreMatch = block.match(/\[\s*(\d+)\s*(?:out of|\/)\s*10\s*\]/i) || block.match(/\(\s*(\d+)\s*(?:out of|\/)\s*10\s*\)/i);
+    if (scoreMatch) whatDidWellScore = scoreMatch[1];
+    whatDidWell = block
+      .replace(/\[\s*\d+\s*(?:out of|\/)\s*10\s*\]\.?/gi, '')
+      .replace(/\(\s*\d+\s*(?:out of|\/)\s*10\s*\)/gi, '')
+      .replace(/^-\s*/gm, '')
+      .trim();
+  }
+
+  let whatToImprove = '';
+  let whatToImproveScore = '';
+  const impBlockMatch = clean.match(/What to Improve:\s*\n?([\s\S]*?)$/i);
+  if (impBlockMatch) {
+    const block = impBlockMatch[1];
+    const scoreMatch = block.match(/\[\s*(\d+)\s*(?:out of|\/)\s*10\s*\]/i) || block.match(/\(\s*(\d+)\s*(?:out of|\/)\s*10\s*\)/i);
+    if (scoreMatch) whatToImproveScore = scoreMatch[1];
+    whatToImprove = block
+      .replace(/\[\s*\d+\s*(?:out of|\/)\s*10\s*\]\.?/gi, '')
+      .replace(/\(\s*\d+\s*(?:out of|\/)\s*10\s*\)/gi, '')
+      .replace(/^-\s*/gm, '')
+      .trim();
+  }
+
+  return {
+    raw: clean,
+    waveCount,
+    whatDidWell,
+    whatDidWellScore,
+    whatToImprove,
+    whatToImproveScore,
+    hasStructured: Boolean(whatDidWell || whatToImprove || waveCount)
+  };
+};
+
+const getCoachRemarksData = (session) => {
+  if (!session) return null;
+  const rawNotes = session.notes || session.coach_notes || session.session_notes || session.feedback || session.remarks || '';
+  return parseCoachNotes(rawNotes);
+};
+
 const StudentProfile = () => {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -1849,7 +1905,7 @@ const StudentProfile = () => {
             {/* Session History Card */}
             <div className="sp-card">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px', flexWrap: 'wrap', gap: '8px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                   <h2 className="sp-card-title">Session History</h2>
                   {completedSessions.length > 0 && (
                     <span style={{
@@ -1866,6 +1922,23 @@ const StudentProfile = () => {
                     }}>
                       <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#10B981' }} />
                       {completedSessions.length} Completed
+                    </span>
+                  )}
+                  {completedSessions.some(s => Boolean(getCoachRemarksData(s))) && (
+                    <span style={{
+                      background: 'linear-gradient(135deg, #ECFDF5 0%, #D1FAE5 100%)',
+                      color: '#065F46',
+                      border: '1px solid #6EE7B7',
+                      fontSize: '11px',
+                      fontWeight: 800,
+                      padding: '2px 9px',
+                      borderRadius: '20px',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      boxShadow: '0 1px 3px rgba(16, 185, 129, 0.15)'
+                    }}>
+                      <span>💬</span> Coach Remarks Available
                     </span>
                   )}
                 </div>
@@ -1928,6 +2001,7 @@ const StudentProfile = () => {
                     const coachName = session.instructor || student.instructor || 'Surf Coach';
                     const coachId = session.instructor_id || student.instructor_id || null;
                     const sessionTitle = session.title || session.group_name || session.location || 'Surf Training Session';
+                    const remarksData = getCoachRemarksData(session);
 
                     return (
                       <div
@@ -1978,7 +2052,7 @@ const StudentProfile = () => {
                         </div>
 
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minWidth: 0 }}>
-                          {/* Top Row: Date, Time & Completed Badge */}
+                          {/* Top Row: Date, Time, Remarks Notification & Completed Badge */}
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                               <span style={{ fontSize: '11px', fontWeight: 800, color: '#047857', textTransform: 'uppercase', letterSpacing: '0.4px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
@@ -2002,21 +2076,52 @@ const StudentProfile = () => {
                               )}
                             </div>
 
-                            <span style={{
-                              fontSize: '10.5px',
-                              fontWeight: 800,
-                              background: '#ECFDF5',
-                              color: '#065F46',
-                              border: '1px solid #A7F3D0',
-                              padding: '2px 8px',
-                              borderRadius: '6px',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '4px'
-                            }}>
-                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                              Completed
-                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              {remarksData && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigate(`/sessions?openSession=${session.id}&tab=notes`);
+                                  }}
+                                  style={{
+                                    fontSize: '10.5px',
+                                    fontWeight: 800,
+                                    background: 'linear-gradient(135deg, #ECFDF5 0%, #D1FAE5 100%)',
+                                    color: '#065F46',
+                                    border: '1.5px solid #10B981',
+                                    padding: '2px 8px',
+                                    borderRadius: '6px',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    cursor: 'pointer',
+                                    boxShadow: '0 1px 3px rgba(16, 185, 129, 0.18)',
+                                    transition: 'all 0.15s ease'
+                                  }}
+                                  title="Click to open full session & view remarks"
+                                >
+                                  <span>💬 See your remarks</span>
+                                  <span style={{ fontSize: '9px', background: '#059669', color: '#FFFFFF', padding: '0 4px', borderRadius: '3px', fontWeight: 800 }}>★</span>
+                                </button>
+                              )}
+
+                              <span style={{
+                                fontSize: '10.5px',
+                                fontWeight: 800,
+                                background: '#ECFDF5',
+                                color: '#065F46',
+                                border: '1px solid #A7F3D0',
+                                padding: '2px 8px',
+                                borderRadius: '6px',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                              }}>
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                                Completed
+                              </span>
+                            </div>
                           </div>
 
                           {/* Middle Row: Title & Participant/Guest Tag */}
@@ -2058,6 +2163,53 @@ const StudentProfile = () => {
                             )}
                           </div>
 
+                          {/* Direct Notification Callout Banner: If Coach gave notes */}
+                          {remarksData && (
+                            <div
+                              onClick={() => navigate(`/sessions?openSession=${session.id}&tab=notes`)}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                padding: '8px 12px',
+                                background: 'linear-gradient(135deg, #F0FDF4 0%, #ECFDF5 100%)',
+                                border: '1.5px solid #A7F3D0',
+                                borderRadius: '8px',
+                                cursor: 'pointer',
+                                margin: '2px 0',
+                                transition: 'all 0.15s ease'
+                              }}
+                              onMouseEnter={e => {
+                                e.currentTarget.style.borderColor = '#10B981';
+                                e.currentTarget.style.transform = 'translateY(-1px)';
+                                e.currentTarget.style.boxShadow = '0 3px 8px rgba(16, 185, 129, 0.12)';
+                              }}
+                              onMouseLeave={e => {
+                                e.currentTarget.style.borderColor = '#A7F3D0';
+                                e.currentTarget.style.transform = 'none';
+                                e.currentTarget.style.boxShadow = 'none';
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <span style={{ fontSize: '15px' }}>💬</span>
+                                <div>
+                                  <div style={{ fontSize: '12px', fontWeight: 800, color: '#065F46', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <span>See your remarks</span>
+                                    <span style={{ fontSize: '9px', background: '#059669', color: '#FFFFFF', padding: '1px 5px', borderRadius: '4px', fontWeight: 800 }}>
+                                      Feedback Ready
+                                    </span>
+                                  </div>
+                                  <div style={{ fontSize: '11px', color: '#047857', marginTop: '1px' }}>
+                                    Coach {coachName} added evaluation scores & feedback. Click to open full session.
+                                  </div>
+                                </div>
+                              </div>
+                              <span style={{ fontSize: '11.5px', fontWeight: 800, color: '#059669', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                                Open Session &rarr;
+                              </span>
+                            </div>
+                          )}
+
                           {/* Bottom Row: Coach & Review link + View Details */}
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', fontSize: '12px', flexWrap: 'wrap', marginTop: '2px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
@@ -2082,11 +2234,39 @@ const StudentProfile = () => {
                                   ★ Review
                                 </span>
                               </span>
+
+                              {remarksData && (
+                                <button
+                                  type="button"
+                                  onClick={() => navigate(`/sessions?openSession=${session.id}&tab=notes`)}
+                                  style={{
+                                    background: '#ECFDF5',
+                                    color: '#065F46',
+                                    border: '1px solid #A7F3D0',
+                                    borderRadius: '6px',
+                                    padding: '2px 8px',
+                                    fontSize: '11.5px',
+                                    fontWeight: 800,
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px'
+                                  }}
+                                >
+                                  <span>💬 See your remarks</span>
+                                </button>
+                              )}
                             </div>
 
                             <button
                               type="button"
-                              onClick={() => navigate('/sessions')}
+                              onClick={() => {
+                                if (remarksData) {
+                                  navigate(`/sessions?openSession=${session.id}&tab=notes`);
+                                } else {
+                                  navigate(`/sessions?openSession=${session.id}`);
+                                }
+                              }}
                               style={{
                                 background: 'none',
                                 border: 'none',

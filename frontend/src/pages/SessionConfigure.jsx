@@ -105,6 +105,23 @@ const SessionConfigure = () => {
   const [saving, setSaving] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
 
+  // Security: Only School Admins and Freelance Coaches can configure session slots
+  // School coaches cannot configure sessions
+  React.useEffect(() => {
+    try {
+      const rawUser = sessionStorage.getItem('user') || localStorage.getItem('user');
+      const user = rawUser ? JSON.parse(rawUser) : null;
+      const role = (user?.role || '').toLowerCase();
+      const school = (user?.school || user?.school_name || '').toLowerCase();
+      const isStudent = role === 'athlete' || role === 'student' || role === 'user';
+      const isCoach = role === 'coach' || role === 'instructor';
+      const isFreelance = school.includes('individual') || school.includes('freelance');
+      if (isStudent || (isCoach && !isFreelance)) {
+        navigate('/sessions', { replace: true });
+      }
+    } catch (e) {}
+  }, [navigate]);
+
   const toggleDay = (sid, day) => setSlots(p => p.map(s => { if (s.id !== sid) return s; const h = s.days.includes(day); return { ...s, days: h ? s.days.filter(d => d !== day) : [...s.days, day] }; }));
   const updateSlot = (sid, f, v) => setSlots(p => p.map(s => s.id === sid ? { ...s, [f]: v } : s));
   const deleteSlot = (sid) => setSlots(p => p.filter(s => s.id !== sid));

@@ -128,6 +128,7 @@ class Instructor(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     name = Column(String, nullable=False)
     email = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
     dob = Column(String, nullable=True)
     age = Column(Integer)
     gender = Column(String)
@@ -150,6 +151,7 @@ class Instructor(Base):
     user_rel = relationship("User", back_populates="instructor")
     students = relationship("Student", back_populates="instructor_rel")
     sessions = relationship("SurfSession", back_populates="instructor_rel")
+    leaves = relationship("InstructorLeave", back_populates="instructor_rel", cascade="all, delete-orphan")
 
 
 class Student(Base):
@@ -354,6 +356,7 @@ class SchoolInviteLink(Base):
     max_count = Column(Integer, default=1)
     used_count = Column(Integer, default=0)
     course_duration = Column(String, default="3 Days Course")
+    start_date = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     is_active = Column(Boolean, default=True)
 
@@ -447,6 +450,24 @@ class OtpToken(Base):
     used = Column(Integer, default=0) # 0 = unused, 1 = used
 
 
+class InstructorLeave(Base):
+    __tablename__ = "instructor_leaves"
+    id = Column(Integer, primary_key=True, index=True)
+    instructor_id = Column(Integer, ForeignKey("instructors.id"), nullable=False)
+    school = Column(String, default="", nullable=True)
+    leave_type = Column(String, default="Casual Leave")  # Casual Leave, Sick Leave, Vacation, Personal, Emergency
+    start_date = Column(String, nullable=False)  # YYYY-MM-DD
+    end_date = Column(String, nullable=False)    # YYYY-MM-DD
+    total_days = Column(Integer, default=1)
+    reason = Column(Text, default="")
+    status = Column(String, default="Pending")    # Pending, Approved, Rejected
+    admin_notes = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    instructor_rel = relationship("Instructor", back_populates="leaves")
+
+
 # ─── Create tables ────────────────────────────────────────────────────────────
 from sqlalchemy import inspect
 inspector = inspect(engine)
@@ -463,6 +484,7 @@ try:
         db_migrate.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS languages TEXT DEFAULT '[\"English\"]'"))
         db_migrate.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS intro_video VARCHAR(255) DEFAULT ''"))
         db_migrate.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS price DOUBLE PRECISION DEFAULT 100.00"))
+        db_migrate.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS phone VARCHAR(50) DEFAULT ''"))
         
         # Student Registration fields migration
         db_migrate.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS gender VARCHAR(50) DEFAULT 'Male'"))
@@ -564,28 +586,61 @@ try:
             db_migrate.execute(text("ALTER TABLE school_invite_links ADD COLUMN IF NOT EXISTS course_duration VARCHAR(100) DEFAULT '3 Days Course'"))
         except Exception:
             pass
+        try:
+            db_migrate.execute(text("ALTER TABLE school_invite_links ADD COLUMN IF NOT EXISTS start_date VARCHAR(50) DEFAULT NULL"))
+        except Exception:
+            pass
+        db_migrate.execute(text("""
+            CREATE TABLE IF NOT EXISTS instructor_leaves (
+                id SERIAL PRIMARY KEY,
+                instructor_id INTEGER REFERENCES instructors(id) ON DELETE CASCADE,
+                school VARCHAR(150) DEFAULT '',
+                leave_type VARCHAR(100) DEFAULT 'Casual Leave',
+                start_date VARCHAR(50) NOT NULL,
+                end_date VARCHAR(50) NOT NULL,
+                total_days INTEGER DEFAULT 1,
+                reason TEXT DEFAULT '',
+                status VARCHAR(50) DEFAULT 'Pending',
+                admin_notes TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
         db_migrate.commit()
     except Exception:
         db_migrate.rollback()
         try:
-            db_migrate.execute(text("ALTER TABLE instructors ADD COLUMN languages TEXT DEFAULT '[\"English\"]'"))
-            db_migrate.execute(text("ALTER TABLE instructors ADD COLUMN intro_video VARCHAR(255) DEFAULT ''"))
-            db_migrate.execute(text("ALTER TABLE instructors ADD COLUMN price DOUBLE PRECISION DEFAULT 100.00"))
-            db_migrate.execute(text("ALTER TABLE students ADD COLUMN whatsapp_number VARCHAR(50) DEFAULT ''"))
-            db_migrate.execute(text("ALTER TABLE students ADD COLUMN guests_count INTEGER DEFAULT 1"))
-            db_migrate.execute(text("ALTER TABLE students ADD COLUMN course_duration VARCHAR(100) DEFAULT '3 Days Course'"))
-            db_migrate.execute(text("ALTER TABLE students ADD COLUMN start_date VARCHAR(50) DEFAULT ''"))
-            db_migrate.execute(text("ALTER TABLE students ADD COLUMN end_date VARCHAR(50) DEFAULT ''"))
-            db_migrate.execute(text("ALTER TABLE students ADD COLUMN session_time VARCHAR(50) DEFAULT '08:30 AM'"))
-            db_migrate.execute(text("ALTER TABLE students ADD COLUMN staying_at_school VARCHAR(20) DEFAULT 'Yes'"))
-            db_migrate.execute(text("ALTER TABLE students ADD COLUMN reminder_preference VARCHAR(50) DEFAULT 'WhatsApp Text'"))
-            db_migrate.execute(text("ALTER TABLE students ADD COLUMN reminder_sent BOOLEAN DEFAULT FALSE"))
-            db_migrate.execute(text("ALTER TABLE students ADD COLUMN guests_details TEXT DEFAULT '[]'"))
-            db_migrate.execute(text("ALTER TABLE students ADD COLUMN dob VARCHAR(50) DEFAULT ''"))
-            db_migrate.execute(text("ALTER TABLE students ADD COLUMN invite_token VARCHAR(128) DEFAULT NULL"))
-            db_migrate.execute(text("ALTER TABLE students ADD COLUMN school VARCHAR(150) DEFAULT ''"))
-            db_migrate.execute(text("ALTER TABLE students ADD COLUMN approval_status VARCHAR(50) DEFAULT 'approved'"))
-            db_migrate.execute(text("ALTER TABLE users ADD COLUMN approval_status VARCHAR(50) DEFAULT 'approved'"))
+            sqlite_alters = [
+                "ALTER TABLE instructors ADD COLUMN languages TEXT DEFAULT '[\"English\"]'",
+                "ALTER TABLE instructors ADD COLUMN intro_video VARCHAR(255) DEFAULT ''",
+                "ALTER TABLE instructors ADD COLUMN price DOUBLE PRECISION DEFAULT 100.00",
+                "ALTER TABLE instructors ADD COLUMN phone VARCHAR(50) DEFAULT ''",
+                "ALTER TABLE students ADD COLUMN whatsapp_number VARCHAR(50) DEFAULT ''",
+                "ALTER TABLE students ADD COLUMN guests_count INTEGER DEFAULT 1",
+                "ALTER TABLE students ADD COLUMN course_duration VARCHAR(100) DEFAULT '3 Days Course'",
+                "ALTER TABLE students ADD COLUMN start_date VARCHAR(50) DEFAULT ''",
+                "ALTER TABLE students ADD COLUMN end_date VARCHAR(50) DEFAULT ''",
+                "ALTER TABLE students ADD COLUMN session_time VARCHAR(50) DEFAULT '08:30 AM'",
+                "ALTER TABLE students ADD COLUMN staying_at_school VARCHAR(20) DEFAULT 'Yes'",
+                "ALTER TABLE students ADD COLUMN reminder_preference VARCHAR(50) DEFAULT 'WhatsApp Text'",
+                "ALTER TABLE students ADD COLUMN reminder_sent BOOLEAN DEFAULT FALSE",
+                "ALTER TABLE students ADD COLUMN guests_details TEXT DEFAULT '[]'",
+                "ALTER TABLE students ADD COLUMN dob VARCHAR(50) DEFAULT ''",
+                "ALTER TABLE students ADD COLUMN invite_token VARCHAR(128) DEFAULT NULL",
+                "ALTER TABLE students ADD COLUMN school VARCHAR(150) DEFAULT ''",
+                "ALTER TABLE students ADD COLUMN approval_status VARCHAR(50) DEFAULT 'approved'",
+                "ALTER TABLE users ADD COLUMN approval_status VARCHAR(50) DEFAULT 'approved'",
+                "ALTER TABLE sessions ADD COLUMN group_name VARCHAR(200) DEFAULT ''",
+                "ALTER TABLE school_invite_links ADD COLUMN course_duration VARCHAR(100) DEFAULT '3 Days Course'",
+                "ALTER TABLE school_invite_links ADD COLUMN start_date VARCHAR(50) DEFAULT NULL"
+            ]
+            for cmd in sqlite_alters:
+                try:
+                    db_migrate.execute(text(cmd))
+                    db_migrate.commit()
+                except Exception:
+                    db_migrate.rollback()
+
             db_migrate.execute(text("""
                 CREATE TABLE IF NOT EXISTS attendance_records (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -610,11 +665,23 @@ try:
                     used BOOLEAN DEFAULT 0
                 )
             """))
-            # sessions.group_name migration (SQLite)
-            try:
-                db_migrate.execute(text("ALTER TABLE sessions ADD COLUMN group_name VARCHAR(200) DEFAULT ''"))
-            except Exception:
-                pass
+            db_migrate.execute(text("""
+                CREATE TABLE IF NOT EXISTS instructor_leaves (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    instructor_id INTEGER NOT NULL,
+                    school TEXT DEFAULT '',
+                    leave_type TEXT DEFAULT 'Casual Leave',
+                    start_date TEXT NOT NULL,
+                    end_date TEXT NOT NULL,
+                    total_days INTEGER DEFAULT 1,
+                    reason TEXT DEFAULT '',
+                    status TEXT DEFAULT 'Pending',
+                    admin_notes TEXT DEFAULT '',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (instructor_id) REFERENCES instructors(id) ON DELETE CASCADE
+                )
+            """))
             db_migrate.commit()
         except Exception:
             db_migrate.rollback()
@@ -1178,6 +1245,7 @@ from fastapi import Depends
 class InstructorCreate(BaseModel):
     name: str
     email: Optional[str] = ""
+    phone: Optional[str] = ""
     password: Optional[str] = ""
     dob: Optional[str] = ""
     age: Optional[int] = 28
@@ -1288,6 +1356,7 @@ class UserSignup(BaseModel):
     dob: Optional[str] = ""
     age: Optional[int] = None
     division: Optional[str] = ""
+    phone: Optional[str] = ""
     whatsapp_number: Optional[str] = ""
     guests_count: Optional[int] = 0
     course_duration: Optional[str] = "3 Days Course"
@@ -1312,6 +1381,7 @@ class SchoolInviteCreate(BaseModel):
     school: str
     max_count: int = 1
     course_duration: Optional[str] = "3 Days Course"
+    start_date: Optional[str] = None
 
 
 class UserLogin(BaseModel):
@@ -1362,6 +1432,7 @@ class StudentUpdate(BaseModel):
 class InstructorUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None
+    phone: Optional[str] = None
     dob: Optional[str] = None
     age: Optional[int] = None
     gender: Optional[str] = None
@@ -1382,6 +1453,18 @@ class InstructorReviewCreate(BaseModel):
     rating: int = 5
     comment: str
     date: Optional[str] = None
+
+
+class LeaveRequestCreate(BaseModel):
+    start_date: str
+    end_date: str
+    leave_type: Optional[str] = "Casual Leave"
+    reason: Optional[str] = ""
+
+
+class LeaveStatusUpdate(BaseModel):
+    status: str
+    admin_notes: Optional[str] = ""
 
 
 class NutritionLogCreate(BaseModel):
@@ -1454,7 +1537,31 @@ class IntegrationKeyCreate(BaseModel):
 
 # ─── Helper ───────────────────────────────────────────────────────────────────
 
-def instructor_to_dict(i: Instructor):
+def leave_to_dict(l: InstructorLeave):
+    inst = l.instructor_rel
+    safe_img = (inst.image if inst and inst.image else "")
+    if "unsplash.com" in safe_img or "1500648767791" in safe_img:
+        safe_img = ""
+    return {
+        "id": l.id,
+        "instructor_id": l.instructor_id,
+        "instructor_name": inst.name if inst else "Unknown Coach",
+        "instructor_email": (inst.email or (inst.user_rel.email if inst and inst.user_rel else "")) if inst else "",
+        "instructor_avatar": safe_img,
+        "school": l.school or (inst.school if inst else "") or "Individual / Freelance Coach",
+        "leave_type": l.leave_type or "Casual Leave",
+        "start_date": l.start_date,
+        "end_date": l.end_date,
+        "total_days": l.total_days or 1,
+        "reason": l.reason or "",
+        "status": l.status or "Pending",
+        "admin_notes": l.admin_notes or "",
+        "created_at": l.created_at.strftime("%Y-%m-%d %H:%M") if l.created_at else "",
+        "updated_at": l.updated_at.strftime("%Y-%m-%d %H:%M") if l.updated_at else "",
+    }
+
+
+def instructor_to_dict(i: Instructor, target_date: Optional[str] = None):
     has_pwd = False
     plain_pwd = ""
     if i.user_rel:
@@ -1463,10 +1570,34 @@ def instructor_to_dict(i: Instructor):
     safe_img = i.image or ""
     if "unsplash.com" in safe_img or "1500648767791" in safe_img:
         safe_img = ""
+
+    today_str = (target_date.strip()[:10] if target_date else datetime.utcnow().strftime("%Y-%m-%d"))
+    is_on_leave = False
+    active_leave_info = None
+    approved_leaves = []
+    try:
+        for l in getattr(i, 'leaves', []):
+            if l.status == "Approved":
+                leave_item = {
+                    "id": l.id,
+                    "leave_type": l.leave_type,
+                    "start_date": l.start_date,
+                    "end_date": l.end_date,
+                    "reason": l.reason or "",
+                    "total_days": l.total_days or 1
+                }
+                approved_leaves.append(leave_item)
+                if l.start_date <= today_str <= l.end_date:
+                    is_on_leave = True
+                    active_leave_info = leave_item
+    except Exception:
+        pass
+
     return {
         "id": i.id,
         "name": i.name,
         "email": i.email or (i.user_rel.email if i.user_rel else ""),
+        "phone": getattr(i, "phone", "") or "",
         "dob": i.dob or "",
         "age": i.age,
         "gender": i.gender,
@@ -1483,6 +1614,9 @@ def instructor_to_dict(i: Instructor):
         "user_id": i.user_id,
         "has_password": has_pwd,
         "password_plain": plain_pwd,
+        "is_on_leave": is_on_leave,
+        "active_leave": active_leave_info,
+        "approved_leaves": approved_leaves,
     }
 
 
@@ -1776,6 +1910,9 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
         coach_school = selected_school or "Individual / Freelance Coach"
         if coach_school == "Individual / Freelance Coach" and not (data.location or "").strip():
             raise HTTPException(status_code=400, detail="Location / region is required for individual coaches.")
+        coach_phone = (data.phone or data.whatsapp_number or "").strip()
+        if not coach_phone:
+            raise HTTPException(status_code=400, detail="Phone number is required for coach registration.")
     initial_approval = "approved" if (data.invite_token or data.invite_code or role != "athlete" or not selected_school) else "pending"
 
     # If signup is via school invite link, validate and lock early
@@ -1802,6 +1939,8 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
         data.school = school_invite_record.school
         if getattr(school_invite_record, 'course_duration', None):
             data.course_duration = school_invite_record.course_duration
+        if getattr(school_invite_record, 'start_date', None):
+            data.start_date = school_invite_record.start_date
         initial_approval = "approved"
     else:
         slots_needed = 1 + (data.guests_count or 0)
@@ -1895,9 +2034,13 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
         if not coach_location:
             coach_location = "North Shore, Oahu"
 
+        coach_phone = (data.phone or data.whatsapp_number or "").strip()
         instructor = Instructor(
             user_id=user.id,
             name=data.name,
+            email=email_clean,
+            phone=coach_phone,
+            dob=data.dob or "",
             age=30,
             gender="Male",
             fitness_level="Advanced",
@@ -2435,6 +2578,8 @@ def update_instructor(instructor_id: int, data: InstructorUpdate, db: OrmSession
         instructor.name = data.name
     if data.email is not None:
         instructor.email = data.email
+    if data.phone is not None:
+        instructor.phone = data.phone.strip()
     if data.dob is not None:
         instructor.dob = data.dob
         if data.age is None and data.dob.strip():
@@ -3054,7 +3199,7 @@ def dashboard_activity(school: Optional[str] = None, db: OrmSession = Depends(ge
 # ─── Instructors ──────────────────────────────────────────────────────────────
 
 @app.get("/api/instructors")
-def get_instructors(school: Optional[str] = None, db: OrmSession = Depends(get_db)):
+def get_instructors(school: Optional[str] = None, date: Optional[str] = None, db: OrmSession = Depends(get_db)):
     query = db.query(Instructor)
     school_clean = (school or "").lower().strip()
 
@@ -3070,7 +3215,7 @@ def get_instructors(school: Optional[str] = None, db: OrmSession = Depends(get_d
         query = query.filter(
             func.lower(Instructor.school) == "individual / freelance coach"
         )
-    return [instructor_to_dict(i) for i in query.all()]
+    return [instructor_to_dict(i, target_date=date) for i in query.all()]
 
 
 @app.get("/api/instructors/{instructor_id}")
@@ -3118,6 +3263,7 @@ def get_instructor(instructor_id: int, db: OrmSession = Depends(get_db)):
 
     d["assigned_students"] = list(assigned_students_map.values())
     d["student_count"] = len(assigned_students_map)
+    d["leaves"] = [leave_to_dict(l) for l in getattr(i, 'leaves', [])]
     return d
 
 
@@ -3235,6 +3381,7 @@ def create_instructor(data: InstructorCreate, request: Request, db: OrmSession =
         user_id=user_id,
         name=data.name,
         email=email_clean or "",
+        phone=(data.phone or "").strip(),
         dob=data.dob or "",
         age=data.age or 28,
         gender=data.gender or "Male",
@@ -3377,6 +3524,138 @@ def delete_instructor(instructor_id: int, db: OrmSession = Depends(get_db)):
         db.rollback()
         print(f"Error deleting instructor {instructor_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete instructor: {str(e)}")
+
+
+# ─── Leave Requests ──────────────────────────────────────────────────────────
+
+def resolve_instructor(instructor_id: int, db: OrmSession) -> Optional[Instructor]:
+    inst = db.query(Instructor).filter(Instructor.id == instructor_id).first()
+    if not inst:
+        inst = db.query(Instructor).filter(Instructor.user_id == instructor_id).first()
+    return inst
+
+
+@app.post("/api/instructors/{instructor_id}/leave-requests")
+def apply_instructor_leave(instructor_id: int, data: LeaveRequestCreate, db: OrmSession = Depends(get_db)):
+    inst = resolve_instructor(instructor_id, db)
+    if not inst:
+        raise HTTPException(status_code=404, detail="Instructor not found")
+
+    start_str = data.start_date.strip()[:10]
+    end_str = data.end_date.strip()[:10] if data.end_date else start_str
+    try:
+        d1 = datetime.strptime(start_str, "%Y-%m-%d").date()
+        d2 = datetime.strptime(end_str, "%Y-%m-%d").date()
+        if d2 < d1:
+            d1, d2 = d2, d1
+            start_str, end_str = end_str, start_str
+        total_days = max(1, (d2 - d1).days + 1)
+    except Exception:
+        total_days = 1
+
+    leave = InstructorLeave(
+        instructor_id=inst.id,
+        school=inst.school or "Individual / Freelance Coach",
+        leave_type=data.leave_type or "Casual Leave",
+        start_date=start_str,
+        end_date=end_str,
+        total_days=total_days,
+        reason=(data.reason or "").strip(),
+        status="Pending",
+        admin_notes=""
+    )
+    db.add(leave)
+    db.commit()
+    db.refresh(leave)
+
+    try:
+        db.add(ActivityLog(
+            text=f"Leave request submitted by Coach {inst.name} ({leave.leave_type}: {leave.start_date} to {leave.end_date})",
+            type="leave",
+            school=inst.school or ""
+        ))
+        db.commit()
+    except Exception:
+        pass
+
+    return leave_to_dict(leave)
+
+
+@app.get("/api/instructors/{instructor_id}/leave-requests")
+def get_instructor_leaves(instructor_id: int, db: OrmSession = Depends(get_db)):
+    inst = resolve_instructor(instructor_id, db)
+    if not inst:
+        raise HTTPException(status_code=404, detail="Instructor not found")
+    leaves = db.query(InstructorLeave).filter(InstructorLeave.instructor_id == inst.id).order_by(InstructorLeave.id.desc()).all()
+    return [leave_to_dict(l) for l in leaves]
+
+
+@app.get("/api/leave-requests")
+def get_all_leave_requests(
+    school: Optional[str] = None, 
+    status: Optional[str] = None, 
+    instructor_id: Optional[int] = None, 
+    db: OrmSession = Depends(get_db)
+):
+    query = db.query(InstructorLeave)
+    school_clean = (school or "").lower().strip()
+
+    if school_clean and school_clean not in ["all", "super admin", "school admin", "superadmin"]:
+        query = query.filter(func.lower(InstructorLeave.school) == school_clean)
+    
+    if status and status.lower() != "all":
+        query = query.filter(func.lower(InstructorLeave.status) == status.lower().strip())
+
+    if instructor_id:
+        inst = resolve_instructor(instructor_id, db)
+        if inst:
+            query = query.filter(InstructorLeave.instructor_id == inst.id)
+
+    leaves = query.order_by(InstructorLeave.id.desc()).all()
+    return [leave_to_dict(l) for l in leaves]
+
+
+@app.patch("/api/leave-requests/{leave_id}")
+@app.put("/api/leave-requests/{leave_id}")
+def update_leave_status(leave_id: int, data: LeaveStatusUpdate, db: OrmSession = Depends(get_db)):
+    leave = db.query(InstructorLeave).filter(InstructorLeave.id == leave_id).first()
+    if not leave:
+        raise HTTPException(status_code=404, detail="Leave request not found")
+
+    new_status = data.status.strip().capitalize()
+    if new_status not in ["Approved", "Rejected", "Pending"]:
+        raise HTTPException(status_code=400, detail="Invalid status. Must be Approved, Rejected, or Pending")
+
+    leave.status = new_status
+    if data.admin_notes is not None:
+        leave.admin_notes = data.admin_notes.strip()
+    leave.updated_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(leave)
+
+    try:
+        inst_name = leave.instructor_rel.name if leave.instructor_rel else "Coach"
+        db.add(ActivityLog(
+            text=f"Leave request for {inst_name} was {new_status} by School Admin",
+            type="leave",
+            school=leave.school or ""
+        ))
+        db.commit()
+    except Exception:
+        pass
+
+    return leave_to_dict(leave)
+
+
+@app.delete("/api/leave-requests/{leave_id}")
+def delete_leave_request(leave_id: int, db: OrmSession = Depends(get_db)):
+    leave = db.query(InstructorLeave).filter(InstructorLeave.id == leave_id).first()
+    if not leave:
+        raise HTTPException(status_code=404, detail="Leave request not found")
+    db.delete(leave)
+    db.commit()
+    return {"message": "Leave request deleted successfully"}
 
 
 # ─── Students ─────────────────────────────────────────────────────────────────
@@ -4094,6 +4373,7 @@ def create_school_invite(data: SchoolInviteCreate, db: OrmSession = Depends(get_
     school_name = data.school.strip() if data.school else ""
     capacity = max(1, int(data.max_count or 1))
     course_dur = (data.course_duration or "3 Days Course").strip()
+    s_date = data.start_date.strip() if data.start_date and data.start_date.strip() else None
     code = f"inv_{_secrets.token_urlsafe(12)}"
 
     invite = SchoolInviteLink(
@@ -4101,6 +4381,7 @@ def create_school_invite(data: SchoolInviteCreate, db: OrmSession = Depends(get_
         school=school_name,
         max_count=capacity,
         course_duration=course_dur,
+        start_date=s_date,
         used_count=0,
         is_active=True
     )
@@ -4115,6 +4396,7 @@ def create_school_invite(data: SchoolInviteCreate, db: OrmSession = Depends(get_
         "locked_guests": max(0, invite.max_count - 1),
         "used_count": invite.used_count,
         "course_duration": invite.course_duration or "3 Days Course",
+        "start_date": invite.start_date or None,
         "remaining": invite.max_count - invite.used_count,
         "is_active": invite.is_active,
         "created_at": invite.created_at.isoformat() if invite.created_at else ""
@@ -4140,6 +4422,7 @@ def list_school_invites(school: Optional[str] = None, db: OrmSession = Depends(g
             "locked_guests": max(0, inv.max_count - 1),
             "used_count": inv.used_count,
             "course_duration": getattr(inv, 'course_duration', None) or "3 Days Course",
+            "start_date": getattr(inv, 'start_date', None) or None,
             "remaining": rem,
             "is_active": is_active,
             "created_at": inv.created_at.isoformat() if inv.created_at else ""
@@ -4177,6 +4460,7 @@ def get_school_invite(code: str, db: OrmSession = Depends(get_db)):
         "locked_guests": locked_guests,
         "used_count": invite.used_count,
         "course_duration": getattr(invite, 'course_duration', None) or "3 Days Course",
+        "start_date": getattr(invite, 'start_date', None) or None,
         "remaining": invite.max_count,
         "is_active": True,
         "detail": "Invite link is valid"
