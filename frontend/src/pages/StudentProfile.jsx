@@ -79,6 +79,117 @@ const getCoachRemarksData = (session) => {
   return parseCoachNotes(rawNotes);
 };
 
+const normalizeToYYYYMMDD = (dateStr) => {
+  if (!dateStr) return '';
+  const str = String(dateStr).trim();
+  const yyyymmdd = str.match(/^(\d{4})[-/](\d{2})[-/](\d{2})/);
+  if (yyyymmdd) return `${yyyymmdd[1]}-${yyyymmdd[2]}-${yyyymmdd[3]}`;
+  const ddmmyyyy = str.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
+  if (ddmmyyyy) return `${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}`;
+  const parsed = new Date(str);
+  if (!isNaN(parsed.getTime())) {
+    const y = parsed.getFullYear();
+    const m = String(parsed.getMonth() + 1).padStart(2, '0');
+    const d = String(parsed.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return str;
+};
+
+const getTodayYYYYMMDD = () => {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+const parseTimeStrToMinutes = (t) => {
+  if (!t) return null;
+  const match = String(t).match(/(\d{1,2}):(\d{2})(?:\s*(AM|PM))?/i);
+  if (!match) return null;
+  let hours = parseInt(match[1], 10);
+  const mins = parseInt(match[2], 10);
+  const ampm = match[3] ? match[3].toUpperCase() : null;
+  if (ampm === 'PM' && hours < 12) hours += 12;
+  if (ampm === 'AM' && hours === 12) hours = 0;
+  return hours * 60 + mins;
+};
+
+const getSessionDisplayStatus = (s) => {
+  if (!s) return 'Upcoming';
+  const rawStatus = s.status;
+  const rawDate = s.date;
+  const rawTime = s.time;
+  const rawDuration = s.duration_mins;
+
+  const str = String(rawStatus || '').trim();
+  const lower = str.toLowerCase();
+
+  if (lower === 'completed') return 'Completed';
+  if (lower === 'cancelled' || lower === 'canceled') return 'Cancelled';
+  if (lower === 'pending for review' || lower === 'pending review' || lower === 'pending_review') {
+    return 'Pending for Review';
+  }
+
+  if (rawDate) {
+    const sessionISO = normalizeToYYYYMMDD(rawDate);
+    const todayISO = getTodayYYYYMMDD();
+    if (sessionISO) {
+      if (sessionISO < todayISO) {
+        return 'Pending for Review';
+      } else if (sessionISO > todayISO) {
+        return 'Upcoming';
+      } else {
+        if (rawTime) {
+          const timeParts = String(rawTime).split(/\s*(?:[-–—]|to)\s*/i);
+          const startMins = parseTimeStrToMinutes(timeParts[0]);
+          if (startMins !== null) {
+            let endMins = null;
+            if (timeParts.length >= 2) endMins = parseTimeStrToMinutes(timeParts[1]);
+            if (endMins === null || endMins <= startMins) {
+              const dur = Number(rawDuration) || 60;
+              endMins = startMins + dur;
+            }
+            const now = new Date();
+            const nowMins = now.getHours() * 60 + now.getMinutes();
+            if (nowMins < startMins) return 'Upcoming';
+            if (nowMins >= endMins) return 'Pending for Review';
+            return 'In Progress';
+          }
+        }
+        return 'Upcoming';
+      }
+    }
+  }
+
+  if (lower === 'in progress' || lower === 'in_progress') return 'In Progress';
+  if (lower === 'upcoming' || lower === 'scheduled') return 'Upcoming';
+  return str || 'Upcoming';
+};
+
+const sortSessionsAscending = (sessionsList) => {
+  return [...sessionsList].sort((a, b) => {
+    const dateA = normalizeToYYYYMMDD(a.date) || a.date || '';
+    const dateB = normalizeToYYYYMMDD(b.date) || b.date || '';
+    if (dateA !== dateB) return dateA.localeCompare(dateB);
+    const timeA = parseTimeStrToMinutes(a.time) ?? 0;
+    const timeB = parseTimeStrToMinutes(b.time) ?? 0;
+    return timeA - timeB;
+  });
+};
+
+const sortSessionsDescending = (sessionsList) => {
+  return [...sessionsList].sort((a, b) => {
+    const dateA = normalizeToYYYYMMDD(a.date) || a.date || '';
+    const dateB = normalizeToYYYYMMDD(b.date) || b.date || '';
+    if (dateA !== dateB) return dateB.localeCompare(dateA);
+    const timeA = parseTimeStrToMinutes(a.time) ?? 0;
+    const timeB = parseTimeStrToMinutes(b.time) ?? 0;
+    return timeB - timeA;
+  });
+};
+
 const StudentProfile = () => {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -662,7 +773,8 @@ const StudentProfile = () => {
               });
               if (mySess.length > 0) {
                 fallback.sessions = mySess;
-                const coachSess = mySess.find(s => s.instructor && s.instructor !== '—' && s.instructor !== 'Coach');
+                const sortedFallbackSess = sortSessionsDescending(mySess);
+                const coachSess = sortedFallbackSess.find(s => s.instructor && !['—', 'Coach', 'Not Assigned Yet', 'Assigned Surf Coach'].includes(s.instructor));
                 if (coachSess) {
                   fallback.instructor = coachSess.instructor;
                   fallback.instructor_id = coachSess.instructor_id;
@@ -737,8 +849,9 @@ const StudentProfile = () => {
             );
             if (mySess.length > 0) {
               stSessions = mySess;
-              const coachSess = mySess.find(s => s.instructor && s.instructor !== '—' && s.instructor !== 'Coach');
-              if (coachSess && (!resolvedInstructor || resolvedInstructor === 'Assigned Surf Coach')) {
+              const sortedMySess = sortSessionsDescending(mySess);
+              const coachSess = sortedMySess.find(s => s.instructor && !['—', 'Coach', 'Not Assigned Yet', 'Assigned Surf Coach'].includes(s.instructor));
+              if (coachSess) {
                 resolvedInstructor = coachSess.instructor;
                 resolvedInstructorId = coachSess.instructor_id;
               }
@@ -895,7 +1008,18 @@ const StudentProfile = () => {
       guests_count: (student.guests_details && student.guests_details.length) || student.guests_count || 0,
       course_duration: student.course_duration || '3 Days Course',
       start_date: student.start_date || '',
-      end_date: student.end_date || '',
+      end_date: student.end_date || (() => {
+        if (!student.start_date) return '';
+        const d = new Date(student.start_date);
+        if (isNaN(d.getTime())) return '';
+        const match = (student.course_duration || '').match(/^(\d+)/);
+        const days = match ? parseInt(match[1], 10) : 3;
+        d.setDate(d.getDate() + (days - 1));
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+      })(),
       session_time: student.session_time || '',
       staying_at_school: student.staying_at_school || 'Yes',
       reminder_preference: student.reminder_preference || 'WhatsApp Text',
@@ -977,6 +1101,8 @@ const StudentProfile = () => {
     Boolean(new URLSearchParams(window.location.search).get('token'))
   );
 
+  const userRole = (currentUser?.role || '').toLowerCase().trim();
+  const isSchoolAdmin = userRole === 'admin' || userRole === 'superadmin' || userRole === 'school_admin' || userRole === 'schooladmin' || userRole === 'school';
   const isCoach = currentUser?.role === 'coach';
   const currentCoachName = (currentUser?.name || currentUser?.instructor_name || '').toLowerCase().trim();
   const currentCoachId = currentUser?.instructor_id || currentUser?.id;
@@ -1148,117 +1274,6 @@ const StudentProfile = () => {
 
   const effectiveSessions = (student?.sessions && Array.isArray(student.sessions)) ? student.sessions : [];
 
-  const normalizeToYYYYMMDD = (dateStr) => {
-    if (!dateStr) return '';
-    const str = String(dateStr).trim();
-    const yyyymmdd = str.match(/^(\d{4})[-/](\d{2})[-/](\d{2})/);
-    if (yyyymmdd) return `${yyyymmdd[1]}-${yyyymmdd[2]}-${yyyymmdd[3]}`;
-    const ddmmyyyy = str.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
-    if (ddmmyyyy) return `${ddmmyyyy[3]}-${ddmmyyyy[2]}-${ddmmyyyy[1]}`;
-    const parsed = new Date(str);
-    if (!isNaN(parsed.getTime())) {
-      const y = parsed.getFullYear();
-      const m = String(parsed.getMonth() + 1).padStart(2, '0');
-      const d = String(parsed.getDate()).padStart(2, '0');
-      return `${y}-${m}-${d}`;
-    }
-    return str;
-  };
-
-  const getTodayYYYYMMDD = () => {
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, '0');
-    const d = String(now.getDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
-  };
-
-  const parseTimeStrToMinutes = (t) => {
-    if (!t) return null;
-    const match = String(t).match(/(\d{1,2}):(\d{2})(?:\s*(AM|PM))?/i);
-    if (!match) return null;
-    let hours = parseInt(match[1], 10);
-    const mins = parseInt(match[2], 10);
-    const ampm = match[3] ? match[3].toUpperCase() : null;
-    if (ampm === 'PM' && hours < 12) hours += 12;
-    if (ampm === 'AM' && hours === 12) hours = 0;
-    return hours * 60 + mins;
-  };
-
-  const getSessionDisplayStatus = (s) => {
-    if (!s) return 'Upcoming';
-    const rawStatus = s.status;
-    const rawDate = s.date;
-    const rawTime = s.time;
-    const rawDuration = s.duration_mins;
-
-    const str = String(rawStatus || '').trim();
-    const lower = str.toLowerCase();
-
-    if (lower === 'completed') return 'Completed';
-    if (lower === 'cancelled' || lower === 'canceled') return 'Cancelled';
-    if (lower === 'pending for review' || lower === 'pending review' || lower === 'pending_review') {
-      return 'Pending for Review';
-    }
-
-    if (rawDate) {
-      const sessionISO = normalizeToYYYYMMDD(rawDate);
-      const todayISO = getTodayYYYYMMDD();
-      if (sessionISO) {
-        if (sessionISO < todayISO) {
-          return 'Pending for Review';
-        } else if (sessionISO > todayISO) {
-          return 'Upcoming';
-        } else {
-          if (rawTime) {
-            const timeParts = String(rawTime).split(/\s*(?:[-–—]|to)\s*/i);
-            const startMins = parseTimeStrToMinutes(timeParts[0]);
-            if (startMins !== null) {
-              let endMins = null;
-              if (timeParts.length >= 2) endMins = parseTimeStrToMinutes(timeParts[1]);
-              if (endMins === null || endMins <= startMins) {
-                const dur = Number(rawDuration) || 60;
-                endMins = startMins + dur;
-              }
-              const now = new Date();
-              const nowMins = now.getHours() * 60 + now.getMinutes();
-              if (nowMins < startMins) return 'Upcoming';
-              if (nowMins >= endMins) return 'Pending for Review';
-              return 'In Progress';
-            }
-          }
-          return 'Upcoming';
-        }
-      }
-    }
-
-    if (lower === 'in progress' || lower === 'in_progress') return 'In Progress';
-    if (lower === 'upcoming' || lower === 'scheduled') return 'Upcoming';
-    return str || 'Upcoming';
-  };
-
-  const sortSessionsAscending = (sessionsList) => {
-    return [...sessionsList].sort((a, b) => {
-      const dateA = normalizeToYYYYMMDD(a.date) || a.date || '';
-      const dateB = normalizeToYYYYMMDD(b.date) || b.date || '';
-      if (dateA !== dateB) return dateA.localeCompare(dateB);
-      const timeA = parseTimeStrToMinutes(a.time) ?? 0;
-      const timeB = parseTimeStrToMinutes(b.time) ?? 0;
-      return timeA - timeB;
-    });
-  };
-
-  const sortSessionsDescending = (sessionsList) => {
-    return [...sessionsList].sort((a, b) => {
-      const dateA = normalizeToYYYYMMDD(a.date) || a.date || '';
-      const dateB = normalizeToYYYYMMDD(b.date) || b.date || '';
-      if (dateA !== dateB) return dateB.localeCompare(dateA);
-      const timeA = parseTimeStrToMinutes(a.time) ?? 0;
-      const timeB = parseTimeStrToMinutes(b.time) ?? 0;
-      return timeB - timeA;
-    });
-  };
-
   const completedSessions = sortSessionsDescending(effectiveSessions.filter(s => getSessionDisplayStatus(s) === 'Completed'));
   const upcomingSessions = sortSessionsAscending(effectiveSessions.filter(s => getSessionDisplayStatus(s) === 'Upcoming'));
   const pendingReviewSessions = sortSessionsAscending(effectiveSessions.filter(s => getSessionDisplayStatus(s) === 'Pending for Review'));
@@ -1278,11 +1293,23 @@ const StudentProfile = () => {
     ? pendingReviewSessions[0]
     : (!nextSession && inProgressSessions.length > 0 ? inProgressSessions[0] : null);
 
-  const assignedCoachName = (student?.instructor && student.instructor.trim() !== '' && student.instructor !== 'Assigned Surf Coach' && student.instructor !== 'Not Assigned Yet')
-    ? student.instructor
-    : (nextSession?.instructor || pendingBannerSession?.instructor || (effectiveSessions.find(s => s.instructor && s.instructor !== '—' && s.instructor !== 'Coach' && s.instructor !== 'Not Assigned Yet')?.instructor) || 'Not Assigned Yet');
+  // Latest session coach resolution:
+  // Priority 1: Coach from upcoming next session or pending/in-progress banner session
+  // Priority 2: Coach from latest session sorted descending
+  // Priority 3: Fallback to student.instructor only if no session has an assigned coach
+  const latestSessionWithCoach = (nextSession?.instructor && !['—', 'Coach', 'Not Assigned Yet', 'Assigned Surf Coach'].includes(nextSession.instructor))
+    ? nextSession
+    : (pendingBannerSession?.instructor && !['—', 'Coach', 'Not Assigned Yet', 'Assigned Surf Coach'].includes(pendingBannerSession.instructor))
+      ? pendingBannerSession
+      : sortSessionsDescending(effectiveSessions).find(s => s.instructor && !['—', 'Coach', 'Not Assigned Yet', 'Assigned Surf Coach'].includes(s.instructor));
 
-  const assignedCoachId = student?.instructor_id || nextSession?.instructor_id || pendingBannerSession?.instructor_id || (effectiveSessions.find(s => s.instructor_id)?.instructor_id) || null;
+  const assignedCoachName = (latestSessionWithCoach?.instructor && latestSessionWithCoach.instructor.trim() !== '')
+    ? latestSessionWithCoach.instructor
+    : ((student?.instructor && student.instructor.trim() !== '' && student.instructor !== 'Assigned Surf Coach' && student.instructor !== 'Not Assigned Yet')
+      ? student.instructor
+      : 'Not Assigned Yet');
+
+  const assignedCoachId = latestSessionWithCoach?.instructor_id || student?.instructor_id || null;
 
   const nextSessionTime = nextSession
     ? `${nextSession.date ? nextSession.date + ', ' : ''}${nextSession.time || ''}`
@@ -1486,7 +1513,7 @@ const StudentProfile = () => {
               >
                 {student.name ? student.name.charAt(0).toUpperCase() : 'S'}
               </div>
-              {isOwnProfile && (
+              {(isOwnProfile || isSchoolAdmin) && (
                 <div className="sp-avatar-overlay">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
@@ -1499,12 +1526,12 @@ const StudentProfile = () => {
             <div className="sp-hero-info">
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <h1 className="sp-name">{student.name}</h1>
-                {isOwnProfile && (
+                {(isOwnProfile || isSchoolAdmin) && (
                   <button
                     type="button"
                     onClick={handleEditClick}
                     style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', color: '#94A3B8', display: 'flex', alignItems: 'center' }}
-                    title="Edit Profile"
+                    title={isSchoolAdmin ? "Edit Student Profile (School Admin)" : "Edit Profile"}
                   >
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
@@ -1557,7 +1584,7 @@ const StudentProfile = () => {
                       <>
                         <span>Assigned Coach:</span>
                         <span style={{ color: '#0F172A', fontWeight: 700 }}>
-                          {(student.instructor && student.instructor !== 'Assigned Surf Coach') ? student.instructor : 'Unassigned'}
+                          {(assignedCoachName && assignedCoachName !== 'Not Assigned Yet') ? assignedCoachName : 'Unassigned'}
                         </span>
                         <button
                           type="button"
@@ -2564,8 +2591,64 @@ const StudentProfile = () => {
                       />
                     </div>
                     <div className="sp-form-field">
-                      <label>Start Date</label>
-                      <input type="date" value={editForm.start_date} onChange={(e) => setEditForm({ ...editForm, start_date: e.target.value })} />
+                      <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>Start Date</span>
+                        {isSchoolAdmin ? (
+                          <span style={{ fontSize: '10px', color: '#0D9488', fontWeight: 700, background: '#ECFDF5', padding: '1px 5px', borderRadius: '4px', border: '1px solid #A7F3D0' }}>Admin Editable</span>
+                        ) : (
+                          <span style={{ fontSize: '10px', color: '#94A3B8', fontWeight: 600 }}>🔒 School Admin Only</span>
+                        )}
+                      </label>
+                      <input 
+                        type="date" 
+                        value={editForm.start_date || ''} 
+                        disabled={!isSchoolAdmin}
+                        onChange={(e) => {
+                          const newStart = e.target.value;
+                          const match = (editForm.course_duration || '').match(/^(\d+)/);
+                          const days = match ? parseInt(match[1], 10) : 3;
+                          let newEnd = editForm.end_date;
+                          if (newStart) {
+                            const d = new Date(newStart);
+                            d.setDate(d.getDate() + (days - 1));
+                            const y = d.getFullYear();
+                            const m = String(d.getMonth() + 1).padStart(2, '0');
+                            const day = String(d.getDate()).padStart(2, '0');
+                            newEnd = `${y}-${m}-${day}`;
+                          }
+                          setEditForm({ ...editForm, start_date: newStart, end_date: newEnd });
+                        }} 
+                        style={{
+                          opacity: isSchoolAdmin ? 1 : 0.65,
+                          cursor: isSchoolAdmin ? 'pointer' : 'not-allowed',
+                          background: isSchoolAdmin ? '#FFFFFF' : '#F8FAFC'
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* End Date (School Admin Only) */}
+                  <div className="sp-form-row">
+                    <div className="sp-form-field">
+                      <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>End Date</span>
+                        {isSchoolAdmin ? (
+                          <span style={{ fontSize: '10px', color: '#0D9488', fontWeight: 700, background: '#ECFDF5', padding: '1px 5px', borderRadius: '4px', border: '1px solid #A7F3D0' }}>Admin Editable</span>
+                        ) : (
+                          <span style={{ fontSize: '10px', color: '#94A3B8', fontWeight: 600 }}>🔒 School Admin Only</span>
+                        )}
+                      </label>
+                      <input 
+                        type="date" 
+                        value={editForm.end_date || ''} 
+                        disabled={!isSchoolAdmin}
+                        onChange={(e) => setEditForm({ ...editForm, end_date: e.target.value })} 
+                        style={{
+                          opacity: isSchoolAdmin ? 1 : 0.65,
+                          cursor: isSchoolAdmin ? 'pointer' : 'not-allowed',
+                          background: isSchoolAdmin ? '#FFFFFF' : '#F8FAFC'
+                        }}
+                      />
                     </div>
                   </div>
 

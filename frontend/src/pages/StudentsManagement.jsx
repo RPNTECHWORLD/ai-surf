@@ -471,9 +471,52 @@ const StudentsManagement = () => {
 
   const [allSessions, setAllSessions] = useState([]);
   const [expandedGuestStudentId, setExpandedGuestStudentId] = useState(null);
+  const [editingStudentDates, setEditingStudentDates] = useState(null);
+  const [savingDates, setSavingDates] = useState(false);
 
   const toggleGuestDropdown = (studentId) => {
     setExpandedGuestStudentId(prev => (prev === studentId ? null : studentId));
+  };
+
+  const handleSaveStudentDates = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (!editingStudentDates || !editingStudentDates.id) return;
+    setSavingDates(true);
+    try {
+      const token = sessionStorage.getItem('token');
+      const res = await fetch(`${API}/api/students/${editingStudentDates.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({
+          start_date: editingStudentDates.start_date || '',
+          end_date: editingStudentDates.end_date || '',
+          course_duration: editingStudentDates.course_duration || undefined
+        })
+      });
+      if (res.ok) {
+        setStudents(prev => prev.map(s => 
+          s.id === editingStudentDates.id 
+            ? { 
+                ...s, 
+                start_date: editingStudentDates.start_date, 
+                end_date: editingStudentDates.end_date,
+                course_duration: editingStudentDates.course_duration || s.course_duration
+              }
+            : s
+        ));
+        setEditingStudentDates(null);
+      } else {
+        alert('Failed to update student dates. Please try again.');
+      }
+    } catch (err) {
+      console.error('Failed to update student dates:', err);
+      alert('Error updating dates. Please check network connection.');
+    } finally {
+      setSavingDates(false);
+    }
   };
 
   const fetchStudents = () => {
@@ -620,6 +663,8 @@ const StudentsManagement = () => {
       setLevelFilter('All');
     } else if (label === 'ACTIVE') {
       setLevelFilter('All');
+    } else if (label === 'UPCOMING') {
+      setLevelFilter('All');
     } else if (label === 'BEGINNER') {
       setLevelFilter('Beginner');
     } else if (label === 'INTERMEDIATE') {
@@ -629,57 +674,163 @@ const StudentsManagement = () => {
     }
   };
 
-  const calculateCurrentCourseDay = (s) => {
-    if (!s) return { which_day: 1, total_days: 3 };
-    
-    let totalDays = 3;
-    const durStr = s.course_duration || '3 Days Course';
+  function parseLocalDateOnly(dateStr) {
+    if (!dateStr) return null;
+    if (dateStr instanceof Date) {
+      return new Date(dateStr.getFullYear(), dateStr.getMonth(), dateStr.getDate());
+    }
+    const s = String(dateStr).trim();
+    if (!s) return null;
+
+    // Handle YYYY-MM-DD or YYYY/MM/DD
+    const ymd = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+    if (ymd) {
+      return new Date(parseInt(ymd[1], 10), parseInt(ymd[2], 10) - 1, parseInt(ymd[3], 10));
+    }
+
+    // Handle DD-MM-YYYY or DD/MM/YYYY
+    const dmy = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+    if (dmy) {
+      return new Date(parseInt(dmy[3], 10), parseInt(dmy[2], 10) - 1, parseInt(dmy[1], 10));
+    }
+
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) {
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    }
+    return null;
+  }
+
+  function getStudentCourseTotalDays(student) {
+    if (!student) return 3;
+    if (student.totalDays && !isNaN(parseInt(student.totalDays, 10))) {
+      return parseInt(student.totalDays, 10);
+    }
+    if (student.total_days && !isNaN(parseInt(student.total_days, 10))) {
+      return parseInt(student.total_days, 10);
+    }
+    const durStr = student.course_duration || student.courseDuration || student.course || student.waitlistGroup || '';
     const match = String(durStr).match(/(\d+)\s*Day/i);
-    if (match) {
-      totalDays = parseInt(match[1]);
-    } else if (s.total_days) {
-      totalDays = parseInt(s.total_days);
+    if (match) return parseInt(match[1], 10);
+    return 3;
+  }
+
+  function getStudentStatusOnDate(student, targetDate) {
+    const rawStart = student?.startDate || student?.start_date;
+    const totalDays = getStudentCourseTotalDays(student);
+
+    if (!rawStart) {
+      return {
+        isActive: false,
+        status: 'no_date',
+        whichDay: 1,
+        totalDays
+      };
     }
 
-    if (!s.start_date) {
-      return { which_day: s.which_day || 1, total_days: totalDays };
+    const startDate = parseLocalDateOnly(rawStart);
+    if (!startDate) {
+      return {
+        isActive: false,
+        status: 'invalid_date',
+        whichDay: 1,
+        totalDays
+      };
     }
 
-    try {
-      let sYear, sMonth, sDay;
-      const parts = String(s.start_date).trim().split(/[-/]/);
-      if (parts.length === 3) {
-        if (parts[0].length === 4) {
-          sYear = parseInt(parts[0]);
-          sMonth = parseInt(parts[1]) - 1;
-          sDay = parseInt(parts[2]);
-        } else if (parts[2].length === 4) {
-          sYear = parseInt(parts[2]);
-          sMonth = parseInt(parts[1]) - 1;
-          sDay = parseInt(parts[0]);
-        }
-      }
-      if (sYear && !isNaN(sYear)) {
-        const sDate = new Date(sYear, sMonth, sDay);
-        const now = new Date();
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        
-        const msPerDay = 1000 * 60 * 60 * 24;
-        const diffDays = Math.floor((today.getTime() - sDate.getTime()) / msPerDay);
-        
-        if (diffDays < 0) {
-          return { which_day: 1, total_days: totalDays, status: 'Upcoming' };
-        } else {
-          const currentDayNum = diffDays + 1;
-          if (currentDayNum > totalDays) {
-            return { which_day: totalDays, total_days: totalDays, completed: true };
-          }
-          return { which_day: currentDayNum, total_days: totalDays };
-        }
-      }
-    } catch (e) {}
+    const target = targetDate instanceof Date ? targetDate : (parseLocalDateOnly(targetDate) || new Date());
+    const targetClean = new Date(target.getFullYear(), target.getMonth(), target.getDate());
+    const startClean = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
 
-    return { which_day: s.which_day || 1, total_days: totalDays };
+    const diffMs = targetClean.getTime() - startClean.getTime();
+    const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+    const dayNumber = diffDays + 1; // Day 1 is startDate itself
+
+    if (dayNumber < 1) {
+      return {
+        isActive: false,
+        status: 'upcoming',
+        whichDay: 1,
+        totalDays,
+        daysUntilStart: Math.abs(diffDays)
+      };
+    } else if (dayNumber > totalDays) {
+      return {
+        isActive: false,
+        status: 'completed',
+        whichDay: totalDays,
+        totalDays,
+        daysAfterEnd: dayNumber - totalDays
+      };
+    } else {
+      return {
+        isActive: true,
+        status: 'active',
+        whichDay: dayNumber,
+        totalDays
+      };
+    }
+  }
+
+  // Target date for evaluating student status:
+  // If user selected a specific date in dateFilter, use that date.
+  // Otherwise, use today's local date.
+  const targetEvaluationDate = React.useMemo(() => {
+    if (dateFilter && dateFilter !== 'All') {
+      const parsed = parseLocalDateOnly(dateFilter);
+      if (parsed) return parsed;
+    }
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  }, [dateFilter]);
+
+  const calculateCurrentCourseDay = (s, targetDate = targetEvaluationDate) => {
+    if (!s) return { which_day: 1, total_days: 3, status: 'no_data', completed: false, isActive: false };
+    const res = getStudentStatusOnDate(s, targetDate);
+    return {
+      which_day: res.whichDay,
+      total_days: res.totalDays,
+      status: res.status, // 'active' | 'upcoming' | 'completed' | 'no_date'
+      completed: res.status === 'completed',
+      isActive: res.isActive
+    };
+  };
+
+  const isStudentActive = (s, targetDate = targetEvaluationDate) => {
+    return getStudentStatusOnDate(s, targetDate).isActive;
+  };
+
+  const isStudentUpcoming = (s, targetDate = targetEvaluationDate) => {
+    return getStudentStatusOnDate(s, targetDate).status === 'upcoming';
+  };
+
+  const getStudentEndDate = (student) => {
+    if (!student) return '';
+    const rawStart = student.startDate || student.start_date;
+    if (!rawStart) return student.end_date || student.endDate || '';
+
+    const startDate = parseLocalDateOnly(rawStart);
+    if (!startDate) return student.end_date || student.endDate || '';
+
+    // If student has a valid end_date in YYYY-MM-DD or DD-MM-YYYY format and >= startDate, use it
+    if (student.end_date) {
+      const parsedEnd = parseLocalDateOnly(student.end_date);
+      if (parsedEnd && parsedEnd >= startDate) {
+        const y = parsedEnd.getFullYear();
+        const m = String(parsedEnd.getMonth() + 1).padStart(2, '0');
+        const d = String(parsedEnd.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+      }
+    }
+
+    const totalDays = getStudentCourseTotalDays(student);
+    const end = new Date(startDate);
+    end.setDate(startDate.getDate() + (totalDays - 1));
+
+    const y = end.getFullYear();
+    const m = String(end.getMonth() + 1).padStart(2, '0');
+    const d = String(end.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
   };
 
   const filtered = approvedStudents.filter(s => {
@@ -694,7 +845,9 @@ const StudentsManagement = () => {
 
     let matchStat = true;
     if (activeStatFilter === 'ACTIVE') {
-      matchStat = s.last_active === 'Today' || s.last_active === 'Yesterday';
+      matchStat = isStudentActive(s, targetEvaluationDate);
+    } else if (activeStatFilter === 'UPCOMING') {
+      matchStat = isStudentUpcoming(s, targetEvaluationDate);
     } else if (activeStatFilter === 'BEGINNER') {
       matchStat = s.level === 'Beginner';
     } else if (activeStatFilter === 'INTERMEDIATE') {
@@ -710,7 +863,14 @@ const StudentsManagement = () => {
       (s.session_time && s.session_time.startsWith(sessionTimeFilter)) ||
       (s.session_time && sessionTimeFilter.startsWith(s.session_time));
     const matchStay = stayFilter === 'All' || (stayFilter === 'Lodge' ? s.staying_at_school === 'Yes' : s.staying_at_school === 'No');
-    const matchDate = dateFilter === 'All' || s.start_date === dateFilter;
+    
+    // If a specific date is selected in the top bar (Today, Yesterday, Tomorrow, or custom):
+    // Match students whose course is active on that date or whose start_date is that date!
+    let matchDate = true;
+    if (dateFilter !== 'All') {
+      matchDate = isStudentActive(s, targetEvaluationDate) || s.start_date === dateFilter;
+    }
+
     const sSwim = (s.swimming_ability || 'Swimmer').toLowerCase();
     const matchSwimming = swimmingFilter === 'All' ||
       (swimmingFilter === 'Swimmer' && !sSwim.includes('non') && sSwim !== 'no') ||
@@ -732,6 +892,18 @@ const StudentsManagement = () => {
 
   const totalPeopleCount = approvedStudents.length + totalApprovedGuests;
 
+  const activeStudentsCount = React.useMemo(() => {
+    return approvedStudents
+      .filter(s => isStudentActive(s, targetEvaluationDate))
+      .reduce((sum, s) => sum + 1 + getStudentGuestCount(s), 0);
+  }, [approvedStudents, targetEvaluationDate]);
+
+  const upcomingStudentsCount = React.useMemo(() => {
+    return approvedStudents
+      .filter(s => isStudentUpcoming(s, targetEvaluationDate))
+      .reduce((sum, s) => sum + 1 + getStudentGuestCount(s), 0);
+  }, [approvedStudents, targetEvaluationDate]);
+
   const stats = [
     { 
       value: totalPeopleCount, 
@@ -740,7 +912,20 @@ const StudentsManagement = () => {
       color: '#050B1A', 
       active: activeStatFilter === 'TOTAL'
     },
-    { value: approvedStudents.filter(s => s.last_active === 'Today' || s.last_active === 'Yesterday').length, label: 'ACTIVE', shortLabel: 'ACTIVE', color: '#0D9488', active: activeStatFilter === 'ACTIVE' },
+    { 
+      value: activeStudentsCount, 
+      label: 'ACTIVE', 
+      shortLabel: 'ACTIVE', 
+      color: '#0D9488', 
+      active: activeStatFilter === 'ACTIVE' 
+    },
+    { 
+      value: upcomingStudentsCount, 
+      label: 'UPCOMING', 
+      shortLabel: 'UPCOMING', 
+      color: '#0284C7', 
+      active: activeStatFilter === 'UPCOMING' 
+    },
     { value: approvedStudents.filter(s => s.level === 'Beginner').length, label: 'BEGINNER', shortLabel: 'BEGINNER', color: '#F59E0B', active: activeStatFilter === 'BEGINNER' },
     { value: approvedStudents.filter(s => s.level === 'Intermediate').length, label: 'INTERMEDIATE', shortLabel: 'INTERMED', color: '#0D9488', active: activeStatFilter === 'INTERMEDIATE' },
     { value: approvedStudents.filter(s => s.level === 'Advanced').length, label: 'ADVANCED', shortLabel: 'ADVANCED', color: '#7C3AED', active: activeStatFilter === 'ADVANCED' },
@@ -1641,16 +1826,19 @@ const StudentsManagement = () => {
 
   const fetchSchoolInvites = async () => {
     try {
-      const res = await fetch(`${API}/api/school-invites?school=${encodeURIComponent(effectiveSchool)}`);
+      const sch = (effectiveSchool || activeSchoolName || (currentUser?.school || '')).trim();
+      const url = sch && sch.toLowerCase() !== 'school admin' && sch.toLowerCase() !== 'super admin'
+        ? `${API}/api/school-invites?school=${encodeURIComponent(sch)}`
+        : `${API}/api/school-invites`;
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
-        setSchoolInvitesList(Array.isArray(data) ? data : []);
+        // Only keep genuine server invites (filter out any old client-generated mock dummy invites)
+        const genuine = Array.isArray(data) ? data.filter(i => i && i.code && !i.code.match(/^inv_[a-z0-9]{7,9}$/)) : [];
+        setSchoolInvitesList(genuine.length > 0 ? genuine : (Array.isArray(data) ? data : []));
       }
     } catch (err) {
-      try {
-        const saved = JSON.parse(localStorage.getItem('local_school_invites') || '[]');
-        setSchoolInvitesList(saved.filter(i => (i.school || '').toLowerCase() === effectiveSchoolLower));
-      } catch (e) {}
+      console.error('Failed to fetch school invites from server:', err);
     }
   };
 
@@ -1664,20 +1852,25 @@ const StudentsManagement = () => {
       showToast('Only School Admins and Individual Coaches can create invite links');
       return;
     }
+    const targetSchool = (effectiveSchool || activeSchoolName || (currentUser?.school || '')).trim();
+    if (!targetSchool || targetSchool.toLowerCase() === 'school admin' || targetSchool.toLowerCase() === 'super admin') {
+      showToast('⚠️ Please select or assign a valid school first before generating an invite link.');
+      return;
+    }
     let chosenDuration = inviteCourseDuration || '3 Days Course';
     const matchNum = String(chosenDuration).match(/^(\d+)/);
     if (matchNum) {
       const n = parseInt(matchNum[1], 10);
       chosenDuration = n === 1 ? '1 Day Crash Course' : `${n} Days Course`;
     }
-    const sDate = inviteStartDate ? inviteStartDate.trim() : null;
+    const sDate = inviteStartDate ? inviteStartDate.trim().replace(/\/+$/, '') : null;
     setSchoolInviteLoading(true);
     try {
       const res = await fetch(`${API}/api/school-invites`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          school: effectiveSchool,
+          school: targetSchool,
           max_count: count,
           course_duration: chosenDuration,
           start_date: sDate
@@ -1690,10 +1883,10 @@ const StudentsManagement = () => {
         const sDateVal = data.start_date || sDate;
         const startDateParam = sDateVal ? `&start_date=${encodeURIComponent(sDateVal)}` : '';
         const coachParam = isCoach && currentCoachName ? `&coach=${encodeURIComponent(currentCoachName)}&coach_id=${encodeURIComponent(currentCoachId || '')}` : '';
-        const fullUrl = `${origin}/auth?mode=signup&invite_code=${data.code}&school=${encodeURIComponent(data.school)}&course_duration=${encodeURIComponent(dur)}${startDateParam}${coachParam}`;
+        const fullUrl = `${origin}/auth?mode=signup&invite_code=${data.code}&school=${encodeURIComponent(data.school || targetSchool)}&course_duration=${encodeURIComponent(dur)}${startDateParam}${coachParam}`;
         const newInviteObj = { ...data, course_duration: dur, start_date: sDateVal, fullUrl };
         setCreatedSchoolInvite(newInviteObj);
-        setSchoolInvitesList(prev => [newInviteObj, ...prev]);
+        setSchoolInvitesList(prev => [newInviteObj, ...prev.filter(i => i.code !== data.code)]);
 
         if (navigator.clipboard) {
           await navigator.clipboard.writeText(fullUrl);
@@ -1701,42 +1894,12 @@ const StudentsManagement = () => {
         setCopiedSchoolInviteCode(data.code);
         showToast(`✓ Invite link for ${count} student(s) (${dur}${sDateVal ? ` • Starts ${sDateVal}` : ''}) copied to clipboard!`);
       } else {
-        const err = await res.json();
-        showToast(err.detail || 'Failed to generate invite link');
+        const err = await res.json().catch(() => ({}));
+        showToast(err.detail || '⚠️ Failed to generate invite link on server. Please try again.');
       }
     } catch (err) {
-      // Local fallback
-      const mockCode = `inv_${Date.now().toString(36)}`;
-      const origin = window.location.origin;
-      const sDateVal = sDate;
-      const startDateParam = sDateVal ? `&start_date=${encodeURIComponent(sDateVal)}` : '';
-      const coachParam = isCoach && currentCoachName ? `&coach=${encodeURIComponent(currentCoachName)}&coach_id=${encodeURIComponent(currentCoachId || '')}` : '';
-      const fullUrl = `${origin}/auth?mode=signup&invite_code=${mockCode}&school=${encodeURIComponent(effectiveSchool)}&course_duration=${encodeURIComponent(chosenDuration)}${startDateParam}${coachParam}`;
-      const newInviteObj = {
-        id: Date.now(),
-        code: mockCode,
-        school: effectiveSchool,
-        max_count: count,
-        course_duration: chosenDuration,
-        start_date: sDateVal,
-        used_count: 0,
-        remaining: count,
-        is_active: true,
-        created_at: new Date().toISOString(),
-        fullUrl
-      };
-      try {
-        const saved = JSON.parse(localStorage.getItem('local_school_invites') || '[]');
-        saved.unshift(newInviteObj);
-        localStorage.setItem('local_school_invites', JSON.stringify(saved));
-      } catch (e) {}
-      setCreatedSchoolInvite(newInviteObj);
-      setSchoolInvitesList(prev => [newInviteObj, ...prev]);
-      if (navigator.clipboard) {
-        await navigator.clipboard.writeText(fullUrl);
-      }
-      setCopiedSchoolInviteCode(mockCode);
-      showToast(`✓ Invite link for ${count} student(s) (${chosenDuration}${sDateVal ? ` • Starts ${sDateVal}` : ''}) copied to clipboard!`);
+      console.error('Error generating invite link on server:', err);
+      showToast('⚠️ Could not connect to server to generate link. Please check your internet connection and try again.');
     } finally {
       setSchoolInviteLoading(false);
     }
@@ -2639,25 +2802,109 @@ const StudentsManagement = () => {
                     </td>
                     <td>
                       {(() => {
-                        const { which_day, total_days } = calculateCurrentCourseDay(s);
+                        const { which_day, total_days, status, completed } = calculateCurrentCourseDay(s, targetEvaluationDate);
                         return (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                            <span style={{ fontSize: '13px', fontWeight: 700, color: '#0F172A' }}>
-                              Day {which_day} of {total_days}
-                            </span>
-                            <span style={{ fontSize: '11px', color: '#64748B' }}>
-                              {s.course_duration || `${total_days} Days Course`}
-                            </span>
+                            {completed ? (
+                              <>
+                                <span style={{ fontSize: '13px', fontWeight: 700, color: '#64748B', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                  Day {total_days} of {total_days}
+                                  <span style={{ fontSize: '10px', background: '#F1F5F9', color: '#64748B', border: '1px solid #CBD5E1', padding: '1px 5px', borderRadius: '4px', fontWeight: 700 }}>
+                                    Completed
+                                  </span>
+                                </span>
+                                <span style={{ fontSize: '11px', color: '#94A3B8' }}>
+                                  {s.course_duration || `${total_days} Days Course`} (Finished)
+                                </span>
+                              </>
+                            ) : status === 'upcoming' ? (
+                              <>
+                                <span style={{ fontSize: '13px', fontWeight: 700, color: '#D97706', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                  Day 1 of {total_days}
+                                  <span style={{ fontSize: '10px', background: '#FEF3C7', color: '#D97706', border: '1px solid #FDE68A', padding: '1px 5px', borderRadius: '4px', fontWeight: 700 }}>
+                                    Upcoming
+                                  </span>
+                                </span>
+                                <span style={{ fontSize: '11px', color: '#B45309' }}>
+                                  Starts {s.start_date}
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                <span style={{ fontSize: '13px', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                  Day {which_day} of {total_days}
+                                  <span style={{ fontSize: '10px', background: '#ECFDF5', color: '#059669', border: '1px solid #A7F3D0', padding: '1px 5px', borderRadius: '4px', fontWeight: 700 }}>
+                                    Active
+                                  </span>
+                                </span>
+                                <span style={{ fontSize: '11px', color: '#64748B' }}>
+                                  {s.course_duration || `${total_days} Days Course`}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </td>
+                    <td
+                      style={{ cursor: isAdminOrSchoolAdmin ? 'pointer' : 'default' }}
+                      onClick={(e) => {
+                        if (isAdminOrSchoolAdmin) {
+                          e.stopPropagation();
+                          const currentEnd = getStudentEndDate(s);
+                          setEditingStudentDates({
+                            id: s.id,
+                            name: s.name,
+                            course_duration: s.course_duration || '',
+                            start_date: s.start_date || '',
+                            end_date: s.end_date || currentEnd || ''
+                          });
+                        }
+                      }}
+                      title={isAdminOrSchoolAdmin ? "Click to edit Start & End dates (School Admin)" : undefined}
+                    >
+                      {(() => {
+                        const calculatedEndDate = getStudentEndDate(s);
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                              <span style={{ fontSize: '12px', fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap' }}>
+                                🗓️ {s.start_date || '—'}
+                              </span>
+                              {isAdminOrSchoolAdmin && (
+                                <span
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '3px',
+                                    fontSize: '10.5px',
+                                    padding: '1px 6px',
+                                    borderRadius: '5px',
+                                    background: '#F1F5F9',
+                                    color: '#475569',
+                                    border: '1px solid #CBD5E1',
+                                    fontWeight: 700,
+                                    lineHeight: 1.2,
+                                    cursor: 'pointer'
+                                  }}
+                                  title="Edit Dates"
+                                >
+                                  ✏️ Edit
+                                </span>
+                              )}
+                            </div>
+                            {calculatedEndDate ? (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                <span style={{ fontSize: '11.5px', fontWeight: 600, color: '#64748B', whiteSpace: 'nowrap' }}>
+                                  🏁 {calculatedEndDate}
+                                </span>
+                              </div>
+                            ) : null}
                           </div>
                         );
                       })()}
                     </td>
                     <td>
-                      <span style={{ fontSize: '12.5px', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                        🗓️ {s.start_date || '—'}
-                      </span>
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
                         {!s.has_password && (
                           <button
                             className="sm-invite-btn"
@@ -2722,7 +2969,18 @@ const StudentsManagement = () => {
                           </button>
                         )}
                         {s.has_password && (
-                          <span style={{ fontSize: '11px', color: '#10B981', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          <span style={{
+                            fontSize: '11.5px',
+                            color: '#059669',
+                            fontWeight: 700,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            background: '#ECFDF5',
+                            border: '1px solid #A7F3D0',
+                            padding: '3px 9px',
+                            borderRadius: '6px'
+                          }}>
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                             Joined
                           </span>
@@ -2753,6 +3011,111 @@ const StudentsManagement = () => {
           )}
         </div>
       </main>
+
+      {/* ── Edit Student Dates Modal (School Admin Only) ── */}
+      {editingStudentDates && isAdminOrSchoolAdmin && (
+        <div className="sm-modal-overlay" onClick={() => setEditingStudentDates(null)}>
+          <div className="sm-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '420px', padding: '24px', borderRadius: '18px', background: '#FFFFFF', boxShadow: '0 20px 40px rgba(0,0,0,0.15)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: '#0F172A', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span>🗓️ Edit Dates</span>
+                </h3>
+                <p style={{ margin: '4px 0 0 0', fontSize: '12.5px', color: '#64748B' }}>
+                  Student: <strong style={{ color: '#0F172A' }}>{editingStudentDates.name}</strong>
+                </p>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => setEditingStudentDates(null)}
+                style={{ background: 'none', border: 'none', fontSize: '20px', color: '#94A3B8', cursor: 'pointer', padding: '4px' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '10px', padding: '10px 14px', marginBottom: '16px', fontSize: '12px', color: '#475569', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '16px' }}>🛡️</span>
+              <span><strong>School Admin Access:</strong> Modify start and end dates of training for this student.</span>
+            </div>
+
+            <form onSubmit={handleSaveStudentDates} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>
+                  Start Date
+                </label>
+                <input
+                  type="date"
+                  value={editingStudentDates.start_date || ''}
+                  onChange={(e) => {
+                    const newStart = e.target.value;
+                    const match = (editingStudentDates.course_duration || '').match(/^(\d+)/);
+                    const days = match ? parseInt(match[1], 10) : (calculateDaysBetween(editingStudentDates.start_date, editingStudentDates.end_date) || 3);
+                    const newEnd = newStart ? addDaysToDate(newStart, days) : editingStudentDates.end_date;
+                    setEditingStudentDates(prev => ({
+                      ...prev,
+                      start_date: newStart,
+                      end_date: newEnd
+                    }));
+                  }}
+                  required
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1.5px solid #CBD5E1', fontSize: '14px', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <label style={{ fontSize: '12px', fontWeight: 700, color: '#334155' }}>
+                    End Date
+                  </label>
+                  {editingStudentDates.start_date && editingStudentDates.end_date && (
+                    <span style={{ fontSize: '11px', color: '#0D9488', fontWeight: 700 }}>
+                      {calculateDaysBetween(editingStudentDates.start_date, editingStudentDates.end_date)} Days
+                    </span>
+                  )}
+                </div>
+                <input
+                  type="date"
+                  min={editingStudentDates.start_date || undefined}
+                  value={editingStudentDates.end_date || ''}
+                  onChange={(e) => {
+                    const newEnd = e.target.value;
+                    let dur = editingStudentDates.course_duration;
+                    if (editingStudentDates.start_date && newEnd) {
+                      const days = calculateDaysBetween(editingStudentDates.start_date, newEnd);
+                      if (days) dur = `${days} ${days === 1 ? 'Day' : 'Days'} Course`;
+                    }
+                    setEditingStudentDates(prev => ({
+                      ...prev,
+                      end_date: newEnd,
+                      course_duration: dur
+                    }));
+                  }}
+                  required
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1.5px solid #CBD5E1', fontSize: '14px', boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
+                <button
+                  type="button"
+                  onClick={() => setEditingStudentDates(null)}
+                  style={{ padding: '9px 16px', borderRadius: '8px', border: '1px solid #CBD5E1', background: '#F8FAFC', color: '#475569', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingDates}
+                  style={{ padding: '9px 18px', borderRadius: '8px', border: 'none', background: '#0D9488', color: '#FFFFFF', fontSize: '13px', fontWeight: 800, cursor: savingDates ? 'not-allowed' : 'pointer', opacity: savingDates ? 0.7 : 1 }}
+                >
+                  {savingDates ? 'Saving...' : '💾 Save Dates'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* ── Add Students Modal & Review Summary ── */}
       {showModal && canAddStudent && (
@@ -4712,7 +5075,36 @@ const StudentsManagement = () => {
             )}
 
             {/* TAB 2: INVITE LINKS HISTORY */}
-            {inviteModalTab === 'history' && (
+            {inviteModalTab === 'history' && (() => {
+              const parseInviteCreatedAt = (createdVal) => {
+                if (!createdVal) return null;
+                if (typeof createdVal === 'number') return new Date(createdVal);
+                let s = String(createdVal).trim();
+                if (s.includes('T') && !s.endsWith('Z') && !s.includes('+') && !s.match(/-\d{2}:\d{2}$/)) {
+                  s += 'Z';
+                }
+                const d = new Date(s);
+                return isNaN(d.getTime()) ? new Date(createdVal) : d;
+              };
+
+              const getInviteCreatedDateISO = (createdVal) => {
+                const d = parseInviteCreatedAt(createdVal);
+                if (!d || isNaN(d.getTime())) return '';
+                const y = d.getFullYear();
+                const m = String(d.getMonth() + 1).padStart(2, '0');
+                const day = String(d.getDate()).padStart(2, '0');
+                return `${y}-${m}-${day}`;
+              };
+
+              const formatInviteCreatedDateTime = (createdVal) => {
+                const d = parseInviteCreatedAt(createdVal);
+                if (!d || isNaN(d.getTime())) return '';
+                const dateStr = d.toLocaleDateString();
+                const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+                return `${dateStr}, ${timeStr}`;
+              };
+
+              return (
               <div>
                 {/* History Header & Filter Pills */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
@@ -4782,7 +5174,7 @@ const StudentsManagement = () => {
                       </span>
                     </button>
 
-                    {/* History Quick Date Filters: Yesterday - Today - Tomorrow + Calendar */}
+                    {/* History Quick Date Filters: Yesterday - Today + Calendar */}
                     {(() => {
                       const getIsoDate = (offset = 0) => {
                         const d = new Date();
@@ -4794,7 +5186,6 @@ const StudentsManagement = () => {
                       };
                       const yestIso = getIsoDate(-1);
                       const todayIso = getIsoDate(0);
-                      const tomIso = getIsoDate(1);
 
                       return (
                         <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#F1F5F9', padding: '2px 4px', borderRadius: '20px', border: '1px solid #E2E8F0' }}>
@@ -4833,24 +5224,6 @@ const StudentsManagement = () => {
                             }}
                           >
                             Today
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setInviteHistoryDateFilter(prev => prev === tomIso ? '' : tomIso)}
-                            style={{
-                              padding: '3px 8px',
-                              borderRadius: '14px',
-                              border: 'none',
-                              background: inviteHistoryDateFilter === tomIso ? '#0D9488' : 'transparent',
-                              color: inviteHistoryDateFilter === tomIso ? '#FFFFFF' : '#475569',
-                              fontWeight: 700,
-                              fontSize: '11px',
-                              cursor: 'pointer',
-                              boxShadow: inviteHistoryDateFilter === tomIso ? '0 1px 4px rgba(13,148,136,0.3)' : 'none',
-                              transition: 'all 0.15s ease'
-                            }}
-                          >
-                            Tomorrow
                           </button>
                           <div style={{
                             display: 'inline-flex',
@@ -4909,15 +5282,6 @@ const StudentsManagement = () => {
 
                 {/* Date Filter Result Banner */}
                 {inviteHistoryDateFilter && (() => {
-                  const getInviteCreatedDateISO = (createdVal) => {
-                    if (!createdVal) return '';
-                    const d = new Date(createdVal);
-                    if (isNaN(d.getTime())) return '';
-                    const y = d.getFullYear();
-                    const m = String(d.getMonth() + 1).padStart(2, '0');
-                    const day = String(d.getDate()).padStart(2, '0');
-                    return `${y}-${m}-${day}`;
-                  };
                   const countOnSelectedDate = schoolInvitesList.filter(inv => getInviteCreatedDateISO(inv.created_at) === inviteHistoryDateFilter).length;
                   const activeOnSelectedDate = schoolInvitesList.filter(inv => {
                     const matchesDate = getInviteCreatedDateISO(inv.created_at) === inviteHistoryDateFilter;
@@ -4975,16 +5339,6 @@ const StudentsManagement = () => {
 
                 {/* List of Previous Invites */}
                 {(() => {
-                  const getInviteCreatedDateISO = (createdVal) => {
-                    if (!createdVal) return '';
-                    const d = new Date(createdVal);
-                    if (isNaN(d.getTime())) return '';
-                    const y = d.getFullYear();
-                    const m = String(d.getMonth() + 1).padStart(2, '0');
-                    const day = String(d.getDate()).padStart(2, '0');
-                    return `${y}-${m}-${day}`;
-                  };
-
                   const activeInvites = schoolInvitesList.filter(inv => {
                     const rem = inv.remaining !== undefined ? inv.remaining : Math.max(0, inv.max_count - (inv.used_count || 0));
                     return rem > 0 && inv.is_active;
@@ -5155,8 +5509,8 @@ const StudentsManagement = () => {
                                     : `⚡ Active (1 Main + ${Math.max(0, inv.max_count - 1)} Guests)`}
                                 </span>
                                 {inv.created_at && (
-                                  <span style={{ color: '#94A3B8' }}>
-                                    • Created {new Date(inv.created_at).toLocaleDateString()}
+                                  <span style={{ color: '#64748B', fontWeight: 600 }}>
+                                    • Created {formatInviteCreatedDateTime(inv.created_at)}
                                   </span>
                                 )}
                               </div>
@@ -5188,7 +5542,8 @@ const StudentsManagement = () => {
                   );
                 })()}
               </div>
-            )}
+              );
+            })()}
           </div>
         </div>
       )}

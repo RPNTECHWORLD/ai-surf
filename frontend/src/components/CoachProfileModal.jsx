@@ -263,7 +263,7 @@ export default function CoachProfileModal({ isOpen, onClose, coachId, coachName,
               {/* Title & Info */}
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                  <h2 style={{ margin: 0, fontSize: '22px', fontWeight: 800, letterSpacing: '-0.3px' }}>
+                  <h2 style={{ margin: 0, fontSize: '22px', fontWeight: 800, letterSpacing: '-0.3px', color: '#FFFFFF' }}>
                     {coach?.name}
                   </h2>
                   <span style={{
@@ -273,13 +273,14 @@ export default function CoachProfileModal({ isOpen, onClose, coachId, coachName,
                     borderRadius: '20px',
                     fontWeight: 700,
                     textTransform: 'uppercase',
-                    letterSpacing: '0.4px'
+                    letterSpacing: '0.4px',
+                    color: '#FFFFFF'
                   }}>
                     Surf Coach
                   </span>
                 </div>
 
-                <div style={{ fontSize: '13px', opacity: 0.9, marginTop: '3px' }}>
+                <div style={{ fontSize: '13px', color: 'rgba(255, 255, 255, 0.9)', opacity: 0.9, marginTop: '3px' }}>
                   {coach?.school || 'Affiliated Surf Academy'}
                 </div>
 

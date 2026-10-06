@@ -203,15 +203,104 @@ function loadConfiguredSlots() {
   return normalizeConfiguredSlots(DEFAULT_CONFIGURED_SLOTS);
 }
 
-function getStudentCourseDayInfo(s, idx = 0) {
-  let totalDays = 3;
-  const durStr = s.course_duration || s.course || s.waitlistGroup || '3 Days Course';
-  const match = String(durStr).match(/(\d+)\s*Day/i);
-  if (match) {
-    totalDays = parseInt(match[1], 10);
-  } else if (s.total_days) {
-    totalDays = parseInt(s.total_days, 10);
+function parseLocalDateOnly(dateStr) {
+  if (!dateStr) return null;
+  if (dateStr instanceof Date) {
+    return new Date(dateStr.getFullYear(), dateStr.getMonth(), dateStr.getDate());
   }
+  const s = String(dateStr).trim();
+  if (!s) return null;
+
+  // Handle YYYY-MM-DD or YYYY/MM/DD
+  const ymd = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (ymd) {
+    return new Date(parseInt(ymd[1], 10), parseInt(ymd[2], 10) - 1, parseInt(ymd[3], 10));
+  }
+
+  // Handle DD-MM-YYYY or DD/MM/YYYY
+  const dmy = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+  if (dmy) {
+    return new Date(parseInt(dmy[3], 10), parseInt(dmy[2], 10) - 1, parseInt(dmy[1], 10));
+  }
+
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) {
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  }
+  return null;
+}
+
+function getStudentCourseTotalDays(student) {
+  if (!student) return 3;
+  if (student.totalDays && !isNaN(parseInt(student.totalDays, 10))) {
+    return parseInt(student.totalDays, 10);
+  }
+  if (student.total_days && !isNaN(parseInt(student.total_days, 10))) {
+    return parseInt(student.total_days, 10);
+  }
+  const durStr = student.course_duration || student.courseDuration || student.course || student.waitlistGroup || '';
+  const match = String(durStr).match(/(\d+)\s*Day/i);
+  if (match) return parseInt(match[1], 10);
+  return 3;
+}
+
+function getStudentStatusOnDate(student, targetDateStr) {
+  const targetDate = parseLocalDateOnly(targetDateStr);
+  const rawStart = student?.startDate || student?.start_date;
+  const totalDays = getStudentCourseTotalDays(student);
+
+  if (!targetDate || !rawStart) {
+    return {
+      isActive: false,
+      status: 'no_date',
+      whichDay: 1,
+      totalDays
+    };
+  }
+
+  const startDate = parseLocalDateOnly(rawStart);
+  if (!startDate) {
+    return {
+      isActive: false,
+      status: 'invalid_date',
+      whichDay: 1,
+      totalDays
+    };
+  }
+
+  const diffMs = targetDate.getTime() - startDate.getTime();
+  const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+  const dayNumber = diffDays + 1; // Day 1 is startDate itself
+
+  if (dayNumber < 1) {
+    return {
+      isActive: false,
+      status: 'upcoming',
+      whichDay: 1,
+      totalDays,
+      daysUntilStart: Math.abs(diffDays)
+    };
+  } else if (dayNumber > totalDays) {
+    return {
+      isActive: false,
+      status: 'completed',
+      whichDay: totalDays,
+      totalDays,
+      daysAfterEnd: dayNumber - totalDays
+    };
+  } else {
+    return {
+      isActive: true,
+      status: 'active',
+      whichDay: dayNumber,
+      totalDays
+    };
+  }
+}
+
+function getStudentCourseDayInfo(s, idx = 0) {
+  const totalDays = getStudentCourseTotalDays(s);
+  const durStr = s.course_duration || s.courseDuration || s.course || s.waitlistGroup || `${totalDays} Days Course`;
 
   let whichDay = 1;
   if (s.which_day !== undefined && s.which_day !== null && !isNaN(parseInt(s.which_day, 10))) {
@@ -221,20 +310,12 @@ function getStudentCourseDayInfo(s, idx = 0) {
   } else if (s.day_number !== undefined && s.day_number !== null && !isNaN(parseInt(s.day_number, 10))) {
     whichDay = parseInt(s.day_number, 10);
   } else if (s.start_date) {
-    try {
-      const parts = String(s.start_date).trim().split(/[-/]/);
-      let sYear, sMonth, sDay;
-      if (parts.length === 3) {
-        if (parts[0].length === 4) { sYear = parseInt(parts[0]); sMonth = parseInt(parts[1]) - 1; sDay = parseInt(parts[2]); }
-        else if (parts[2].length === 4) { sYear = parseInt(parts[2]); sMonth = parseInt(parts[1]) - 1; sDay = parseInt(parts[0]); }
-      }
-      if (sYear && !isNaN(sYear)) {
-        const sDate = new Date(sYear, sMonth, sDay);
-        const today = new Date();
-        const diffDays = Math.floor((today.getTime() - sDate.getTime()) / (1000 * 60 * 60 * 24));
-        whichDay = Math.max(1, Math.min(totalDays, diffDays + 1));
-      }
-    } catch (e) {}
+    const sDate = parseLocalDateOnly(s.start_date);
+    if (sDate) {
+      const today = new Date();
+      const diffDays = Math.floor((today.getTime() - sDate.getTime()) / (1000 * 60 * 60 * 24));
+      whichDay = Math.max(1, Math.min(totalDays, diffDays + 1));
+    }
   } else {
     whichDay = (idx % totalDays) + 1;
   }
@@ -630,6 +711,10 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
               swimming_ability: s.swimming_ability || 'Swimmer',
               whatsapp_number: s.whatsapp_number || '',
               email: s.email || '',
+              start_date: s.start_date || '',
+              startDate: s.start_date || '',
+              end_date: s.end_date || '',
+              endDate: s.end_date || '',
               isReal: true,
               isGuest: false,
               parentStudentId: null,
@@ -664,6 +749,10 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                   swimming_ability: g.swimming_ability || s.swimming_ability || 'Swimmer',
                   whatsapp_number: g.whatsapp_number || g.phone || s.whatsapp_number || '',
                   email: g.email || s.email || '',
+                  start_date: s.start_date || '',
+                  startDate: s.start_date || '',
+                  end_date: s.end_date || '',
+                  endDate: s.end_date || '',
                   isReal: true,
                   isGuest: true,
                   guestIndex: gIdx + 1,
@@ -787,9 +876,23 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
       return matched;
     }
-    // Normal Create Mode: Exclude students already scheduled on selected date
-    return dbStudents.filter(s => !isStudentScheduledInDbOnDate(s));
-  }, [dbStudents, isStudentScheduledInDbOnDate, editSession]);
+    // Normal Create Mode:
+    // Strictly show students who are active on the selected session date (within start_date + course duration days)
+    // or who have a session booked on this date.
+    const enrichedStudents = dbStudents.map(s => {
+      const status = getStudentStatusOnDate(s, selectedSessionDateYYYYMMDD);
+      const isScheduled = isStudentScheduledInDbOnDate(s);
+      return {
+        ...s,
+        whichDay: status.whichDay || s.whichDay || 1,
+        totalDays: status.totalDays || s.totalDays || 3,
+        dateStatus: status.status, // 'active' | 'upcoming' | 'completed' | 'no_date'
+        isActiveOnDate: status.isActive || isScheduled
+      };
+    });
+
+    return enrichedStudents.filter(s => s.isActiveOnDate);
+  }, [dbStudents, isStudentScheduledInDbOnDate, editSession, selectedSessionDateYYYYMMDD]);
 
   // Real Instructors (NO fake data)
   const allInstructors = dbInstructors;
@@ -2816,7 +2919,10 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
               {filteredStudents.length === 0 ? (
                 <div style={{ padding: '36px', textAlign: 'center', color: '#64748B', background: '#FFFFFF', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
-                  No students found matching your criteria.
+                  <div style={{ fontSize: '15px', fontWeight: 700, color: '#1E293B', marginBottom: '6px' }}>No active students on this date</div>
+                  <div style={{ fontSize: '13px', color: '#64748B' }}>
+                    No students currently have an active course window on {formattedSessionDate}.
+                  </div>
                 </div>
               ) : (
                 <div className="ns-student-grid">
@@ -3059,24 +3165,58 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
                           {/* Column 2: Day Badge */}
                           <div className="ns-student-col-day">
-                            <span
-                              className="ns-day-progress-badge"
-                              style={{
-                                background: '#F1F5F9',
-                                color: '#475569',
-                                fontWeight: 600,
-                                fontSize: '11px',
-                                padding: '3px 8px',
-                                borderRadius: '10px',
-                                border: '1px solid #E2E8F0',
-                                whiteSpace: 'nowrap',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '3px'
-                              }}
-                            >
-                              <span className="ns-hide-mobile">📅 </span>Day {student.whichDay}/{student.totalDays}
-                            </span>
+                            {student.dateStatus === 'completed' ? (
+                              <span
+                                style={{
+                                  background: '#FEE2E2',
+                                  color: '#DC2626',
+                                  fontWeight: 600,
+                                  fontSize: '10.5px',
+                                  padding: '2px 7px',
+                                  borderRadius: '8px',
+                                  border: '1px solid #FECACA',
+                                  whiteSpace: 'nowrap'
+                                }}
+                                title="Course completed before this date"
+                              >
+                                🏁 Completed
+                              </span>
+                            ) : student.dateStatus === 'upcoming' ? (
+                              <span
+                                style={{
+                                  background: '#FEF3C7',
+                                  color: '#D97706',
+                                  fontWeight: 600,
+                                  fontSize: '10.5px',
+                                  padding: '2px 7px',
+                                  borderRadius: '8px',
+                                  border: '1px solid #FDE68A',
+                                  whiteSpace: 'nowrap'
+                                }}
+                                title={`Course starts on ${student.startDate || student.start_date}`}
+                              >
+                                ⏳ Upcoming
+                              </span>
+                            ) : (
+                              <span
+                                className="ns-day-progress-badge"
+                                style={{
+                                  background: student.isActiveOnDate ? '#ECFDF5' : '#F1F5F9',
+                                  color: student.isActiveOnDate ? '#059669' : '#475569',
+                                  fontWeight: 600,
+                                  fontSize: '11px',
+                                  padding: '3px 8px',
+                                  borderRadius: '10px',
+                                  border: `1px solid ${student.isActiveOnDate ? '#A7F3D0' : '#E2E8F0'}`,
+                                  whiteSpace: 'nowrap',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px'
+                                }}
+                              >
+                                <span className="ns-hide-mobile">📅 </span>Day {student.whichDay}/{student.totalDays}
+                              </span>
+                            )}
                           </div>
 
                           {/* Column 3: Course Duration (Desktop Only) */}

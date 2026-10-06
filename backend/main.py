@@ -615,6 +615,24 @@ try:
                 "ALTER TABLE instructors ADD COLUMN intro_video VARCHAR(255) DEFAULT ''",
                 "ALTER TABLE instructors ADD COLUMN price DOUBLE PRECISION DEFAULT 100.00",
                 "ALTER TABLE instructors ADD COLUMN phone VARCHAR(50) DEFAULT ''",
+                "ALTER TABLE instructors ADD COLUMN email VARCHAR DEFAULT ''",
+                "ALTER TABLE instructors ADD COLUMN dob VARCHAR DEFAULT ''",
+                "ALTER TABLE instructors ADD COLUMN bio TEXT DEFAULT ''",
+                "ALTER TABLE instructors ADD COLUMN specializations TEXT DEFAULT ''",
+                "ALTER TABLE instructors ADD COLUMN rates VARCHAR DEFAULT ''",
+                "ALTER TABLE instructors ADD COLUMN location VARCHAR DEFAULT ''",
+                "ALTER TABLE instructors ADD COLUMN rating FLOAT DEFAULT 5.0",
+                "ALTER TABLE instructors ADD COLUMN image VARCHAR DEFAULT ''",
+                "ALTER TABLE instructors ADD COLUMN reviews TEXT DEFAULT ''",
+                "ALTER TABLE instructors ADD COLUMN school VARCHAR DEFAULT 'Individual / Freelance Coach'",
+                "ALTER TABLE students ADD COLUMN gender VARCHAR(50) DEFAULT 'Male'",
+                "ALTER TABLE students ADD COLUMN age INTEGER DEFAULT 20",
+                "ALTER TABLE students ADD COLUMN bio TEXT DEFAULT ''",
+                "ALTER TABLE students ADD COLUMN dob VARCHAR(50) DEFAULT ''",
+                "ALTER TABLE students ADD COLUMN division VARCHAR(50) DEFAULT ''",
+                "ALTER TABLE students ADD COLUMN stance VARCHAR(50) DEFAULT 'regular'",
+                "ALTER TABLE students ADD COLUMN surf_stats TEXT DEFAULT '{}'",
+                "ALTER TABLE students ADD COLUMN performance_logs TEXT DEFAULT '[]'",
                 "ALTER TABLE students ADD COLUMN whatsapp_number VARCHAR(50) DEFAULT ''",
                 "ALTER TABLE students ADD COLUMN guests_count INTEGER DEFAULT 1",
                 "ALTER TABLE students ADD COLUMN course_duration VARCHAR(100) DEFAULT '3 Days Course'",
@@ -622,15 +640,27 @@ try:
                 "ALTER TABLE students ADD COLUMN end_date VARCHAR(50) DEFAULT ''",
                 "ALTER TABLE students ADD COLUMN session_time VARCHAR(50) DEFAULT '08:30 AM'",
                 "ALTER TABLE students ADD COLUMN staying_at_school VARCHAR(20) DEFAULT 'Yes'",
+                "ALTER TABLE students ADD COLUMN swimming_ability VARCHAR(50) DEFAULT 'Swimmer'",
                 "ALTER TABLE students ADD COLUMN reminder_preference VARCHAR(50) DEFAULT 'WhatsApp Text'",
                 "ALTER TABLE students ADD COLUMN reminder_sent BOOLEAN DEFAULT FALSE",
                 "ALTER TABLE students ADD COLUMN guests_details TEXT DEFAULT '[]'",
-                "ALTER TABLE students ADD COLUMN dob VARCHAR(50) DEFAULT ''",
                 "ALTER TABLE students ADD COLUMN invite_token VARCHAR(128) DEFAULT NULL",
                 "ALTER TABLE students ADD COLUMN school VARCHAR(150) DEFAULT ''",
                 "ALTER TABLE students ADD COLUMN approval_status VARCHAR(50) DEFAULT 'approved'",
                 "ALTER TABLE users ADD COLUMN approval_status VARCHAR(50) DEFAULT 'approved'",
+                "ALTER TABLE users ADD COLUMN name VARCHAR DEFAULT ''",
+                "ALTER TABLE users ADD COLUMN created_by_school BOOLEAN DEFAULT false",
+                "ALTER TABLE users ADD COLUMN auth_provider VARCHAR(50) DEFAULT 'email'",
+                "ALTER TABLE users ADD COLUMN password_plain VARCHAR(255) DEFAULT NULL",
+                "ALTER TABLE users ADD COLUMN social_id VARCHAR(255) DEFAULT NULL",
+                "ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT 1",
+                "ALTER TABLE users ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
                 "ALTER TABLE sessions ADD COLUMN group_name VARCHAR(200) DEFAULT ''",
+                "ALTER TABLE sessions ADD COLUMN image_url VARCHAR DEFAULT ''",
+                "ALTER TABLE sessions ADD COLUMN video_url VARCHAR DEFAULT ''",
+                "ALTER TABLE sessions ADD COLUMN student_name VARCHAR(200) DEFAULT ''",
+                "ALTER TABLE sessions ADD COLUMN guest_name VARCHAR(200) DEFAULT ''",
+                "ALTER TABLE activity_log ADD COLUMN school VARCHAR(150) DEFAULT 'Aquatic Indica Surf School'",
                 "ALTER TABLE school_invite_links ADD COLUMN course_duration VARCHAR(100) DEFAULT '3 Days Course'",
                 "ALTER TABLE school_invite_links ADD COLUMN start_date VARCHAR(50) DEFAULT NULL"
             ]
@@ -3277,24 +3307,45 @@ def add_instructor_review(instructor_id: int, data: InstructorReviewCreate, db: 
     coach_name = (i.name or "").strip()
 
     # 1. Prevent coach self-review
-    if reviewer_name.lower() == coach_name.lower() or (data.student_id and data.student_id == i.id):
+    if reviewer_name and coach_name and reviewer_name.lower() == coach_name.lower():
         raise HTTPException(status_code=403, detail="Coaches cannot submit reviews for themselves.")
 
-    # 2. Prevent any coach from reviewing any coach
-    matched_coach = db.query(Instructor).filter(func.lower(Instructor.name) == reviewer_name.lower()).first()
-    if matched_coach:
-        raise HTTPException(status_code=403, detail="Coaches cannot submit reviews for coaches. Only students can review coaches.")
-
+    # 2. Check if reviewer is a student or coach
+    st_match = None
     if data.student_id:
-        inst_match = db.query(Instructor).filter(
-            or_(Instructor.id == data.student_id, Instructor.user_id == data.student_id)
-        ).first()
-        if inst_match:
-            raise HTTPException(status_code=403, detail="Coaches cannot submit reviews for coaches. Only students can review coaches.")
+        st_match = db.query(Student).filter(Student.id == data.student_id).first()
+        if not st_match:
+            st_match = db.query(Student).filter(Student.user_id == data.student_id).first()
 
-        user_match = db.query(User).filter(User.id == data.student_id).first()
-        if user_match and user_match.role and user_match.role.lower() in ["coach", "instructor", "admin", "school"]:
-            raise HTTPException(status_code=403, detail="Only students can submit reviews.")
+    if st_match:
+        # Verified student record! Check if the linked user account is an instructor
+        if st_match.user_id:
+            inst_by_user = db.query(Instructor).filter(Instructor.user_id == st_match.user_id).first()
+            if inst_by_user:
+                if inst_by_user.id == i.id:
+                    raise HTTPException(status_code=403, detail="Coaches cannot submit reviews for themselves.")
+                raise HTTPException(status_code=403, detail="Coaches cannot submit reviews for coaches. Only students can review coaches.")
+            u = db.query(User).filter(User.id == st_match.user_id).first()
+            if u and u.role and u.role.lower() in ["coach", "instructor"]:
+                raise HTTPException(status_code=403, detail="Coaches cannot submit reviews for coaches. Only students can review coaches.")
+    else:
+        # Not a student ID. Check if it's a coach User ID
+        if data.student_id:
+            inst_by_uid = db.query(Instructor).filter(Instructor.user_id == data.student_id).first()
+            if inst_by_uid:
+                if inst_by_uid.id == i.id:
+                    raise HTTPException(status_code=403, detail="Coaches cannot submit reviews for themselves.")
+                raise HTTPException(status_code=403, detail="Coaches cannot submit reviews for coaches. Only students can review coaches.")
+            u_direct = db.query(User).filter(User.id == data.student_id).first()
+            if u_direct and u_direct.role and u_direct.role.lower() in ["coach", "instructor", "admin", "school"]:
+                raise HTTPException(status_code=403, detail="Only students can submit reviews.")
+
+        # If name matches coach and no student has this name, block
+        if reviewer_name:
+            matched_coach = db.query(Instructor).filter(func.lower(Instructor.name) == reviewer_name.lower()).first()
+            student_with_name = db.query(Student).filter(func.lower(Student.name) == reviewer_name.lower()).first()
+            if matched_coach and not student_with_name:
+                raise HTTPException(status_code=403, detail="Coaches cannot submit reviews for coaches. Only students can review coaches.")
     
     current_reviews = []
     if i.reviews:
@@ -3731,13 +3782,13 @@ def get_student(student_id: int, db: OrmSession = Depends(get_db)):
     d["session_count"] = len(all_sess)
     d["sessions"] = [session_to_dict(sess) for sess in all_sess]
     
-    # If student has no assigned instructor but sessions have an instructor, resolve it
-    if (not d.get("instructor") or d.get("instructor") == "Assigned Surf Coach") and all_sess:
+    # Resolve coach from latest session if sessions exist
+    if all_sess:
         for sess in all_sess:
-            if sess.instructor_rel and sess.instructor_rel.name:
+            if sess.instructor_rel and sess.instructor_rel.name and sess.instructor_rel.name not in ["—", "Coach", "Not Assigned Yet", "Assigned Surf Coach"]:
                 d["instructor"] = sess.instructor_rel.name
                 d["instructor_id"] = sess.instructor_id
-                if not s.instructor_id:
+                if s.instructor_id != sess.instructor_id:
                     try:
                         s.instructor_id = sess.instructor_id
                         db.commit()

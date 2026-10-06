@@ -31,8 +31,10 @@ const AuthPage = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const inviteToken = searchParams.get('invite');
-  const inviteCode = searchParams.get('invite_code');
-  const urlSchool = searchParams.get('school');
+  const rawInviteCode = searchParams.get('invite_code');
+  const inviteCode = rawInviteCode ? rawInviteCode.trim().replace(/\/+$/, '') : null;
+  const rawSchool = searchParams.get('school');
+  const urlSchool = rawSchool ? rawSchool.trim().replace(/\/+$/, '') : null;
   const urlCoach = searchParams.get('coach');
   const urlCoachId = searchParams.get('coach_id');
   const [inviteData, setInviteData] = useState(null);
@@ -175,18 +177,25 @@ const AuthPage = () => {
 
   // Fetch school batch invite info if invite_code present in URL
   useEffect(() => {
-    if (!inviteCode) return;
+    if (!inviteCode) {
+      setSchoolInviteData(null);
+      setSchoolInviteError('');
+      setSchoolInviteLoading(false);
+      return;
+    }
     setSchoolInviteLoading(true);
     setSchoolInviteError('');
+    setSchoolInviteData(null); // Reset previous invite data immediately so stale data is never shown
     setIsLogin(false);
     setRole('athlete');
     setOtpVerified(false);
     setOtpSent(false);
 
-    fetch(`${API}/api/school-invites/${inviteCode}`)
-      .then(r => r.json())
-      .then(data => {
-        if (data.valid || data.remaining !== undefined) {
+    const cleanCode = inviteCode.trim().replace(/\/+$/, '');
+    fetch(`${API}/api/school-invites/${cleanCode}`)
+      .then(async (r) => {
+        const data = await r.json().catch(() => ({}));
+        if (data && (data.valid || data.remaining !== undefined)) {
           const isAlreadyUsed = (data.used_count > 0) || !data.valid || (data.remaining !== undefined && data.remaining <= 0);
           const safeData = {
             ...data,
@@ -195,8 +204,10 @@ const AuthPage = () => {
           };
           setSchoolInviteData(safeData);
           const lockedSchool = data.school || urlSchool || '';
-          const lockedCourse = data.course_duration || searchParams.get('course_duration');
-          const lockedStartDate = data.start_date || searchParams.get('start_date') || '';
+          const rawCourse = searchParams.get('course_duration') || '';
+          const lockedCourse = data.course_duration || (rawCourse ? rawCourse.trim().replace(/\/+$/, '') : '');
+          const rawParamStart = searchParams.get('start_date') || '';
+          const lockedStartDate = data.start_date || (rawParamStart ? rawParamStart.trim().replace(/\/+$/, '') : '');
           const lockedGuests = data.locked_guests !== undefined ? data.locked_guests : Math.max(0, (data.max_count || 1) - 1);
           setFormData(prev => ({
             ...prev,
@@ -213,49 +224,14 @@ const AuthPage = () => {
             setSchoolInviteError(data.detail || 'This invite link has already been used. Each invite link is valid for 1 primary account registration only.');
           }
         } else {
+          setSchoolInviteData(null);
           setSchoolInviteError(data.detail || 'Invalid or expired invite link.');
         }
       })
-      .catch(() => {
-        // Local storage fallback for offline / mock testing
-        try {
-          const localInvites = JSON.parse(localStorage.getItem('local_school_invites') || '[]');
-          const match = localInvites.find(i => i.code === inviteCode);
-          if (match) {
-            const isAlreadyUsed = (match.used_count || 0) > 0;
-            const rem = Math.max(0, match.max_count - (match.used_count || 0));
-            const isValid = match.is_active && !isAlreadyUsed && rem > 0;
-            const lockedGuests = Math.max(0, (match.max_count || 1) - 1);
-            const mockData = {
-              valid: isValid,
-              code: match.code,
-              school: match.school,
-              max_count: match.max_count,
-              locked_guests: lockedGuests,
-              course_duration: match.course_duration,
-              used_count: match.used_count || 0,
-              remaining: isValid ? match.max_count : 0,
-              is_active: isValid
-            };
-            setSchoolInviteData(mockData);
-            const lockedCourse = match.course_duration || searchParams.get('course_duration');
-            const lockedStartDate = match.start_date || searchParams.get('start_date') || '';
-            setFormData(prev => ({
-              ...prev,
-              school: match.school,
-              course_duration: lockedCourse || prev.course_duration,
-              start_date: lockedStartDate || prev.start_date,
-              guests_count: lockedGuests,
-              guests_details: Array.from({ length: lockedGuests }).map((_, i) => (prev.guests_details || [])[i] || { name: '', whatsapp_number: '', email: '' })
-            }));
-            if (match.school) setSchoolsList(prev => Array.from(new Set([match.school, ...prev])));
-            if (!isValid) {
-              setSchoolInviteError(isAlreadyUsed ? 'This invite link has already been used. Each invite link is valid for 1 primary account registration only.' : 'This invite link has reached its maximum registration limit.');
-            }
-            return;
-          }
-        } catch (e) {}
-        setSchoolInviteError('Could not verify invite link. Please check your connection.');
+      .catch((err) => {
+        console.error('Error verifying invite link:', err);
+        setSchoolInviteData(null);
+        setSchoolInviteError('Could not verify invite link. Please check your internet connection.');
       })
       .finally(() => setSchoolInviteLoading(false));
   }, [inviteCode, urlSchool]);
