@@ -517,3 +517,39 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
 07. **Production Backend Deployment (AWS EC2)**:
     - **FastAPI Backend on EC2**: Deployed updated `backend/main.py` containing `approved_leaves` and date filter handling to AWS EC2 (`i-0c62e04f44a9ea237`) via S3 bucket `aisurf-media-uploads-149051628601` and AWS Systems Manager (Latest SSM Command ID: `f9073e65-1cd5-46d8-a7a1-a1f74875f25c`).
     - **Service Restart & Health Verification**: Restarted `aisurf-backend` systemd service with verified 200 OK live status, confirming active `approved_leaves` payload support on production.
+
+### Changes on 12-10-2026
+
+01. **Smart Coach-to-Student Ratio Engine (`NewSession.jsx`)**:
+    - **Dynamic Ratio Calculation**: Added an automatic ratio calculator dividing total active students across coaches (e.g., 34 students ÷ 21 coaches = ~1 Coach : 2 Students).
+    - **Visual Ratio Analytics**: Introduced a dedicated stat badge in the Step 3 summary header (`👥 Ratio: 1 Coach : ~X Students`) and individual `🏄‍♂️ 1 Coach : X Students` breakdown badges on each group card for real-time safety and class capacity monitoring.
+
+02. **Manual Group Assignment Workflow (`NewSession.jsx`)**:
+    - **User-Driven Group Creation**: Removed unwanted automatic group distribution on initial wizard mount. Groups are now created manually by the administrator, allowing flexible student grouping.
+    - **Header & Group Badge Synchronization**: Added real-time student count chips to group header buttons (`Group A (X)`, `Group B (Y)`), syncing immediately with group member additions and removals.
+    - **Accompanying Guests Handling**: Fixed student selection and group counts so accompanying guests attached to students are accurately accounted for without ghost count inflation.
+
+03. **"Select by Filter" Multi-Student Selection Tool (`NewSession.jsx`)**:
+    - **Targeted Batch Selection**: Added a **"Select by Filter"** action button in the student roster table.
+    - **Active Criteria Matching**: Instantly selects only the students who match the currently applied filters (Division, Level, Package, Search Query), streamlining multi-student assignment into surf sessions.
+
+04. **Calendar Date Lock & Future Date Protection (`NewSession.jsx`, `Sessions.jsx`)**:
+    - **Future Date Restriction**: Disabled selecting future calendar dates where past performance or attendance logs cannot be pre-recorded.
+    - **Local Time Accuracy**: Standardized ISO date helpers (`getTodayYYYYMMDD`) using local timezone formatting to prevent UTC day-shift bugs.
+
+05. **Active Time Slot Filtering per Day (`Sessions.jsx`)**:
+    - **Day-of-Week Configuration Sync**: Updated `availableSlots` computation to cross-reference configured active slots (`session_slots` in settings) for the specific day of the week (Mon-Sun).
+    - **Ghost Slot Removal**: Suppressed inactive zero-session slot tabs (e.g., `03:30 AM 0`, `08:31 AM 0`), showing only active and scheduled slots for the selected date.
+
+06. **Default "Today" Live Schedule & Session View Isolation (`Sessions.jsx`)**:
+    - **Mandatory "Today" Default**: Configured the Surf Sessions dashboard to always load with **Today** selected by default, preventing the roster from dumping all historical sessions across the database (e.g., showing 51 of 51 historical sessions).
+    - **Non-Deselectable Quick Filters**: Updated the `Today` filter button to remain active when clicked, preventing accidental toggling off to an empty state.
+    - **Graceful Fallbacks**: Toggling off `Yesterday` or `Tomorrow`, clearing a custom date picker (`×`), or clicking `Reset Filters` automatically reverts the filter back to **Today**.
+    - **Slot & Session Count Scoping**: Scoped `All Slots` count badges and slot metrics to the active date rather than database-wide totals.
+
+07. **Cleaned Day Details Modal UI (`Sessions.jsx`)**:
+    - **Redundant Element Cleanup**: Removed extraneous `Details` pill buttons beside enrolled student names in the day details roster modal to simplify and streamline the layout.
+
+08. **Production Backend Deployment (AWS EC2)**:
+    - **FastAPI Backend on EC2**: Deployed updated `backend/main.py` containing student creation `gender` field support to AWS EC2 (`i-0c62e04f44a9ea237`) via S3 bucket `aisurf-media-uploads-149051628601` and AWS Systems Manager (SSM Command ID: `6dff0a5e-c60d-43a6-83ac-1b32ec435972`).
+    - **Service Restart & Health Verification**: Restarted `aisurf-backend` systemd service on EC2 (`54.242.160.238:8000`) with verified 200 OK live status.

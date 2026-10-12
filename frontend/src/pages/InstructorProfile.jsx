@@ -87,8 +87,10 @@ const InstructorProfile = () => {
     school: 'Individual / Freelance Coach',
     image: '',
     specializations: [],
+    languages: [],
     certifications: ''
   });
+  const [customEditLangInput, setCustomEditLangInput] = useState('');
 
   const isSchoolAffiliated = Boolean(editForm.school) && editForm.school !== 'Individual / Freelance Coach';
 
@@ -591,6 +593,25 @@ const InstructorProfile = () => {
   };
 
   const handleEditClick = () => {
+    const rawL = instructor.languages;
+    let initLangs = [];
+    if (Array.isArray(rawL)) {
+      initLangs = rawL;
+    } else if (typeof rawL === 'string' && rawL.trim()) {
+      try {
+        const p = JSON.parse(rawL);
+        initLangs = Array.isArray(p) ? p : [rawL];
+      } catch {
+        initLangs = rawL.split(',').map(s => s.trim()).filter(Boolean);
+      }
+    }
+    if (initLangs.length === 0) initLangs = ['English'];
+
+    const expDigits = String(instructor.experience || '').replace(/[^0-9]/g, '');
+    const certsStr = Array.isArray(instructor.certifications)
+      ? instructor.certifications.join('\n')
+      : String(instructor.certifications || '');
+
     setEditForm({
       name: instructor.name || '',
       email: instructor.email || '',
@@ -599,15 +620,17 @@ const InstructorProfile = () => {
       age: instructor.age || (instructor.dob ? calculateAge(instructor.dob) : '') || '',
       gender: instructor.gender || 'Male',
       bio: instructor.bio || '',
-      experience: instructor.experience || '',
+      experience: expDigits || instructor.experience || '',
       fitness_level: instructor.fitness_level || 'Elite',
       rates: instructor.rates || '',
       location: instructor.location || '',
       school: instructor.school || 'Individual / Freelance Coach',
       image: (instructor.image && !instructor.image.startsWith('blob:')) ? instructor.image : '',
       specializations: instructor.specializations || [],
-      certifications: (instructor.certifications || []).join('\n')
+      languages: initLangs,
+      certifications: certsStr
     });
+    setCustomEditLangInput('');
     setPhotoPreview('');
     setShowEditModal(true);
   };
@@ -639,10 +662,13 @@ const InstructorProfile = () => {
         experience: editForm.experience,
         fitness_level: editForm.fitness_level,
         specializations: editForm.specializations,
+        languages: editForm.languages && editForm.languages.length > 0 ? editForm.languages : ['English'],
         rates: editForm.rates,
         location: isSchoolAffiliated ? (getSchoolLocation(editForm.school) || editForm.location) : editForm.location,
         school: editForm.school || 'Individual / Freelance Coach',
-        certifications: editForm.certifications.split('\n').filter(c => c.trim() !== '')
+        certifications: Array.isArray(editForm.certifications)
+          ? editForm.certifications
+          : String(editForm.certifications || '').split('\n').map(c => c.trim()).filter(Boolean)
       };
       if (safeImage) {
         payload.image = safeImage;
@@ -658,14 +684,17 @@ const InstructorProfile = () => {
       });
 
       if (res.ok) {
+        const savedData = await res.json().catch(() => null);
         const newSchool = editForm.school || 'Individual / Freelance Coach';
         if (currentUser && (
-          currentUser.instructor_id === parseInt(id) ||
-          currentUser.id === parseInt(id) ||
-          (currentUser.email && instructor?.email && currentUser.email.toLowerCase().trim() === instructor.email.toLowerCase().trim())
+          Number(currentUser.instructor_id) === Number(id) ||
+          Number(currentUser.id) === Number(id) ||
+          (currentUser.email && instructor?.email && currentUser.email.toLowerCase().trim() === instructor.email.toLowerCase().trim()) ||
+          (currentUser.name && instructor?.name && currentUser.name.toLowerCase().trim() === instructor.name.toLowerCase().trim())
         )) {
           const updatedUser = {
             ...currentUser,
+            role: currentUser.role || 'coach',
             name: editForm.name,
             image: safeImage || currentUser.image,
             school: newSchool,
@@ -688,6 +717,7 @@ const InstructorProfile = () => {
         const updatedInst = {
           ...instructor,
           ...payload,
+          ...(savedData || {}),
           school: newSchool
         };
         setInstructor(updatedInst);
@@ -708,25 +738,6 @@ const InstructorProfile = () => {
   if (!instructor) return <div className="db-page"><Sidebar /><main className="db-main">Instructor not found</main></div>;
 
   const activeSchoolStr = sessionStorage.getItem('activeSchool') || '';
-  const isSuperAdmin = currentUser?.role === 'superadmin' || 
-                       currentUser?.role === 'super_admin' || 
-                       activeSchoolStr.toLowerCase().includes('super admin');
-
-  const isSchoolAdmin = currentUser?.role === 'school_admin' || 
-                        currentUser?.role === 'school' || 
-                        currentUser?.role === 'admin' ||
-                        currentUser?.role === 'schooladmin' ||
-                        Boolean(currentUser?.school_name || (currentUser?.school && currentUser?.role !== 'coach' && currentUser?.role !== 'instructor'));
-
-  const isCoachThemselves = (currentUser?.role === 'coach' || currentUser?.role === 'instructor') && (
-    currentUser?.instructor_id === parseInt(id) ||
-    currentUser?.id === parseInt(id) ||
-    (currentUser?.email && instructor?.email && currentUser.email.toLowerCase().trim() === instructor.email.toLowerCase().trim())
-  );
-
-  // School Admin should NEVER see Edit Profile button; only the coach themselves when logged in
-  const canEditProfile = !isSchoolAdmin && isCoachThemselves;
-
   const userRole = (currentUser?.role || (() => {
     try {
       const u = JSON.parse(sessionStorage.getItem('user') || localStorage.getItem('user') || '{}');
@@ -735,7 +746,32 @@ const InstructorProfile = () => {
       return '';
     }
   })()).toLowerCase().trim();
+
+  const isCoach = userRole === 'coach' || userRole === 'instructor';
   const isStudent = userRole === 'athlete' || userRole === 'student' || userRole === 'user';
+  const isSuperAdmin = userRole === 'superadmin' || 
+                       userRole === 'super_admin' || 
+                       activeSchoolStr.toLowerCase().includes('super admin');
+
+  // A coach or student is NEVER a school admin. School admin is only when role is school_admin/admin/school without being a coach.
+  const isSchoolAdmin = !isCoach && !isStudent && !isSuperAdmin && (
+    userRole === 'school_admin' || 
+    userRole === 'school' || 
+    userRole === 'admin' ||
+    userRole === 'schooladmin' ||
+    userRole === 'school admin' ||
+    Boolean((currentUser?.school_name || currentUser?.school) && !userRole)
+  );
+
+  const isCoachThemselves = isCoach && (
+    Number(currentUser?.instructor_id) === Number(id) ||
+    Number(currentUser?.id) === Number(id) ||
+    (currentUser?.email && instructor?.email && currentUser.email.toLowerCase().trim() === instructor.email.toLowerCase().trim()) ||
+    (currentUser?.name && instructor?.name && currentUser.name.toLowerCase().trim() === instructor.name.toLowerCase().trim())
+  );
+
+  // School Admin should NEVER see Edit Profile button; only the coach themselves when logged in
+  const canEditProfile = isCoachThemselves;
 
 
   return (
@@ -779,6 +815,35 @@ const InstructorProfile = () => {
             <div className="ip-hero-badges">
               <span className="ip-badge-primary">ISA CERTIFIED</span>
               <span className="ip-badge-active">ACTIVE</span>
+              {(() => {
+                const rawL = instructor.languages;
+                let lList = [];
+                if (Array.isArray(rawL)) lList = rawL;
+                else if (typeof rawL === 'string' && rawL.trim()) {
+                  try { const p = JSON.parse(rawL); lList = Array.isArray(p) ? p : [rawL]; }
+                  catch { lList = rawL.split(',').map(s => s.trim()).filter(Boolean); }
+                }
+                if (lList.length === 0) lList = ['English'];
+                return (
+                  <span
+                    style={{
+                      background: 'rgba(13, 148, 136, 0.2)',
+                      color: '#2DD4BF',
+                      border: '1px solid rgba(45, 212, 191, 0.4)',
+                      padding: '4px 10px',
+                      borderRadius: '20px',
+                      fontSize: '11px',
+                      fontWeight: '800',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      letterSpacing: '0.04em'
+                    }}
+                  >
+                    🗣️ {lList.join(', ')}
+                  </span>
+                );
+              })()}
               {(instructor.is_on_leave || instructor.active_leave) && (
                 <span 
                   className="ip-badge-leave"
@@ -1088,6 +1153,41 @@ const InstructorProfile = () => {
                   <span className="ip-detail-label">Specializations</span>
                   <span className="ip-detail-value" style={{ maxWidth: '180px', textAlign: 'right', whiteSpace: 'normal' }}>
                     {(instructor.specializations || []).join(', ') || '—'}
+                  </span>
+                </div>
+                <div className="ip-detail-row">
+                  <span className="ip-detail-label">Languages Spoken</span>
+                  <span className="ip-detail-value" style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', justifyContent: 'flex-end', maxWidth: '240px' }}>
+                    {(() => {
+                      const raw = instructor.languages;
+                      let list = [];
+                      if (Array.isArray(raw)) list = raw;
+                      else if (typeof raw === 'string' && raw.trim()) {
+                        try {
+                          const p = JSON.parse(raw);
+                          list = Array.isArray(p) ? p : [raw];
+                        } catch {
+                          list = raw.split(',').map(s => s.trim()).filter(Boolean);
+                        }
+                      }
+                      if (list.length === 0) list = ['English'];
+                      return list.map((lang, idx) => (
+                        <span
+                          key={idx}
+                          style={{
+                            background: '#F0FDFA',
+                            color: '#0F766E',
+                            border: '1px solid #CCFBF1',
+                            borderRadius: '8px',
+                            padding: '2px 8px',
+                            fontSize: '11.5px',
+                            fontWeight: 700
+                          }}
+                        >
+                          🗣️ {lang}
+                        </span>
+                      ));
+                    })()}
                   </span>
                 </div>
               </div>
@@ -1438,6 +1538,105 @@ const InstructorProfile = () => {
                   <div className="sp-form-field">
                     <label>Bio <span style={{ color: '#EF4444' }}>*</span></label>
                     <textarea rows="3" value={editForm.bio} onChange={(e) => setEditForm({ ...editForm, bio: e.target.value })} placeholder="Write your coaching bio..." required></textarea>
+                  </div>
+
+                  <div className="sp-form-field">
+                    <label>Languages Spoken</label>
+                    {/* Selected Language Chips */}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px', minHeight: '34px', padding: '6px 8px', background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '10px', alignItems: 'center' }}>
+                      {(Array.isArray(editForm.languages) ? editForm.languages : []).map((lang, idx) => (
+                        <span key={idx} style={{ background: '#0D9488', color: '#FFF', fontSize: '12px', fontWeight: 700, padding: '3px 10px', borderRadius: '14px', display: 'inline-flex', alignItems: 'center', gap: '6px', boxShadow: '0 1px 3px rgba(13, 148, 136, 0.2)' }}>
+                          {lang}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const cur = Array.isArray(editForm.languages) ? editForm.languages : [];
+                              setEditForm({ ...editForm, languages: cur.filter((_, i) => i !== idx) });
+                            }}
+                            style={{ background: 'none', border: 'none', color: '#FFF', cursor: 'pointer', padding: 0, fontSize: '12px', fontWeight: 800, lineHeight: 1 }}
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      ))}
+                      {(!editForm.languages || editForm.languages.length === 0) && (
+                        <span style={{ fontSize: '12px', color: '#94A3B8', fontStyle: 'italic', padding: '2px 4px' }}>No languages selected yet</span>
+                      )}
+                    </div>
+
+                    {/* Quick Select Preset Buttons */}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginBottom: '8px' }}>
+                      {['English', 'Tamil', 'Hindi', 'Spanish', 'French', 'German', 'Portuguese', 'Japanese', 'Malayalam', 'Telugu'].map(preset => {
+                        const cur = Array.isArray(editForm.languages) ? editForm.languages : [];
+                        const isSel = cur.some(l => l.toLowerCase() === preset.toLowerCase());
+                        return (
+                          <button
+                            key={preset}
+                            type="button"
+                            onClick={() => {
+                              let upd;
+                              if (isSel) {
+                                upd = cur.filter(l => l.toLowerCase() !== preset.toLowerCase());
+                              } else {
+                                upd = [...cur, preset];
+                              }
+                              setEditForm({ ...editForm, languages: upd });
+                            }}
+                            style={{
+                              background: isSel ? 'rgba(13, 148, 136, 0.15)' : '#F1F5F9',
+                              color: isSel ? '#0D9488' : '#475569',
+                              border: `1px solid ${isSel ? '#0D9488' : '#CBD5E1'}`,
+                              fontSize: '11.5px',
+                              fontWeight: 700,
+                              padding: '4px 9px',
+                              borderRadius: '8px',
+                              cursor: 'pointer',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            {isSel ? `✓ ${preset}` : `+ ${preset}`}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Custom Language Type & Add Input */}
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <input
+                        type="text"
+                        placeholder="Type another language (e.g. Italian)..."
+                        value={customEditLangInput}
+                        onChange={e => setCustomEditLangInput(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (customEditLangInput.trim()) {
+                              const cur = Array.isArray(editForm.languages) ? editForm.languages : [];
+                              if (!cur.some(l => l.toLowerCase() === customEditLangInput.trim().toLowerCase())) {
+                                setEditForm({ ...editForm, languages: [...cur, customEditLangInput.trim()] });
+                              }
+                              setCustomEditLangInput('');
+                            }
+                          }
+                        }}
+                        style={{ flex: 1, fontSize: '13px' }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (customEditLangInput.trim()) {
+                            const cur = Array.isArray(editForm.languages) ? editForm.languages : [];
+                            if (!cur.some(l => l.toLowerCase() === customEditLangInput.trim().toLowerCase())) {
+                              setEditForm({ ...editForm, languages: [...cur, customEditLangInput.trim()] });
+                            }
+                            setCustomEditLangInput('');
+                          }
+                        }}
+                        style={{ background: '#0D9488', color: '#FFF', border: 'none', borderRadius: '8px', padding: '0 14px', fontSize: '12px', fontWeight: 700, cursor: 'pointer' }}
+                      >
+                        + Add
+                      </button>
+                    </div>
                   </div>
 
                   <div className="sp-form-field">

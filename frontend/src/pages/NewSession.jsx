@@ -521,7 +521,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   // ─── Step 3 State: Instructor Groups Matching (Real School Instructors) ───
   const [dbInstructors, setDbInstructors] = useState([]);
   const [step3DayFilter, setStep3DayFilter] = useState('all'); // 'all' | '1' | '2' | '3'...
-  const [step3StatusFilter, setStep3StatusFilter] = useState('all'); // 'all' | 'unassigned' | 'assigned'
+  const [step3StatusFilter, setStep3StatusFilter] = useState('unassigned'); // 'unassigned' | 'all' | 'assigned'
   const [step3LevelFilter, setStep3LevelFilter] = useState('all'); // 'all' | 'beginner' | 'intermediate' | 'advanced'
   const [step3GenderFilter, setStep3GenderFilter] = useState('all'); // 'all' | 'male' | 'female'
   const [step3SwimmingFilter, setStep3SwimmingFilter] = useState('all'); // 'all' | 'swimmer' | 'non-swimmer'
@@ -717,6 +717,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
               endDate: s.end_date || '',
               isReal: true,
               isGuest: false,
+              age: s.age,
+              dob: s.dob,
               parentStudentId: null,
               parentStudentName: null
             });
@@ -755,6 +757,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                   endDate: s.end_date || '',
                   isReal: true,
                   isGuest: true,
+                  age: g.age,
+                  dob: g.dob,
                   guestIndex: gIdx + 1,
                   parentStudentId: s.id,
                   parentStudentName: s.name
@@ -1319,6 +1323,32 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     return days;
   }, [allPoolStudents]);
 
+  // Students precisely matching active Step 2 filters (Day, Level, Gender, Swimming, Search)
+  const filterMatchingStudents = useMemo(() => {
+    return allPoolStudents.filter(s => {
+      // 1. Day Filter (courseDayFilter)
+      if (courseDayFilter !== 'all' && String(s.whichDay) !== String(courseDayFilter)) return false;
+      // 2. Level Filter
+      if (levelFilter !== 'all' && s.level.toLowerCase() !== levelFilter.toLowerCase()) return false;
+      // 3. Gender Filter
+      if (genderFilterStep2 !== 'all' && (s.gender || 'male').toLowerCase() !== genderFilterStep2.toLowerCase()) return false;
+      // 4. Swimming Ability Filter
+      if (swimmingFilterStep2 !== 'all') {
+        const sSwim = (s.swimming_ability || 'Swimmer').toLowerCase();
+        if (swimmingFilterStep2 === 'swimmer' && (sSwim.includes('non') || sSwim === 'no')) return false;
+        if (swimmingFilterStep2 === 'non-swimmer' && !(sSwim.includes('non') || sSwim === 'no')) return false;
+      }
+      // 5. Search Text
+      if (studentSearchStep2 && studentSearchStep2.trim()) {
+        const q = studentSearchStep2.toLowerCase().trim();
+        const n = (s.name || '').toLowerCase();
+        const p = (s.parentStudentName || '').toLowerCase();
+        if (!n.includes(q) && !p.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [allPoolStudents, courseDayFilter, levelFilter, genderFilterStep2, swimmingFilterStep2, studentSearchStep2]);
+
   // Step 2 Filtered & Sorted students from database:
   // Active slot's assigned students on TOP (0), Unassigned in MIDDLE (1), Other slots' students at BOTTOM (2)
   const filteredStudents = useMemo(() => {
@@ -1408,50 +1438,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     if (selectedSlotId) {
       setStep3SlotFilter(selectedSlotId);
     }
-    if (trainingGroups.length === 0) {
-      const activeSlotsWithStudents = slots.filter(s => (slotStudentMap[s.id] || []).length > 0);
-      const initialSlot = activeSlotsWithStudents.length > 0 ? activeSlotsWithStudents[0] : (selectedSlot || slots[0]);
 
-      const targetIds = allSelectedStudentIds.length > 0 ? allSelectedStudentIds : selectedStudentIds;
-
-      if (targetIds && targetIds.length > 0) {
-        if (activeSlotsWithStudents.length > 1) {
-          const newGroups = activeSlotsWithStudents.map(slot => {
-            const slotStudents = slotStudentMap[slot.id] || [];
-            return {
-              id: `group-${slot.id}-A`,
-              name: `Group A`,
-              day: `Day 1`,
-              level: 'General',
-              slotId: slot.id,
-              studentIds: slotStudents,
-              assignedInstructorId: (isIndividualCoach && currentIndividualCoach?.id && !getInstructorLeaveOnDate(currentIndividualCoach, selectedSessionDateYYYYMMDD)) ? currentIndividualCoach.id : ((isCoachFreelance && (currentUser?.instructor_id || currentUser?.id) && !getInstructorLeaveOnDate({ id: currentUser?.instructor_id || currentUser?.id, name: currentUser?.name }, selectedSessionDateYYYYMMDD)) ? (currentUser?.instructor_id || currentUser?.id) : null),
-              assignedInstructorIds: (isIndividualCoach && currentIndividualCoach?.id && !getInstructorLeaveOnDate(currentIndividualCoach, selectedSessionDateYYYYMMDD)) ? [currentIndividualCoach.id] : ((isCoachFreelance && (currentUser?.instructor_id || currentUser?.id) && !getInstructorLeaveOnDate({ id: currentUser?.instructor_id || currentUser?.id, name: currentUser?.name }, selectedSessionDateYYYYMMDD)) ? [(currentUser?.instructor_id || currentUser?.id)] : []),
-            };
-          });
-          setTrainingGroups(newGroups);
-          setActiveDropGroupId(newGroups[0]?.id || null);
-        } else {
-          const singleCoachId = (isIndividualCoach && currentIndividualCoach?.id && !getInstructorLeaveOnDate(currentIndividualCoach, selectedSessionDateYYYYMMDD)) ? currentIndividualCoach.id : ((isCoachFreelance && (currentUser?.instructor_id || currentUser?.id) && !getInstructorLeaveOnDate({ id: currentUser?.instructor_id || currentUser?.id, name: currentUser?.name }, selectedSessionDateYYYYMMDD)) ? (currentUser?.instructor_id || currentUser?.id) : null);
-          setTrainingGroups([
-            {
-              id: `group-1`,
-              name: `Group A`,
-              day: `Day 1`,
-              level: 'General',
-              slotId: initialSlot?.id || null,
-              studentIds: targetIds,
-              assignedInstructorId: singleCoachId,
-              assignedInstructorIds: singleCoachId ? [singleCoachId] : [],
-            }
-          ]);
-          setActiveDropGroupId('group-1');
-        }
-      } else {
-        setTrainingGroups([]);
-        setActiveDropGroupId(null);
-      }
-    } else if (editSession) {
+    if (editSession) {
       // In edit mode: sync the group's slotId and studentIds if user adjusted slots/students in Step 2
       const activeSlotsWithStudents = slots.filter(s => (slotStudentMap[s.id] || []).length > 0);
       const chosenSlot = activeSlotsWithStudents.length > 0 ? activeSlotsWithStudents[0] : (selectedSlot || slots[0]);
@@ -1473,6 +1461,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         setSelectedSlotId(chosenSlotId);
       }
     }
+
     setCurrentStep(3);
   };
 
@@ -1506,11 +1495,11 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     return importedStudents.filter(s => slotAssignedIds.includes(s.id));
   }, [importedStudents, step3SlotFilter, slotStudentMap, editSession]);
 
-  const hasActiveStep3Filters = step3DayFilter !== 'all' || step3StatusFilter !== 'all' || step3LevelFilter !== 'all' || step3GenderFilter !== 'all' || step3SwimmingFilter !== 'all' || Boolean(studentSearch);
+  const hasActiveStep3Filters = step3DayFilter !== 'all' || step3StatusFilter !== 'unassigned' || step3LevelFilter !== 'all' || step3GenderFilter !== 'all' || step3SwimmingFilter !== 'all' || Boolean(studentSearch);
 
   const resetStep3Filters = () => {
     setStep3DayFilter('all');
-    setStep3StatusFilter('all');
+    setStep3StatusFilter('unassigned');
     setStep3LevelFilter('all');
     setStep3GenderFilter('all');
     setStep3SwimmingFilter('all');
@@ -1609,6 +1598,44 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     return coachIdSet.size;
   }, [displayedTrainingGroups]);
 
+  // Step 3: Student-to-Coach Ratio calculation (Divides total students by active coaches)
+  const groupRatioStats = useMemo(() => {
+    const studentsTotal = importedStudents.length;
+    const coachesTotal = activeInstructorsCount;
+
+    if (coachesTotal === 0) {
+      return {
+        ratioDisplay: studentsTotal > 0 ? `${studentsTotal} : 0` : '0 : 0',
+        coachCount: 0,
+        studentCount: studentsTotal,
+        exactRatio: '0',
+        subtext: 'No active coaches available'
+      };
+    }
+
+    if (studentsTotal === 0) {
+      return {
+        ratioDisplay: '0 : 1',
+        coachCount: 1,
+        studentCount: 0,
+        exactRatio: '0',
+        subtext: '0 students imported'
+      };
+    }
+
+    const studentsPerCoachRaw = studentsTotal / coachesTotal;
+    const roundedStudentsPerCoach = Math.max(1, Math.round(studentsPerCoachRaw));
+    const exactFormatted = studentsPerCoachRaw.toFixed(1);
+
+    return {
+      ratioDisplay: `1 : ${roundedStudentsPerCoach}`,
+      coachCount: 1,
+      studentCount: roundedStudentsPerCoach,
+      exactRatio: exactFormatted,
+      subtext: `Per Group Ratio (${studentsTotal} ÷ ${coachesTotal} ≈ 1:${exactFormatted})`
+    };
+  }, [importedStudents.length, activeInstructorsCount]);
+
   // Set of student IDs that belong to the active slot in Step 3
   const activeSlotStudentIdSet = useMemo(() => {
     if (editSession || step3SlotFilter === 'ALL') {
@@ -1637,44 +1664,16 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     });
   }, [step3SlotFilter, activeSlotStudentIdSet]);
 
-  // Step 3: Toggle check in Column 1 (Synchronized Main Student + Accompanying Guests)
+  // Step 3: Toggle check in Column 1 (Individual row selection so already-grouped guests are never forced in)
   const toggleStep3StudentCheck = (id) => {
     // Only allow selecting students that actually belong to the currently active slot
     if (!activeSlotStudentIdSet.has(id) && step3SlotFilter !== 'ALL' && !editSession) {
       return;
     }
 
-    const clickedStudent = importedStudents.find(s => s.id === id);
-    if (!clickedStudent) {
-      setStep3CheckedStudentIds(prev =>
-        prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-      );
-      return;
-    }
-
-    if (!clickedStudent.isGuest) {
-      // Main student -> toggle main student and all their accompanying guests together (strictly within active slot)
-      const associatedGuests = importedStudents.filter(
-        s => s.isGuest && String(s.parentStudentId) === String(clickedStudent.id) && activeSlotStudentIdSet.has(s.id)
-      );
-      const familyIds = [clickedStudent.id, ...associatedGuests.map(g => g.id)].filter(x => activeSlotStudentIdSet.has(x));
-
-      setStep3CheckedStudentIds(prev => {
-        const isMainChecked = prev.includes(clickedStudent.id);
-        if (isMainChecked) {
-          // Deselect main student and all accompanying guests
-          return prev.filter(x => !familyIds.includes(x));
-        } else {
-          // Select main student and all accompanying guests
-          return Array.from(new Set([...prev, ...familyIds]));
-        }
-      });
-    } else {
-      // Individual guest student clicked
-      setStep3CheckedStudentIds(prev =>
-        prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-      );
-    }
+    setStep3CheckedStudentIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
   };
 
   // Create Group from checked students or create a fresh empty group card with assigned slot
@@ -2828,6 +2827,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                 const slotCap = getSlotCapacity(activeSlot);
                 const currentSlotList = slotStudentMap[activeSlotId] || [];
                 const visibleIds = filteredStudents.map(s => s.id);
+                const matchingFilteredIds = filterMatchingStudents.map(s => s.id);
+                const isAllFilteredSelected = matchingFilteredIds.length > 0 && matchingFilteredIds.every(id => currentSlotList.includes(id));
                 const isAllSelected = visibleIds.length > 0 && visibleIds.every(id => currentSlotList.includes(id));
                 const isSlotFull = currentSlotList.length >= slotCap;
 
@@ -2853,66 +2854,151 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                       </span>
                     </div>
 
-                    <button
-                      type="button"
-                      className={`ns-select-all-btn ${isAllSelected ? 'deselect' : ''}`}
-                      onClick={() => {
-                        if (!activeSlotId) return;
-                        if (isAllSelected) {
-                          setSlotStudentMap(prevMap => {
-                            const newMap = { ...prevMap };
-                            newMap[activeSlotId] = (newMap[activeSlotId] || []).filter(id => !visibleIds.includes(id));
-                            return newMap;
-                          });
-                        } else {
-                          if (currentSlotList.length >= slotCap) {
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      {/* Select by Filter Button */}
+                      <button
+                        type="button"
+                        className={`ns-select-all-btn ${isAllFilteredSelected ? 'deselect' : ''}`}
+                        onClick={() => {
+                          if (!activeSlotId) return;
+                          if (matchingFilteredIds.length === 0) {
                             setUiAlert({
-                              title: 'Slot Capacity Limit Reached',
-                              message: `This slot (${activeSlot?.startTime || activeSlot?.time || 'selected'}) has already reached its capacity limit of ${slotCap} students. You cannot add more students.`,
-                              type: 'warning',
-                              icon: '⚠️'
+                              title: 'No Matching Students',
+                              message: 'No students match the current active filter criteria.',
+                              type: 'info',
+                              icon: 'ℹ️'
                             });
                             return;
                           }
 
-                          const remainingSpots = slotCap - currentSlotList.length;
-                          const idsToAdd = visibleIds.filter(id => !currentSlotList.includes(id)).slice(0, remainingSpots);
-                          if (idsToAdd.length === 0) return;
-
-                          setSlotStudentMap(prevMap => {
-                            const newMap = { ...prevMap };
-                            Object.keys(newMap).forEach(sId => {
-                              if (Array.isArray(newMap[sId])) {
-                                newMap[sId] = newMap[sId].filter(id => !idsToAdd.includes(id));
-                              }
+                          if (isAllFilteredSelected) {
+                            // Deselect filtered students from active slot
+                            setSlotStudentMap(prevMap => {
+                              const newMap = { ...prevMap };
+                              newMap[activeSlotId] = (newMap[activeSlotId] || []).filter(id => !matchingFilteredIds.includes(id));
+                              return newMap;
                             });
-                            newMap[activeSlotId] = Array.from(new Set([...(newMap[activeSlotId] || []), ...idsToAdd]));
-                            return newMap;
-                          });
+                          } else {
+                            // "filterla ennala select pani irukano avanga mattum select agidanum"
+                            // Automatically expand slot capacity if matching students exceed current capacity
+                            if (matchingFilteredIds.length > slotCap) {
+                              handleUpdateSlotCapacity(activeSlotId, matchingFilteredIds.length);
+                            }
 
-                          if (visibleIds.filter(id => !currentSlotList.includes(id)).length > remainingSpots) {
+                            setSlotStudentMap(prevMap => {
+                              const newMap = { ...prevMap };
+                              // Remove matching students from other slots first
+                              Object.keys(newMap).forEach(sId => {
+                                if (sId !== activeSlotId && Array.isArray(newMap[sId])) {
+                                  newMap[sId] = newMap[sId].filter(id => !matchingFilteredIds.includes(id));
+                                }
+                              });
+                              // Assign ONLY the filtered students to this active slot
+                              newMap[activeSlotId] = [...matchingFilteredIds];
+                              return newMap;
+                            });
+
+                            const filterInfo = [
+                              courseDayFilter !== 'all' ? `Day ${courseDayFilter}` : '',
+                              levelFilter !== 'all' ? levelFilter : '',
+                              genderFilterStep2 !== 'all' ? genderFilterStep2 : '',
+                              swimmingFilterStep2 !== 'all' ? swimmingFilterStep2 : '',
+                              studentSearchStep2 ? `"${studentSearchStep2}"` : ''
+                            ].filter(Boolean).join(', ') || 'All';
+
                             setUiAlert({
-                              title: 'Slot Capacity Reached',
-                              message: `Selected ${remainingSpots} student(s) to reach the maximum capacity of ${slotCap} for this slot.`,
-                              type: 'info',
-                              icon: 'ℹ️'
+                              title: 'Selected by Filter',
+                              message: `Selected ${matchingFilteredIds.length} student(s) matching active filter (${filterInfo}).`,
+                              type: 'success',
+                              icon: '🎯'
                             });
                           }
-                        }
-                      }}
-                    >
-                      {isAllSelected ? (
-                        <>
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-                          <span>Deselect All</span>
-                        </>
-                      ) : (
-                        <>
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                          <span>Select All</span>
-                        </>
-                      )}
-                    </button>
+                        }}
+                        style={{
+                          background: isAllFilteredSelected
+                            ? '#F0FDFA'
+                            : 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)',
+                          color: isAllFilteredSelected ? '#0F766E' : '#FFFFFF',
+                          border: isAllFilteredSelected ? '1.5px solid #99F6E4' : '1px solid #0D9488',
+                          boxShadow: isAllFilteredSelected ? 'none' : '0 2px 6px rgba(13, 148, 136, 0.25)'
+                        }}
+                        title={isAllFilteredSelected ? 'Deselect students matching the active filter' : 'Select only students matching the current active filter'}
+                      >
+                        {isAllFilteredSelected ? (
+                          <>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                            <span>Deselect by Filter ({matchingFilteredIds.length})</span>
+                          </>
+                        ) : (
+                          <>
+                            <span>🎯</span>
+                            <span>Select by Filter ({matchingFilteredIds.length})</span>
+                          </>
+                        )}
+                      </button>
+
+                      {/* Select All Button */}
+                      <button
+                        type="button"
+                        className={`ns-select-all-btn ${isAllSelected ? 'deselect' : ''}`}
+                        onClick={() => {
+                          if (!activeSlotId) return;
+                          if (isAllSelected) {
+                            setSlotStudentMap(prevMap => {
+                              const newMap = { ...prevMap };
+                              newMap[activeSlotId] = (newMap[activeSlotId] || []).filter(id => !visibleIds.includes(id));
+                              return newMap;
+                            });
+                          } else {
+                            if (currentSlotList.length >= slotCap) {
+                              setUiAlert({
+                                title: 'Slot Capacity Limit Reached',
+                                message: `This slot (${activeSlot?.startTime || activeSlot?.time || 'selected'}) has already reached its capacity limit of ${slotCap} students. You cannot add more students.`,
+                                type: 'warning',
+                                icon: '⚠️'
+                              });
+                              return;
+                            }
+
+                            const remainingSpots = slotCap - currentSlotList.length;
+                            const idsToAdd = visibleIds.filter(id => !currentSlotList.includes(id)).slice(0, remainingSpots);
+                            if (idsToAdd.length === 0) return;
+
+                            setSlotStudentMap(prevMap => {
+                              const newMap = { ...prevMap };
+                              Object.keys(newMap).forEach(sId => {
+                                if (Array.isArray(newMap[sId])) {
+                                  newMap[sId] = newMap[sId].filter(id => !idsToAdd.includes(id));
+                                }
+                              });
+                              newMap[activeSlotId] = Array.from(new Set([...(newMap[activeSlotId] || []), ...idsToAdd]));
+                              return newMap;
+                            });
+
+                            if (visibleIds.filter(id => !currentSlotList.includes(id)).length > remainingSpots) {
+                              setUiAlert({
+                                title: 'Slot Capacity Reached',
+                                message: `Selected ${remainingSpots} student(s) to reach the maximum capacity of ${slotCap} for this slot.`,
+                                type: 'info',
+                                icon: 'ℹ️'
+                              });
+                            }
+                          }
+                        }}
+                      >
+                        {isAllSelected ? (
+                          <>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                            <span>Deselect All</span>
+                          </>
+                        ) : (
+                          <>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                            <span>Select All</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
                 );
               })()}
@@ -3387,8 +3473,17 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                 </span>
               </div>
               <div className="ns-stat-card">
-                <h2 className="ns-sc-value">{currentSlotStudentsCount} : {currentSlotAssignedInstructorsCount}</h2>
-                <span className="ns-sc-label">Students : Instructor Ratio</span>
+                <h2 className="ns-sc-value">{groupRatioStats.ratioDisplay}</h2>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
+                  <span className="ns-sc-label" style={{ fontWeight: 700, color: '#0F172A', lineHeight: 1.2 }}>
+                    {groupRatioStats.coachCount > 0
+                      ? `${groupRatioStats.coachCount} Coach : ~${groupRatioStats.studentCount} ${groupRatioStats.studentCount === 1 ? 'Student' : 'Students'}`
+                      : 'Students : Instructor Ratio'}
+                  </span>
+                  <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 500, lineHeight: 1.2 }}>
+                    {groupRatioStats.subtext}
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -3569,20 +3664,20 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                         height: '34px',
                         padding: '0 4px',
                         fontSize: '11px',
-                        fontWeight: step3StatusFilter !== 'all' ? 700 : 500,
-                        color: step3StatusFilter !== 'all' ? '#0284C7' : '#0F172A',
-                        background: step3StatusFilter !== 'all' ? '#F0F9FF' : '#F8FAFC',
-                        border: `1.5px solid ${step3StatusFilter !== 'all' ? '#0284C7' : '#CBD5E1'}`,
+                        fontWeight: step3StatusFilter !== 'unassigned' ? 700 : 500,
+                        color: step3StatusFilter !== 'unassigned' ? '#0284C7' : '#0F172A',
+                        background: step3StatusFilter !== 'unassigned' ? '#F0F9FF' : '#F8FAFC',
+                        border: `1.5px solid ${step3StatusFilter !== 'unassigned' ? '#0284C7' : '#CBD5E1'}`,
                         borderRadius: '8px',
                         cursor: 'pointer',
                         outline: 'none',
                         boxSizing: 'border-box'
                       }}
                     >
-                      <option value="all">All ({slotImportedStudents.length})</option>
                       <option value="unassigned">
                         Unassigned ({slotImportedStudents.filter(s => !trainingGroups.some(g => g.studentIds.includes(s.id))).length})
                       </option>
+                      <option value="all">All ({slotImportedStudents.length})</option>
                       <option value="assigned">
                         Assigned ({slotImportedStudents.filter(s => trainingGroups.some(g => g.studentIds.includes(s.id))).length})
                       </option>
@@ -3712,8 +3807,14 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                 <div className="ns-ws-student-list">
                   {filteredColumn1Students.length === 0 ? (
                     <div style={{ padding: '28px 12px', textAlign: 'center', color: '#94A3B8', fontSize: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ fontSize: '22px' }}>🔍</span>
-                      <span>No students found matching current filters.</span>
+                      <span style={{ fontSize: '24px' }}>
+                        {step3StatusFilter === 'unassigned' && slotImportedStudents.length > 0 && slotImportedStudents.every(s => trainingGroups.some(g => g.studentIds.includes(s.id))) ? '🎉' : '🔍'}
+                      </span>
+                      <span style={{ fontWeight: 600, color: '#475569' }}>
+                        {step3StatusFilter === 'unassigned' && slotImportedStudents.length > 0 && slotImportedStudents.every(s => trainingGroups.some(g => g.studentIds.includes(s.id)))
+                          ? 'All students in this slot are assigned to training groups!'
+                          : 'No students found matching current filters.'}
+                      </span>
                       {hasActiveStep3Filters && (
                         <button
                           type="button"
@@ -3901,6 +4002,44 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                 {(student.gender || '').toLowerCase() === 'female' ? '♀ Female' : '♂ Male'}
                               </span>
 
+                              {/* Kids Badge */}
+                              {(() => {
+                                let stAge = (student.age !== undefined && student.age !== null && student.age !== '') ? Number(student.age) : null;
+                                if ((stAge === null || isNaN(stAge)) && student.dob) {
+                                  try {
+                                    const bd = new Date(student.dob);
+                                    if (!isNaN(bd.getTime())) {
+                                      const now = new Date();
+                                      let a = now.getFullYear() - bd.getFullYear();
+                                      const m = now.getMonth() - bd.getMonth();
+                                      if (m < 0 || (m === 0 && now.getDate() < bd.getDate())) a--;
+                                      if (a >= 0) stAge = a;
+                                    }
+                                  } catch (e) {}
+                                }
+                                if (stAge !== null && !isNaN(stAge) && stAge > 0 && stAge < 16) {
+                                  return (
+                                    <span
+                                      style={{
+                                        fontSize: '10px',
+                                        padding: '1.5px 6px',
+                                        borderRadius: '4px',
+                                        fontWeight: 800,
+                                        background: '#F5F3FF',
+                                        color: '#7C3AED',
+                                        border: '1px solid #DDD6FE',
+                                        whiteSpace: 'nowrap',
+                                        flexShrink: 0
+                                      }}
+                                      title={`Kids / Under 16 (${stAge} yrs)`}
+                                    >
+                                      🧒 Kids
+                                    </span>
+                                  );
+                                }
+                                return null;
+                              })()}
+
                               {/* Time Slot Badge */}
                               {slotAssignment && (
                                 <span
@@ -4018,8 +4157,34 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                         Clear All
                       </button>
                     )}
-                    <button className="ns-add-grp-btn" onClick={handleCreateGroup}>
-                      + Create Group Card
+                    <button
+                      className="ns-add-grp-btn"
+                      onClick={handleCreateGroup}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        background: step3CheckedStudentIds.length > 0 ? '#F0FDFA' : '#F1F5F9',
+                        borderColor: step3CheckedStudentIds.length > 0 ? '#99F6E4' : '#E2E8F0',
+                        color: step3CheckedStudentIds.length > 0 ? '#0F766E' : '#0F172A',
+                        fontWeight: 700,
+                        transition: 'all 0.15s ease'
+                      }}
+                      title={step3CheckedStudentIds.length > 0 ? `Create group with ${step3CheckedStudentIds.length} selected student(s)` : "Create a new group card"}
+                    >
+                      <span>+ Create Group Card</span>
+                      {step3CheckedStudentIds.length > 0 && (
+                        <span style={{
+                          background: '#0D9488',
+                          color: '#FFFFFF',
+                          padding: '1px 7px',
+                          borderRadius: '10px',
+                          fontSize: '11px',
+                          fontWeight: 800
+                        }}>
+                          {step3CheckedStudentIds.length}
+                        </span>
+                      )}
                     </button>
                   </div>
                 </div>
@@ -4049,8 +4214,25 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                         {step3SlotFilter === 'ALL' ? 'No training groups created yet' : 'No training groups for this time slot yet'}
                       </p>
                       <p style={{ margin: '6px 0 16px 0', fontSize: '12px' }}>Click <strong>"+ Create Group Card"</strong> or check students on the left to start grouping.</p>
-                      <button className="ns-create-grp-btn" onClick={handleCreateGroup} style={{ margin: '0 auto' }}>
-                        + Create Group Card
+                      <button
+                        className="ns-create-grp-btn"
+                        onClick={handleCreateGroup}
+                        style={{ margin: '0 auto', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                        title={step3CheckedStudentIds.length > 0 ? `Create group with ${step3CheckedStudentIds.length} selected student(s)` : "Create a new group card"}
+                      >
+                        <span>+ Create Group Card</span>
+                        {step3CheckedStudentIds.length > 0 && (
+                          <span style={{
+                            background: 'rgba(255, 255, 255, 0.28)',
+                            color: '#FFFFFF',
+                            padding: '1px 7px',
+                            borderRadius: '10px',
+                            fontSize: '11px',
+                            fontWeight: 800
+                          }}>
+                            {step3CheckedStudentIds.length}
+                          </span>
+                        )}
                       </button>
                       {trainingGroups.length > 0 && (
                         <div style={{ marginTop: '12px' }}>
@@ -4070,6 +4252,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                       const assignedInstructors = assignedInstIds
                         .map(id => allInstructors.find(i => String(i.id) === String(id)))
                         .filter(Boolean);
+                      const effectiveGroupCoaches = assignedInstructors.length > 0
+                        ? assignedInstructors
+                        : (isIndividualCoach && currentIndividualCoach ? [currentIndividualCoach] : []);
                       const grpStudents = grp.studentIds
                         .map(id => allPoolStudents.find(s => s.id === id))
                         .filter(Boolean)
@@ -4145,9 +4330,25 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                 ))}
                               </select>
                             </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <span className="ns-gc-count" style={{ fontWeight: 700, color: grpStudents.length > 0 ? '#0F172A' : '#94A3B8' }}>
-                                {grpStudents.length} Students
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                              <span
+                                style={{
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  padding: '2px 8px',
+                                  borderRadius: '6px',
+                                  background: effectiveGroupCoaches.length > 0 ? '#EFF6FF' : '#FEF2F2',
+                                  color: effectiveGroupCoaches.length > 0 ? '#1D4ED8' : '#DC2626',
+                                  border: effectiveGroupCoaches.length > 0 ? '1.5px solid #BFDBFE' : '1.5px solid #FECACA',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px'
+                                }}
+                                title="Group Coach to Student Ratio"
+                              >
+                                {effectiveGroupCoaches.length > 0
+                                  ? `🏄‍♂️ ${effectiveGroupCoaches.length} Coach : ${grpStudents.length} ${grpStudents.length === 1 ? 'Student' : 'Students'}`
+                                  : `⚠️ 0 Coach : ${grpStudents.length} ${grpStudents.length === 1 ? 'Student' : 'Students'}`}
                               </span>
                               <button
                                 type="button"

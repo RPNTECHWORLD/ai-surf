@@ -256,6 +256,18 @@ const MONTH_NAMES = [
 
 const DAYS_OF_WEEK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+const parseTimeToMinutes = (timeStr) => {
+  if (!timeStr) return 0;
+  const match = String(timeStr).match(/(\d{1,2}):(\d{2})(?:\s*(AM|PM))?/i);
+  if (!match) return 0;
+  let hours = parseInt(match[1], 10);
+  const mins = parseInt(match[2], 10);
+  const ampm = match[3] ? match[3].toUpperCase() : null;
+  if (ampm === 'PM' && hours < 12) hours += 12;
+  if (ampm === 'AM' && hours === 12) hours = 0;
+  return hours * 60 + mins;
+};
+
 const Sessions = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -422,8 +434,8 @@ const Sessions = () => {
   const isSchoolCoach = isCoach && !isCoachFreelance;
   const canManageSessions = !isStudent && !isSchoolCoach && Boolean(isAdminOrSuperAdmin || isCoachFreelance || (!isCoach && isIndividualSurfer));
 
-  // Filter States
-  const [dateFilter, setDateFilter] = useState('');
+  // Filter States: Default to Today's date so "Today" live schedule is shown immediately
+  const [dateFilter, setDateFilter] = useState(() => getTodayYYYYMMDD());
   const [slotFilter, setSlotFilter] = useState('All');
   const [instructorFilter, setInstructorFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
@@ -480,6 +492,7 @@ const Sessions = () => {
   const [groupVideoInput, setGroupVideoInput] = useState('');
   const [selectedGroupFile, setSelectedGroupFile] = useState(null);
   const [isSavingGroupVideo, setIsSavingGroupVideo] = useState(false);
+  const [groupVideoUploadProgress, setGroupVideoUploadProgress] = useState(0);
   // In-App Confirmation Modal & Toast Notification State (Replaces native browser confirm/alert)
   const [confirmModal, setConfirmModal] = useState({
     isOpen: false,
@@ -603,12 +616,60 @@ const Sessions = () => {
     setGroupVideoInput(blobUrl);
   };
 
+  const uploadVideoWithProgress = (file, onProgress) => {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${API}/api/upload-video`);
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && e.total > 0) {
+          const pct = Math.min(99, Math.round((e.loaded / e.total) * 100));
+          if (onProgress) onProgress(pct);
+        }
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const data = JSON.parse(xhr.responseText);
+            if (onProgress) onProgress(100);
+            resolve(data);
+          } catch (err) {
+            reject(err);
+          }
+        } else {
+          reject(new Error(`Server error (${xhr.status})`));
+        }
+      };
+      xhr.onerror = () => reject(new Error('Network error during upload'));
+      const formData = new FormData();
+      formData.append('file', file);
+      xhr.send(formData);
+    });
+  };
+
   const handleSaveGroupVideo = async () => {
-    if (!selectedGroupForVideo || !groupVideoInput.trim()) return;
+    if (!selectedGroupForVideo) return;
     setIsSavingGroupVideo(true);
+    setGroupVideoUploadProgress(1);
 
     try {
-      const targetVideoUrl = groupVideoInput.trim();
+      let targetVideoUrl = groupVideoInput ? groupVideoInput.trim() : '';
+
+      // If a local file was chosen, upload it to server with progress tracking!
+      if (selectedGroupFile) {
+        const uploadData = await uploadVideoWithProgress(selectedGroupFile, (pct) => {
+          setGroupVideoUploadProgress(Math.max(1, pct));
+        });
+        targetVideoUrl = uploadData.video_url || uploadData.url;
+
+        if (!targetVideoUrl || targetVideoUrl.startsWith('blob:')) {
+          throw new Error('Server did not return a valid permanent video URL.');
+        }
+      }
+
+      if (!targetVideoUrl || targetVideoUrl.startsWith('blob:')) {
+        throw new Error('Cannot save temporary blob URL. Please select a valid video file to upload.');
+      }
+
       const sessionIds = selectedGroupForVideo.sessions.map(s => s.id);
 
       // Update all sessions in group via API
@@ -634,11 +695,15 @@ const Sessions = () => {
 
       setShowGroupVideoModal(false);
       setSelectedGroupForVideo(null);
+      setSelectedGroupFile(null);
       setGroupVideoInput('');
+      showToast('✓ Video uploaded and attached successfully!', 'success');
     } catch (err) {
       console.error('Error saving group video:', err);
+      showToast('Error uploading video: ' + (err.message || 'Unknown error'), 'error');
     } finally {
       setIsSavingGroupVideo(false);
+      setGroupVideoUploadProgress(0);
     }
   };
 
@@ -772,6 +837,8 @@ const Sessions = () => {
   const [hubStudentNotesMap, setHubStudentNotesMap] = useState({});
   const [hubStatus, setHubStatus] = useState('Upcoming');
   const [hubIsUploadingVideo, setHubIsUploadingVideo] = useState(false);
+  const [hubVideoUploadProgress, setHubVideoUploadProgress] = useState(0);
+  const [hubVideoUploadStatus, setHubVideoUploadStatus] = useState('');
   const [hubIsUploadingImage, setHubIsUploadingImage] = useState(false);
   const [hubIsSaving, setHubIsSaving] = useState(false);
   const [hubSaveSuccess, setHubSaveSuccess] = useState(false);
@@ -886,26 +953,38 @@ const Sessions = () => {
     if (!files || files.length === 0) return;
     const fileList = Array.from(files);
     setHubIsUploadingVideo(true);
+    setHubVideoUploadProgress(1);
+    setHubVideoUploadStatus('Preparing upload...');
+
     try {
       const newUploadedVideos = [];
       for (let i = 0; i < fileList.length; i++) {
         const file = fileList[i];
-        const formData = new FormData();
-        formData.append('file', file);
+        const fileSizeMb = (file.size / (1024 * 1024)).toFixed(1);
         let uploadedUrl = '';
+
         try {
-          const res = await fetch(`${API}/api/upload-video`, {
-            method: 'POST',
-            body: formData,
+          const data = await uploadVideoWithProgress(file, (pct) => {
+            const overallPct = fileList.length === 1 
+              ? pct 
+              : Math.round(((i + (pct / 100)) / fileList.length) * 100);
+            setHubVideoUploadProgress(Math.max(1, overallPct));
+            if (fileList.length > 1) {
+              setHubVideoUploadStatus(`Uploading file ${i + 1} of ${fileList.length} (${pct}% • ${fileSizeMb} MB)...`);
+            } else {
+              setHubVideoUploadStatus(`Uploading ${file.name} (${pct}% of ${fileSizeMb} MB)...`);
+            }
           });
-          if (res.ok) {
-            const data = await res.json();
-            uploadedUrl = data.video_url || data.url || URL.createObjectURL(file);
-          } else {
-            uploadedUrl = URL.createObjectURL(file);
-          }
+          uploadedUrl = data.video_url || data.url || '';
         } catch (e) {
-          uploadedUrl = URL.createObjectURL(file);
+          console.error('Upload network error:', e);
+          showToast(`Network error uploading ${file.name}.`, 'error');
+          continue;
+        }
+
+        if (!uploadedUrl || uploadedUrl.startsWith('blob:')) {
+          showToast(`Server did not return a valid URL for ${file.name}.`, 'error');
+          continue;
         }
 
         const clipNum = hubVideos.length + i + 1;
@@ -923,13 +1002,67 @@ const Sessions = () => {
         setHubActiveVideoId(combined[0].id);
       }
 
-      // Do NOT auto save: mark as modified so user explicitly clicks "Save Changes"
-      setHubHasChanges(true);
-      setHubSaveSuccess(false);
+      // AUTO-SAVE to backend and session state immediately upon upload!
+      const validVideos = combined.filter(v => v.url && !v.url.startsWith('blob:'));
+      const serializedVideoUrl = validVideos.length === 1
+        ? validVideos[0].url
+        : (validVideos.length > 1 ? JSON.stringify(validVideos) : '');
+      const primaryVideoUrl = validVideos[0]?.url || '';
+
+      if (selectedHubSession) {
+        const sessionList = (selectedHubSession.isGroup && selectedHubSession.sessions)
+          ? selectedHubSession.sessions
+          : [selectedHubSession];
+
+        await Promise.all(
+          sessionList.map(s =>
+            fetch(`${API}/api/sessions/${s.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ video_url: serializedVideoUrl || primaryVideoUrl }),
+            }).catch(err => console.error('Failed auto-saving session video', s.id, err))
+          )
+        );
+
+        // Update local sessions state
+        const targetSessionIds = sessionList.map(s => s.id);
+        setSessions(prev =>
+          prev.map(s => {
+            if (targetSessionIds.includes(s.id)) {
+              return {
+                ...s,
+                video_url: serializedVideoUrl || primaryVideoUrl,
+                video_urls: combined,
+              };
+            }
+            return s;
+          })
+        );
+
+        // Update selectedHubSession
+        setSelectedHubSession(prev => {
+          if (!prev) return prev;
+          const updatedSessions = prev.sessions
+            ? prev.sessions.map(s => ({ ...s, video_url: serializedVideoUrl || primaryVideoUrl }))
+            : prev.sessions;
+          return {
+            ...prev,
+            sessions: updatedSessions,
+            video_url: serializedVideoUrl || primaryVideoUrl,
+            video_urls: combined,
+          };
+        });
+      }
+
+      setHubHasChanges(false);
+      setHubSaveSuccess(true);
+      showToast('✓ Video uploaded and auto-saved successfully!', 'success');
     } catch (err) {
       console.error('Video upload error:', err);
     } finally {
       setHubIsUploadingVideo(false);
+      setHubVideoUploadProgress(0);
+      setHubVideoUploadStatus('');
       if (hubVideoFileRef.current) hubVideoFileRef.current.value = '';
     }
   };
@@ -1141,15 +1274,17 @@ const Sessions = () => {
         ? selectedHubSession.sessions
         : [selectedHubSession];
 
-      const serializedVideoUrl = hubVideos.length === 1
-        ? hubVideos[0].url
-        : (hubVideos.length > 1 ? JSON.stringify(hubVideos) : '');
-      const primaryVideoUrl = hubVideos[0]?.url || '';
+      const validVideos = hubVideos.filter(v => v.url && !v.url.startsWith('blob:'));
+      const serializedVideoUrl = validVideos.length === 1
+        ? validVideos[0].url
+        : (validVideos.length > 1 ? JSON.stringify(validVideos) : '');
+      const primaryVideoUrl = validVideos[0]?.url || '';
 
-      const serializedImageUrl = hubImages.length === 1
-        ? hubImages[0].url
-        : (hubImages.length > 1 ? JSON.stringify(hubImages.map(img => img.url)) : (hubImageUrl || ''));
-      const primaryImageUrl = hubImages[0]?.url || hubImageUrl || '';
+      const validImages = hubImages.filter(img => img.url && !img.url.startsWith('blob:'));
+      const serializedImageUrl = validImages.length === 1
+        ? validImages[0].url
+        : (validImages.length > 1 ? JSON.stringify(validImages.map(img => img.url)) : ((hubImageUrl && !hubImageUrl.startsWith('blob:')) ? hubImageUrl : ''));
+      const primaryImageUrl = validImages[0]?.url || ((hubImageUrl && !hubImageUrl.startsWith('blob:')) ? hubImageUrl : '');
 
       // Ensure current active student's notes are saved into latest map
       const currentMap = {
@@ -1324,6 +1459,39 @@ const Sessions = () => {
   const [selectedSessionDetail, setSelectedSessionDetail] = useState(null);
   const [selectedDayDetailsModal, setSelectedDayDetailsModal] = useState(null);
 
+  // Lock background body scroll whenever any modal popup is open
+  useEffect(() => {
+    const isAnyModalOpen = Boolean(
+      selectedHubSession ||
+      showCalendarModal ||
+      selectedDayDetailsModal ||
+      showGroupVideoModal ||
+      hubZoomImage ||
+      selectedSessionDetail
+    );
+
+    if (isAnyModalOpen) {
+      const originalOverflow = document.body.style.overflow;
+      const originalPaddingRight = document.body.style.paddingRight;
+      const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+      if (scrollbarWidth > 0) {
+        document.body.style.paddingRight = `${scrollbarWidth}px`;
+      }
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.overflow = originalOverflow;
+        document.body.style.paddingRight = originalPaddingRight;
+      };
+    }
+  }, [
+    selectedHubSession,
+    showCalendarModal,
+    selectedDayDetailsModal,
+    showGroupVideoModal,
+    hubZoomImage,
+    selectedSessionDetail
+  ]);
+
   const effectiveSchool = (isCoach && isCoachFreelance)
     ? 'Individual / Freelance Coach'
     : (activeSchoolName && schoolLower !== 'school admin' && schoolLower !== 'super admin')
@@ -1456,46 +1624,110 @@ const Sessions = () => {
     return Array.from(names);
   }, [roleScopedSessions, allStudentsList]);
 
-  // Extract unique slots / times (combining configured slots + active sessions)
+  // Extract unique slots / times that are available and active strictly for the selected date (or today)
   const availableSlots = useMemo(() => {
-    const timesSet = new Set();
+    // 1. Determine effective date and day of week
+    const effectiveDateStr = dateFilter || getTodayYYYYMMDD();
+
+    let dayOfWeek = '';
+    try {
+      const iso = normalizeToYYYYMMDD(effectiveDateStr);
+      if (iso) {
+        const [y, m, d] = iso.split('-').map(Number);
+        dayOfWeek = new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'short' });
+      }
+    } catch (e) {}
+
+    // 2. Filter sessions strictly for the effective target date (default Today)
+    const targetSessions = roleScopedSessions.filter(s => {
+      const sessionDateISO = normalizeToYYYYMMDD(s.date);
+      const filterISO = normalizeToYYYYMMDD(effectiveDateStr);
+      return sessionDateISO === filterISO || String(s.date || '').toLowerCase().includes(effectiveDateStr.toLowerCase());
+    });
+
+    // 3. Collect times that actually have sessions on this date / view
+    const sessionTimesOnDate = new Set();
+    targetSessions.forEach(s => {
+      if (s.time) {
+        const cleanT = s.time.includes(' - ') ? s.time.split(' - ')[0].trim() : s.time;
+        if (cleanT) sessionTimesOnDate.add(cleanT);
+      }
+    });
+
+    // 4. Collect configured slots from localStorage that are explicitly active for this day of week
+    const configuredActiveTimes = new Set();
     try {
       const raw = localStorage.getItem('session_slots');
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
-          parsed.filter(s => s.active !== false).forEach(s => {
+          parsed.forEach(s => {
+            // Must be active (not disabled)
+            if (s.active === false) return;
+
+            // If day of week is known, must be active on this day of week
+            if (dayOfWeek && Array.isArray(s.days) && s.days.length > 0) {
+              if (!s.days.includes(dayOfWeek)) return;
+            }
+
             const t = s.time || s.startTime;
-            if (t) timesSet.add(t);
+            if (t) {
+              const cleanT = t.includes(' - ') ? t.split(' - ')[0].trim() : t;
+              configuredActiveTimes.add(cleanT);
+            }
           });
         }
       }
     } catch (e) {}
 
-    roleScopedSessions.forEach(s => {
-      if (s.time) {
-        const cleanT = s.time.includes(' - ') ? s.time.split(' - ')[0].trim() : s.time;
-        timesSet.add(cleanT);
-      }
-    });
+    // 5. Build final set of available active slots for that day:
+    const combinedSet = new Set();
 
-    if (timesSet.size === 0) {
-      ['08:30 AM', '10:30 AM', '11:30 AM', '01:00 PM', '04:00 PM'].forEach(t => timesSet.add(t));
+    sessionTimesOnDate.forEach(t => combinedSet.add(t));
+
+    // If date is filtered, include configured active slots for that day of week (if they match or if day has 0 sessions)
+    if (dateFilter) {
+      configuredActiveTimes.forEach(t => {
+        if (sessionTimesOnDate.has(t) || sessionTimesOnDate.size === 0) {
+          combinedSet.add(t);
+        }
+      });
     }
 
-    return Array.from(timesSet);
-  }, [roleScopedSessions]);
+    // Fallback if empty
+    if (combinedSet.size === 0) {
+      if (configuredActiveTimes.size > 0) {
+        configuredActiveTimes.forEach(t => combinedSet.add(t));
+      } else {
+        ['08:30 AM', '10:30 AM', '11:30 AM', '01:00 PM', '04:00 PM'].forEach(t => combinedSet.add(t));
+      }
+    }
+
+    // Sort slots chronologically
+    return Array.from(combinedSet).sort((a, b) => parseTimeToMinutes(a) - parseTimeToMinutes(b));
+  }, [roleScopedSessions, dateFilter]);
+
+  // Auto-reset slotFilter to 'All' if the selected slot is not in the active date's available slots
+  useEffect(() => {
+    if (slotFilter !== 'All' && availableSlots.length > 0) {
+      const isStillAvailable = availableSlots.some(s => 
+        s === slotFilter || s.includes(slotFilter) || slotFilter.includes(s)
+      );
+      if (!isStillAvailable) {
+        setSlotFilter('All');
+      }
+    }
+  }, [availableSlots, slotFilter]);
 
   // Filtered sessions
   const filteredSessions = useMemo(() => {
     return roleScopedSessions.filter(s => {
-      // Date filter
-      if (dateFilter) {
-        const sessionDateISO = normalizeToYYYYMMDD(s.date);
-        const filterISO = normalizeToYYYYMMDD(dateFilter);
-        if (sessionDateISO !== filterISO && !String(s.date || '').toLowerCase().includes(dateFilter.toLowerCase())) {
-          return false;
-        }
+      // Date filter - always filter by selected date (default Today so all sessions are never shown together)
+      const activeDateFilter = dateFilter || getTodayYYYYMMDD();
+      const sessionDateISO = normalizeToYYYYMMDD(s.date);
+      const filterISO = normalizeToYYYYMMDD(activeDateFilter);
+      if (sessionDateISO !== filterISO && !String(s.date || '').toLowerCase().includes(activeDateFilter.toLowerCase())) {
+        return false;
       }
 
       // Slot (Time) filter
@@ -1618,18 +1850,6 @@ const Sessions = () => {
       }
     });
 
-    const parseTimeToMinutes = (timeStr) => {
-      if (!timeStr) return 0;
-      const match = String(timeStr).match(/(\d{1,2}):(\d{2})(?:\s*(AM|PM))?/i);
-      if (!match) return 0;
-      let hours = parseInt(match[1], 10);
-      const mins = parseInt(match[2], 10);
-      const ampm = match[3] ? match[3].toUpperCase() : null;
-      if (ampm === 'PM' && hours < 12) hours += 12;
-      if (ampm === 'AM' && hours === 12) hours = 0;
-      return hours * 60 + mins;
-    };
-
     // Sort groups: Date DESC -> Time Slot ASC -> Group Name ASC (e.g. Group A before Group B)
     // For students or upcoming filter, sort chronological ASC so earliest next session appears first
     const isUpcomingSort = isStudent || statusFilter === 'Upcoming';
@@ -1690,14 +1910,14 @@ const Sessions = () => {
   }, [roleScopedSessions]);
 
   const hasActiveFilters = 
-    dateFilter !== '' ||
+    Boolean(dateFilter && dateFilter !== getTodayYYYYMMDD()) ||
     slotFilter !== 'All' ||
     instructorFilter !== 'All' ||
     statusFilter !== 'All' ||
     searchQuery.trim() !== '';
 
   const resetFilters = () => {
-    setDateFilter('');
+    setDateFilter(getTodayYYYYMMDD());
     setSlotFilter('All');
     setInstructorFilter('All');
     setStatusFilter('All');
@@ -1716,16 +1936,15 @@ const Sessions = () => {
 
   // Session count per time slot for tab badges
   const slotSessionCounts = useMemo(() => {
+    const activeDate = dateFilter || getTodayYYYYMMDD();
     const map = {};
     availableSlots.forEach(slotTime => {
       const fTimeLower = slotTime.toLowerCase();
       const matchingSessions = roleScopedSessions.filter(s => {
-        if (dateFilter) {
-          const sessionDateISO = normalizeToYYYYMMDD(s.date);
-          const filterISO = normalizeToYYYYMMDD(dateFilter);
-          if (sessionDateISO !== filterISO && !String(s.date || '').toLowerCase().includes(dateFilter.toLowerCase())) {
-            return false;
-          }
+        const sessionDateISO = normalizeToYYYYMMDD(s.date);
+        const filterISO = normalizeToYYYYMMDD(activeDate);
+        if (sessionDateISO !== filterISO && !String(s.date || '').toLowerCase().includes(activeDate.toLowerCase())) {
+          return false;
         }
         const sTimeLower = (s.time || '').toLowerCase();
         return sTimeLower.includes(fTimeLower) || fTimeLower.includes(sTimeLower);
@@ -1736,16 +1955,14 @@ const Sessions = () => {
   }, [availableSlots, roleScopedSessions, dateFilter]);
 
   const allSlotsCount = useMemo(() => {
-    if (dateFilter) {
-      const dateFiltered = roleScopedSessions.filter(s => {
-        const sessionDateISO = normalizeToYYYYMMDD(s.date);
-        const filterISO = normalizeToYYYYMMDD(dateFilter);
-        return sessionDateISO === filterISO || String(s.date || '').toLowerCase().includes(dateFilter.toLowerCase());
-      });
-      return getGroupSessionCount(dateFiltered);
-    }
-    return totalSessions;
-  }, [dateFilter, roleScopedSessions, totalSessions]);
+    const activeDate = dateFilter || getTodayYYYYMMDD();
+    const dateFiltered = roleScopedSessions.filter(s => {
+      const sessionDateISO = normalizeToYYYYMMDD(s.date);
+      const filterISO = normalizeToYYYYMMDD(activeDate);
+      return sessionDateISO === filterISO || String(s.date || '').toLowerCase().includes(activeDate.toLowerCase());
+    });
+    return getGroupSessionCount(dateFiltered);
+  }, [dateFilter, roleScopedSessions]);
 
   // Multi-Selection Helper Functions (Properly placed after filteredSessions)
   const allFilteredSessionIds = useMemo(() => {
@@ -2112,7 +2329,7 @@ const Sessions = () => {
                   }}>
                     <button
                       type="button"
-                      onClick={() => setDateFilter(prev => prev === yestIso ? '' : yestIso)}
+                      onClick={() => setDateFilter(prev => prev === yestIso ? todayIso : yestIso)}
                       style={{
                         padding: '6px 12px',
                         borderRadius: '8px',
@@ -2133,18 +2350,18 @@ const Sessions = () => {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setDateFilter(prev => prev === todayIso ? '' : todayIso)}
+                      onClick={() => setDateFilter(todayIso)}
                       style={{
                         padding: '6px 12px',
                         borderRadius: '8px',
-                        border: dateFilter === todayIso ? '1.5px solid #0D9488' : '1px solid transparent',
-                        background: dateFilter === todayIso ? 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)' : '#FFFFFF',
-                        color: dateFilter === todayIso ? '#FFFFFF' : '#334155',
+                        border: (dateFilter === todayIso || !dateFilter) ? '1.5px solid #0D9488' : '1px solid transparent',
+                        background: (dateFilter === todayIso || !dateFilter) ? 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)' : '#FFFFFF',
+                        color: (dateFilter === todayIso || !dateFilter) ? '#FFFFFF' : '#334155',
                         fontWeight: 700,
                         fontSize: '12px',
                         fontFamily: "'Outfit', sans-serif",
                         cursor: 'pointer',
-                        boxShadow: dateFilter === todayIso ? '0 2px 8px rgba(13, 148, 136, 0.35)' : '0 1px 2px rgba(0,0,0,0.04)',
+                        boxShadow: (dateFilter === todayIso || !dateFilter) ? '0 2px 8px rgba(13, 148, 136, 0.35)' : '0 1px 2px rgba(0,0,0,0.04)',
                         transition: 'all 0.15s ease',
                         whiteSpace: 'nowrap'
                       }}
@@ -2154,7 +2371,7 @@ const Sessions = () => {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setDateFilter(prev => prev === tomIso ? '' : tomIso)}
+                      onClick={() => setDateFilter(prev => prev === tomIso ? todayIso : tomIso)}
                       style={{
                         padding: '6px 12px',
                         borderRadius: '8px',
@@ -2178,16 +2395,16 @@ const Sessions = () => {
                     <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
                       <input
                         type="date"
-                        value={dateFilter || ''}
-                        onChange={(e) => setDateFilter(e.target.value)}
+                        value={dateFilter || todayIso}
+                        onChange={(e) => setDateFilter(e.target.value || todayIso)}
                         style={{
                           height: '32px',
-                          padding: '0 24px 0 8px',
+                          padding: isCustomDate ? '0 24px 0 8px' : '0 8px',
                           borderRadius: '8px',
                           border: isCustomDate ? '1.5px solid #0D9488' : '1px solid #CBD5E1',
                           background: isCustomDate ? '#E6F9F5' : '#FFFFFF',
-                          color: dateFilter ? '#0D9488' : '#64748B',
-                          fontWeight: dateFilter ? 700 : 500,
+                          color: isCustomDate ? '#0D9488' : '#64748B',
+                          fontWeight: isCustomDate ? 700 : 500,
                           fontSize: '12px',
                           cursor: 'pointer',
                           outline: 'none',
@@ -2196,10 +2413,10 @@ const Sessions = () => {
                         }}
                         title="Pick custom date"
                       />
-                      {dateFilter && (
+                      {isCustomDate && (
                         <button
                           type="button"
-                          onClick={() => setDateFilter('')}
+                          onClick={() => setDateFilter(todayIso)}
                           style={{
                             position: 'absolute',
                             right: '6px',
@@ -2212,7 +2429,7 @@ const Sessions = () => {
                             lineHeight: 1,
                             padding: '2px'
                           }}
-                          title="Clear date filter"
+                          title="Reset to today"
                         >
                           ×
                         </button>
@@ -2468,7 +2685,7 @@ const Sessions = () => {
           {loading ? (
             <div className="ses-loading">
               <div className="ses-spinner" />
-              <span style={{ color: '#64748B', fontSize: '14px', fontWeight: 500 }}>Loading sessions from AWS Cloud...</span>
+              <span style={{ color: '#64748B', fontSize: '14px', fontWeight: 500 }}>Loading sessions...</span>
             </div>
           ) : filteredSessions.length === 0 ? (
             <div className="ses-empty-state-card">
@@ -3220,11 +3437,11 @@ const Sessions = () => {
             <div
               className="ses-modal-box ses-hub-modal"
               style={{
-                maxWidth: '820px',
-                width: '95%',
-                height: 'min(580px, 90vh)',
-                minHeight: 'min(540px, 90vh)',
-                maxHeight: '90vh',
+                maxWidth: '1080px',
+                width: '96%',
+                height: 'min(720px, 92vh)',
+                minHeight: 'min(600px, 85vh)',
+                maxHeight: '92vh',
                 padding: '0',
                 display: 'flex',
                 flexDirection: 'column',
@@ -3397,27 +3614,27 @@ const Sessions = () => {
                 {/* ─── TAB 1: ATHLETES ROSTER ─── */}
                 {hubActiveTab === 'overview' && (
                   <div>
-                    <div style={{ border: '1px solid #E2E8F0', borderRadius: '12px', overflow: 'hidden' }}>
-                      <table className="ses-table" style={{ margin: 0 }}>
+                    <div style={{ border: '1px solid #E2E8F0', borderRadius: '12px', overflowX: 'auto', background: '#FFFFFF', WebkitOverflowScrolling: 'touch' }}>
+                      <table style={{ width: '100%', minWidth: '660px', borderCollapse: 'collapse', textAlign: 'left', margin: 0 }}>
                         <thead>
                           <tr>
-                            <th style={{ width: '40px', padding: '10px 14px' }}>#</th>
-                            <th style={{ padding: '10px 14px' }}>Student Name</th>
-                            <th style={{ padding: '10px 14px' }}>Level</th>
-                            <th style={{ padding: '10px 14px' }}>Status</th>
-                            <th style={{ textAlign: 'right', padding: '10px 14px' }}>Actions</th>
+                            <th style={{ width: '40px', padding: '12px 14px', fontSize: '11px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>#</th>
+                            <th style={{ padding: '12px 14px', fontSize: '11px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>Student Name</th>
+                            <th style={{ width: '110px', padding: '12px 14px', fontSize: '11px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>Level</th>
+                            <th style={{ width: '120px', padding: '12px 14px', fontSize: '11px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0' }}>Status</th>
+                            <th style={{ width: '220px', textAlign: 'right', padding: '12px 20px', fontSize: '11px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0', whiteSpace: 'nowrap' }}>Actions</th>
                           </tr>
                         </thead>
                         <tbody>
                           {(selectedHubSession.sessions || [selectedHubSession]).map((s, idx) => (
-                            <tr key={s.id || idx} className="ses-table-row">
+                            <tr key={s.id || idx} className="ses-table-row" style={{ borderBottom: '1px solid #F1F5F9' }}>
                               <td style={{ fontWeight: 600, color: '#94A3B8', padding: '12px 14px' }}>{idx + 1}</td>
                               <td style={{ padding: '12px 14px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                  <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#0284C7', color: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '12px' }}>
+                                  <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#0284C7', color: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '12px', flexShrink: 0 }}>
                                     {(s.student || 'A').charAt(0).toUpperCase()}
                                   </div>
-                                  <div style={{ fontWeight: 600, color: '#0F172A', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <div style={{ fontWeight: 600, color: '#0F172A', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                                     <span>{s.student || 'Student'}</span>
                                     {(s.is_guest || s.guest_name) && (
                                       <span style={{
@@ -3449,14 +3666,14 @@ const Sessions = () => {
                                   {s.status || hubStatus}
                                 </span>
                               </td>
-                              <td style={{ padding: '12px 14px' }}>
-                                <div className="ses-actions-row" style={{ justifyContent: 'flex-end', gap: '6px' }}>
+                              <td style={{ padding: '12px 20px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '8px', flexWrap: 'nowrap' }}>
                                   {selectedHubSession.isGroup && (
                                     s.video_url ? (
                                       <button
                                         type="button"
                                         className="ses-btn-student-video has-video"
-                                        style={{ padding: '4px 8px', fontSize: '11px' }}
+                                        style={{ padding: '4px 10px', fontSize: '11px', flexShrink: 0, whiteSpace: 'nowrap' }}
                                         title={`Manage individual footage for ${s.student}`}
                                         onClick={() => {
                                           openSessionHub({
@@ -3488,7 +3705,7 @@ const Sessions = () => {
                                       <button
                                         type="button"
                                         className="ses-btn-student-video no-video"
-                                        style={{ padding: '4px 8px', fontSize: '11px' }}
+                                        style={{ padding: '4px 10px', fontSize: '11px', flexShrink: 0, whiteSpace: 'nowrap' }}
                                         title={`Upload private video specifically for ${s.student}`}
                                         onClick={() => {
                                           openSessionHub({
@@ -3520,7 +3737,7 @@ const Sessions = () => {
                                   )}
                                   <button
                                     className="ses-btn-view-analysis ses-btn-analysis-active"
-                                    style={{ padding: '5px 12px', fontSize: '11.5px', borderRadius: '6px' }}
+                                    style={{ padding: '5px 14px', fontSize: '11.5px', borderRadius: '6px', flexShrink: 0, whiteSpace: 'nowrap' }}
                                     title="Open Video Analysis for this student"
                                     onClick={() => {
                                       const effVid = s.video_url || hubVideos[0]?.url || '';
@@ -3764,14 +3981,28 @@ const Sessions = () => {
                               </div>
 
                               <div style={{ fontSize: '18px', fontWeight: 700, color: '#0F172A', marginBottom: '6px', fontFamily: 'Outfit, sans-serif' }}>
-                                {hubIsUploadingVideo ? 'Uploading Video(s) to AWS Cloud…' : 'Click to Upload Multiple Wave Videos'}
+                                {hubIsUploadingVideo ? `Uploading Video (${hubVideoUploadProgress}%)` : 'Click to Upload Multiple Wave Videos'}
                               </div>
                               <p style={{ margin: 0, fontSize: '13px', color: '#64748B' }}>
-                                {hubIsUploadingVideo ? 'Processing video files...' : 'Select one or multiple MP4, MOV, WebM clips from your device or camera'}
+                                {hubIsUploadingVideo ? (hubVideoUploadStatus || 'Uploading in progress...') : 'Select one or multiple MP4, MOV, WebM clips from your device or camera'}
                               </p>
                               {hubIsUploadingVideo && (
-                                <div style={{ marginTop: '12px' }}>
-                                  <div className="ses-spinner" style={{ width: '26px', height: '26px', margin: '0 auto' }} />
+                                <div style={{ width: '100%', maxWidth: '320px', margin: '14px auto 0' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', fontSize: '12.5px' }}>
+                                    <span style={{ fontWeight: 600, color: '#0F172A' }}>Uploading...</span>
+                                    <span style={{ fontWeight: 800, color: '#0284C7', fontFamily: 'monospace', fontSize: '14px' }}>{hubVideoUploadProgress}%</span>
+                                  </div>
+                                  <div style={{ width: '100%', height: '8px', background: '#E2E8F0', borderRadius: '999px', overflow: 'hidden' }}>
+                                    <div 
+                                      style={{ 
+                                        width: `${Math.max(1, hubVideoUploadProgress)}%`, 
+                                        height: '100%', 
+                                        background: 'linear-gradient(90deg, #0D9488 0%, #0284C7 100%)', 
+                                        borderRadius: '999px',
+                                        transition: 'width 0.2s ease-out' 
+                                      }} 
+                                    />
+                                  </div>
                                 </div>
                               )}
                             </div>
@@ -3810,7 +4041,7 @@ const Sessions = () => {
                           </div>
 
                           <div style={{ borderRadius: '12px', overflow: 'hidden', background: '#0F172A', border: '2px solid #334155', boxShadow: '0 8px 24px rgba(0,0,0,0.15)' }}>
-                            <video key={activeVideo.url} src={activeVideo.url} controls style={{ width: '100%', maxHeight: '320px', display: 'block' }} />
+                            <video key={activeVideo.url} src={activeVideo.url} controls style={{ width: '100%', maxHeight: '430px', display: 'block', objectFit: 'contain' }} />
                           </div>
 
                           {/* Direct Launch AI Analysis CTA */}
@@ -4094,7 +4325,7 @@ const Sessions = () => {
                           </div>
 
                           <div style={{ fontSize: '17px', fontWeight: 700, color: '#0F172A', marginBottom: '6px', fontFamily: 'Outfit, sans-serif' }}>
-                            {hubIsUploadingImage ? 'Uploading Photos to AWS Cloud…' : 'Click to Upload Multiple Session Photos'}
+                            {hubIsUploadingImage ? 'Uploading Photos…' : 'Click to Upload Multiple Session Photos'}
                           </div>
                           <p style={{ margin: 0, fontSize: '13px', color: '#64748B' }}>
                             {hubIsUploadingImage ? 'Processing photo files...' : 'Select multiple JPG, PNG, WebP photos taken during the session'}
@@ -4827,31 +5058,33 @@ const Sessions = () => {
                     <button
                       type="button"
                       style={{
-                        padding: '7px 20px',
+                        padding: '8px 20px',
                         borderRadius: '8px',
                         border: 'none',
-                        background: hubHasChanges ? '#0D9488' : '#CBD5E1',
-                        color: hubHasChanges ? '#FFFFFF' : '#64748B',
+                        background: (hubSaveSuccess && !hubHasChanges) ? '#10B981' : (hubHasChanges ? '#0D9488' : '#CBD5E1'),
+                        color: (hubSaveSuccess || hubHasChanges) ? '#FFFFFF' : '#64748B',
                         fontWeight: 700,
                         fontSize: '13px',
                         cursor: hubHasChanges ? 'pointer' : 'default',
                         display: 'inline-flex',
                         alignItems: 'center',
                         gap: '6px',
-                        transition: 'all 0.2s ease',
-                        boxShadow: hubHasChanges ? '0 2px 10px rgba(13, 148, 136, 0.3)' : 'none'
+                        transition: 'all 0.25s ease',
+                        boxShadow: (hubSaveSuccess && !hubHasChanges) ? '0 2px 10px rgba(16, 185, 129, 0.35)' : (hubHasChanges ? '0 2px 10px rgba(13, 148, 136, 0.3)' : 'none')
                       }}
                       onClick={hubHasChanges ? handleSaveHubChanges : undefined}
-                      disabled={hubIsSaving || !hubHasChanges}
+                      disabled={hubIsSaving || (!hubHasChanges && !hubSaveSuccess)}
                     >
                     {hubIsSaving ? (
                       <>
                         <span className="ses-spinner" style={{ width: '13px', height: '13px', borderWidth: '2px', display: 'inline-block' }} />
                         Saving…
                       </>
-                    ) : hubSaveSuccess && !hubHasChanges ? (
-                      // Already saved, no new changes — show Saved label
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>&#10003; Saved</span>
+                    ) : (hubSaveSuccess && !hubHasChanges) ? (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                        Auto-Saved
+                      </span>
                     ) : (
                       'Save Changes'
                     )}
@@ -4982,7 +5215,7 @@ const Sessions = () => {
                   onClick={handleSaveGroupVideo}
                   disabled={isSavingGroupVideo || !groupVideoInput.trim()}
                 >
-                  {isSavingGroupVideo ? 'Uploading Video…' : `Upload & Save for ${selectedGroupForVideo.sessions.length} Students`}
+                  {isSavingGroupVideo ? `Uploading Video (${groupVideoUploadProgress}%)…` : `Upload & Save for ${selectedGroupForVideo.sessions.length} Students`}
                 </button>
               </div>
             </div>
@@ -5582,15 +5815,6 @@ const Sessions = () => {
                                             </span>
                                           </div>
                                         </div>
-
-                                        <button
-                                          type="button"
-                                          className="ses-btn-secondary"
-                                          style={{ padding: '3px 8px', fontSize: '11px' }}
-                                          onClick={() => setSelectedSessionDetail(sess)}
-                                        >
-                                          Details
-                                        </button>
                                       </div>
                                     ))}
                                   </div>
@@ -5637,17 +5861,6 @@ const Sessions = () => {
                                       ⏰ {sess.time} &bull; Coach: {sess.instructor || 'Coach'}
                                     </span>
                                   </div>
-                                </div>
-
-                                <div style={{ display: 'flex', gap: '6px' }}>
-                                  <button
-                                    type="button"
-                                    className="ses-btn-secondary"
-                                    style={{ padding: '5px 12px', fontSize: '12px' }}
-                                    onClick={() => setSelectedSessionDetail(sess)}
-                                  >
-                                    Details
-                                  </button>
                                 </div>
                               </div>
                             </div>
@@ -6327,6 +6540,8 @@ const Sessions = () => {
         .ses-modal-overlay {
           position: fixed; inset: 0; background: rgba(5, 11, 26, 0.8); backdrop-filter: blur(6px);
           display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 24px;
+          overflow-y: auto;
+          overscroll-behavior: contain;
         }
         .ses-modal-box {
           background: #FFFFFF; border-radius: 20px; max-width: 1100px; width: 100%; max-height: 90vh;
@@ -6334,8 +6549,11 @@ const Sessions = () => {
           border: 1px solid rgba(255,255,255,0.2);
         }
         .ses-hub-modal {
-          height: min(580px, 90vh) !important;
-          min-height: min(540px, 90vh) !important;
+          max-width: 1020px !important;
+          width: 95% !important;
+          height: min(720px, 92vh) !important;
+          min-height: min(600px, 85vh) !important;
+          max-height: 92vh !important;
         }
         .ses-modal-header {
           display: flex; justify-content: space-between; align-items: center; padding: 20px 28px;

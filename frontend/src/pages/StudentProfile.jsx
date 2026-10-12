@@ -997,6 +997,7 @@ const StudentProfile = () => {
       bio: student.bio || '',
       dob: student.dob || '',
       age: student.age || '',
+      gender: student.gender || 'Male',
       division: student.division || "Men's Open",
       stance: student.stance || 'regular',
       swimming_ability: student.swimming_ability || 'Swimmer',
@@ -1047,6 +1048,7 @@ const StudentProfile = () => {
           age: editForm.dob ? calculateAge(editForm.dob) : (editForm.age ? parseInt(editForm.age) : null),
           division: editForm.division,
           stance: editForm.stance,
+          gender: editForm.gender,
           swimming_ability: editForm.swimming_ability,
           surf_stats: {
             waves_ridden: parseInt(editForm.waves_ridden) || 0,
@@ -1545,6 +1547,46 @@ const StudentProfile = () => {
                   <span className="sp-level-badge">
                     {(student.level || 'INTERMEDIATE').toUpperCase()}
                   </span>
+                  {student.gender && (
+                    <span style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      padding: '4px 10px',
+                      borderRadius: '20px',
+                      color: student.gender?.toLowerCase() === 'female' ? '#DB2777' : '#0284C7',
+                      background: student.gender?.toLowerCase() === 'female' ? '#FDF2F8' : '#F0F9FF',
+                      border: `1px solid ${student.gender?.toLowerCase() === 'female' ? '#FBCFE8' : '#BAE6FD'}`
+                    }}>
+                      {student.gender?.toLowerCase() === 'female' ? '♀ Female' : '♂ Male'}
+                    </span>
+                  )}
+                  {(() => {
+                    const stAge = (student.age !== undefined && student.age !== null && student.age !== '') ? Number(student.age) : (student.dob ? Number(calculateAge(student.dob)) : null);
+                    if (stAge !== null && !isNaN(stAge) && stAge > 0 && stAge < 16) {
+                      return (
+                        <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          fontSize: '11px',
+                          fontWeight: 800,
+                          padding: '4px 10px',
+                          borderRadius: '20px',
+                          color: '#7C3AED',
+                          background: '#F5F3FF',
+                          border: '1px solid #DDD6FE'
+                        }}
+                        title={`Kids / Under 16 (${stAge} yrs)`}
+                        >
+                          🧒 Kids ({stAge} yrs)
+                        </span>
+                      );
+                    }
+                    return null;
+                  })()}
                   <span style={{
                     display: 'inline-flex',
                     alignItems: 'center',
@@ -1885,8 +1927,27 @@ const StudentProfile = () => {
                                 </span>
                               )}
                             </div>
-                            <div style={{ fontSize: '12px', color: '#64748B', display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '4px' }}>
+                            <div style={{ fontSize: '12px', color: '#64748B', display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '4px', alignItems: 'center' }}>
                               {g.age && <span>🎂 Age: {g.age} yrs</span>}
+                              {(() => {
+                                const numGAge = g.age ? Number(g.age) : (g.dob ? Number(calculateAge(g.dob)) : null);
+                                if (numGAge !== null && !isNaN(numGAge) && numGAge > 0 && numGAge < 16) {
+                                  return (
+                                    <span style={{
+                                      fontSize: '10.5px',
+                                      fontWeight: 800,
+                                      color: '#7C3AED',
+                                      background: '#F5F3FF',
+                                      border: '1px solid #DDD6FE',
+                                      padding: '1px 6px',
+                                      borderRadius: '4px'
+                                    }}>
+                                      🧒 Kids
+                                    </span>
+                                  );
+                                }
+                                return null;
+                              })()}
                               {g.gender && <span>• {g.gender}</span>}
                               {g.stance && <span>• Stance: {g.stance}</span>}
                               {g.whatsapp_number && <span>📱 {g.whatsapp_number}</span>}
@@ -2712,12 +2773,21 @@ const StudentProfile = () => {
                         </div>
                       </div>
                     </div>
-                    <div className="sp-form-field">
-                      <label>Swimming Ability</label>
-                      <select value={editForm.swimming_ability || 'Swimmer'} onChange={(e) => setEditForm({ ...editForm, swimming_ability: e.target.value })}>
-                        <option value="Swimmer">🏊 Swimmer</option>
-                        <option value="Non-Swimmer">🤿 Non-Swimmer</option>
-                      </select>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                      <div className="sp-form-field">
+                        <label>Gender</label>
+                        <select value={editForm.gender || 'Male'} onChange={(e) => setEditForm({ ...editForm, gender: e.target.value })}>
+                          <option value="Male">♂ Male</option>
+                          <option value="Female">♀ Female</option>
+                        </select>
+                      </div>
+                      <div className="sp-form-field">
+                        <label>Swimming Ability</label>
+                        <select value={editForm.swimming_ability || 'Swimmer'} onChange={(e) => setEditForm({ ...editForm, swimming_ability: e.target.value })}>
+                          <option value="Swimmer">🏊 Swimmer</option>
+                          <option value="Non-Swimmer">🤿 Non-Swimmer</option>
+                        </select>
+                      </div>
                     </div>
                   </div>
                 </div>

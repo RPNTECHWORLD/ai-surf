@@ -28,6 +28,16 @@ const StudentsManagement = () => {
   const [sessionTimeFilter, setSessionTimeFilter] = useState('All');
   const [stayFilter, setStayFilter] = useState('All');
   const [dateFilter, setDateFilter] = useState('All');
+  const [pendingDateFilter, setPendingDateFilter] = useState('All');
+  const [pendingSearch, setPendingSearch] = useState('');
+  const getIsoDate = (offset = 0) => {
+    const d = new Date();
+    if (offset !== 0) d.setDate(d.getDate() + offset);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
   const [swimmingFilter, setSwimmingFilter] = useState('All'); // 'All' | 'Swimmer' | 'Non-Swimmer'
   const [activeStatFilter, setActiveStatFilter] = useState('TOTAL');
   const [showModal, setShowModal] = useState(false);
@@ -297,6 +307,7 @@ const StudentsManagement = () => {
 
   const [form, setForm] = useState({
     name: '', email: '', password: '', level: 'Beginner', instructor_id: '',
+    gender: 'Male',
     swimming_ability: 'Swimmer',
     whatsapp_number: '', dob: '', age: '', course_duration: '3 Days Course', session_time: '',
     start_date: defaultStartDate, end_date: defaultEndDate, staying_at_school: 'Yes',
@@ -961,6 +972,7 @@ const StudentsManagement = () => {
           email: form.email,
           password: form.password || undefined,
           level: form.level,
+          gender: form.gender || 'Male',
           swimming_ability: form.swimming_ability || 'Swimmer',
           dob: form.dob || '',
           instructor_id: assignedInstId,
@@ -1670,6 +1682,29 @@ const StudentsManagement = () => {
     }
   }, [reqRefreshKey, students, approvedStudents, approvedEmailsSet, activeSchoolName, isDefaultSchool]);
 
+  const filteredPendingRequests = useMemo(() => {
+    return allPendingRequests.filter(req => {
+      // 1. Filter by Start Date
+      if (pendingDateFilter && pendingDateFilter !== 'All') {
+        const reqDate = String(req.start_date || '').trim();
+        if (!reqDate.includes(pendingDateFilter)) {
+          return false;
+        }
+      }
+      // 2. Filter by search query
+      if (pendingSearch && pendingSearch.trim()) {
+        const q = pendingSearch.toLowerCase().trim();
+        const name = (req.student_name || req.name || '').toLowerCase();
+        const email = (req.student_email || req.email || '').toLowerCase();
+        const phone = (req.whatsapp_number || req.phone || '').toLowerCase();
+        if (!name.includes(q) && !email.includes(q) && !phone.includes(q)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [allPendingRequests, pendingDateFilter, pendingSearch]);
+
   const handleApproveStudentRequest = async (reqId, studentEmail) => {
     try {
       const emailLower = (studentEmail || '').toLowerCase().trim();
@@ -2019,7 +2054,7 @@ const StudentsManagement = () => {
                       borderRadius: '20px',
                       letterSpacing: '0.4px'
                     }}>
-                      {allPendingRequests.length} PENDING
+                      {(pendingDateFilter !== 'All' || pendingSearch) ? `${filteredPendingRequests.length} of ${allPendingRequests.length} PENDING` : `${allPendingRequests.length} PENDING`}
                     </span>
                   </div>
                   <p className="sm-modal-sub" style={{ color: '#64748B', fontSize: '14px', margin: '6px 0 0 0' }}>
@@ -2033,6 +2068,183 @@ const StudentsManagement = () => {
                   </svg>
                 </button>
               </div>
+
+              {/* Date Filter & Search Bar */}
+              {(() => {
+                const yestIso = getIsoDate(-1);
+                const todayIso = getIsoDate(0);
+                const isCustomDate = pendingDateFilter !== 'All' && pendingDateFilter !== yestIso && pendingDateFilter !== todayIso;
+
+                return (
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '12px',
+                    flexWrap: 'wrap',
+                    background: '#F8FAFC',
+                    padding: '12px 18px',
+                    borderRadius: '14px',
+                    border: '1.5px solid #E2E8F0',
+                    marginBottom: '18px'
+                  }}>
+                    {/* Left: Quick Date Filters */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '12.5px', fontWeight: 800, color: '#475569', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                        <span>🗓️</span>
+                        <span>Start Date:</span>
+                      </span>
+
+                      <div style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        background: '#FFFFFF',
+                        border: '1.5px solid #CBD5E1',
+                        borderRadius: '10px',
+                        padding: '3px 4px',
+                        gap: '4px',
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.03)'
+                      }}>
+                        <button
+                          type="button"
+                          onClick={() => setPendingDateFilter('All')}
+                          style={{
+                            padding: '6px 14px',
+                            borderRadius: '7px',
+                            border: 'none',
+                            background: (!pendingDateFilter || pendingDateFilter === 'All') ? 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)' : 'transparent',
+                            color: (!pendingDateFilter || pendingDateFilter === 'All') ? '#FFFFFF' : '#475569',
+                            fontWeight: 700,
+                            fontSize: '12px',
+                            fontFamily: "'Outfit', sans-serif",
+                            cursor: 'pointer',
+                            boxShadow: (!pendingDateFilter || pendingDateFilter === 'All') ? '0 2px 6px rgba(13, 148, 136, 0.3)' : 'none',
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          All Dates ({allPendingRequests.length})
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setPendingDateFilter(prev => prev === yestIso ? 'All' : yestIso)}
+                          style={{
+                            padding: '6px 14px',
+                            borderRadius: '7px',
+                            border: 'none',
+                            background: pendingDateFilter === yestIso ? 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)' : 'transparent',
+                            color: pendingDateFilter === yestIso ? '#FFFFFF' : '#475569',
+                            fontWeight: 700,
+                            fontSize: '12px',
+                            fontFamily: "'Outfit', sans-serif",
+                            cursor: 'pointer',
+                            boxShadow: pendingDateFilter === yestIso ? '0 2px 6px rgba(13, 148, 136, 0.3)' : 'none',
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          Yesterday
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setPendingDateFilter(prev => prev === todayIso ? 'All' : todayIso)}
+                          style={{
+                            padding: '6px 14px',
+                            borderRadius: '7px',
+                            border: 'none',
+                            background: pendingDateFilter === todayIso ? 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)' : 'transparent',
+                            color: pendingDateFilter === todayIso ? '#FFFFFF' : '#475569',
+                            fontWeight: 700,
+                            fontSize: '12px',
+                            fontFamily: "'Outfit', sans-serif",
+                            cursor: 'pointer',
+                            boxShadow: pendingDateFilter === todayIso ? '0 2px 6px rgba(13, 148, 136, 0.3)' : 'none',
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          Today
+                        </button>
+
+                        {/* Calendar Date Picker Input */}
+                        <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+                          <input
+                            type="date"
+                            max={todayIso}
+                            value={(!pendingDateFilter || pendingDateFilter === 'All') ? '' : pendingDateFilter}
+                            onChange={e => {
+                              const val = e.target.value;
+                              if (val && val > todayIso) {
+                                setPendingDateFilter(todayIso);
+                                return;
+                              }
+                              setPendingDateFilter(val || 'All');
+                            }}
+                            style={{
+                              height: '32px',
+                              padding: '0 24px 0 8px',
+                              borderRadius: '6px',
+                              border: isCustomDate ? '1.5px solid #0D9488' : '1px solid #CBD5E1',
+                              background: isCustomDate ? '#E6F9F5' : '#FFFFFF',
+                              color: (pendingDateFilter && pendingDateFilter !== 'All') ? '#0D9488' : '#64748B',
+                              fontWeight: (pendingDateFilter && pendingDateFilter !== 'All') ? 700 : 500,
+                              fontSize: '12px',
+                              cursor: 'pointer',
+                              outline: 'none',
+                              boxShadow: isCustomDate ? '0 2px 6px rgba(13, 148, 136, 0.2)' : 'none',
+                              transition: 'all 0.15s ease'
+                            }}
+                            title="Pick a specific booking start date"
+                          />
+                          {pendingDateFilter && pendingDateFilter !== 'All' && (
+                            <button
+                              type="button"
+                              onClick={() => setPendingDateFilter('All')}
+                              style={{
+                                position: 'absolute',
+                                right: '6px',
+                                background: 'none',
+                                border: 'none',
+                                color: '#0D9488',
+                                cursor: 'pointer',
+                                fontSize: '13px',
+                                fontWeight: 800,
+                                padding: 0
+                              }}
+                              title="Clear date filter"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Right: Search box */}
+                    <div style={{ position: 'relative', minWidth: '220px', flex: '1', maxWidth: '300px' }}>
+                      <input
+                        type="text"
+                        placeholder="Search student, email, phone..."
+                        value={pendingSearch}
+                        onChange={e => setPendingSearch(e.target.value)}
+                        style={{
+                          width: '100%',
+                          height: '35px',
+                          padding: '0 12px 0 32px',
+                          borderRadius: '8px',
+                          border: '1.5px solid #CBD5E1',
+                          fontSize: '12.5px',
+                          background: '#FFFFFF',
+                          outline: 'none',
+                          boxSizing: 'border-box'
+                        }}
+                      />
+                      <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#94A3B8', fontSize: '13px' }}>
+                        🔍
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* List of Requests in Table Rows or Empty State */}
               {allPendingRequests.length === 0 ? (
@@ -2051,6 +2263,40 @@ const StudentsManagement = () => {
                   <p style={{ margin: '8px 0 0', fontSize: '14px', color: '#64748B' }}>
                     No pending registration requests waiting for review at this moment.
                   </p>
+                </div>
+              ) : filteredPendingRequests.length === 0 ? (
+                <div style={{
+                  textAlign: 'center',
+                  padding: '60px 20px',
+                  background: '#F8FAFC',
+                  borderRadius: '16px',
+                  border: '1.5px dashed #CBD5E1',
+                  marginTop: '10px'
+                }}>
+                  <div style={{ fontSize: '44px', marginBottom: '12px' }}>📅</div>
+                  <h4 style={{ margin: 0, fontSize: '19px', fontWeight: 800, color: '#0F172A' }}>
+                    No Requests Found for Selected Date
+                  </h4>
+                  <p style={{ margin: '8px 0 0', fontSize: '13.5px', color: '#64748B' }}>
+                    No pending registration requests match the filter "{pendingDateFilter !== 'All' ? pendingDateFilter : 'selected filters'}".
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => { setPendingDateFilter('All'); setPendingSearch(''); }}
+                    style={{
+                      marginTop: '14px',
+                      padding: '7px 16px',
+                      borderRadius: '8px',
+                      border: '1px solid #CBD5E1',
+                      background: '#FFFFFF',
+                      color: '#0D9488',
+                      fontWeight: 700,
+                      fontSize: '12.5px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    ✕ Clear Date Filter
+                  </button>
                 </div>
               ) : (
                 <div style={{
@@ -2075,7 +2321,7 @@ const StudentsManagement = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {allPendingRequests.map((req, rIdx) => {
+                      {filteredPendingRequests.map((req, rIdx) => {
                         const studentName = req.student_name || req.name || 'Student';
                         const initials = studentName.split(' ').map(n => n[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || 'ST';
                         const guestList = parseGuestsArray(req.guests_details);
@@ -2104,8 +2350,34 @@ const StudentsManagement = () => {
                                     {initials}
                                   </div>
                                   <div>
-                                    <div style={{ fontSize: '15.5px', fontWeight: 800, color: '#0F172A', lineHeight: 1.3 }}>
-                                      {studentName}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                      <span style={{ fontSize: '15.5px', fontWeight: 800, color: '#0F172A', lineHeight: 1.3 }}>
+                                        {studentName}
+                                      </span>
+                                      {(() => {
+                                        const pAge = (req.age !== undefined && req.age !== null && req.age !== '') ? Number(req.age) : (req.dob ? Number(calculateAge(req.dob)) : null);
+                                        if (pAge !== null && !isNaN(pAge) && pAge > 0 && pAge < 16) {
+                                          return (
+                                            <span style={{
+                                              display: 'inline-flex',
+                                              alignItems: 'center',
+                                              gap: '3px',
+                                              fontSize: '10.5px',
+                                              fontWeight: 800,
+                                              color: '#7C3AED',
+                                              background: '#F5F3FF',
+                                              border: '1px solid #DDD6FE',
+                                              padding: '1px 6px',
+                                              borderRadius: '5px'
+                                            }}
+                                            title={`Under 16 (${pAge} yrs)`}
+                                            >
+                                              🧒 Kids
+                                            </span>
+                                          );
+                                        }
+                                        return null;
+                                      })()}
                                     </div>
                                     <div style={{ fontSize: '12px', color: '#D97706', fontWeight: 600, marginTop: '3px', display: 'flex', alignItems: 'center', gap: '4px' }}>
                                       <span>🏫</span>
@@ -2133,18 +2405,38 @@ const StudentsManagement = () => {
                                   {req.dob || '—'}
                                 </div>
                                 {(calculateAge(req.dob) || req.age) && (
-                                  <span style={{
-                                    display: 'inline-block',
-                                    fontSize: '11px',
-                                    color: '#0D9488',
-                                    fontWeight: 700,
-                                    background: 'rgba(13,148,136,0.1)',
-                                    padding: '2px 8px',
-                                    borderRadius: '10px',
-                                    marginTop: '3px'
-                                  }}>
-                                    {calculateAge(req.dob) || req.age} yrs
-                                  </span>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginTop: '3px', flexWrap: 'wrap' }}>
+                                    <span style={{
+                                      display: 'inline-block',
+                                      fontSize: '11px',
+                                      color: '#0D9488',
+                                      fontWeight: 700,
+                                      background: 'rgba(13,148,136,0.1)',
+                                      padding: '2px 8px',
+                                      borderRadius: '10px'
+                                    }}>
+                                      {calculateAge(req.dob) || req.age} yrs
+                                    </span>
+                                    {(() => {
+                                      const pAge = Number(calculateAge(req.dob) || req.age);
+                                      if (pAge && pAge > 0 && pAge < 16) {
+                                        return (
+                                          <span style={{
+                                            fontSize: '10px',
+                                            fontWeight: 800,
+                                            color: '#7C3AED',
+                                            background: '#F5F3FF',
+                                            border: '1px solid #DDD6FE',
+                                            padding: '1px 5px',
+                                            borderRadius: '4px'
+                                          }}>
+                                            🧒 Kids
+                                          </span>
+                                        );
+                                      }
+                                      return null;
+                                    })()}
+                                  </div>
                                 )}
                               </td>
 
@@ -2614,6 +2906,55 @@ const StudentsManagement = () => {
                         <div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                             <div className="sm-student-name">{s.name}</div>
+                            {(() => {
+                              const genderVal = s.gender || (s.division && /women|girl/i.test(s.division) ? 'Female' : 'Male');
+                              if (!genderVal) return null;
+                              const isFemale = genderVal.toLowerCase() === 'female';
+                              return (
+                                <span
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '3px',
+                                    fontSize: '10.5px',
+                                    fontWeight: 700,
+                                    color: isFemale ? '#DB2777' : '#0284C7',
+                                    background: isFemale ? '#FDF2F8' : '#F0F9FF',
+                                    border: `1px solid ${isFemale ? '#FBCFE8' : '#BAE6FD'}`,
+                                    padding: '1px 6px',
+                                    borderRadius: '5px'
+                                  }}
+                                  title={`Gender: ${genderVal}`}
+                                >
+                                  {isFemale ? '♀ Female' : '♂ Male'}
+                                </span>
+                              );
+                            })()}
+                            {(() => {
+                              const ageVal = (s.age !== undefined && s.age !== null && s.age !== '') ? Number(s.age) : (s.dob ? Number(calculateAge(s.dob)) : null);
+                              if (ageVal !== null && !isNaN(ageVal) && ageVal > 0 && ageVal < 16) {
+                                return (
+                                  <span
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '3px',
+                                      fontSize: '10.5px',
+                                      fontWeight: 800,
+                                      color: '#7C3AED',
+                                      background: '#F5F3FF',
+                                      border: '1px solid #DDD6FE',
+                                      padding: '1px 6px',
+                                      borderRadius: '5px'
+                                    }}
+                                    title={`Under 16 (${ageVal} yrs)`}
+                                  >
+                                    🧒 Kids
+                                  </span>
+                                );
+                              }
+                              return null;
+                            })()}
                             {s.swimming_ability?.toLowerCase() === 'non-swimmer' ? (
                               <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '10.5px', fontWeight: 700, color: '#D97706', background: '#FEF3C7', border: '1px solid #FDE68A', padding: '1px 6px', borderRadius: '5px' }}>
                                 🤿 Non-Swimmer
@@ -2738,6 +3079,25 @@ const StudentsManagement = () => {
                                           }}>
                                             {g.gender && <span>{g.gender}</span>}
                                             {gAge ? <span>• {gAge} yrs</span> : null}
+                                            {(() => {
+                                              const numGAge = gAge ? Number(gAge) : null;
+                                              if (numGAge !== null && !isNaN(numGAge) && numGAge > 0 && numGAge < 16) {
+                                                return (
+                                                  <span style={{
+                                                    fontSize: '9.5px',
+                                                    fontWeight: 800,
+                                                    background: '#F5F3FF',
+                                                    color: '#7C3AED',
+                                                    border: '1px solid #DDD6FE',
+                                                    padding: '1px 5px',
+                                                    borderRadius: '3px'
+                                                  }}>
+                                                    🧒 Kids
+                                                  </span>
+                                                );
+                                              }
+                                              return null;
+                                            })()}
                                             {g.level && (
                                               <span style={{
                                                 fontSize: '9.5px',
@@ -3199,9 +3559,12 @@ const StudentsManagement = () => {
                     <div className="sm-field">
                       <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span>Date of Birth (DOB) *</span>
-                        {form.dob && calculateAge(form.dob) && (
-                          <span style={{ fontSize: '11px', color: '#0D9488', fontWeight: '700', background: 'rgba(13,148,136,0.12)', padding: '2px 8px', borderRadius: '12px' }}>
-                            Age: {calculateAge(form.dob)} yrs
+                        {form.dob && calculateAge(form.dob) !== '' && (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '11px', color: '#0D9488', fontWeight: '700', background: 'rgba(13,148,136,0.12)', padding: '2px 8px', borderRadius: '12px' }}>
+                            <span>Age: {calculateAge(form.dob)} yrs</span>
+                            {Number(calculateAge(form.dob)) > 0 && Number(calculateAge(form.dob)) < 16 && (
+                              <span style={{ background: '#7C3AED', color: '#FFFFFF', padding: '1px 6px', borderRadius: '4px', fontSize: '9.5px', fontWeight: 800 }}>🧒 Kids</span>
+                            )}
                           </span>
                         )}
                       </label>
@@ -3219,7 +3582,7 @@ const StudentsManagement = () => {
                     </div>
                   </div>
 
-                  <div className="sm-grid-2">
+                  <div className="sm-grid-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '12px' }}>
                     <div className="sm-field">
                       <label>Surf Level *</label>
                       <select value={form.level} onChange={e => setForm({...form, level: e.target.value})}>
@@ -3227,6 +3590,13 @@ const StudentsManagement = () => {
                         <option value="Intermediate">Intermediate</option>
                         <option value="Advanced">Advanced</option>
                         <option value="Master">Master</option>
+                      </select>
+                    </div>
+                    <div className="sm-field">
+                      <label>Gender *</label>
+                      <select value={form.gender || 'Male'} onChange={e => setForm({...form, gender: e.target.value})}>
+                        <option value="Male">♂ Male</option>
+                        <option value="Female">♀ Female</option>
                       </select>
                     </div>
                     <div className="sm-field">
@@ -3395,9 +3765,12 @@ const StudentsManagement = () => {
                                 onChange={e => handleSingleGuestChange(gIdx, 'dob', e.target.value)}
                                 style={{ height: '36px', fontSize: '12px', padding: '0 6px', borderRadius: '6px', border: '1px solid #CBD5E1', outline: 'none', width: '100%' }}
                               />
-                              {g.dob && calculateAge(g.dob) && (
-                                <span style={{ fontSize: '10px', color: '#0D9488', fontWeight: 700 }}>
-                                  Age: {calculateAge(g.dob)} yrs
+                              {g.dob && calculateAge(g.dob) !== '' && (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '10px', color: '#0D9488', fontWeight: 700 }}>
+                                  <span>Age: {calculateAge(g.dob)} yrs</span>
+                                  {Number(calculateAge(g.dob)) > 0 && Number(calculateAge(g.dob)) < 16 && (
+                                    <span style={{ background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE', padding: '0 4px', borderRadius: '3px', fontSize: '9px', fontWeight: 800 }}>🧒 Kids</span>
+                                  )}
                                 </span>
                               )}
                             </div>
@@ -4349,8 +4722,8 @@ const StudentsManagement = () => {
                           <td>Date of Birth</td>
                           <td>
                             {addedStudentSummary.dob
-                              ? `${addedStudentSummary.dob}${calculateAge(addedStudentSummary.dob) ? ` (${calculateAge(addedStudentSummary.dob)} yrs)` : ''}`
-                              : (addedStudentSummary.age ? `${addedStudentSummary.age} yrs` : '—')}
+                              ? `${addedStudentSummary.dob}${calculateAge(addedStudentSummary.dob) ? ` (${calculateAge(addedStudentSummary.dob)} yrs${Number(calculateAge(addedStudentSummary.dob)) > 0 && Number(calculateAge(addedStudentSummary.dob)) < 16 ? ' • 🧒 Kids' : ''})` : ''}`
+                              : (addedStudentSummary.age ? `${addedStudentSummary.age} yrs${Number(addedStudentSummary.age) > 0 && Number(addedStudentSummary.age) < 16 ? ' • 🧒 Kids' : ''}` : '—')}
                           </td>
                         </tr>
                         <tr>

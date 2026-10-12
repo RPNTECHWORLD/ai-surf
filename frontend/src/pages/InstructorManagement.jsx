@@ -1,8 +1,47 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 
 const API = import.meta.env.VITE_API_URL || '';
+
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'
+];
+
+const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+// Checks whether a leave record overlaps with a given year and month (month is 0-indexed)
+const isLeaveInMonth = (leave, year, month) => {
+  const targetYearMonth = `${year}-${String(month + 1).padStart(2, '0')}`;
+  const start = leave.start_date || (leave.created_at ? leave.created_at.split(' ')[0] : '');
+  const end = leave.end_date || start;
+
+  if (!start && !end) return false;
+
+  const startYM = start.slice(0, 7);
+  const endYM = end.slice(0, 7);
+
+  if (startYM === targetYearMonth || endYM === targetYearMonth) return true;
+
+  try {
+    const sDate = new Date(start);
+    const eDate = new Date(end);
+    const mStart = new Date(year, month, 1);
+    const mEnd = new Date(year, month + 1, 0);
+    return sDate <= mEnd && eDate >= mStart;
+  } catch (e) {
+    return false;
+  }
+};
+
+// Checks if a date string 'YYYY-MM-DD' falls within a leave range
+const isDateInLeaveRange = (dateStr, leave) => {
+  const start = leave.start_date || (leave.created_at ? leave.created_at.split(' ')[0] : '');
+  const end = leave.end_date || start;
+  if (!start) return false;
+  return dateStr >= start && dateStr <= end;
+};
 
 const fitnessColors = { Elite: '#FF9800', Advanced: '#7C3AED', Intermediate: '#F59E0B', Beginner: '#6B7280' };
 
@@ -104,6 +143,9 @@ const InstructorManagement = () => {
   const [leaveSearch, setLeaveSearch] = useState('');
   const [actionLoadingId, setActionLoadingId] = useState(null);
   const [changeApprovalLeave, setChangeApprovalLeave] = useState(null);
+  const [leaveMonthDate, setLeaveMonthDate] = useState(() => new Date()); // Default to current month
+  const [leaveViewMode, setLeaveViewMode] = useState('list'); // 'list' (default) | 'calendar'
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState(null);
 
   const fetchLeaveRequests = () => {
     setLeaveLoading(true);
@@ -361,21 +403,118 @@ const InstructorManagement = () => {
     );
   });
 
-  const pendingLeavesCount = leaveRequests.filter(l => (l.status || '').toLowerCase() === 'pending').length;
+  const handlePrevMonth = () => {
+    setLeaveMonthDate(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
+    setSelectedCalendarDate(null);
+  };
 
-  const filteredLeaves = leaveRequests.filter(l => {
-    if (leaveFilterStatus !== 'All' && (l.status || '').toLowerCase() !== leaveFilterStatus.toLowerCase()) {
-      return false;
+  const handleNextMonth = () => {
+    setLeaveMonthDate(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
+    setSelectedCalendarDate(null);
+  };
+
+  const handleCurrentMonth = () => {
+    setLeaveMonthDate(new Date());
+    setSelectedCalendarDate(null);
+  };
+
+  const selectedYear = leaveMonthDate.getFullYear();
+  const selectedMonth = leaveMonthDate.getMonth();
+
+  const isCurrentMonth = useMemo(() => {
+    const now = new Date();
+    return now.getFullYear() === selectedYear && now.getMonth() === selectedMonth;
+  }, [selectedYear, selectedMonth]);
+
+  // Leaves strictly overlapping with the selected month
+  const currentMonthLeaves = useMemo(() => {
+    return leaveRequests.filter(l => isLeaveInMonth(l, selectedYear, selectedMonth));
+  }, [leaveRequests, selectedYear, selectedMonth]);
+
+  const pendingLeavesCount = useMemo(() => {
+    return currentMonthLeaves.filter(l => (l.status || '').toLowerCase() === 'pending').length;
+  }, [currentMonthLeaves]);
+
+  const monthApprovedCount = useMemo(() => {
+    return currentMonthLeaves.filter(l => (l.status || '').toLowerCase() === 'approved').length;
+  }, [currentMonthLeaves]);
+
+  const monthRejectedCount = useMemo(() => {
+    return currentMonthLeaves.filter(l => (l.status || '').toLowerCase() === 'rejected').length;
+  }, [currentMonthLeaves]);
+
+  const filteredLeaves = useMemo(() => {
+    return currentMonthLeaves.filter(l => {
+      if (leaveFilterStatus !== 'All' && (l.status || '').toLowerCase() !== leaveFilterStatus.toLowerCase()) {
+        return false;
+      }
+      if (selectedCalendarDate) {
+        if (!isDateInLeaveRange(selectedCalendarDate, l)) return false;
+      }
+      if (leaveSearch) {
+        const q = leaveSearch.toLowerCase();
+        const name = (l.instructor_name || '').toLowerCase();
+        const type = (l.leave_type || '').toLowerCase();
+        const reason = (l.reason || '').toLowerCase();
+        return name.includes(q) || type.includes(q) || reason.includes(q);
+      }
+      return true;
+    });
+  }, [currentMonthLeaves, leaveFilterStatus, selectedCalendarDate, leaveSearch]);
+
+  const calendarCells = useMemo(() => {
+    const year = selectedYear;
+    const month = selectedMonth;
+
+    const firstDay = new Date(year, month, 1).getDay(); // 0 is Sun
+    const startOffset = (firstDay + 6) % 7; // Monday is 0, Sunday is 6
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const daysInPrevMonth = new Date(year, month, 0).getDate();
+
+    const cells = [];
+
+    // Leading days from previous month
+    for (let i = startOffset - 1; i >= 0; i--) {
+      const d = daysInPrevMonth - i;
+      const prevDate = new Date(year, month - 1, d);
+      const dateStr = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      cells.push({
+        dayNum: d,
+        dateStr,
+        isCurrentMonth: false,
+        leaves: leaveRequests.filter(l => isDateInLeaveRange(dateStr, l))
+      });
     }
-    if (leaveSearch) {
-      const q = leaveSearch.toLowerCase();
-      const name = (l.instructor_name || '').toLowerCase();
-      const type = (l.leave_type || '').toLowerCase();
-      const reason = (l.reason || '').toLowerCase();
-      return name.includes(q) || type.includes(q) || reason.includes(q);
+
+    // Days in current month
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      cells.push({
+        dayNum: d,
+        dateStr,
+        isCurrentMonth: true,
+        isToday: dateStr === todayStr,
+        leaves: currentMonthLeaves.filter(l => isDateInLeaveRange(dateStr, l))
+      });
     }
-    return true;
-  });
+
+    // Trailing days
+    const remaining = (7 - (cells.length % 7)) % 7;
+    for (let d = 1; d <= remaining; d++) {
+      const nextDate = new Date(year, month + 1, d);
+      const dateStr = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      cells.push({
+        dayNum: d,
+        dateStr,
+        isCurrentMonth: false,
+        leaves: leaveRequests.filter(l => isDateInLeaveRange(dateStr, l))
+      });
+    }
+
+    return cells;
+  }, [selectedYear, selectedMonth, currentMonthLeaves, leaveRequests]);
 
   const handleSaveCoachPassword = async (e) => {
     e.preventDefault();
@@ -447,7 +586,8 @@ const InstructorManagement = () => {
           image: safeImage,
           school: (!isSuperAdmin && currentSchool) ? currentSchool : (form.school || 'Individual / Freelance Coach'),
           location: coachLoc,
-          languages: Array.isArray(form.languages) ? form.languages.join(', ') : (form.languages || ''),
+          languages: Array.isArray(form.languages) ? form.languages : (form.languages ? String(form.languages).split(',').map(s => s.trim()).filter(Boolean) : ['English']),
+          bio: form.biography || '',
         }),
       });
       if (res.ok) {
@@ -487,6 +627,8 @@ const InstructorManagement = () => {
           fitness_level: form.fitness_level,
           experience: form.experience,
           certifications: certs,
+          languages: Array.isArray(form.languages) ? form.languages : (form.languages ? String(form.languages).split(',').map(s => s.trim()).filter(Boolean) : ['English']),
+          bio: form.biography || '',
           image: safeImage,
           school: form.school || getActiveSchoolName(),
           location: coachLoc,
@@ -562,6 +704,216 @@ const InstructorManagement = () => {
 
   const hasInstructors = instructors.length > 0;
 
+  const renderLeaveCard = (leave) => {
+    const isPending = (leave.status || '').toLowerCase() === 'pending';
+    const isApproved = (leave.status || '').toLowerCase() === 'approved';
+    const isRejected = (leave.status || '').toLowerCase() === 'rejected';
+
+    return (
+      <div
+        key={leave.id}
+        style={{
+          background: '#FFFFFF',
+          border: '1px solid',
+          borderColor: isPending ? '#FDE68A' : (isApproved ? '#A7F3D0' : '#E2E8F0'),
+          borderRadius: '16px',
+          padding: '20px 24px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '14px',
+          boxShadow: '0 2px 10px rgba(0,0,0,0.03)',
+          transition: 'all 0.2s ease'
+        }}
+      >
+        {/* Top Row: Coach Info + Leave Type + Status */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+            {leave.instructor_avatar ? (
+              <img
+                src={leave.instructor_avatar}
+                alt={leave.instructor_name}
+                style={{ width: '48px', height: '48px', borderRadius: '24px', objectFit: 'cover' }}
+              />
+            ) : (
+              <div style={{ width: '48px', height: '48px', borderRadius: '24px', background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)', color: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', fontWeight: 800 }}>
+                {(leave.instructor_name || 'C')[0].toUpperCase()}
+              </div>
+            )}
+
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <h3
+                  onClick={() => navigate(`/instructors/${leave.instructor_id}`)}
+                  style={{ margin: 0, fontSize: '16px', fontWeight: 800, color: '#0F172A', cursor: 'pointer', textDecoration: 'none' }}
+                  title="Click to view coach profile"
+                >
+                  {leave.instructor_name}
+                </h3>
+                <span style={{ fontSize: '11px', background: '#F1F5F9', color: '#475569', padding: '2px 8px', borderRadius: '10px', fontWeight: 600 }}>
+                  {leave.school || 'Freelance Coach'}
+                </span>
+              </div>
+              <p style={{ margin: '2px 0 0 0', fontSize: '12.5px', color: '#64748B' }}>
+                {leave.instructor_email || 'Coach'} • Applied on {leave.created_at || 'Recently'}
+              </p>
+            </div>
+          </div>
+
+          {/* Status & Type Pills */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span
+              style={{
+                padding: '5px 12px',
+                borderRadius: '20px',
+                fontSize: '12px',
+                fontWeight: 700,
+                background: '#F0FDF4',
+                color: '#15803D',
+                border: '1px solid #BBF7D0'
+              }}
+            >
+              {leave.leave_type}
+            </span>
+
+            <span
+              style={{
+                padding: '5px 14px',
+                borderRadius: '20px',
+                fontSize: '12px',
+                fontWeight: 800,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                background: isApproved ? '#DCFCE7' : (isRejected ? '#FEE2E2' : '#FEF3C7'),
+                color: isApproved ? '#15803D' : (isRejected ? '#B91C1C' : '#B45309'),
+                border: '1px solid',
+                borderColor: isApproved ? '#86EFAC' : (isRejected ? '#FCA5A5' : '#FCD34D')
+              }}
+            >
+              {isApproved ? '✅ Approved' : (isRejected ? '❌ Rejected' : '⏳ Pending Review')}
+            </span>
+          </div>
+        </div>
+
+        {/* Middle Row: Date Range + Total Days + Reason */}
+        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '14px', background: '#F8FAFC', padding: '12px 16px', borderRadius: '12px', border: '1px solid #F1F5F9' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '16px' }}>📅</span>
+            <div>
+              <span style={{ fontSize: '11px', textTransform: 'uppercase', color: '#64748B', fontWeight: 700 }}>Leave Period</span>
+              <div style={{ fontSize: '14px', fontWeight: 800, color: '#0F172A' }}>
+                {leave.start_date} {leave.end_date && leave.end_date !== leave.start_date ? `➔ ${leave.end_date}` : ''}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ height: '24px', width: '1px', background: '#CBD5E1' }} />
+
+          <div>
+            <span style={{ fontSize: '11px', textTransform: 'uppercase', color: '#64748B', fontWeight: 700 }}>Total Duration</span>
+            <div style={{ fontSize: '14px', fontWeight: 800, color: '#0D9488' }}>
+              {leave.total_days} Day{leave.total_days > 1 ? 's' : ''}
+            </div>
+          </div>
+
+          {leave.reason && (
+            <>
+              <div style={{ height: '24px', width: '1px', background: '#CBD5E1' }} />
+              <div style={{ flex: 1, minWidth: '200px' }}>
+                <span style={{ fontSize: '11px', textTransform: 'uppercase', color: '#64748B', fontWeight: 700 }}>Coach Reason / Notes</span>
+                <div style={{ fontSize: '13px', color: '#334155', fontStyle: 'italic' }}>
+                  "{leave.reason}"
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Admin Remarks if present */}
+        {leave.admin_notes && (
+          <div style={{ padding: '8px 14px', background: 'rgba(13, 148, 136, 0.08)', borderRadius: '10px', border: '1px solid rgba(13, 148, 136, 0.2)', fontSize: '13px', color: '#0F766E' }}>
+            <strong>Admin Feedback:</strong> {leave.admin_notes}
+          </div>
+        )}
+
+        {/* Bottom Actions Row */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '10px', borderTop: '1px solid #F1F5F9', paddingTop: '12px' }}>
+          {isPending ? (
+            <>
+              <button
+                type="button"
+                disabled={actionLoadingId === leave.id}
+                onClick={() => handleUpdateLeaveStatus(leave.id, 'Rejected')}
+                style={{
+                  padding: '8px 18px',
+                  borderRadius: '10px',
+                  border: '1.5px solid #FCA5A5',
+                  background: '#FEF2F2',
+                  color: '#DC2626',
+                  fontWeight: 700,
+                  fontSize: '13px',
+                  cursor: actionLoadingId === leave.id ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <span>{actionLoadingId === leave.id ? 'Rejecting...' : '❌ Reject'}</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={actionLoadingId === leave.id}
+                onClick={() => handleUpdateLeaveStatus(leave.id, 'Approved')}
+                style={{
+                  padding: '8px 20px',
+                  borderRadius: '10px',
+                  border: 'none',
+                  background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
+                  color: '#FFFFFF',
+                  fontWeight: 700,
+                  fontSize: '13px',
+                  cursor: actionLoadingId === leave.id ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <span>{actionLoadingId === leave.id ? 'Approving...' : '✓ Approve'}</span>
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              disabled={actionLoadingId === leave.id}
+              onClick={() => setChangeApprovalLeave(leave)}
+              style={{
+                padding: '7px 16px',
+                borderRadius: '8px',
+                border: '1.5px solid #CBD5E1',
+                background: '#FFFFFF',
+                color: '#334155',
+                fontSize: '12.5px',
+                fontWeight: 700,
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <span>✏️ Change Approval</span>
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="im-page">
       <Sidebar />
@@ -580,6 +932,7 @@ const InstructorManagement = () => {
               className="im-btn-leave-requests"
               onClick={() => {
                 setShowLeaveModal(true);
+                setLeaveViewMode('list');
                 fetchLeaveRequests();
               }}
               style={{
@@ -745,6 +1098,25 @@ const InstructorManagement = () => {
                           <span className="im-badge-level" style={{ background: instructor.school && instructor.school !== 'Individual / Freelance Coach' ? 'rgba(13, 148, 136, 0.12)' : 'rgba(59, 130, 246, 0.12)', color: instructor.school && instructor.school !== 'Individual / Freelance Coach' ? '#0D9488' : '#2563EB', borderColor: 'transparent' }}>
                             {instructor.school ? (instructor.school.length > 20 ? instructor.school.slice(0, 18) + '...' : instructor.school) : 'Individual Coach'}
                           </span>
+                          {(() => {
+                            const rawL = instructor.languages;
+                            let lList = [];
+                            if (Array.isArray(rawL)) lList = rawL;
+                            else if (typeof rawL === 'string' && rawL.trim()) {
+                              try { const p = JSON.parse(rawL); lList = Array.isArray(p) ? p : [rawL]; }
+                              catch { lList = rawL.split(',').map(s => s.trim()).filter(Boolean); }
+                            }
+                            if (lList.length === 0) return null;
+                            return (
+                              <span
+                                className="im-badge-cert"
+                                style={{ background: '#F0FDFA', color: '#0F766E', borderColor: '#CCFBF1' }}
+                                title={`Languages: ${lList.join(', ')}`}
+                              >
+                                🗣️ {lList.slice(0, 2).join(', ')}{lList.length > 2 ? ` +${lList.length - 2}` : ''}
+                              </span>
+                            );
+                          })()}
                           {(instructor.is_on_leave || instructor.active_leave) && (
                             <span 
                               style={{ 
@@ -1289,9 +1661,11 @@ const InstructorManagement = () => {
               className="im-leave-modal"
               onClick={(e) => e.stopPropagation()}
               style={{
-                maxWidth: '960px',
-                width: '100%',
-                maxHeight: '90vh',
+                maxWidth: '1060px',
+                width: '96%',
+                height: '88vh',
+                maxHeight: '88vh',
+                minHeight: '88vh',
                 backgroundColor: '#F8FAFC',
                 borderRadius: '24px',
                 boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.35)',
@@ -1352,7 +1726,7 @@ const InstructorManagement = () => {
                       )}
                     </div>
                     <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#64748B' }}>
-                      Review and approve leave applications submitted by coaches and instructors.
+                      Monthly calendar & approval management for instructor leaves.
                     </p>
                   </div>
                 </div>
@@ -1393,352 +1767,671 @@ const InstructorManagement = () => {
               {/* Modal Scrollable Body */}
               <div
                 style={{
-                  padding: '24px 28px',
+                  padding: '22px 26px',
                   overflowY: 'auto',
                   display: 'flex',
                   flexDirection: 'column',
-                  gap: '20px',
-                  flex: 1
+                  gap: '18px',
+                  flex: 1,
+                  minHeight: 0
                 }}
               >
-        {/* Metric Cards Row */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
-          <div style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '14px', padding: '18px 20px', display: 'flex', alignItems: 'center', gap: '14px', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' }}>
-            <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(15, 23, 42, 0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px' }}>
-              📋
-            </div>
-            <div>
-              <div style={{ fontSize: '12px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Total Requests</div>
-              <div style={{ fontSize: '24px', fontWeight: 800, color: '#0F172A', fontFamily: 'Outfit, sans-serif' }}>{leaveRequests.length}</div>
-            </div>
-          </div>
-
-          <div style={{ background: '#FFFFFF', border: '1px solid #FDE68A', borderRadius: '14px', padding: '18px 20px', display: 'flex', alignItems: 'center', gap: '14px', boxShadow: '0 2px 8px rgba(245, 158, 11, 0.08)' }}>
-            <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: '#FEF3C7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px', color: '#D97706' }}>
-              ⏳
-            </div>
-            <div>
-              <div style={{ fontSize: '12px', fontWeight: 700, color: '#D97706', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Pending Review</div>
-              <div style={{ fontSize: '24px', fontWeight: 800, color: '#B45309', fontFamily: 'Outfit, sans-serif' }}>
-                {leaveRequests.filter(l => (l.status || '').toLowerCase() === 'pending').length}
-              </div>
-            </div>
-          </div>
-
-          <div style={{ background: '#FFFFFF', border: '1px solid #A7F3D0', borderRadius: '14px', padding: '18px 20px', display: 'flex', alignItems: 'center', gap: '14px', boxShadow: '0 2px 8px rgba(16, 185, 129, 0.08)' }}>
-            <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: '#DCFCE7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px', color: '#10B981' }}>
-              ✅
-            </div>
-            <div>
-              <div style={{ fontSize: '12px', fontWeight: 700, color: '#15803D', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Approved</div>
-              <div style={{ fontSize: '24px', fontWeight: 800, color: '#166534', fontFamily: 'Outfit, sans-serif' }}>
-                {leaveRequests.filter(l => (l.status || '').toLowerCase() === 'approved').length}
-              </div>
-            </div>
-          </div>
-
-          <div style={{ background: '#FFFFFF', border: '1px solid #FECDD3', borderRadius: '14px', padding: '18px 20px', display: 'flex', alignItems: 'center', gap: '14px', boxShadow: '0 2px 8px rgba(239, 68, 68, 0.08)' }}>
-            <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: '#FFE4E6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px', color: '#F43F5E' }}>
-              ❌
-            </div>
-            <div>
-              <div style={{ fontSize: '12px', fontWeight: 700, color: '#BE123C', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Rejected</div>
-              <div style={{ fontSize: '24px', fontWeight: 800, color: '#9F1239', fontFamily: 'Outfit, sans-serif' }}>
-                {leaveRequests.filter(l => (l.status || '').toLowerCase() === 'rejected').length}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Filter and Search Bar */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap', background: '#FFFFFF', padding: '14px 18px', borderRadius: '14px', border: '1px solid #E2E8F0' }}>
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-            {['All', 'Pending', 'Approved', 'Rejected'].map(st => (
-              <button
-                key={st}
-                type="button"
-                onClick={() => setLeaveFilterStatus(st)}
-                style={{
-                  padding: '7px 16px',
-                  borderRadius: '10px',
-                  border: '1px solid',
-                  borderColor: leaveFilterStatus === st ? '#0F172A' : '#E2E8F0',
-                  background: leaveFilterStatus === st ? '#0F172A' : '#F8FAFC',
-                  color: leaveFilterStatus === st ? '#FFFFFF' : '#475569',
-                  fontWeight: 700,
-                  fontSize: '13px',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease'
-                }}
-              >
-                {st === 'All' ? 'All Requests' : st}
-                {st === 'Pending' && pendingLeavesCount > 0 && ` (${pendingLeavesCount})`}
-              </button>
-            ))}
-          </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, maxWidth: '360px', minWidth: '240px' }}>
-            <input
-              type="text"
-              placeholder="Search coach, leave type, reason..."
-              value={leaveSearch}
-              onChange={(e) => setLeaveSearch(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '9px 14px',
-                borderRadius: '10px',
-                border: '1.5px solid #CBD5E1',
-                fontSize: '13.5px',
-                outline: 'none',
-                fontFamily: 'inherit'
-              }}
-            />
-            <button
-              type="button"
-              onClick={fetchLeaveRequests}
-              style={{
-                padding: '9px 14px',
-                borderRadius: '10px',
-                border: '1px solid #CBD5E1',
-                background: '#F8FAFC',
-                cursor: 'pointer',
-                fontSize: '13px',
-                fontWeight: 600,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px'
-              }}
-              title="Refresh leave requests"
-            >
-              🔄
-            </button>
-          </div>
-        </div>
-
-        {/* Leave Requests Cards List */}
-        {leaveLoading ? (
-          <div className="db-loading"><div className="db-spinner" /></div>
-        ) : filteredLeaves.length === 0 ? (
-          <div style={{ background: '#FFFFFF', border: '1px dashed #CBD5E1', borderRadius: '16px', padding: '60px 20px', textAlign: 'center', color: '#64748B' }}>
-            <div style={{ fontSize: '48px', marginBottom: '12px' }}>🏖️</div>
-            <h3 style={{ margin: '0 0 6px 0', color: '#0F172A', fontSize: '18px', fontWeight: 700 }}>No Leave Requests Found</h3>
-            <p style={{ margin: 0, fontSize: '13.5px' }}>
-              {leaveFilterStatus !== 'All' ? `No ${leaveFilterStatus.toLowerCase()} requests match your filter.` : "Instructors from your school haven't submitted any leave requests yet."}
-            </p>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-            {filteredLeaves.map(leave => {
-              const isPending = (leave.status || '').toLowerCase() === 'pending';
-              const isApproved = (leave.status || '').toLowerCase() === 'approved';
-              const isRejected = (leave.status || '').toLowerCase() === 'rejected';
-
-              return (
+                {/* 1. Month Navigation & View Toggle Bar */}
                 <div
-                  key={leave.id}
                   style={{
-                    background: '#FFFFFF',
-                    border: '1px solid',
-                    borderColor: isPending ? '#FDE68A' : (isApproved ? '#A7F3D0' : '#E2E8F0'),
-                    borderRadius: '16px',
-                    padding: '20px 24px',
                     display: 'flex',
-                    flexDirection: 'column',
-                    gap: '14px',
-                    boxShadow: '0 2px 10px rgba(0,0,0,0.03)',
-                    transition: 'all 0.2s ease'
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    flexWrap: 'wrap',
+                    gap: '12px',
+                    backgroundColor: '#FFFFFF',
+                    padding: '14px 18px',
+                    borderRadius: '16px',
+                    border: '1px solid #E2E8F0',
+                    boxShadow: '0 2px 6px rgba(0,0,0,0.02)'
                   }}
                 >
-                  {/* Top Row: Coach Info + Leave Type + Status */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                      {leave.instructor_avatar ? (
-                        <img
-                          src={leave.instructor_avatar}
-                          alt={leave.instructor_name}
-                          style={{ width: '48px', height: '48px', borderRadius: '24px', objectFit: 'cover' }}
-                        />
+                  {/* Month Navigation */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <button
+                      type="button"
+                      onClick={handlePrevMonth}
+                      title="Previous Month"
+                      style={{
+                        padding: '8px 14px',
+                        borderRadius: '10px',
+                        border: '1px solid #CBD5E1',
+                        background: '#F8FAFC',
+                        color: '#334155',
+                        fontWeight: 700,
+                        fontSize: '13px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        transition: 'all 0.15s'
+                      }}
+                    >
+                      ◀ Prev
+                    </button>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '18px', fontWeight: 800, color: '#0F172A', fontFamily: 'Outfit, sans-serif' }}>
+                        {MONTH_NAMES[selectedMonth]} {selectedYear}
+                      </span>
+                      {isCurrentMonth ? (
+                        <span
+                          style={{
+                            background: '#DCFCE7',
+                            color: '#15803D',
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            padding: '3px 8px',
+                            borderRadius: '12px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}
+                        >
+                          <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#16A34A' }} />
+                          Current Month
+                        </span>
                       ) : (
-                        <div style={{ width: '48px', height: '48px', borderRadius: '24px', background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)', color: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', fontWeight: 800 }}>
-                          {(leave.instructor_name || 'C')[0].toUpperCase()}
-                        </div>
+                        <button
+                          type="button"
+                          onClick={handleCurrentMonth}
+                          style={{
+                            background: '#F1F5F9',
+                            color: '#0F766E',
+                            border: '1px solid #CCFBF1',
+                            fontSize: '11.5px',
+                            fontWeight: 700,
+                            padding: '4px 10px',
+                            borderRadius: '10px',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}
+                        >
+                          📍 Jump to Current Month
+                        </button>
                       )}
-
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <h3
-                            onClick={() => navigate(`/instructors/${leave.instructor_id}`)}
-                            style={{ margin: 0, fontSize: '16px', fontWeight: 800, color: '#0F172A', cursor: 'pointer', textDecoration: 'none' }}
-                            title="Click to view coach profile"
-                          >
-                            {leave.instructor_name}
-                          </h3>
-                          <span style={{ fontSize: '11px', background: '#F1F5F9', color: '#475569', padding: '2px 8px', borderRadius: '10px', fontWeight: 600 }}>
-                            {leave.school || 'Freelance Coach'}
-                          </span>
-                        </div>
-                        <p style={{ margin: '2px 0 0 0', fontSize: '12.5px', color: '#64748B' }}>
-                          {leave.instructor_email || 'Coach'} • Applied on {leave.created_at || 'Recently'}
-                        </p>
-                      </div>
                     </div>
 
-                    {/* Status & Type Pills */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span
-                        style={{
-                          padding: '5px 12px',
-                          borderRadius: '20px',
-                          fontSize: '12px',
-                          fontWeight: 700,
-                          background: '#F0FDF4',
-                          color: '#15803D',
-                          border: '1px solid #BBF7D0'
-                        }}
-                      >
-                        {leave.leave_type}
-                      </span>
-
-                      <span
-                        style={{
-                          padding: '5px 14px',
-                          borderRadius: '20px',
-                          fontSize: '12px',
-                          fontWeight: 800,
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '5px',
-                          background: isApproved ? '#DCFCE7' : (isRejected ? '#FEE2E2' : '#FEF3C7'),
-                          color: isApproved ? '#15803D' : (isRejected ? '#B91C1C' : '#B45309'),
-                          border: '1px solid',
-                          borderColor: isApproved ? '#86EFAC' : (isRejected ? '#FCA5A5' : '#FCD34D')
-                        }}
-                      >
-                        {isApproved ? '✅ Approved' : (isRejected ? '❌ Rejected' : '⏳ Pending Review')}
-                      </span>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={handleNextMonth}
+                      title="Next Month"
+                      style={{
+                        padding: '8px 14px',
+                        borderRadius: '10px',
+                        border: '1px solid #CBD5E1',
+                        background: '#F8FAFC',
+                        color: '#334155',
+                        fontWeight: 700,
+                        fontSize: '13px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        transition: 'all 0.15s'
+                      }}
+                    >
+                      Next ▶
+                    </button>
                   </div>
 
-                  {/* Middle Row: Date Range + Total Days + Reason */}
-                  <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '14px', background: '#F8FAFC', padding: '12px 16px', borderRadius: '12px', border: '1px solid #F1F5F9' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ fontSize: '16px' }}>📅</span>
-                      <div>
-                        <span style={{ fontSize: '11px', textTransform: 'uppercase', color: '#64748B', fontWeight: 700 }}>Leave Period</span>
-                        <div style={{ fontSize: '14px', fontWeight: 800, color: '#0F172A' }}>
-                          {leave.start_date} {leave.end_date && leave.end_date !== leave.start_date ? `➔ ${leave.end_date}` : ''}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div style={{ height: '24px', width: '1px', background: '#CBD5E1' }} />
-
-                    <div>
-                      <span style={{ fontSize: '11px', textTransform: 'uppercase', color: '#64748B', fontWeight: 700 }}>Total Duration</span>
-                      <div style={{ fontSize: '14px', fontWeight: 800, color: '#0D9488' }}>
-                        {leave.total_days} Day{leave.total_days > 1 ? 's' : ''}
-                      </div>
-                    </div>
-
-                    {leave.reason && (
-                      <>
-                        <div style={{ height: '24px', width: '1px', background: '#CBD5E1' }} />
-                        <div style={{ flex: 1, minWidth: '200px' }}>
-                          <span style={{ fontSize: '11px', textTransform: 'uppercase', color: '#64748B', fontWeight: 700 }}>Coach Reason / Notes</span>
-                          <div style={{ fontSize: '13px', color: '#334155', fontStyle: 'italic' }}>
-                            "{leave.reason}"
-                          </div>
-                        </div>
-                      </>
-                    )}
-                  </div>
-
-                  {/* Admin Remarks if present */}
-                  {leave.admin_notes && (
-                    <div style={{ padding: '8px 14px', background: 'rgba(13, 148, 136, 0.08)', borderRadius: '10px', border: '1px solid rgba(13, 148, 136, 0.2)', fontSize: '13px', color: '#0F766E' }}>
-                      <strong>Admin Feedback:</strong> {leave.admin_notes}
-                    </div>
-                  )}
-
-                  {/* Action Buttons Row: Direct 1-click Approve or Reject */}
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '10px', paddingTop: '4px' }}>
-                    {isPending ? (
-                      <>
-                        <button
-                          type="button"
-                          disabled={actionLoadingId === leave.id}
-                          onClick={() => handleUpdateLeaveStatus(leave.id, 'Rejected')}
-                          style={{
-                            padding: '8px 18px',
-                            borderRadius: '10px',
-                            border: '1.5px solid #FCA5A5',
-                            background: '#FFF',
-                            color: '#DC2626',
-                            fontWeight: 700,
-                            fontSize: '13px',
-                            cursor: actionLoadingId === leave.id ? 'not-allowed' : 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            transition: 'all 0.15s ease'
-                          }}
-                        >
-                          <span>{actionLoadingId === leave.id ? 'Rejecting...' : '❌ Reject'}</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          disabled={actionLoadingId === leave.id}
-                          onClick={() => handleUpdateLeaveStatus(leave.id, 'Approved')}
-                          style={{
-                            padding: '8px 20px',
-                            borderRadius: '10px',
-                            border: 'none',
-                            background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
-                            color: '#FFFFFF',
-                            fontWeight: 700,
-                            fontSize: '13px',
-                            cursor: actionLoadingId === leave.id ? 'not-allowed' : 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '6px',
-                            boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)',
-                            transition: 'all 0.15s ease'
-                          }}
-                        >
-                          <span>{actionLoadingId === leave.id ? 'Approving...' : '✓ Approve'}</span>
-                        </button>
-                      </>
-                    ) : (
+                  {/* View Mode Switcher + Refresh */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div style={{ display: 'inline-flex', background: '#F1F5F9', padding: '3px', borderRadius: '12px', border: '1px solid #E2E8F0' }}>
                       <button
                         type="button"
-                        disabled={actionLoadingId === leave.id}
-                        onClick={() => setChangeApprovalLeave(leave)}
+                        onClick={() => setLeaveViewMode('list')}
                         style={{
-                          padding: '7px 16px',
-                          borderRadius: '8px',
-                          border: '1.5px solid #CBD5E1',
-                          background: '#FFFFFF',
-                          color: '#334155',
+                          padding: '7px 15px',
+                          borderRadius: '9px',
+                          border: 'none',
+                          background: leaveViewMode === 'list' ? '#FFFFFF' : 'transparent',
+                          color: leaveViewMode === 'list' ? '#0F172A' : '#64748B',
+                          fontWeight: leaveViewMode === 'list' ? 800 : 600,
                           fontSize: '12.5px',
-                          fontWeight: 700,
                           cursor: 'pointer',
-                          display: 'inline-flex',
+                          boxShadow: leaveViewMode === 'list' ? '0 1px 4px rgba(0,0,0,0.08)' : 'none',
+                          display: 'flex',
                           alignItems: 'center',
                           gap: '6px',
-                          boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-                          transition: 'all 0.15s ease'
+                          transition: 'all 0.15s'
                         }}
                       >
-                        <span>✏️ Change Approval</span>
+                        <span>📋</span>
+                        <span>List View ({currentMonthLeaves.length})</span>
                       </button>
-                    )}
+                      <button
+                        type="button"
+                        onClick={() => setLeaveViewMode(prev => prev === 'calendar' ? 'list' : 'calendar')}
+                        style={{
+                          padding: '7px 15px',
+                          borderRadius: '9px',
+                          border: 'none',
+                          background: leaveViewMode === 'calendar' ? '#0D9488' : 'transparent',
+                          color: leaveViewMode === 'calendar' ? '#FFFFFF' : '#64748B',
+                          fontWeight: leaveViewMode === 'calendar' ? 800 : 600,
+                          fontSize: '12.5px',
+                          cursor: 'pointer',
+                          boxShadow: leaveViewMode === 'calendar' ? '0 2px 6px rgba(13, 148, 136, 0.3)' : 'none',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          transition: 'all 0.15s'
+                        }}
+                      >
+                        <span>📅</span>
+                        <span>{leaveViewMode === 'calendar' ? '✕ Close Calendar' : 'Open Calendar'}</span>
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={fetchLeaveRequests}
+                      style={{
+                        padding: '8px 12px',
+                        borderRadius: '10px',
+                        border: '1px solid #CBD5E1',
+                        background: '#FFFFFF',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        color: '#475569',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px'
+                      }}
+                      title="Refresh leaves"
+                    >
+                      🔄
+                    </button>
                   </div>
                 </div>
-              );
-            })}
-            </div>
-          )}
+
+                {/* 2. Month Metric Summary Cards */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '14px' }}>
+                  <div style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '14px', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'rgba(15, 23, 42, 0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>
+                      📋
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{MONTH_NAMES[selectedMonth]} Total</div>
+                      <div style={{ fontSize: '22px', fontWeight: 800, color: '#0F172A', fontFamily: 'Outfit, sans-serif' }}>{currentMonthLeaves.length}</div>
+                    </div>
+                  </div>
+
+                  <div style={{ background: '#FFFFFF', border: '1px solid #FDE68A', borderRadius: '14px', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: '#FEF3C7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', color: '#D97706' }}>
+                      ⏳
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', fontWeight: 700, color: '#D97706', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Pending Review</div>
+                      <div style={{ fontSize: '22px', fontWeight: 800, color: '#B45309', fontFamily: 'Outfit, sans-serif' }}>{pendingLeavesCount}</div>
+                    </div>
+                  </div>
+
+                  <div style={{ background: '#FFFFFF', border: '1px solid #A7F3D0', borderRadius: '14px', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: '#DCFCE7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', color: '#10B981' }}>
+                      ✅
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', fontWeight: 700, color: '#15803D', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Approved</div>
+                      <div style={{ fontSize: '22px', fontWeight: 800, color: '#166534', fontFamily: 'Outfit, sans-serif' }}>{monthApprovedCount}</div>
+                    </div>
+                  </div>
+
+                  <div style={{ background: '#FFFFFF', border: '1px solid #FECDD3', borderRadius: '14px', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: '#FFE4E6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', color: '#F43F5E' }}>
+                      ❌
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '11px', fontWeight: 700, color: '#BE123C', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Rejected</div>
+                      <div style={{ fontSize: '22px', fontWeight: 800, color: '#9F1239', fontFamily: 'Outfit, sans-serif' }}>{monthRejectedCount}</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. CALENDAR VIEW MODE */}
+                {leaveViewMode === 'calendar' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', flex: 1, minHeight: 0 }}>
+                    {/* Calendar Grid Container */}
+                    <div
+                      style={{
+                        backgroundColor: '#FFFFFF',
+                        border: '1px solid #E2E8F0',
+                        borderRadius: '18px',
+                        padding: '18px',
+                        boxShadow: '0 2px 10px rgba(0,0,0,0.02)'
+                      }}
+                    >
+                      {/* Calendar Header with Close Button */}
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          marginBottom: '14px',
+                          paddingBottom: '10px',
+                          borderBottom: '1px solid #F1F5F9'
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontSize: '13.5px', fontWeight: 800, color: '#0F172A' }}>
+                            📅 Monthly Calendar Schedule
+                          </span>
+                          <span style={{ fontSize: '12px', color: '#64748B' }}>
+                            (Click any day cell to view or filter coaches)
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setLeaveViewMode('list')}
+                          style={{
+                            padding: '6px 14px',
+                            borderRadius: '9px',
+                            border: '1px solid #CBD5E1',
+                            background: '#F8FAFC',
+                            color: '#475569',
+                            fontWeight: 700,
+                            fontSize: '12px',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            transition: 'all 0.15s'
+                          }}
+                        >
+                          ✕ Close Calendar
+                        </button>
+                      </div>
+
+                      {/* Days of Week Header */}
+                      <div
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(7, 1fr)',
+                          gap: '6px',
+                          marginBottom: '8px',
+                          textAlign: 'center'
+                        }}
+                      >
+                        {DAYS_OF_WEEK.map(d => (
+                          <div
+                            key={d}
+                            style={{
+                              padding: '8px 4px',
+                              fontSize: '12px',
+                              fontWeight: 800,
+                              color: '#64748B',
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.05em'
+                            }}
+                          >
+                            {d}
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* 7-Column Day Grid */}
+                      <div
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(7, 1fr)',
+                          gap: '6px'
+                        }}
+                      >
+                        {calendarCells.map((cell, idx) => {
+                          const isSelected = selectedCalendarDate === cell.dateStr;
+                          const hasLeaves = cell.leaves && cell.leaves.length > 0;
+
+                          return (
+                            <div
+                              key={`${cell.dateStr}-${idx}`}
+                              onClick={() => {
+                                setSelectedCalendarDate(isSelected ? null : cell.dateStr);
+                              }}
+                              style={{
+                                minHeight: '76px',
+                                padding: '8px 7px',
+                                borderRadius: '12px',
+                                border: isSelected
+                                  ? '2px solid #0D9488'
+                                  : (cell.isToday ? '1.5px solid #0D9488' : '1px solid #E2E8F0'),
+                                backgroundColor: isSelected
+                                  ? '#F0FDFA'
+                                  : (cell.isCurrentMonth ? '#FFFFFF' : '#F8FAFC'),
+                                opacity: cell.isCurrentMonth ? 1 : 0.5,
+                                cursor: 'pointer',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '4px',
+                                transition: 'all 0.15s ease',
+                                boxShadow: isSelected ? '0 0 0 3px rgba(13, 148, 136, 0.15)' : 'none'
+                              }}
+                              onMouseEnter={(e) => {
+                                if (!isSelected) {
+                                  e.currentTarget.style.borderColor = '#94A3B8';
+                                  e.currentTarget.style.backgroundColor = '#F8FAFC';
+                                }
+                              }}
+                              onMouseLeave={(e) => {
+                                if (!isSelected) {
+                                  e.currentTarget.style.borderColor = cell.isToday ? '#0D9488' : '#E2E8F0';
+                                  e.currentTarget.style.backgroundColor = cell.isCurrentMonth ? '#FFFFFF' : '#F8FAFC';
+                                }
+                              }}
+                            >
+                              {/* Day Number and Today Indicator */}
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <span
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    width: cell.isToday ? '24px' : 'auto',
+                                    height: cell.isToday ? '24px' : 'auto',
+                                    borderRadius: cell.isToday ? '50%' : '0',
+                                    backgroundColor: cell.isToday ? '#0D9488' : 'transparent',
+                                    color: cell.isToday ? '#FFFFFF' : (cell.isCurrentMonth ? '#0F172A' : '#94A3B8'),
+                                    fontWeight: cell.isToday ? 800 : (cell.isCurrentMonth ? 700 : 500),
+                                    fontSize: '13px'
+                                  }}
+                                >
+                                  {cell.dayNum}
+                                </span>
+
+                                {hasLeaves && (
+                                  <span
+                                    style={{
+                                      fontSize: '10px',
+                                      fontWeight: 800,
+                                      padding: '1px 5px',
+                                      borderRadius: '6px',
+                                      background: '#0F172A',
+                                      color: '#FFFFFF'
+                                    }}
+                                  >
+                                    {cell.leaves.length}
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Leave Chips inside Day */}
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', marginTop: '2px', overflow: 'hidden' }}>
+                                {cell.leaves.slice(0, 2).map((l, lIdx) => {
+                                  const st = (l.status || '').toLowerCase();
+                                  const isApp = st === 'approved';
+                                  const isRej = st === 'rejected';
+
+                                  return (
+                                    <div
+                                      key={`${l.id}-${lIdx}`}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setChangeApprovalLeave(l);
+                                      }}
+                                      title={`${l.instructor_name || 'Coach'} (${l.leave_type}) - Click to manage`}
+                                      style={{
+                                        fontSize: '10.5px',
+                                        fontWeight: 700,
+                                        padding: '2px 5px',
+                                        borderRadius: '6px',
+                                        whiteSpace: 'nowrap',
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                        cursor: 'pointer',
+                                        background: isApp ? '#DCFCE7' : (isRej ? '#FEE2E2' : '#FEF3C7'),
+                                        color: isApp ? '#15803D' : (isRej ? '#991B1B' : '#B45309'),
+                                        border: `1px solid ${isApp ? '#BBF7D0' : (isRej ? '#FECDD3' : '#FDE68A')}`,
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '3px'
+                                      }}
+                                    >
+                                      <span>{isApp ? '✓' : (isRej ? '✕' : '⏳')}</span>
+                                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                        {(l.instructor_name || 'Coach').split(' ')[0]}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
+
+                                {cell.leaves.length > 2 && (
+                                  <div
+                                    style={{
+                                      fontSize: '9.5px',
+                                      color: '#64748B',
+                                      fontWeight: 700,
+                                      textAlign: 'center',
+                                      padding: '1px'
+                                    }}
+                                  >
+                                    +{cell.leaves.length - 2} more
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Section Below Calendar: Selected Day or Month Full List */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          flexWrap: 'wrap',
+                          gap: '10px'
+                        }}
+                      >
+                        <div>
+                          {selectedCalendarDate ? (
+                            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 800, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span>📅 Leaves for {selectedCalendarDate}</span>
+                              <span style={{ fontSize: '13px', background: '#E2E8F0', padding: '2px 8px', borderRadius: '10px', color: '#334155' }}>
+                                {calendarCells.find(c => c.dateStr === selectedCalendarDate)?.leaves?.length || 0} found
+                              </span>
+                            </h3>
+                          ) : (
+                            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 800, color: '#0F172A' }}>
+                              All Requests in {MONTH_NAMES[selectedMonth]} {selectedYear} ({currentMonthLeaves.length})
+                            </h3>
+                          )}
+                          <p style={{ margin: '2px 0 0 0', fontSize: '12.5px', color: '#64748B' }}>
+                            {selectedCalendarDate
+                              ? 'Showing leaves active on this specific date. Click "Show All" to view entire month.'
+                              : 'Select any day on the calendar above to inspect coaches on leave.'}
+                          </p>
+                        </div>
+
+                        {selectedCalendarDate && (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedCalendarDate(null)}
+                            style={{
+                              padding: '6px 12px',
+                              borderRadius: '8px',
+                              border: '1px solid #CBD5E1',
+                              background: '#FFFFFF',
+                              color: '#475569',
+                              fontSize: '12px',
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            ✕ Show All {MONTH_NAMES[selectedMonth]} Requests
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Leaves Rendering for Calendar View */}
+                      {leaveLoading ? (
+                        <div className="db-loading"><div className="db-spinner" /></div>
+                      ) : selectedCalendarDate ? (
+                        (() => {
+                          const dayLeaves = calendarCells.find(c => c.dateStr === selectedCalendarDate)?.leaves || [];
+                          if (dayLeaves.length === 0) {
+                            return (
+                              <div style={{ background: '#FFFFFF', border: '1px dashed #CBD5E1', borderRadius: '14px', padding: '36px 20px', textAlign: 'center', color: '#64748B' }}>
+                                <div style={{ fontSize: '32px', marginBottom: '8px' }}>🏖️</div>
+                                <h4 style={{ margin: '0 0 4px 0', color: '#0F172A', fontSize: '15px', fontWeight: 700 }}>No Leaves on {selectedCalendarDate}</h4>
+                                <p style={{ margin: 0, fontSize: '13px' }}>All coaches are available on this date.</p>
+                              </div>
+                            );
+                          }
+                          return (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                              {dayLeaves.map(leave => renderLeaveCard(leave))}
+                            </div>
+                          );
+                        })()
+                      ) : currentMonthLeaves.length === 0 ? (
+                        <div style={{ background: '#FFFFFF', border: '1px dashed #CBD5E1', borderRadius: '14px', padding: '40px 20px', textAlign: 'center', color: '#64748B' }}>
+                          <div style={{ fontSize: '36px', marginBottom: '8px' }}>🏖️</div>
+                          <h4 style={{ margin: '0 0 4px 0', color: '#0F172A', fontSize: '16px', fontWeight: 700 }}>No Leaves in {MONTH_NAMES[selectedMonth]} {selectedYear}</h4>
+                          <p style={{ margin: 0, fontSize: '13px' }}>No coach leave applications recorded for this month. Use ◀ / ▶ to browse other months.</p>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                          {currentMonthLeaves.map(leave => renderLeaveCard(leave))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* 4. LIST VIEW MODE */}
+                {leaveViewMode === 'list' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', flex: 1, minHeight: 0 }}>
+                    {/* Filter and Search Bar */}
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: '14px',
+                        flexWrap: 'wrap',
+                        background: '#FFFFFF',
+                        padding: '12px 16px',
+                        borderRadius: '14px',
+                        border: '1px solid #E2E8F0'
+                      }}
+                    >
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                        {['All', 'Pending', 'Approved', 'Rejected'].map(st => (
+                          <button
+                            key={st}
+                            type="button"
+                            onClick={() => setLeaveFilterStatus(st)}
+                            style={{
+                              padding: '7px 14px',
+                              borderRadius: '10px',
+                              border: '1px solid',
+                              borderColor: leaveFilterStatus === st ? '#0F172A' : '#E2E8F0',
+                              background: leaveFilterStatus === st ? '#0F172A' : '#F8FAFC',
+                              color: leaveFilterStatus === st ? '#FFFFFF' : '#475569',
+                              fontWeight: 700,
+                              fontSize: '12.5px',
+                              cursor: 'pointer',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            {st === 'All' ? `All (${currentMonthLeaves.length})` : st}
+                            {st === 'Pending' && pendingLeavesCount > 0 && ` (${pendingLeavesCount})`}
+                            {st === 'Approved' && monthApprovedCount > 0 && ` (${monthApprovedCount})`}
+                            {st === 'Rejected' && monthRejectedCount > 0 && ` (${monthRejectedCount})`}
+                          </button>
+                        ))}
+
+                        {/* Open Calendar button directly in toolbar */}
+                        <button
+                          type="button"
+                          onClick={() => setLeaveViewMode('calendar')}
+                          style={{
+                            padding: '7px 14px',
+                            borderRadius: '10px',
+                            border: '1.5px solid #0D9488',
+                            background: '#F0FDFA',
+                            color: '#0F766E',
+                            fontWeight: 700,
+                            fontSize: '12.5px',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '5px',
+                            boxShadow: '0 1px 3px rgba(13, 148, 136, 0.1)',
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          <span>📅</span>
+                          <span>Open Calendar</span>
+                        </button>
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1, maxWidth: '340px', minWidth: '220px' }}>
+                        <input
+                          type="text"
+                          placeholder="Search coach, leave type, reason..."
+                          value={leaveSearch}
+                          onChange={(e) => setLeaveSearch(e.target.value)}
+                          style={{
+                            width: '100%',
+                            padding: '8px 12px',
+                            borderRadius: '10px',
+                            border: '1.5px solid #CBD5E1',
+                            fontSize: '13px',
+                            outline: 'none',
+                            fontFamily: 'inherit'
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* List Content */}
+                    {leaveLoading ? (
+                      <div className="db-loading"><div className="db-spinner" /></div>
+                    ) : filteredLeaves.length === 0 ? (
+                      <div style={{
+                        background: '#FFFFFF',
+                        border: '1px dashed #CBD5E1',
+                        borderRadius: '16px',
+                        padding: '40px 20px',
+                        textAlign: 'center',
+                        color: '#64748B',
+                        flex: 1,
+                        minHeight: '260px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}>
+                        <div style={{ fontSize: '42px', marginBottom: '10px' }}>🏖️</div>
+                        <h4 style={{ margin: '0 0 6px 0', color: '#0F172A', fontSize: '17px', fontWeight: 700 }}>No Requests Found</h4>
+                        <p style={{ margin: 0, fontSize: '13px' }}>
+                          {leaveFilterStatus !== 'All'
+                            ? `No ${leaveFilterStatus.toLowerCase()} requests in ${MONTH_NAMES[selectedMonth]} ${selectedYear}.`
+                            : `No leave applications recorded in ${MONTH_NAMES[selectedMonth]} ${selectedYear}.`}
+                        </p>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        {filteredLeaves.map(leave => renderLeaveCard(leave))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </div>

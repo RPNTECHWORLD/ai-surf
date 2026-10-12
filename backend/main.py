@@ -8,7 +8,7 @@ import os
 import uuid
 # pyrefly: ignore [missing-import]
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Union, Any
 from datetime import datetime, date
 import json
 import boto3
@@ -31,6 +31,11 @@ if DATABASE_URL.startswith("postgres://"):
 
 try:
     if DATABASE_URL.startswith("sqlite"):
+        if "sqlite:///" in DATABASE_URL:
+            db_path = DATABASE_URL.replace("sqlite:///", "")
+            if not os.path.isabs(db_path):
+                abs_db = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), db_path))
+                DATABASE_URL = f"sqlite:///{abs_db.replace(os.sep, '/')}"
         engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
     else:
         if "amazonaws.com" in DATABASE_URL:
@@ -1283,6 +1288,7 @@ class InstructorCreate(BaseModel):
     fitness_level: str = "Elite"
     experience: str = "2 Years"
     certifications: List[str] = []
+    languages: Optional[Any] = ["English"]
     image: Optional[str] = ""
     school: Optional[str] = "Individual / Freelance Coach"
     location: Optional[str] = ""
@@ -1297,6 +1303,7 @@ class StudentCreate(BaseModel):
     last_active: Optional[str] = "Today"
     dob: Optional[str] = ""
     age: Optional[int] = None
+    gender: Optional[str] = "Male"
     whatsapp_number: Optional[str] = ""
     guests_count: Optional[int] = 0
     course_duration: Optional[str] = "3 Days Course"
@@ -1473,6 +1480,7 @@ class InstructorUpdate(BaseModel):
     rates: Optional[str] = None
     location: Optional[str] = None
     certifications: Optional[List[str]] = None
+    languages: Optional[Any] = None
     image: Optional[str] = None
     school: Optional[str] = None
 
@@ -1623,6 +1631,24 @@ def instructor_to_dict(i: Instructor, target_date: Optional[str] = None):
     except Exception:
         pass
 
+    raw_langs = getattr(i, 'languages', None)
+    langs_list = []
+    if raw_langs:
+        try:
+            if isinstance(raw_langs, str):
+                trimmed = raw_langs.strip()
+                if trimmed.startswith('[') and trimmed.endswith(']'):
+                    parsed = json.loads(trimmed)
+                    langs_list = parsed if isinstance(parsed, list) else [parsed]
+                else:
+                    langs_list = [l.strip() for l in trimmed.split(',') if l.strip()]
+            elif isinstance(raw_langs, list):
+                langs_list = raw_langs
+        except Exception:
+            langs_list = [raw_langs] if isinstance(raw_langs, str) else []
+    if not langs_list:
+        langs_list = ["English"]
+
     return {
         "id": i.id,
         "name": i.name,
@@ -1634,6 +1660,7 @@ def instructor_to_dict(i: Instructor, target_date: Optional[str] = None):
         "fitness_level": i.fitness_level,
         "experience": i.experience,
         "certifications": json.loads(i.certifications) if i.certifications else [],
+        "languages": langs_list,
         "image": safe_img,
         "bio": i.bio or "",
         "specializations": json.loads(i.specializations) if i.specializations else [],
@@ -2598,58 +2625,6 @@ def student_leave_school(student_id: int, db: OrmSession = Depends(get_db)):
     return {"status": "success", "school": "", "approval_status": "approved"}
 
 
-@app.put("/api/instructors/{instructor_id}")
-def update_instructor(instructor_id: int, data: InstructorUpdate, db: OrmSession = Depends(get_db)):
-    instructor = db.query(Instructor).filter(Instructor.id == instructor_id).first()
-    if not instructor:
-        raise HTTPException(status_code=404, detail="Instructor not found")
-
-    if data.name is not None:
-        instructor.name = data.name
-    if data.email is not None:
-        instructor.email = data.email
-    if data.phone is not None:
-        instructor.phone = data.phone.strip()
-    if data.dob is not None:
-        instructor.dob = data.dob
-        if data.age is None and data.dob.strip():
-            try:
-                from datetime import date
-                dob_dt = date.fromisoformat(data.dob.strip())
-                today = date.today()
-                calc_age = today.year - dob_dt.year - ((today.month, today.day) < (dob_dt.month, dob_dt.day))
-                if 0 < calc_age < 120:
-                    instructor.age = calc_age
-            except Exception:
-                pass
-    if data.age is not None:
-        instructor.age = data.age
-    if data.gender is not None:
-        instructor.gender = data.gender
-    if data.bio is not None:
-        instructor.bio = data.bio
-    if data.experience is not None:
-        instructor.experience = data.experience
-    if data.fitness_level is not None:
-        instructor.fitness_level = data.fitness_level
-    if data.specializations is not None:
-        instructor.specializations = json.dumps(data.specializations)
-    if data.rates is not None:
-        instructor.rates = data.rates
-    if data.location is not None:
-        instructor.location = data.location
-    if data.certifications is not None:
-        instructor.certifications = json.dumps(data.certifications)
-    if data.image is not None:
-        instructor.image = data.image
-    if data.school is not None:
-        instructor.school = data.school
-
-    db.commit()
-    db.refresh(instructor)
-    return instructor_to_dict(instructor)
-
-
 # ─── Logs Routes ──────────────────────────────────────────────────────────────
 
 @app.get("/api/students/{student_id}/logs/nutrition")
@@ -3428,6 +3403,15 @@ def create_instructor(data: InstructorCreate, request: Request, db: OrmSession =
     if not coach_location:
         coach_location = "Oahu, HI"
 
+    raw_langs = getattr(data, 'languages', None)
+    saved_langs = ["English"]
+    if isinstance(raw_langs, list) and len(raw_langs) > 0:
+        saved_langs = [str(l).strip() for l in raw_langs if str(l).strip()]
+    elif isinstance(raw_langs, str) and raw_langs.strip():
+        saved_langs = [l.strip() for l in raw_langs.split(',') if l.strip()]
+    if not saved_langs:
+        saved_langs = ["English"]
+
     instructor = Instructor(
         user_id=user_id,
         name=data.name,
@@ -3439,6 +3423,7 @@ def create_instructor(data: InstructorCreate, request: Request, db: OrmSession =
         fitness_level=data.fitness_level or "Elite",
         experience=data.experience or "2 Years",
         certifications=json.dumps(data.certifications),
+        languages=json.dumps(saved_langs),
         image=data.image or "",
         school=coach_school,
         location=coach_location,
@@ -3498,6 +3483,65 @@ def create_instructor(data: InstructorCreate, request: Request, db: OrmSession =
     return instructor_to_dict(instructor)
 
 
+@app.put("/api/instructors/{instructor_id}")
+def update_instructor(instructor_id: int, data: InstructorUpdate, db: OrmSession = Depends(get_db)):
+    i = db.query(Instructor).filter(
+        (Instructor.id == instructor_id) | (Instructor.user_id == instructor_id)
+    ).first()
+    if not i:
+        raise HTTPException(status_code=404, detail="Instructor not found")
+
+    if data.name is not None:
+        i.name = data.name.strip()
+    if data.email is not None:
+        i.email = data.email.strip().lower()
+        if i.user_rel:
+            i.user_rel.email = data.email.strip().lower()
+    if data.phone is not None:
+        i.phone = data.phone.strip()
+    if data.dob is not None:
+        i.dob = data.dob.strip()
+        c_age = calculate_age_from_dob(data.dob)
+        if c_age is not None:
+            i.age = c_age
+    if data.age is not None:
+        i.age = data.age
+    if data.gender is not None:
+        i.gender = data.gender
+    if data.fitness_level is not None:
+        i.fitness_level = data.fitness_level
+    if data.experience is not None:
+        i.experience = data.experience
+    if data.bio is not None:
+        i.bio = data.bio
+    if data.rates is not None:
+        i.rates = data.rates
+    if data.location is not None:
+        i.location = data.location
+    if data.school is not None:
+        i.school = data.school
+    if data.image is not None:
+        i.image = data.image
+    if data.certifications is not None:
+        i.certifications = json.dumps(data.certifications)
+    if data.specializations is not None:
+        i.specializations = json.dumps(data.specializations)
+    if data.languages is not None:
+        langs_val = data.languages
+        parsed_langs = ["English"]
+        if isinstance(langs_val, list):
+            parsed_langs = [str(l).strip() for l in langs_val if str(l).strip()]
+        elif isinstance(langs_val, str) and langs_val.strip():
+            parsed_langs = [l.strip() for l in langs_val.split(',') if l.strip()]
+        if not parsed_langs:
+            parsed_langs = ["English"]
+        i.languages = json.dumps(parsed_langs)
+
+    db.commit()
+    db.refresh(i)
+    return instructor_to_dict(i)
+
+
 @app.delete("/api/instructors/{instructor_id}")
 def delete_instructor(instructor_id: int, db: OrmSession = Depends(get_db)):
     # Resolve instructor record (by Instructor.id or Instructor.user_id)
@@ -3513,50 +3557,55 @@ def delete_instructor(instructor_id: int, db: OrmSession = Depends(get_db)):
 
     try:
         if i:
+            target_user_id = i.user_id
+            coach_id = i.id
+
             # 1. Unlink all students assigned to this coach (do NOT delete students)
-            db.query(Student).filter(Student.instructor_id == i.id).update(
-                {"instructor_id": None}, synchronize_session="fetch"
+            db.query(Student).filter(Student.instructor_id == coach_id).update(
+                {"instructor_id": None}, synchronize_session=False
             )
 
-            # 2. Delete attendance records linked to this coach's sessions
-            coach_session_ids = [
-                s.id for s in db.query(SurfSession).filter(SurfSession.instructor_id == i.id).all()
-            ]
-            if coach_session_ids:
-                db.query(AttendanceRecord).filter(
-                    AttendanceRecord.student_id.in_(
-                        db.query(SurfSession.student_id).filter(SurfSession.instructor_id == i.id)
-                    )
-                ).delete(synchronize_session="fetch")
 
             # 3. Delete sessions belonging to this coach
-            db.query(SurfSession).filter(SurfSession.instructor_id == i.id).delete(
-                synchronize_session="fetch"
+            db.query(SurfSession).filter(SurfSession.instructor_id == coach_id).delete(
+                synchronize_session=False
             )
 
-            # 4. Delete mock heat participants first (FK constraint), then mock heats
-            coach_heat_ids = [
-                h.id for h in db.query(MockHeat).filter(MockHeat.coach_id == i.id).all()
-            ]
-            if coach_heat_ids:
-                db.execute(
-                    __import__("sqlalchemy").text(
-                        "DELETE FROM mock_heat_participants WHERE mock_heat_id = ANY(:ids)"
-                    ),
-                    {"ids": coach_heat_ids}
-                )
-            db.query(MockHeat).filter(MockHeat.coach_id == i.id).delete(
-                synchronize_session="fetch"
-            )
+            # 4. Delete mock heat waves and mock heats
+            try:
+                coach_heat_ids = [h.id for h in db.query(MockHeat).filter(MockHeat.coach_id == coach_id).all()]
+                if coach_heat_ids:
+                    db.query(MockHeatWave).filter(MockHeatWave.mock_heat_id.in_(coach_heat_ids)).delete(synchronize_session=False)
+                    try:
+                        from sqlalchemy import text
+                        db.execute(text("DELETE FROM mock_heat_participants WHERE heat_id IN :ids"), {"ids": tuple(coach_heat_ids)})
+                    except Exception:
+                        pass
+                    db.query(MockHeat).filter(MockHeat.coach_id == coach_id).delete(synchronize_session=False)
+            except Exception:
+                pass
 
-            # 5. Delete linked user account
-            if i.user_id:
-                db.query(User).filter(User.id == i.user_id).delete(
-                    synchronize_session="fetch"
+            # 5. Delete instructor leaves
+            try:
+                db.query(InstructorLeave).filter(InstructorLeave.instructor_id == coach_id).delete(
+                    synchronize_session=False
                 )
+            except Exception:
+                pass
 
-            # 6. Delete the instructor record itself
+            # 6. Delete the instructor record itself FIRST (to release FK to users.id)
             db.delete(i)
+            db.flush()
+
+            # 7. Delete linked user account (after instructor is deleted)
+            if target_user_id:
+                try:
+                    db.query(User).filter(User.id == target_user_id).delete(
+                        synchronize_session=False
+                    )
+                except Exception as user_err:
+                    print(f"Warning: could not delete user {target_user_id}: {user_err}")
+
             db.commit()
             return {"message": "Instructor deleted successfully"}
 
@@ -3859,6 +3908,7 @@ def create_student(data: StudentCreate, request: Request, db: OrmSession = Depen
         last_active="Today",
         dob=data.dob or "",
         age=computed_age,
+        gender=data.gender or "Male",
         whatsapp_number=data.whatsapp_number or "",
         guests_count=len(data.guests_details) if data.guests_details else (data.guests_count or 0),
         course_duration=data.course_duration or "3 Days Course",

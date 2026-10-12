@@ -12,7 +12,7 @@ const DEFAULT_CLIPS = [
     startTime: 0, 
     duration: '0:15',
     url: 'https://assets.mixkit.co/videos/preview/mixkit-surfer-riding-a-wave-in-the-sea-39828-large.mp4', 
-    bg: 'https://images.unsplash.com/photo-1502680390469-be75c86b636f?auto=format&fit=crop&w=600&q=80',
+    bg: '',
     isSessionClip: true
   }
 ];
@@ -85,10 +85,22 @@ const captureVideoThumbnail = (videoUrl, seekTime = 1) => {
       resolve('');
       return;
     }
+    // Check cached thumbnail in localStorage first
+    try {
+      const cached = localStorage.getItem(`thumbnail_${encodeURIComponent(videoUrl)}`);
+      if (cached && cached.startsWith('data:image')) {
+        resolve(cached);
+        return;
+      }
+    } catch (e) {}
+
     try {
       const vid = document.createElement('video');
       vid.src = videoUrl;
-      vid.crossOrigin = 'anonymous';
+      // Do NOT set crossOrigin on blob or data URLs as it causes CORS errors in Chrome
+      if (!videoUrl.startsWith('blob:') && !videoUrl.startsWith('data:')) {
+        vid.crossOrigin = 'anonymous';
+      }
       vid.muted = true;
       vid.preload = 'auto';
 
@@ -100,6 +112,11 @@ const captureVideoThumbnail = (videoUrl, seekTime = 1) => {
             vid.removeAttribute('src');
             vid.load();
           } catch (e) {}
+          if (result && result.startsWith('data:image')) {
+            try {
+              localStorage.setItem(`thumbnail_${encodeURIComponent(videoUrl)}`, result);
+            } catch (e) {}
+          }
           resolve(result || '');
         }
       };
@@ -128,7 +145,7 @@ const captureVideoThumbnail = (videoUrl, seekTime = 1) => {
       }, { once: true });
 
       vid.addEventListener('error', () => finish(''), { once: true });
-      setTimeout(() => finish(''), 4000);
+      setTimeout(() => finish(''), 3500);
     } catch (err) {
       resolve('');
     }
@@ -212,6 +229,27 @@ const extractMultiClipThumbnails = (videoUrl) => {
   });
 };
 
+// Unique storage key helper to strictly isolate coach notes, strokes, and scores per video/session
+const getVideoStorageKey = (clip, studentName, sessionDate) => {
+  const url = clip?.url;
+  // If it's a valid permanent non-blob URL
+  if (url && typeof url === 'string' && !url.startsWith('blob:')) {
+    try {
+      const cleanUrl = url.trim().split('?')[0];
+      const filename = cleanUrl.split('/').pop();
+      if (filename && filename.length > 3) {
+        return `vid_${filename.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+      }
+    } catch (e) {}
+  }
+
+  // Robust session + date + clip ID fallback (works even if URL is blob or loading)
+  const cleanStudent = String(studentName || 'student').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+  const cleanDate = String(sessionDate || 'date').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+  const clipId = clip?.id || 1;
+  return `session_${cleanStudent}_${cleanDate}_clip_${clipId}`;
+};
+
 const VideoAnalysis = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -226,23 +264,11 @@ const VideoAnalysis = () => {
   const [isSurferDropdownOpen, setIsSurferDropdownOpen] = useState(false);
   const surferDropdownRef = useRef(null);
 
-  // Coach Scores state (starts at 0, fully editable by coach per surfer)
-  const [athleteScores, setAthleteScores] = useState(() => {
-    try {
-      const saved = localStorage.getItem(`coach_scores_${studentName}`);
-      if (saved) return JSON.parse(saved);
-    } catch (e) {}
-    return {};
-  });
+  // Coach Scores state (starts at 0, loaded dynamically per video)
+  const [athleteScores, setAthleteScores] = useState({});
 
-  // Coach Key Moments & Notes (drawings & timestamped notes)
-  const [coachMoments, setCoachMoments] = useState(() => {
-    try {
-      const saved = localStorage.getItem(`coach_moments_${studentName}`);
-      if (saved) return JSON.parse(saved);
-    } catch (e) {}
-    return [];
-  });
+  // Coach Key Moments & Notes (drawings & timestamped notes, loaded dynamically per video)
+  const [coachMoments, setCoachMoments] = useState([]);
 
   const [isAddingNote, setIsAddingNote] = useState(false);
   const [newNoteText, setNewNoteText] = useState('');
@@ -392,6 +418,103 @@ const VideoAnalysis = () => {
   const [isUploadingClip, setIsUploadingClip] = useState(false);
   const [targetClipIdForUpload, setTargetClipIdForUpload] = useState(null);
 
+  // Storage key strictly scoped to current video clip
+  const activeVideoKey = useMemo(() => {
+    return getVideoStorageKey(currentClip, studentName, sessionDate);
+  }, [currentClip?.url, currentClip?.id, studentName, sessionDate]);
+
+  // Session fallback key for cross-session safety
+  const sessionFallbackKey = useMemo(() => {
+    const cleanStudent = String(studentName || 'student').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+    const cleanDate = String(sessionDate || 'date').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+    return `session_${cleanStudent}_${cleanDate}_clip_${currentClip?.id || 1}`;
+  }, [studentName, sessionDate, currentClip?.id]);
+
+  // Filter moments strictly for the active clip & video
+  const clipMoments = useMemo(() => {
+    return coachMoments.filter(m => {
+      if (m.videoKey && m.videoKey !== activeVideoKey && m.videoKey !== sessionFallbackKey) return false;
+      if (m.clipUrl && currentClip?.url && m.clipUrl !== currentClip.url) return false;
+      if (m.clipId !== undefined && currentClip?.id !== undefined && m.clipId !== currentClip.id) return false;
+      return true;
+    });
+  }, [coachMoments, activeVideoKey, sessionFallbackKey, currentClip]);
+
+  // Synchronize Coach Moments, Canvas Strokes, and Athlete Scores strictly per video clip
+  useEffect(() => {
+    if (!activeVideoKey) return;
+
+    // 1. Load Coach Moments
+    try {
+      let saved = localStorage.getItem(`coach_moments_${activeVideoKey}`);
+      if (!saved && sessionFallbackKey !== activeVideoKey) {
+        saved = localStorage.getItem(`coach_moments_${sessionFallbackKey}`);
+      }
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setCoachMoments(Array.isArray(parsed) ? parsed : []);
+      } else {
+        // Safe one-time legacy migration ONLY for the specific 43-second video where moments were originally tested
+        if (activeVideoKey.includes('1ad3c5d4-510a-4885-aa4e-f4f4bc1d2e55')) {
+          const legacy = localStorage.getItem(`coach_moments_${studentName}`);
+          if (legacy) {
+            const parsed = JSON.parse(legacy);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setCoachMoments(parsed);
+              localStorage.setItem(`coach_moments_${activeVideoKey}`, JSON.stringify(parsed));
+            } else {
+              setCoachMoments([]);
+            }
+          } else {
+            setCoachMoments([]);
+          }
+        } else {
+          setCoachMoments([]);
+        }
+      }
+    } catch (e) {
+      setCoachMoments([]);
+    }
+
+    // 2. Load Strokes for canvas drawing
+    try {
+      let savedStrokes = localStorage.getItem(`coach_strokes_${activeVideoKey}`);
+      if (!savedStrokes && sessionFallbackKey !== activeVideoKey) {
+        savedStrokes = localStorage.getItem(`coach_strokes_${sessionFallbackKey}`);
+      }
+      if (savedStrokes) {
+        const parsedStrokes = JSON.parse(savedStrokes);
+        setStrokes(Array.isArray(parsedStrokes) ? parsedStrokes : []);
+      } else {
+        setStrokes([]);
+      }
+    } catch (e) {
+      setStrokes([]);
+    }
+
+    // 3. Load Athlete Scores
+    try {
+      let savedScores = localStorage.getItem(`coach_scores_${activeVideoKey}`);
+      if (!savedScores && sessionFallbackKey !== activeVideoKey) {
+        savedScores = localStorage.getItem(`coach_scores_${sessionFallbackKey}`);
+      }
+      if (savedScores) {
+        setAthleteScores(JSON.parse(savedScores) || {});
+      } else {
+        setAthleteScores({});
+      }
+    } catch (e) {
+      setAthleteScores({});
+    }
+
+    // Clear canvas when switching videos so previous drawings don't linger
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+  }, [activeVideoKey, sessionFallbackKey]);
+
   // Refs
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -399,6 +522,9 @@ const VideoAnalysis = () => {
   const fileInputRef = useRef(null);
   const targetFileInputRef = useRef(null);
   const addClipInputRef = useRef(null);
+  const customThumbInputRef = useRef(null);
+  const [thumbnailTargetClipId, setThumbnailTargetClipId] = useState(null);
+  const [thumbnailToast, setThumbnailToast] = useState('');
   const progressBarRef = useRef(null);
   const isScrubbingRef = useRef(false);
   const wasPlayingBeforeScrubRef = useRef(false);
@@ -407,6 +533,7 @@ const VideoAnalysis = () => {
 
   // Video Player Playback State
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isVideoLoading, setIsVideoLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
@@ -430,7 +557,10 @@ const VideoAnalysis = () => {
       nextScores.overall = Math.round((nextScores.takeoff + nextScores.positioning + nextScores.balance + nextScores.waveReading) / 4);
       const all = { ...prev, [activeSurferId]: nextScores };
       try {
-        localStorage.setItem(`coach_scores_${studentName}`, JSON.stringify(all));
+        localStorage.setItem(`coach_scores_${activeVideoKey}`, JSON.stringify(all));
+        if (sessionFallbackKey !== activeVideoKey) {
+          localStorage.setItem(`coach_scores_${sessionFallbackKey}`, JSON.stringify(all));
+        }
       } catch (e) {}
       return all;
     });
@@ -443,7 +573,10 @@ const VideoAnalysis = () => {
       const current = prev[activeSurferId] || { takeoff: 0, positioning: 0, balance: 0, waveReading: 0, overall: 0 };
       const all = { ...prev, [activeSurferId]: { ...current, overall: num } };
       try {
-        localStorage.setItem(`coach_scores_${studentName}`, JSON.stringify(all));
+        localStorage.setItem(`coach_scores_${activeVideoKey}`, JSON.stringify(all));
+        if (sessionFallbackKey !== activeVideoKey) {
+          localStorage.setItem(`coach_scores_${sessionFallbackKey}`, JSON.stringify(all));
+        }
       } catch (e) {}
       return all;
     });
@@ -457,6 +590,8 @@ const VideoAnalysis = () => {
     const newMoment = {
       id: `note_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
       clipId: currentClip.id,
+      clipUrl: currentClip.url || '',
+      videoKey: activeVideoKey,
       timestamp: timeSec,
       timestampFormatted: timeFormatted,
       title: newNoteText.trim(),
@@ -468,7 +603,10 @@ const VideoAnalysis = () => {
     setCoachMoments(prev => {
       const updated = [...prev, newMoment].sort((a, b) => a.timestamp - b.timestamp);
       try {
-        localStorage.setItem(`coach_moments_${studentName}`, JSON.stringify(updated));
+        localStorage.setItem(`coach_moments_${activeVideoKey}`, JSON.stringify(updated));
+        if (sessionFallbackKey !== activeVideoKey) {
+          localStorage.setItem(`coach_moments_${sessionFallbackKey}`, JSON.stringify(updated));
+        }
       } catch (e) {}
       return updated;
     });
@@ -476,16 +614,34 @@ const VideoAnalysis = () => {
     setIsAddingNote(false);
   };
 
-  // Delete a moment / note
+  // Delete a moment / note and its corresponding drawings
   const handleDeleteMoment = (momentId, e) => {
     if (e) e.stopPropagation();
+    const targetMoment = coachMoments.find(m => m.id === momentId);
     setCoachMoments(prev => {
       const updated = prev.filter(m => m.id !== momentId);
       try {
-        localStorage.setItem(`coach_moments_${studentName}`, JSON.stringify(updated));
+        localStorage.setItem(`coach_moments_${activeVideoKey}`, JSON.stringify(updated));
+        if (sessionFallbackKey !== activeVideoKey) {
+          localStorage.setItem(`coach_moments_${sessionFallbackKey}`, JSON.stringify(updated));
+        }
       } catch (e) {}
       return updated;
     });
+
+    if (targetMoment && targetMoment.type === 'drawing') {
+      setStrokes(prev => {
+        const nextStrokes = prev.filter(s => Math.abs((s.timestamp || 0) - targetMoment.timestamp) > 1.0);
+        try {
+          localStorage.setItem(`coach_strokes_${activeVideoKey}`, JSON.stringify(nextStrokes));
+          if (sessionFallbackKey !== activeVideoKey) {
+            localStorage.setItem(`coach_strokes_${sessionFallbackKey}`, JSON.stringify(nextStrokes));
+          }
+        } catch (e) {}
+        return nextStrokes;
+      });
+      setTimeout(() => redraw(), 30);
+    }
   };
 
   // Seek video and display drawing or frame for moment
@@ -520,21 +676,19 @@ const VideoAnalysis = () => {
           });
         }
       });
-    coachMoments
-      .filter(m => m.clipId === undefined || m.clipId === currentClip.id)
-      .forEach(m => {
-        const timeKey = Math.round((m.timestamp || 0) * 10) / 10;
-        const key = `moment_${timeKey}_${m.color}`;
-        if (!map.has(key)) {
-          map.set(key, {
-            timestamp: m.timestamp || 0,
-            color: m.color || '#0D9488',
-            key
-          });
-        }
-      });
+    clipMoments.forEach(m => {
+      const timeKey = Math.round((m.timestamp || 0) * 10) / 10;
+      const key = `moment_${timeKey}_${m.color}`;
+      if (!map.has(key)) {
+        map.set(key, {
+          timestamp: m.timestamp || 0,
+          color: m.color || '#0D9488',
+          key
+        });
+      }
+    });
     return Array.from(map.values());
-  }, [strokes, currentClip, coachMoments]);
+  }, [strokes, currentClip, clipMoments]);
 
   // Parse multiple video URLs from query string or payload
   const parseVideoUrls = (rawUrl) => {
@@ -578,17 +732,24 @@ const VideoAnalysis = () => {
     const validUrls = urls.filter(u => u && !u.includes('ForBigger') && !u.includes('gtv-videos'));
     const finalUrls = validUrls.length > 0 ? validUrls : ['https://assets.mixkit.co/videos/preview/mixkit-surfer-riding-a-wave-in-the-sea-39828-large.mp4'];
 
-    const newClips = finalUrls.map((url, idx) => ({
-      id: idx + 1,
-      name: `Clip ${idx + 1}`,
-      waveName: label || (finalUrls.length === 1 ? 'Session Video' : `Session Clip ${idx + 1}`),
-      startTime: 0,
-      duration: '0:00',
-      url,
-      bg: '',
-      isSessionClip: true
-    }));
+    const newClips = finalUrls.map((url, idx) => {
+      let cachedThumb = '';
+      try {
+        cachedThumb = localStorage.getItem(`thumbnail_${encodeURIComponent(url)}`) || localStorage.getItem(`clip_thumb_${idx + 1}_${encodeURIComponent(url)}`) || '';
+      } catch (e) {}
+      return {
+        id: idx + 1,
+        name: `Clip ${idx + 1}`,
+        waveName: label || (finalUrls.length === 1 ? 'Session Video' : `Session Clip ${idx + 1}`),
+        startTime: 0,
+        duration: '0:00',
+        url,
+        bg: cachedThumb,
+        isSessionClip: true
+      };
+    });
 
+    setIsVideoLoading(true);
     setClips(newClips);
     setCurrentClip(newClips[0]);
 
@@ -611,10 +772,44 @@ const VideoAnalysis = () => {
 
   // Synchronize on mount if query param contains video URL(s)
   useEffect(() => {
-    if (initialVideoUrl) {
-      loadVideosIntoClips(initialVideoUrl);
-    }
-  }, [initialVideoUrl]);
+    const initVideo = async () => {
+      // If initialVideoUrl is a valid non-blob URL, load it directly
+      if (initialVideoUrl && !initialVideoUrl.startsWith('blob:')) {
+        loadVideosIntoClips(initialVideoUrl);
+        return;
+      }
+
+      // If initialVideoUrl is a temporary blob URL or empty, auto-recover real video from backend session API
+      try {
+        const res = await fetch(`${API}/api/sessions`);
+        if (res.ok) {
+          const sessions = await res.json();
+          const targetISO = normalizeDateStr(sessionDate);
+          const match = sessions.find(s => {
+            const grp = s.group_name || s.notes || '';
+            const sISO = normalizeDateStr(s.date);
+            const dateMatch = !targetISO || !sISO || sISO === targetISO || s.date === sessionDate || (s.date && sessionDate && (s.date.includes(sessionDate) || sessionDate.includes(s.date)));
+            const nameMatch = (grp && studentName && (grp.toLowerCase().includes(studentName.toLowerCase()) || studentName.toLowerCase().includes(grp.toLowerCase()))) ||
+                              (s.student && studentName && s.student.toLowerCase() === studentName.toLowerCase());
+            return dateMatch && nameMatch && s.video_url && !s.video_url.startsWith('blob:');
+          });
+
+          if (match && match.video_url) {
+            loadVideosIntoClips(match.video_url);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('Auto-resolving session video failed:', err);
+      }
+
+      if (initialVideoUrl) {
+        loadVideosIntoClips(initialVideoUrl);
+      }
+    };
+
+    initVideo();
+  }, [initialVideoUrl, studentName, sessionDate]);
 
   // Handle uploading video file from local device
   const handleUploadVideoFile = async (e, targetClipId = null) => {
@@ -778,8 +973,95 @@ const VideoAnalysis = () => {
     }
   };
 
+  // Capture current video player frame as thumbnail for a clip
+  const handleCaptureCurrentFrame = (clipId) => {
+    const targetId = clipId || currentClip?.id;
+    const targetClip = clips.find(c => c.id === targetId) || currentClip;
+
+    let capturedUrl = '';
+    if (videoRef.current && (currentClip?.id === targetId || clips.length === 1)) {
+      try {
+        const vid = videoRef.current;
+        if (vid.videoWidth && vid.videoHeight) {
+          const canvas = document.createElement('canvas');
+          canvas.width = 480;
+          canvas.height = Math.round(480 * (vid.videoHeight / vid.videoWidth)) || 270;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
+          if (dataUrl && dataUrl.startsWith('data:image')) {
+            capturedUrl = dataUrl;
+          }
+        }
+      } catch (err) {
+        console.warn('Canvas player frame capture failed/tainted', err);
+      }
+    }
+
+    if (capturedUrl) {
+      setClips(prev => prev.map(c => c.id === targetId ? { ...c, bg: capturedUrl } : c));
+      if (currentClip?.id === targetId) {
+        setCurrentClip(prev => ({ ...prev, bg: capturedUrl }));
+      }
+      try {
+        localStorage.setItem(`thumbnail_${encodeURIComponent(targetClip?.url || '')}`, capturedUrl);
+        localStorage.setItem(`clip_thumb_${targetId}_${encodeURIComponent(targetClip?.url || '')}`, capturedUrl);
+      } catch (e) {}
+      setThumbnailToast(`Thumbnail for ${targetClip?.name || 'Clip'} updated!`);
+      setTimeout(() => setThumbnailToast(''), 2500);
+      return;
+    }
+
+    // Fallback: extract via video URL extractor
+    if (targetClip?.url) {
+      const seek = (currentTime && currentTime > 0.1) ? currentTime : 1;
+      captureVideoThumbnail(targetClip.url, seek).then(thumb => {
+        if (thumb) {
+          setClips(prev => prev.map(c => c.id === targetId ? { ...c, bg: thumb } : c));
+          if (currentClip?.id === targetId) {
+            setCurrentClip(prev => ({ ...prev, bg: thumb }));
+          }
+          try {
+            localStorage.setItem(`thumbnail_${encodeURIComponent(targetClip.url)}`, thumb);
+            localStorage.setItem(`clip_thumb_${targetId}_${encodeURIComponent(targetClip.url)}`, thumb);
+          } catch (e) {}
+          setThumbnailToast(`Thumbnail for ${targetClip?.name || 'Clip'} updated!`);
+          setTimeout(() => setThumbnailToast(''), 2500);
+        }
+      });
+    }
+  };
+
+  // Upload custom thumbnail image for a clip
+  const handleCustomThumbnailUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !thumbnailTargetClipId) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result;
+      if (dataUrl && typeof dataUrl === 'string') {
+        const targetId = thumbnailTargetClipId;
+        const targetClip = clips.find(c => c.id === targetId) || currentClip;
+        setClips(prev => prev.map(c => c.id === targetId ? { ...c, bg: dataUrl } : c));
+        if (currentClip?.id === targetId) {
+          setCurrentClip(prev => ({ ...prev, bg: dataUrl }));
+        }
+        try {
+          localStorage.setItem(`thumbnail_${encodeURIComponent(targetClip?.url || '')}`, dataUrl);
+          localStorage.setItem(`clip_thumb_${targetId}_${encodeURIComponent(targetClip?.url || '')}`, dataUrl);
+        } catch (err) {}
+        setThumbnailToast(`Thumbnail updated from photo!`);
+        setTimeout(() => setThumbnailToast(''), 2500);
+      }
+    };
+    reader.readAsDataURL(file);
+    if (customThumbInputRef.current) customThumbInputRef.current.value = '';
+  };
+
   // Handle switching active clip
   const handleSelectClip = (clip) => {
+    setIsVideoLoading(true);
     setCurrentClip(clip);
     if (videoRef.current) {
       if (videoRef.current.src !== clip.url) {
@@ -821,7 +1103,9 @@ const VideoAnalysis = () => {
 
     // Strictly show strokes for this clip matching THIS timeframe only (±1.0s window)
     const activeStrokes = strokes.filter(s => {
-      if (s.clipId !== undefined && s.clipId !== currentClip.id) return false;
+      if (s.videoKey && s.videoKey !== activeVideoKey && s.videoKey !== sessionFallbackKey) return false;
+      if (s.clipUrl && currentClip?.url && s.clipUrl !== currentClip.url) return false;
+      if (s.clipId !== undefined && currentClip?.id !== undefined && s.clipId !== currentClip.id) return false;
 
       // Timeframe matching: only show drawings that were drawn at this specific timeframe
       const strokeTime = s.timestamp !== undefined ? s.timestamp : 0;
@@ -1156,6 +1440,8 @@ const VideoAnalysis = () => {
       lineWidth,
       timestamp: videoRef.current ? videoRef.current.currentTime : currentTime,
       clipId: currentClip.id,
+      clipUrl: currentClip.url || '',
+      videoKey: activeVideoKey,
       points: [{ x, y }]
     };
   };
@@ -1176,7 +1462,16 @@ const VideoAnalysis = () => {
   const handleMouseUp = () => {
     if (isDrawing && currentStrokeRef.current) {
       const strokeToSave = currentStrokeRef.current;
-      setStrokes(prev => [...prev, strokeToSave]);
+      setStrokes(prev => {
+        const nextStrokes = [...prev, strokeToSave];
+        try {
+          localStorage.setItem(`coach_strokes_${activeVideoKey}`, JSON.stringify(nextStrokes));
+          if (sessionFallbackKey !== activeVideoKey) {
+            localStorage.setItem(`coach_strokes_${sessionFallbackKey}`, JSON.stringify(nextStrokes));
+          }
+        } catch (e) {}
+        return nextStrokes;
+      });
 
       // When coach draws on the video, automatically add a timestamp moment to Key Moments
       if (strokeToSave.tool !== 'eraser') {
@@ -1184,12 +1479,14 @@ const VideoAnalysis = () => {
         const timeFormatted = formatTime(timeSec);
 
         setCoachMoments(prev => {
-          const alreadyExists = prev.some(m => m.clipId === currentClip.id && Math.abs(m.timestamp - timeSec) < 1.2 && m.type === 'drawing');
+          const alreadyExists = prev.some(m => Math.abs(m.timestamp - timeSec) < 1.2 && m.type === 'drawing');
           if (alreadyExists) return prev;
 
           const newMoment = {
             id: `draw_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
             clipId: currentClip.id,
+            clipUrl: currentClip.url || '',
+            videoKey: activeVideoKey,
             timestamp: timeSec,
             timestampFormatted: timeFormatted,
             title: `Coach Drawing (${timeFormatted})`,
@@ -1200,7 +1497,10 @@ const VideoAnalysis = () => {
           };
           const updated = [...prev, newMoment].sort((a, b) => a.timestamp - b.timestamp);
           try {
-            localStorage.setItem(`coach_moments_${studentName}`, JSON.stringify(updated));
+            localStorage.setItem(`coach_moments_${activeVideoKey}`, JSON.stringify(updated));
+            if (sessionFallbackKey !== activeVideoKey) {
+              localStorage.setItem(`coach_moments_${sessionFallbackKey}`, JSON.stringify(updated));
+            }
           } catch (e) {}
           return updated;
         });
@@ -1211,11 +1511,26 @@ const VideoAnalysis = () => {
   };
 
   const handleUndo = () => {
-    setStrokes(prev => prev.slice(0, -1));
+    setStrokes(prev => {
+      const nextStrokes = prev.slice(0, -1);
+      try {
+        localStorage.setItem(`coach_strokes_${activeVideoKey}`, JSON.stringify(nextStrokes));
+        if (sessionFallbackKey !== activeVideoKey) {
+          localStorage.setItem(`coach_strokes_${sessionFallbackKey}`, JSON.stringify(nextStrokes));
+        }
+      } catch (e) {}
+      return nextStrokes;
+    });
   };
 
   const handleClear = () => {
     setStrokes([]);
+    try {
+      localStorage.removeItem(`coach_strokes_${activeVideoKey}`);
+      if (sessionFallbackKey !== activeVideoKey) {
+        localStorage.removeItem(`coach_strokes_${sessionFallbackKey}`);
+      }
+    } catch (e) {}
   };
 
   // Seek video and pause on clicking Key Moments
@@ -1344,36 +1659,125 @@ const VideoAnalysis = () => {
             {/* Main Player Container */}
             <div className="va-player-container">
               {currentClip?.url && (
-                <video 
-                  key={currentClip.url}
-                  ref={videoRef}
-                  src={currentClip.url} 
-                  autoPlay={false}
-                  loop 
-                  muted={isMuted} 
-                  playsInline
-                  preload="auto"
-                  onPlay={() => {
-                    setIsPlaying(true);
-                    const canvas = canvasRef.current;
-                    if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
-                  }}
-                  onPause={() => {
-                    setIsPlaying(false);
-                    redraw();
-                  }}
-                  onTimeUpdate={handleTimeUpdate}
-                  onLoadedMetadata={handleLoadedMetadata}
-                  onError={(e) => {
-                    console.warn('Video failed to load from primary source, falling back to guaranteed high-res wave clip:', currentClip?.url);
-                    const fallbackUrl = 'https://assets.mixkit.co/videos/preview/mixkit-surfer-riding-a-wave-in-the-sea-39828-large.mp4';
-                    if (currentClip?.url !== fallbackUrl) {
-                      setCurrentClip(prev => ({ ...prev, url: fallbackUrl }));
-                      setClips(prev => prev.map(c => ({ ...c, url: fallbackUrl })));
-                    }
-                  }}
-                  style={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: '#000000', position: 'absolute', top: 0, left: 0, zIndex: 1 }} 
-                />
+                <>
+                  <video 
+                    key={currentClip.url}
+                    ref={videoRef}
+                    src={currentClip.url} 
+                    autoPlay
+                    loop 
+                    muted={isMuted} 
+                    playsInline
+                    preload="auto"
+                    onLoadStart={() => {
+                      setIsVideoLoading(true);
+                    }}
+                    onWaiting={() => {
+                      setIsVideoLoading(true);
+                    }}
+                    onCanPlay={() => {
+                      setIsVideoLoading(false);
+                      if (videoRef.current && videoRef.current.paused) {
+                        videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+                      }
+                    }}
+                    onPlaying={() => {
+                      setIsVideoLoading(false);
+                      setIsPlaying(true);
+                    }}
+                    onLoadedData={() => {
+                      setIsVideoLoading(false);
+                      if (videoRef.current && (!currentClip?.bg || currentClip?.bg.includes('unsplash'))) {
+                        setTimeout(() => {
+                          try {
+                            const vid = videoRef.current;
+                            if (vid && vid.videoWidth && vid.videoHeight) {
+                              const canvas = document.createElement('canvas');
+                              canvas.width = 400;
+                              canvas.height = Math.round(400 * (vid.videoHeight / vid.videoWidth)) || 225;
+                              const ctx = canvas.getContext('2d');
+                              ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
+                              const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                              if (dataUrl && dataUrl.startsWith('data:image')) {
+                                setClips(prev => prev.map(c => c.id === currentClip.id ? { ...c, bg: dataUrl } : c));
+                                setCurrentClip(prev => ({ ...prev, bg: dataUrl }));
+                                try {
+                                  localStorage.setItem(`thumbnail_${encodeURIComponent(currentClip.url)}`, dataUrl);
+                                  localStorage.setItem(`clip_thumb_${currentClip.id}_${encodeURIComponent(currentClip.url)}`, dataUrl);
+                                } catch (e) {}
+                              }
+                            }
+                          } catch (e) {}
+                        }, 250);
+                      }
+                    }}
+                    onPlay={() => {
+                      setIsPlaying(true);
+                      setIsVideoLoading(false);
+                      const canvas = canvasRef.current;
+                      if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+                    }}
+                    onPause={() => {
+                      setIsPlaying(false);
+                      redraw();
+                    }}
+                    onTimeUpdate={handleTimeUpdate}
+                    onLoadedMetadata={handleLoadedMetadata}
+                    onError={(e) => {
+                      setIsVideoLoading(false);
+                      console.warn('Video failed to load from primary source, falling back to guaranteed high-res wave clip:', currentClip?.url);
+                      const fallbackUrl = 'https://assets.mixkit.co/videos/preview/mixkit-surfer-riding-a-wave-in-the-sea-39828-large.mp4';
+                      if (currentClip?.url !== fallbackUrl) {
+                        setCurrentClip(prev => ({ ...prev, url: fallbackUrl }));
+                        setClips(prev => prev.map(c => ({ ...c, url: fallbackUrl })));
+                      }
+                    }}
+                    style={{ width: '100%', height: '100%', objectFit: 'contain', backgroundColor: '#000000', position: 'absolute', top: 0, left: 0, zIndex: 1 }} 
+                  />
+
+                  {/* Modern Loading & Buffering Overlay */}
+                  {isVideoLoading && (
+                    <div 
+                      className="va-video-loader-overlay"
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        height: '100%',
+                        zIndex: 5,
+                        backgroundColor: 'rgba(10, 15, 29, 0.88)',
+                        backdropFilter: 'blur(6px)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '16px',
+                        pointerEvents: 'none'
+                      }}
+                    >
+                      <div 
+                        style={{
+                          width: '48px',
+                          height: '48px',
+                          border: '3.5px solid rgba(2, 132, 199, 0.25)',
+                          borderTop: '3.5px solid #0284C7',
+                          borderRight: '3.5px solid #38BDF8',
+                          borderRadius: '50%',
+                          animation: 'vaSpin 0.75s linear infinite'
+                        }}
+                      />
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ color: '#F8FAFC', fontSize: '15px', fontWeight: 600, letterSpacing: '0.3px' }}>
+                          Loading Video...
+                        </div>
+                        <div style={{ color: '#94A3B8', fontSize: '12px', marginTop: '4px' }}>
+                          Buffering surf session from cloud
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
 
               {/* HTML5 Canvas overlay for drawing */}
@@ -1648,6 +2052,13 @@ const VideoAnalysis = () => {
               style={{ display: 'none' }}
               onChange={handleAddNewVideoClip}
             />
+            <input
+              ref={customThumbInputRef}
+              type="file"
+              accept="image/*"
+              style={{ display: 'none' }}
+              onChange={handleCustomThumbnailUpload}
+            />
 
             {/* Videos Section Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px', marginBottom: '10px' }}>
@@ -1735,8 +2146,7 @@ const VideoAnalysis = () => {
             {/* Videos Carousel */}
             <div className="va-clips-row">
               {clips.map((clip, index) => {
-                const fallbackImg = 'https://images.unsplash.com/photo-1502680390469-be75c86b636f?auto=format&fit=crop&w=600&q=80';
-                const effectiveBg = clip.bg && clip.bg.trim() !== '' ? clip.bg : fallbackImg;
+                const hasRealCustomBg = clip.bg && clip.bg.trim() !== '' && !clip.bg.includes('unsplash');
                 const isActive = currentClip.id === clip.id;
 
                 // Show divider before first uploaded (non-session) clip only
@@ -1785,20 +2195,87 @@ const VideoAnalysis = () => {
                       className={`va-clip-item ${isActive ? 'va-clip-active' : ''}`}
                       onClick={() => handleSelectClip(clip)}
                       style={{
-                        backgroundImage: `linear-gradient(180deg, rgba(5, 11, 26, 0.25) 0%, rgba(5, 11, 26, 0.35) 45%, rgba(5, 11, 26, 0.95) 100%), url('${effectiveBg}')`,
+                        position: 'relative',
+                        backgroundColor: '#050B1A',
+                        ...(hasRealCustomBg ? {
+                          backgroundImage: `linear-gradient(180deg, rgba(5, 11, 26, 0.25) 0%, rgba(5, 11, 26, 0.35) 45%, rgba(5, 11, 26, 0.95) 100%), url('${clip.bg}')`,
+                          backgroundSize: 'cover',
+                          backgroundPosition: 'center'
+                        } : {}),
                         ...(clip.isSessionClip === false ? { border: '1.5px solid rgba(45,212,191,0.35)' } : {})
                       }}
                     >
+                      {/* Real video background frame rendered directly from video when no custom thumbnail photo is set */}
+                      {!hasRealCustomBg && clip.url && (
+                        <video
+                          key={`card-vid-${clip.id}-${clip.url}`}
+                          src={`${clip.url}#t=0.5`}
+                          preload="metadata"
+                          muted
+                          playsInline
+                          style={{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            width: '100%',
+                            height: '100%',
+                            objectFit: 'cover',
+                            zIndex: 0,
+                            pointerEvents: 'none'
+                          }}
+                        />
+                      )}
+
+                      {/* Dark gradient overlay for text readability */}
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          width: '100%',
+                          height: '100%',
+                          background: 'linear-gradient(180deg, rgba(5, 11, 26, 0.25) 0%, rgba(5, 11, 26, 0.35) 45%, rgba(5, 11, 26, 0.92) 100%)',
+                          zIndex: 1,
+                          pointerEvents: 'none'
+                        }}
+                      />
+
                       {/* Top Bar with Badge and Actions */}
-                      <div className="va-clip-top-row">
+                      <div className="va-clip-top-row" style={{ zIndex: 3 }}>
                         <div className="va-clip-badge">
                           <span className="va-clip-badge-dot" style={{ backgroundColor: isActive ? '#2DD4BF' : 'rgba(255,255,255,0.45)' }}></span>
                           {clip.name}
                         </div>
 
-                        {clips.length > 1 && (
-                          <div style={{ display: 'flex', gap: '4px' }}>
-                            {/* Delete/Remove this video */}
+                        <div style={{ display: 'flex', gap: '4px' }}>
+                          {/* 📸 Set current video frame as thumbnail */}
+                          <button
+                            type="button"
+                            className="va-clip-replace-btn"
+                            title={`Capture current video frame as thumbnail for ${clip.name}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCaptureCurrentFrame(clip.id);
+                            }}
+                          >
+                            📸
+                          </button>
+
+                          {/* 🖼️ Upload custom thumbnail photo */}
+                          <button
+                            type="button"
+                            className="va-clip-replace-btn"
+                            title={`Upload custom photo thumbnail for ${clip.name}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setThumbnailTargetClipId(clip.id);
+                              customThumbInputRef.current?.click();
+                            }}
+                          >
+                            🖼️
+                          </button>
+
+                          {clips.length > 1 && (
                             <button
                               type="button"
                               className="va-clip-replace-btn"
@@ -1811,17 +2288,17 @@ const VideoAnalysis = () => {
                             >
                               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
                             </button>
-                          </div>
-                        )}
+                          )}
+                        </div>
                       </div>
 
                       {/* Center Hover Play Indicator */}
-                      <div className="va-clip-play-center">
+                      <div className="va-clip-play-center" style={{ zIndex: 2 }}>
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
                       </div>
                       
                       {/* Bottom Metadata */}
-                      <div className="va-clip-bottom-info">
+                      <div className="va-clip-bottom-info" style={{ zIndex: 2 }}>
                         <div className="va-clip-wave-name" title={clip.waveName || `Video ${index + 1}`}>{clip.waveName || `Video ${index + 1}`}</div>
                         <div className="va-clip-duration-tag">
                           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
@@ -2035,7 +2512,7 @@ const VideoAnalysis = () => {
             <div className="va-section" style={{ flex: 1 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
                 <div className="va-section-title">
-                  DETECTED KEY MOMENTS & NOTES ({coachMoments.filter(m => m.clipId === undefined || m.clipId === currentClip.id).length})
+                  DETECTED KEY MOMENTS & NOTES ({clipMoments.length})
                 </div>
                 <button
                   type="button"
@@ -2135,29 +2612,24 @@ const VideoAnalysis = () => {
               )}
               
               <div className="va-moments-list">
-                {(() => {
-                  const clipMoments = coachMoments.filter(m => m.clipId === undefined || m.clipId === currentClip.id);
-                  if (clipMoments.length === 0) {
-                    return (
-                      <div style={{
-                        padding: '24px 16px',
-                        textAlign: 'center',
-                        background: 'rgba(255,255,255,0.02)',
-                        borderRadius: '12px',
-                        border: '1px dashed rgba(255,255,255,0.1)'
-                      }}>
-                        <div style={{ fontSize: '24px', marginBottom: '8px' }}>✏️</div>
-                        <div style={{ fontSize: '13px', fontWeight: 700, color: 'rgba(255,255,255,0.8)', marginBottom: '4px' }}>
-                          No Timestamps or Notes Yet
-                        </div>
-                        <p style={{ margin: 0, fontSize: '12px', color: 'rgba(255,255,255,0.5)', lineHeight: 1.5 }}>
-                          Draw on the video with the pen tool or click <strong>+ Add Note</strong> at any timeframe to capture coaching advice!
-                        </p>
-                      </div>
-                    );
-                  }
-
-                  return clipMoments.map((moment) => {
+                {clipMoments.length === 0 ? (
+                  <div style={{
+                    padding: '24px 16px',
+                    textAlign: 'center',
+                    background: 'rgba(255,255,255,0.02)',
+                    borderRadius: '12px',
+                    border: '1px dashed rgba(255,255,255,0.1)'
+                  }}>
+                    <div style={{ fontSize: '24px', marginBottom: '8px' }}>✏️</div>
+                    <div style={{ fontSize: '13px', fontWeight: 700, color: 'rgba(255,255,255,0.8)', marginBottom: '4px' }}>
+                      No Timestamps or Notes Yet
+                    </div>
+                    <p style={{ margin: 0, fontSize: '12px', color: 'rgba(255,255,255,0.5)', lineHeight: 1.5 }}>
+                      Draw on the video with the pen tool or click <strong>+ Add Note</strong> at any timeframe to capture coaching advice!
+                    </p>
+                  </div>
+                ) : (
+                  clipMoments.map((moment) => {
                     const fallbackImg = currentClip.bg || 'https://images.unsplash.com/photo-1502680390469-be75c86b636f?auto=format&fit=crop&q=80&w=150';
                     const isDrawingType = moment.type === 'drawing';
                     return (
@@ -2198,8 +2670,8 @@ const VideoAnalysis = () => {
                         </button>
                       </div>
                     );
-                  });
-                })()}
+                  })
+                )}
               </div>
             </div>
 
@@ -3209,7 +3681,38 @@ const VideoAnalysis = () => {
             padding: 2px 4px;
           }
         }
+        @keyframes vaSpin {
+          to { transform: rotate(360deg); }
+        }
       `}</style>
+
+      {/* Toast feedback for thumbnail capture / update */}
+      {thumbnailToast && (
+        <div
+          style={{
+            position: 'fixed',
+            bottom: '24px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'rgba(15, 23, 42, 0.95)',
+            color: '#2DD4BF',
+            border: '1.5px solid rgba(45, 212, 191, 0.5)',
+            backdropFilter: 'blur(10px)',
+            padding: '10px 22px',
+            borderRadius: '24px',
+            fontSize: '13.5px',
+            fontWeight: 800,
+            zIndex: 99999,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.6), 0 0 16px rgba(45,212,191,0.3)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}
+        >
+          <span style={{ fontSize: '15px' }}>📸</span>
+          <span>{thumbnailToast}</span>
+        </div>
+      )}
     </div>
   );
 };
