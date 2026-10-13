@@ -32,6 +32,23 @@ function getAvatarColor(name) {
   return gradients[Math.abs(hash) % gradients.length];
 }
 
+const BADGE_LEVELS = [
+  { rank: 1, badge: 'WHITE', label: 'Beginner', color: '#475569', bg: '#F8FAFC', border: '#CBD5E1', dot: '#94A3B8', icon: '⚪' },
+  { rank: 2, badge: 'YELLOW', label: 'Advance Beginner', color: '#B45309', bg: '#FEF3C7', border: '#F59E0B', dot: '#F59E0B', icon: '🟡' },
+  { rank: 3, badge: 'GREEN', label: 'Intermediate', color: '#047857', bg: '#D1FAE5', border: '#10B981', dot: '#10B981', icon: '🟢' },
+  { rank: 4, badge: 'BLUE', label: 'Advance Intermediate', color: '#1D4ED8', bg: '#DBEAFE', border: '#3B82F6', dot: '#3B82F6', icon: '🔵' },
+  { rank: 5, badge: 'RED', label: 'Pro', color: '#BE123C', bg: '#FFE4E6', border: '#F43F5E', dot: '#F43F5E', icon: '🔴' },
+];
+
+const normalizeBadgeLevel = (lvl) => {
+  const s = String(lvl || '').toLowerCase().trim();
+  if (s.includes('pro') || s.includes('master') || s === 'advanced') return 'Pro';
+  if (s.includes('advance intermediate') || s.includes('advanced intermediate')) return 'Advance Intermediate';
+  if (s.includes('intermediate')) return 'Intermediate';
+  if (s.includes('advance beginner') || s.includes('advanced beginner') || s.includes('yellow')) return 'Advance Beginner';
+  return 'Beginner';
+};
+
 // Renders user-uploaded image if present; otherwise renders initials fallback
 const UserAvatar = ({ src, name, size = 32, className = '', style = {} }) => {
   const [imgError, setImgError] = useState(false);
@@ -835,6 +852,7 @@ const Sessions = () => {
   const [hubWhatToImproveScore, setHubWhatToImproveScore] = useState('');
   const [hubSelectedStudentId, setHubSelectedStudentId] = useState(null);
   const [hubStudentNotesMap, setHubStudentNotesMap] = useState({});
+  const [hubStudentLevelMap, setHubStudentLevelMap] = useState({});
   const [hubStatus, setHubStatus] = useState('Upcoming');
   const [hubIsUploadingVideo, setHubIsUploadingVideo] = useState(false);
   const [hubVideoUploadProgress, setHubVideoUploadProgress] = useState(0);
@@ -873,6 +891,7 @@ const Sessions = () => {
 
     const sessionList = (data.sessions && data.sessions.length > 0) ? data.sessions : [data];
     const notesMap = {};
+    const levelMap = {};
     sessionList.forEach(s => {
       const p = parseCoachNotes(s.notes || '');
       notesMap[s.id] = {
@@ -882,8 +901,16 @@ const Sessions = () => {
         whatToImprove: p.whatToImprove || '',
         whatToImproveScore: p.whatToImproveScore || ''
       };
+      let resolvedLvl = s.level || s.type || '';
+      if (!resolvedLvl && s.student_id && allStudentsList.length > 0) {
+        const matchSt = allStudentsList.find(st => st.id === s.student_id);
+        if (matchSt && matchSt.level) resolvedLvl = matchSt.level;
+      }
+      if (!resolvedLvl) resolvedLvl = 'Beginner';
+      levelMap[s.id] = resolvedLvl;
     });
     setHubStudentNotesMap(notesMap);
+    setHubStudentLevelMap(levelMap);
 
     let initialStudentId = sessionList[0]?.id || data.id;
     if (isStudent) {
@@ -1265,6 +1292,41 @@ const Sessions = () => {
     setHubSaveSuccess(false);
   };
 
+  const getActiveStudentLevel = (sessionId) => {
+    return hubStudentLevelMap[sessionId] || 'Beginner';
+  };
+
+  const handleSetStudentLevel = (sessionId, newLevel) => {
+    setHubStudentLevelMap(prev => ({
+      ...prev,
+      [sessionId]: newLevel
+    }));
+    setHubHasChanges(true);
+    setHubSaveSuccess(false);
+  };
+
+  const handleUpgradeStudentLevel = (sessionId) => {
+    const currentLvl = getActiveStudentLevel(sessionId);
+    const norm = normalizeBadgeLevel(currentLvl);
+    const currentIdx = BADGE_LEVELS.findIndex(b => b.label.toLowerCase() === norm.toLowerCase());
+    if (currentIdx !== -1 && currentIdx < BADGE_LEVELS.length - 1) {
+      const nextLevel = BADGE_LEVELS[currentIdx + 1].label;
+      handleSetStudentLevel(sessionId, nextLevel);
+    } else if (currentIdx === -1) {
+      handleSetStudentLevel(sessionId, 'Advance Beginner');
+    }
+  };
+
+  const handleDowngradeStudentLevel = (sessionId) => {
+    const currentLvl = getActiveStudentLevel(sessionId);
+    const norm = normalizeBadgeLevel(currentLvl);
+    const currentIdx = BADGE_LEVELS.findIndex(b => b.label.toLowerCase() === norm.toLowerCase());
+    if (currentIdx > 0) {
+      const prevLevel = BADGE_LEVELS[currentIdx - 1].label;
+      handleSetStudentLevel(sessionId, prevLevel);
+    }
+  };
+
   const handleSaveHubChanges = async () => {
     if (!selectedHubSession) return;
     setHubIsSaving(true);
@@ -1301,7 +1363,7 @@ const Sessions = () => {
       };
 
       await Promise.all(
-        sessionList.map(s => {
+        sessionList.map(async s => {
           const sObj = currentMap[s.id];
           const sNotesFormatted = sObj
             ? formatCoachNotes(
@@ -1313,18 +1375,30 @@ const Sessions = () => {
               )
             : (s.notes || '');
 
+          const newLevel = hubStudentLevelMap[s.id] || s.level || s.type || 'Beginner';
+
           const payload = {
             status: hubStatus,
             notes: sNotesFormatted,
             video_url: serializedVideoUrl || primaryVideoUrl,
             image_url: serializedImageUrl || primaryImageUrl,
+            level: newLevel,
+            type: newLevel,
           };
 
-          return fetch(`${API}/api/sessions/${s.id}`, {
+          const sessionReq = fetch(`${API}/api/sessions/${s.id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
           }).catch(err => console.error('Failed updating session', s.id, err));
+
+          const studentReq = s.student_id ? fetch(`${API}/api/students/${s.student_id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ level: newLevel }),
+          }).catch(err => console.error('Failed updating student level', s.student_id, err)) : Promise.resolve();
+
+          return Promise.all([sessionReq, studentReq]);
         })
       );
 
@@ -1332,14 +1406,17 @@ const Sessions = () => {
       setSessions(prev =>
         prev.map(s => {
           const sObj = currentMap[s.id];
-          if (sObj) {
-            const sNotesFormatted = formatCoachNotes(
-              sObj.waveCount,
-              sObj.whatDidWell,
-              sObj.whatDidWellScore,
-              sObj.whatToImprove,
-              sObj.whatToImproveScore
-            );
+          const newLevel = hubStudentLevelMap[s.id];
+          if (sObj || newLevel) {
+            const sNotesFormatted = sObj
+              ? formatCoachNotes(
+                  sObj.waveCount,
+                  sObj.whatDidWell,
+                  sObj.whatDidWellScore,
+                  sObj.whatToImprove,
+                  sObj.whatToImproveScore
+                )
+              : s.notes;
             return {
               ...s,
               status: hubStatus,
@@ -1348,9 +1425,22 @@ const Sessions = () => {
               video_urls: hubVideos,
               image_url: serializedImageUrl || primaryImageUrl,
               image_urls: hubImages,
+              level: newLevel || s.level,
+              type: newLevel || s.type,
             };
           }
           return s;
+        })
+      );
+
+      // Update allStudentsList state so any component using it updates immediately
+      setAllStudentsList(prev =>
+        prev.map(st => {
+          const matchedSession = sessionList.find(s => s.student_id === st.id);
+          if (matchedSession && hubStudentLevelMap[matchedSession.id]) {
+            return { ...st, level: hubStudentLevelMap[matchedSession.id] };
+          }
+          return st;
         })
       );
 
@@ -1360,6 +1450,7 @@ const Sessions = () => {
         const updatedSessions = prev.sessions
           ? prev.sessions.map(s => {
               const sObj = currentMap[s.id];
+              const newLevel = hubStudentLevelMap[s.id];
               const sNotesFormatted = sObj
                 ? formatCoachNotes(
                     sObj.waveCount,
@@ -1369,7 +1460,13 @@ const Sessions = () => {
                     sObj.whatToImproveScore
                   )
                 : s.notes;
-              return { ...s, notes: sNotesFormatted, status: hubStatus };
+              return {
+                ...s,
+                notes: sNotesFormatted,
+                status: hubStatus,
+                level: newLevel || s.level,
+                type: newLevel || s.type,
+              };
             })
           : prev.sessions;
 
@@ -1377,6 +1474,8 @@ const Sessions = () => {
           ...prev,
           status: hubStatus,
           sessions: updatedSessions,
+          level: hubStudentLevelMap[prev.id] || prev.level,
+          type: hubStudentLevelMap[prev.id] || prev.type,
           video_url: serializedVideoUrl || primaryVideoUrl,
           video_urls: hubVideos,
           image_url: serializedImageUrl || primaryImageUrl,
@@ -1458,6 +1557,167 @@ const Sessions = () => {
   const [selectedCalendarDate, setSelectedCalendarDate] = useState('');
   const [selectedSessionDetail, setSelectedSessionDetail] = useState(null);
   const [selectedDayDetailsModal, setSelectedDayDetailsModal] = useState(null);
+  const [dayModalStudentSearch, setDayModalStudentSearch] = useState('');
+  const [dayAttendanceMap, setDayAttendanceMap] = useState({});
+  const [attendanceLoadingIds, setAttendanceLoadingIds] = useState({});
+
+  // Initialize attendance map for the selected day directly from sessions
+  useEffect(() => {
+    if (!selectedDayDetailsModal) {
+      setDayAttendanceMap({});
+      return;
+    }
+    const map = {};
+    sessions.forEach(s => {
+      if (normalizeToYYYYMMDD(s.date) === selectedDayDetailsModal) {
+        if (s.id && s.attendance) {
+          map[s.id] = s.attendance;
+        }
+      }
+    });
+    setDayAttendanceMap(map);
+  }, [selectedDayDetailsModal, sessions]);
+
+  const handleToggleAttendance = async (sess, targetStatus) => {
+    const sessionId = sess.id;
+    if (!sessionId) {
+      showToast('Session ID not found', 'error');
+      return;
+    }
+    const currentStatus = dayAttendanceMap[sessionId] !== undefined
+      ? dayAttendanceMap[sessionId]
+      : (sess.attendance || '');
+    const isAlreadySame = currentStatus === targetStatus;
+    const newStatus = isAlreadySame ? '' : targetStatus;
+
+    // Optimistically update attendance for this specific session only
+    setAttendanceLoadingIds(prev => ({ ...prev, [sessionId]: true }));
+    setDayAttendanceMap(prev => ({ ...prev, [sessionId]: newStatus }));
+    setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, attendance: newStatus } : s));
+
+    try {
+      const res = await fetch(`${API}/api/sessions/${sessionId}/attendance`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ attendance: newStatus })
+      });
+      if (res.ok) {
+        if (newStatus) {
+          showToast(`✓ ${sess.student} marked as ${newStatus}`, 'success');
+        } else {
+          showToast(`Attendance cleared for ${sess.student}`, 'info');
+        }
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        showToast(errData.detail || 'Failed to update attendance', 'error');
+        // Revert on failure
+        setDayAttendanceMap(prev => ({ ...prev, [sessionId]: currentStatus }));
+        setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, attendance: currentStatus } : s));
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('Network error while marking attendance', 'error');
+      setDayAttendanceMap(prev => ({ ...prev, [sessionId]: currentStatus }));
+      setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, attendance: currentStatus } : s));
+    } finally {
+      setAttendanceLoadingIds(prev => ({ ...prev, [sessionId]: false }));
+    }
+  };
+
+  const handleMarkGroupAllPresent = async (sessionsInGroup) => {
+    if (!sessionsInGroup || sessionsInGroup.length === 0) {
+      showToast('No sessions found in group', 'info');
+      return;
+    }
+
+    const items = sessionsInGroup.filter(s => s.id).map(s => ({
+      session_id: s.id,
+      attendance: 'Present'
+    }));
+
+    if (items.length === 0) return;
+
+    // Optimistically mark all sessions in this group
+    setDayAttendanceMap(prev => {
+      const updated = { ...prev };
+      items.forEach(it => {
+        updated[it.session_id] = 'Present';
+      });
+      return updated;
+    });
+    setSessions(prev => prev.map(s => {
+      const match = items.find(it => it.session_id === s.id);
+      return match ? { ...s, attendance: 'Present' } : s;
+    }));
+
+    try {
+      const res = await fetch(`${API}/api/sessions/bulk-attendance`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items })
+      });
+      if (res.ok) {
+        showToast(`✓ All ${items.length} students marked Present!`, 'success');
+      } else {
+        showToast('Failed to mark group attendance', 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('Error marking group attendance', 'error');
+    }
+  };
+
+  // Helper to resolve student/guest contact phone number from session or allStudentsList
+  const resolveStudentPhone = (sess) => {
+    if (!sess) return '';
+    if (sess.phone) return String(sess.phone).trim();
+    if (sess.whatsapp_number) return String(sess.whatsapp_number).trim();
+
+    if (Array.isArray(allStudentsList) && allStudentsList.length > 0) {
+      let matched = sess.student_id ? allStudentsList.find(s => s.id === sess.student_id) : null;
+      if (!matched && sess.student) {
+        const sClean = sess.student.trim().toLowerCase();
+        matched = allStudentsList.find(s => (s.name || '').trim().toLowerCase() === sClean);
+      }
+
+      if (matched) {
+        if (sess.is_guest || sess.guest_name) {
+          const gTarget = (sess.guest_name || sess.student || '').trim().toLowerCase();
+          try {
+            const rawG = matched.guests_details;
+            const gList = Array.isArray(rawG) ? rawG : (typeof rawG === 'string' ? JSON.parse(rawG) : []);
+            if (Array.isArray(gList)) {
+              const foundG = gList.find(g => (g.name || '').trim().toLowerCase() === gTarget);
+              if (foundG && (foundG.whatsapp_number || foundG.phone)) {
+                return String(foundG.whatsapp_number || foundG.phone).trim();
+              }
+            }
+          } catch (e) {}
+        }
+        if (matched.whatsapp_number || matched.phone) {
+          return String(matched.whatsapp_number || matched.phone).trim();
+        }
+      }
+
+      if (sess.student) {
+        const sTarget = sess.student.trim().toLowerCase();
+        for (const st of allStudentsList) {
+          try {
+            const rawG = st.guests_details;
+            const gList = Array.isArray(rawG) ? rawG : (typeof rawG === 'string' ? JSON.parse(rawG) : []);
+            if (Array.isArray(gList)) {
+              const foundG = gList.find(g => (g.name || '').trim().toLowerCase() === sTarget);
+              if (foundG) {
+                if (foundG.whatsapp_number || foundG.phone) return String(foundG.whatsapp_number || foundG.phone).trim();
+                if (st.whatsapp_number || st.phone) return String(st.whatsapp_number || st.phone).trim();
+              }
+            }
+          } catch (e) {}
+        }
+      }
+    }
+    return '';
+  };
 
   // Lock background body scroll whenever any modal popup is open
   useEffect(() => {
@@ -1467,14 +1727,18 @@ const Sessions = () => {
       selectedDayDetailsModal ||
       showGroupVideoModal ||
       hubZoomImage ||
-      selectedSessionDetail
+      selectedSessionDetail ||
+      showScheduleModal ||
+      selectedCoachForModal ||
+      confirmModal?.isOpen
     );
 
     if (isAnyModalOpen) {
       const originalOverflow = document.body.style.overflow;
       const originalPaddingRight = document.body.style.paddingRight;
       const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
-      if (scrollbarWidth > 0) {
+      const isMac = typeof navigator !== 'undefined' && (/Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent));
+      if (scrollbarWidth > 0 && !isMac) {
         document.body.style.paddingRight = `${scrollbarWidth}px`;
       }
       document.body.style.overflow = 'hidden';
@@ -1489,7 +1753,10 @@ const Sessions = () => {
     selectedDayDetailsModal,
     showGroupVideoModal,
     hubZoomImage,
-    selectedSessionDetail
+    selectedSessionDetail,
+    showScheduleModal,
+    selectedCoachForModal,
+    confirmModal?.isOpen
   ]);
 
   const effectiveSchool = (isCoach && isCoachFreelance)
@@ -4363,77 +4630,211 @@ const Sessions = () => {
                       )}
                     </div>
 
-                    {/* Student Selection Dropdown for Group Sessions */}
+                    {/* Interactive Athlete Selector for Group Sessions (Always visible cards with 1-click switching) */}
                     {selectedHubSession?.sessions && selectedHubSession.sessions.length > 1 && (
                       <div style={{
                         background: 'linear-gradient(135deg, #F0FDFA 0%, #F8FAFC 100%)',
                         border: '1.5px solid #0D9488',
-                        borderRadius: '12px',
-                        padding: '12px 16px',
+                        borderRadius: '16px',
+                        padding: '16px 18px',
                         display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        flexWrap: 'wrap',
+                        flexDirection: 'column',
                         gap: '12px',
-                        boxShadow: '0 2px 8px rgba(13, 148, 136, 0.08)'
+                        boxShadow: '0 4px 16px rgba(13, 148, 136, 0.08)'
                       }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        {/* Header */}
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            <div style={{
+                              width: '36px',
+                              height: '36px',
+                              borderRadius: '10px',
+                              background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
+                              color: '#FFFFFF',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: '17px',
+                              fontWeight: 700,
+                              flexShrink: 0
+                            }}>
+                              👥
+                            </div>
+                            <div>
+                              <div style={{ fontSize: '13.5px', fontWeight: 800, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span>Athletes in this Session ({selectedHubSession.sessions.length}):</span>
+                              </div>
+                              <div style={{ fontSize: '12px', color: '#64748B' }}>
+                                Click any athlete to view &amp; record their specific wave count and feedback
+                              </div>
+                            </div>
+                          </div>
+
                           <div style={{
-                            width: '36px',
-                            height: '36px',
-                            borderRadius: '10px',
-                            background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
-                            color: '#FFFFFF',
+                            fontSize: '12px',
+                            fontWeight: 700,
+                            color: '#0F766E',
+                            background: '#CCFBF1',
+                            padding: '4px 12px',
+                            borderRadius: '20px',
+                            border: '1px solid #99F6E4',
                             display: 'flex',
                             alignItems: 'center',
-                            justifyContent: 'center',
-                            fontSize: '17px',
-                            fontWeight: 700,
-                            flexShrink: 0
+                            gap: '6px'
                           }}>
-                            👥
-                          </div>
-                          <div>
-                            <div style={{ fontSize: '13px', fontWeight: 800, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              <span>Select Student ({selectedHubSession.sessions.length} Athletes):</span>
-                            </div>
-                            <div style={{ fontSize: '12px', color: '#64748B' }}>
-                              Choose an athlete from the dropdown to record their specific wave count and feedback
-                            </div>
+                            <span>Active:</span>
+                            <span style={{ color: '#134E4A' }}>
+                              {selectedHubSession.sessions.find(s => s.id === (hubSelectedStudentId || selectedHubSession.sessions[0]?.id))?.student || 'Athlete'}
+                            </span>
                           </div>
                         </div>
 
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <label style={{ fontSize: '12.5px', fontWeight: 700, color: '#0F766E' }}>
-                            Student:
-                          </label>
-                          <select
-                            value={hubSelectedStudentId || selectedHubSession.sessions[0]?.id}
-                            onChange={(e) => handleSelectHubStudent(Number(e.target.value))}
-                            style={{
-                              padding: '8px 14px',
-                              borderRadius: '8px',
-                              border: '2px solid #0D9488',
-                              fontSize: '13.5px',
-                              fontWeight: 700,
-                              color: '#0F172A',
-                              background: '#FFFFFF',
-                              cursor: 'pointer',
-                              outline: 'none',
-                              boxShadow: '0 2px 6px rgba(13, 148, 136, 0.15)',
-                              minWidth: '220px'
-                            }}
-                          >
-                            {selectedHubSession.sessions.map((s, idx) => {
-                              const sObj = hubStudentNotesMap[s.id];
-                              const hasFeedback = Boolean(sObj && (sObj.waveCount || sObj.whatDidWell || sObj.whatToImprove));
-                              return (
-                                <option key={s.id || idx} value={s.id}>
-                                  {s.student || `Student ${idx + 1}`} ({s.level || 'Beginner'}) {hasFeedback ? '✓' : ''}
-                                </option>
-                              );
-                            })}
-                          </select>
+                        {/* Athlete Selector Chips / Tabs (Uniform Equal Size Grid) */}
+                        <div style={{
+                          display: 'grid',
+                          gridTemplateColumns: selectedHubSession.sessions.length <= 4
+                            ? `repeat(${selectedHubSession.sessions.length}, minmax(0, 1fr))`
+                            : 'repeat(auto-fit, minmax(200px, 1fr))',
+                          gap: '10px',
+                          width: '100%',
+                          alignItems: 'stretch'
+                        }}>
+                          {selectedHubSession.sessions.map((s, idx) => {
+                            const activeStudentId = hubSelectedStudentId || selectedHubSession.sessions[0]?.id;
+                            const isSelected = s.id === activeStudentId;
+                            const sObj = hubStudentNotesMap[s.id];
+                            const hasFeedback = Boolean(sObj && (sObj.waveCount || sObj.whatDidWell || sObj.whatToImprove));
+                            const studentDisplayName = s.student || s.student_name || `Student ${idx + 1}`;
+                            const studentInitials = studentDisplayName.trim().split(/\s+/).map(p => p[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || 'ST';
+                            const currentLvl = hubStudentLevelMap[s.id] || s.level || 'Beginner';
+                            const bMeta = BADGE_LEVELS.find(b => b.label.toLowerCase() === normalizeBadgeLevel(currentLvl).toLowerCase()) || BADGE_LEVELS[0];
+
+                            return (
+                              <button
+                                key={s.id || idx}
+                                type="button"
+                                onClick={() => handleSelectHubStudent(s.id)}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '10px',
+                                  padding: '8px 12px',
+                                  borderRadius: '12px',
+                                  border: isSelected ? '2px solid #0D9488' : '1.5px solid #CBD5E1',
+                                  background: isSelected ? 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)' : '#FFFFFF',
+                                  color: isSelected ? '#FFFFFF' : '#1E293B',
+                                  cursor: 'pointer',
+                                  fontWeight: 700,
+                                  fontSize: '13.5px',
+                                  boxShadow: isSelected ? '0 4px 14px rgba(13, 148, 136, 0.32)' : '0 1px 3px rgba(0,0,0,0.04)',
+                                  transition: 'all 0.18s ease',
+                                  textAlign: 'left',
+                                  width: '100%',
+                                  minWidth: 0,
+                                  height: '56px',
+                                  boxSizing: 'border-box'
+                                }}
+                                onMouseEnter={e => {
+                                  if (!isSelected) {
+                                    e.currentTarget.style.borderColor = '#0D9488';
+                                    e.currentTarget.style.background = '#F0FDFA';
+                                    e.currentTarget.style.transform = 'translateY(-1px)';
+                                  }
+                                }}
+                                onMouseLeave={e => {
+                                  if (!isSelected) {
+                                    e.currentTarget.style.borderColor = '#CBD5E1';
+                                    e.currentTarget.style.background = '#FFFFFF';
+                                    e.currentTarget.style.transform = 'translateY(0)';
+                                  }
+                                }}
+                              >
+                                {/* Avatar Circle */}
+                                <div style={{
+                                  width: '28px',
+                                  height: '28px',
+                                  borderRadius: '50%',
+                                  background: isSelected ? '#FFFFFF' : 'linear-gradient(135deg, #0284C7 0%, #0369A1 100%)',
+                                  color: isSelected ? '#0D9488' : '#FFFFFF',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  fontSize: '11px',
+                                  fontWeight: 800,
+                                  flexShrink: 0
+                                }}>
+                                  {studentInitials}
+                                </div>
+
+                                {/* Student Name & Details */}
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0, flex: 1, overflow: 'hidden' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
+                                    <span style={{
+                                      fontSize: '13.5px',
+                                      fontWeight: 800,
+                                      whiteSpace: 'nowrap',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis'
+                                    }}>
+                                      {studentDisplayName}
+                                    </span>
+                                    {s.is_guest && (
+                                      <span style={{
+                                        fontSize: '10px',
+                                        fontWeight: 700,
+                                        padding: '1px 6px',
+                                        borderRadius: '6px',
+                                        background: isSelected ? 'rgba(255,255,255,0.25)' : '#E0F2FE',
+                                        color: isSelected ? '#FFFFFF' : '#0369A1',
+                                        flexShrink: 0
+                                      }}>
+                                        Guest
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0, justifyContent: 'space-between' }}>
+                                    <span style={{
+                                      fontSize: '11px',
+                                      fontWeight: 700,
+                                      opacity: isSelected ? 1 : 0.85,
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '3px',
+                                      whiteSpace: 'nowrap',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                      minWidth: 0
+                                    }} title={currentLvl}>
+                                      <span style={{ flexShrink: 0 }}>{bMeta.icon}</span>
+                                      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{currentLvl}</span>
+                                    </span>
+                                    {hasFeedback ? (
+                                      <span style={{
+                                        fontSize: '10px',
+                                        fontWeight: 700,
+                                        padding: '1px 6px',
+                                        borderRadius: '6px',
+                                        background: isSelected ? '#10B981' : '#DCFCE7',
+                                        color: isSelected ? '#FFFFFF' : '#15803D',
+                                        flexShrink: 0
+                                      }}>
+                                        ✓ Evaluated
+                                      </span>
+                                    ) : (
+                                      <span style={{
+                                        fontSize: '10px',
+                                        fontWeight: 600,
+                                        opacity: 0.6,
+                                        flexShrink: 0
+                                      }}>
+                                        Pending
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </button>
+                            );
+                          })}
                         </div>
                       </div>
                     )}
@@ -4443,6 +4844,50 @@ const Sessions = () => {
                       /* ─── STUDENT PERFORMANCE REPORT CARD ─── */
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
                         
+                        {/* Student Current Badge Progression Badge */}
+                        {(() => {
+                          const currentStdLvl = hubStudentLevelMap[hubSelectedStudentId || selectedHubSession?.sessions?.[0]?.id || selectedHubSession?.id] || selectedHubSession?.level || 'Beginner';
+                          const stdBadgeMeta = BADGE_LEVELS.find(b => b.label.toLowerCase() === normalizeBadgeLevel(currentStdLvl).toLowerCase()) || BADGE_LEVELS[0];
+                          return (
+                            <div style={{
+                              background: 'linear-gradient(135deg, #F0FDFA 0%, #FFFFFF 100%)',
+                              border: `1.5px solid ${stdBadgeMeta.border}`,
+                              borderRadius: '14px',
+                              padding: '14px 18px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              flexWrap: 'wrap',
+                              gap: '12px',
+                              boxShadow: '0 2px 8px rgba(13, 148, 136, 0.08)'
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <span style={{ fontSize: '26px' }}>{stdBadgeMeta.icon}</span>
+                                <div>
+                                  <div style={{ fontSize: '14px', fontWeight: 800, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <span>Current Surfing Badge:</span>
+                                    <span style={{ color: stdBadgeMeta.color }}>{stdBadgeMeta.badge} ({stdBadgeMeta.label})</span>
+                                  </div>
+                                  <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>
+                                    Skill Rank {stdBadgeMeta.rank} of 5 • Certified by Coach
+                                  </div>
+                                </div>
+                              </div>
+                              <div style={{
+                                fontSize: '12px',
+                                fontWeight: 800,
+                                color: stdBadgeMeta.color,
+                                background: stdBadgeMeta.bg,
+                                border: `1px solid ${stdBadgeMeta.border}`,
+                                padding: '4px 12px',
+                                borderRadius: '20px'
+                              }}>
+                                Rank {stdBadgeMeta.rank} / 5
+                              </div>
+                            </div>
+                          );
+                        })()}
+
                         {/* Overall Session Evaluation Banner */}
                         <div
                           style={{
@@ -4692,6 +5137,161 @@ const Sessions = () => {
                     ) : (
                       /* ─── COACH EDITING & SCORING VIEW ─── */
                       <>
+                        {/* ─── CARD 0: SURFING LEVEL (CLEAN & COMPACT) ─── */}
+                        {(() => {
+                          const activeStudentSessionId = hubSelectedStudentId || (selectedHubSession?.sessions ? selectedHubSession.sessions[0]?.id : selectedHubSession?.id);
+                          const activeSessionObj = (selectedHubSession?.sessions && selectedHubSession.sessions.length > 0)
+                            ? (selectedHubSession.sessions.find(s => s.id === activeStudentSessionId) || selectedHubSession.sessions[0])
+                            : selectedHubSession;
+                          const rawActiveLevel = hubStudentLevelMap[activeStudentSessionId] || activeSessionObj?.level || activeSessionObj?.type || 'Beginner';
+                          const activeBadgeNorm = normalizeBadgeLevel(rawActiveLevel);
+                          const activeBadgeMeta = BADGE_LEVELS.find(b => b.label.toLowerCase() === activeBadgeNorm.toLowerCase()) || BADGE_LEVELS[0];
+                          const activeRank = activeBadgeMeta.rank; // 1 to 5
+                          const canDowngrade = activeRank > 1;
+                          const canUpgrade = activeRank < 5;
+
+                          return (
+                            <div style={{
+                              background: '#FFFFFF',
+                              border: '1.5px solid #E2E8F0',
+                              borderRadius: '14px',
+                              padding: '14px 18px',
+                              boxShadow: '0 1px 3px rgba(0,0,0,0.02)'
+                            }}>
+                              {/* Header: Title + Current Badge Pill + Downgrade/Upgrade Buttons */}
+                              <div style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                marginBottom: '10px',
+                                flexWrap: 'wrap',
+                                gap: '8px'
+                              }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                  <span style={{ fontSize: '13.5px', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <span style={{ fontSize: '16px' }}>🏄</span> Surfing Level:
+                                  </span>
+                                  <span style={{
+                                    fontSize: '11.5px',
+                                    fontWeight: 700,
+                                    color: activeBadgeMeta.color,
+                                    background: activeBadgeMeta.bg,
+                                    border: `1px solid ${activeBadgeMeta.border}`,
+                                    padding: '2px 8px',
+                                    borderRadius: '6px',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px'
+                                  }}>
+                                    <span>{activeBadgeMeta.icon}</span>
+                                    <span>{activeBadgeMeta.label} ({activeBadgeMeta.badge} Badge)</span>
+                                  </span>
+                                </div>
+
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <button
+                                    type="button"
+                                    disabled={!canDowngrade}
+                                    onClick={() => handleDowngradeStudentLevel(activeStudentSessionId)}
+                                    title={canDowngrade ? `Downgrade to ${BADGE_LEVELS[activeRank - 2].label}` : 'Minimum level'}
+                                    style={{
+                                      padding: '5px 10px',
+                                      borderRadius: '7px',
+                                      fontSize: '11.5px',
+                                      fontWeight: 700,
+                                      border: '1px solid #CBD5E1',
+                                      background: canDowngrade ? '#F8FAFC' : '#F1F5F9',
+                                      color: canDowngrade ? '#334155' : '#94A3B8',
+                                      cursor: canDowngrade ? 'pointer' : 'not-allowed',
+                                      opacity: canDowngrade ? 1 : 0.5,
+                                      transition: 'all 0.15s ease'
+                                    }}
+                                  >
+                                    ▼ Downgrade
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={!canUpgrade}
+                                    onClick={() => handleUpgradeStudentLevel(activeStudentSessionId)}
+                                    title={canUpgrade ? `Upgrade to ${BADGE_LEVELS[activeRank].label}` : 'Maximum level'}
+                                    style={{
+                                      padding: '5px 12px',
+                                      borderRadius: '7px',
+                                      fontSize: '11.5px',
+                                      fontWeight: 700,
+                                      border: canUpgrade ? '1px solid #0D9488' : '1px solid #E2E8F0',
+                                      background: canUpgrade ? '#0D9488' : '#F1F5F9',
+                                      color: canUpgrade ? '#FFFFFF' : '#94A3B8',
+                                      cursor: canUpgrade ? 'pointer' : 'not-allowed',
+                                      opacity: canUpgrade ? 1 : 0.5,
+                                      transition: 'all 0.15s ease'
+                                    }}
+                                  >
+                                    ▲ Upgrade
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* 5 Compact Level Pills (Uniform Equal Size Grid) */}
+                              <div style={{
+                                display: 'grid',
+                                gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
+                                gap: '8px',
+                                width: '100%'
+                              }}>
+                                {BADGE_LEVELS.map(lvl => {
+                                  const isCurrent = lvl.rank === activeRank;
+                                  return (
+                                    <button
+                                      key={lvl.badge}
+                                      type="button"
+                                      onClick={() => handleSetStudentLevel(activeStudentSessionId, lvl.label)}
+                                      style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        gap: '6px',
+                                        padding: '7px 8px',
+                                        borderRadius: '8px',
+                                        border: isCurrent ? `2px solid ${lvl.border}` : '1.5px solid #E2E8F0',
+                                        background: isCurrent ? lvl.bg : '#F8FAFC',
+                                        color: isCurrent ? lvl.color : '#475569',
+                                        fontWeight: isCurrent ? 800 : 600,
+                                        fontSize: '12px',
+                                        cursor: 'pointer',
+                                        boxShadow: isCurrent ? `0 2px 6px ${lvl.border}33` : 'none',
+                                        transition: 'all 0.15s ease',
+                                        width: '100%',
+                                        minWidth: 0,
+                                        boxSizing: 'border-box',
+                                        whiteSpace: 'nowrap'
+                                      }}
+                                    >
+                                      <span style={{ flexShrink: 0 }}>{lvl.icon}</span>
+                                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{lvl.label}</span>
+                                      {isCurrent && (
+                                        <span style={{
+                                          fontSize: '9px',
+                                          fontWeight: 800,
+                                          background: lvl.border,
+                                          color: '#FFFFFF',
+                                          padding: '1px 5px',
+                                          borderRadius: '4px',
+                                          marginLeft: '2px',
+                                          letterSpacing: '0.3px',
+                                          flexShrink: 0
+                                        }}>
+                                          CURRENT
+                                        </span>
+                                      )}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })()}
+
                         {/* CARD 1: Wave Count */}
                         <div style={{ background: '#FFFFFF', border: '1.5px solid #E2E8F0', borderRadius: '14px', padding: '16px 18px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
@@ -5676,8 +6276,62 @@ const Sessions = () => {
               const isPast = targetISO < getTodayYYYYMMDD();
               const isToday = targetISO === getTodayYYYYMMDD();
 
+              const query = (dayModalStudentSearch || '').trim().toLowerCase();
+              let filteredGroups = modalGroups;
+              let filteredUngrouped = modalUngrouped;
+
+              const matchesNamePrefix = (nameStr, q) => {
+                if (!nameStr || !q) return false;
+                const cleanName = String(nameStr).trim().toLowerCase();
+                const cleanQuery = String(q).trim().toLowerCase();
+                if (!cleanQuery) return true;
+
+                // 1. Direct name prefix (e.g. "k an" matches "K Anvesh kumar reddy")
+                if (cleanName.startsWith(cleanQuery)) return true;
+
+                // 2. Individual word prefix match (each word must START with the search term, NOT matching inside/middle of words)
+                const words = cleanName.split(/[\s,._-]+/).filter(Boolean);
+                if (words.some(w => w.startsWith(cleanQuery))) return true;
+
+                // 3. Multi-word search terms (e.g. "div red" matches "K Divith Reddy")
+                const queryParts = cleanQuery.split(/[\s,._-]+/).filter(Boolean);
+                if (queryParts.length > 1) {
+                  return queryParts.every(qp => words.some(w => w.startsWith(qp)));
+                }
+
+                return false;
+              };
+
+              if (query) {
+                const matchesSession = (sess) =>
+                  matchesNamePrefix(sess.student, query) ||
+                  matchesNamePrefix(sess.guest_name, query);
+
+                filteredGroups = modalGroups.map(grp => {
+                  const matchingSessions = grp.sessions.filter(matchesSession);
+                  if (matchingSessions.length > 0) {
+                    return { ...grp, sessions: matchingSessions };
+                  }
+                  return null;
+                }).filter(Boolean);
+
+                filteredUngrouped = modalUngrouped.filter(matchesSession);
+              }
+
+              const totalMatchingStudents = filteredGroups.reduce((acc, g) => acc + g.sessions.length, 0) + filteredUngrouped.length;
+
+              const totalDayPresent = targetDaySessions.filter(s => {
+                const att = dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '');
+                return att === 'Present';
+              }).length;
+
+              const totalDayAbsent = targetDaySessions.filter(s => {
+                const att = dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '');
+                return att === 'Absent';
+              }).length;
+
               return (
-                <div className="ses-modal-overlay" style={{ zIndex: 10002 }} onClick={() => setSelectedDayDetailsModal(null)}>
+                <div className="ses-modal-overlay" style={{ zIndex: 10002 }} onClick={() => { setSelectedDayDetailsModal(null); setDayModalStudentSearch(''); }}>
                   <div
                     className="ses-modal-box"
                     style={{ maxWidth: '640px', width: '92%', maxHeight: '88vh', display: 'flex', flexDirection: 'column', padding: '0', overflow: 'hidden' }}
@@ -5698,19 +6352,118 @@ const Sessions = () => {
                               </span>
                             )}
                           </div>
-                          <span style={{ fontSize: '12px', color: '#94A3B8' }}>
-                            {targetDaySessions.length} total session{targetDaySessions.length === 1 ? '' : 's'} scheduled &bull; {modalGroups.length} group{modalGroups.length === 1 ? '' : 's'}
-                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '3px' }}>
+                            <span style={{ fontSize: '12px', color: '#94A3B8' }}>
+                              {targetDaySessions.length} total session{targetDaySessions.length === 1 ? '' : 's'} scheduled &bull; {modalGroups.length} group{modalGroups.length === 1 ? '' : 's'}
+                            </span>
+                            <span style={{ color: '#475569', fontSize: '11px' }}>&bull;</span>
+                            <span style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              fontSize: '11px',
+                              fontWeight: 700,
+                              color: '#4ADE80',
+                              background: 'rgba(74, 222, 128, 0.15)',
+                              border: '1px solid rgba(74, 222, 128, 0.3)',
+                              padding: '1px 7px',
+                              borderRadius: '10px'
+                            }}>
+                              <span>✓</span> {totalDayPresent} Present
+                            </span>
+                            <span style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              fontSize: '11px',
+                              fontWeight: 700,
+                              color: totalDayAbsent > 0 ? '#F87171' : '#94A3B8',
+                              background: totalDayAbsent > 0 ? 'rgba(248, 113, 113, 0.15)' : 'rgba(255, 255, 255, 0.08)',
+                              border: totalDayAbsent > 0 ? '1px solid rgba(248, 113, 113, 0.3)' : '1px solid rgba(255, 255, 255, 0.12)',
+                              padding: '1px 7px',
+                              borderRadius: '10px'
+                            }}>
+                              <span>✕</span> {totalDayAbsent} Absent
+                            </span>
+                          </div>
                         </div>
                       </div>
                       <button
                         className="ses-modal-close"
                         style={{ width: '28px', height: '28px', fontSize: '12px', color: '#FFFFFF', background: 'rgba(255,255,255,0.1)' }}
-                        onClick={() => setSelectedDayDetailsModal(null)}
+                        onClick={() => { setSelectedDayDetailsModal(null); setDayModalStudentSearch(''); }}
                       >
                         ✕
                       </button>
                     </div>
+
+                    {/* Student Search Bar */}
+                    {targetDaySessions.length > 0 && (
+                      <div style={{ padding: '12px 20px', background: '#FFFFFF', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <div style={{ position: 'relative', flex: 1, display: 'flex', alignItems: 'center' }}>
+                          <span style={{ position: 'absolute', left: '12px', fontSize: '14px', color: '#64748B', pointerEvents: 'none' }}>
+                            🔍
+                          </span>
+                          <input
+                            type="text"
+                            placeholder="Search student name in this day's sessions..."
+                            value={dayModalStudentSearch}
+                            onChange={e => setDayModalStudentSearch(e.target.value)}
+                            style={{
+                              width: '100%',
+                              padding: '8px 34px 8px 34px',
+                              borderRadius: '8px',
+                              border: dayModalStudentSearch.trim() ? '1.5px solid #0D9488' : '1px solid #CBD5E1',
+                              background: dayModalStudentSearch.trim() ? '#F0FDFA' : '#F8FAFC',
+                              fontSize: '13px',
+                              fontWeight: 600,
+                              color: '#0F172A',
+                              outline: 'none',
+                              boxSizing: 'border-box'
+                            }}
+                          />
+                          {dayModalStudentSearch && (
+                            <button
+                              type="button"
+                              onClick={() => setDayModalStudentSearch('')}
+                              style={{
+                                position: 'absolute',
+                                right: '10px',
+                                background: '#E2E8F0',
+                                border: 'none',
+                                color: '#475569',
+                                borderRadius: '50%',
+                                width: '18px',
+                                height: '18px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '10px',
+                                fontWeight: 800,
+                                cursor: 'pointer'
+                              }}
+                              title="Clear search"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+                        {dayModalStudentSearch.trim() && (
+                          <span style={{
+                            fontSize: '11.5px',
+                            fontWeight: 700,
+                            color: totalMatchingStudents > 0 ? '#0D9488' : '#DC2626',
+                            background: totalMatchingStudents > 0 ? '#F0FDFA' : '#FEF2F2',
+                            border: totalMatchingStudents > 0 ? '1px solid #99F6E4' : '1px solid #FECACA',
+                            padding: '4px 10px',
+                            borderRadius: '6px',
+                            whiteSpace: 'nowrap'
+                          }}>
+                            {totalMatchingStudents} {totalMatchingStudents === 1 ? 'student' : 'students'} found
+                          </span>
+                        )}
+                      </div>
+                    )}
 
                     {/* Modal Body */}
                     <div style={{ padding: '18px 20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px', background: '#F8FAFC', flex: 1 }}>
@@ -5732,18 +6485,54 @@ const Sessions = () => {
                                 setScheduleModalInitialDate(targetISO);
                                 setShowScheduleModal(true);
                                 setSelectedDayDetailsModal(null);
+                                setDayModalStudentSearch('');
                               }}
                             >
                               + Schedule Session for this Date
                             </button>
                           )}
                         </div>
+                      ) : query && totalMatchingStudents === 0 ? (
+                        <div style={{ textAlign: 'center', padding: '36px 16px', background: '#FFFFFF', borderRadius: '12px', border: '1.5px dashed #CBD5E1' }}>
+                          <div style={{ fontSize: '32px', marginBottom: '8px' }}>🔍</div>
+                          <h4 style={{ margin: '0 0 6px', color: '#0F172A', fontSize: '15px', fontWeight: 700 }}>
+                            No Students Found
+                          </h4>
+                          <p style={{ margin: '0 0 14px', color: '#64748B', fontSize: '13px' }}>
+                            No student matching &ldquo;<strong>{dayModalStudentSearch}</strong>&rdquo; was found in this day&rsquo;s sessions.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => setDayModalStudentSearch('')}
+                            style={{
+                              background: '#0D9488',
+                              color: '#FFFFFF',
+                              border: 'none',
+                              borderRadius: '8px',
+                              padding: '7px 16px',
+                              fontSize: '12.5px',
+                              fontWeight: 700,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            ✕ Clear Search
+                          </button>
+                        </div>
                       ) : (
                         <>
                           {/* Groups list */}
-                          {modalGroups.map(grp => {
+                          {filteredGroups.map(grp => {
                             const statusColorCode = statusColor(grp);
                             const statusBgCode = statusBg(grp);
+                            const grpPresentCount = grp.sessions.filter(s => {
+                              const att = dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '');
+                              return att === 'Present';
+                            }).length;
+                            const grpAbsentCount = grp.sessions.filter(s => {
+                              const att = dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '');
+                              return att === 'Absent';
+                            }).length;
+
                             return (
                               <div
                                 key={grp.key || grp.groupName}
@@ -5787,36 +6576,207 @@ const Sessions = () => {
 
                                 {/* Enrolled Students */}
                                 <div style={{ background: '#F8FAFC', padding: '10px 12px', borderRadius: '10px', border: '1px solid #E2E8F0', marginBottom: '12px' }}>
-                                  <div style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
-                                    Enrolled Students ({grp.sessions.length}):
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '6px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                      <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                                        Enrolled Students ({grp.sessions.length}):
+                                      </span>
+                                      <span style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '3px',
+                                        fontSize: '10.5px',
+                                        fontWeight: 700,
+                                        color: '#15803D',
+                                        background: '#DCFCE7',
+                                        border: '1px solid #86EFAC',
+                                        padding: '1px 6px',
+                                        borderRadius: '8px'
+                                      }}>
+                                        <span>✓</span> {grpPresentCount} Present
+                                      </span>
+                                      <span style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '3px',
+                                        fontSize: '10.5px',
+                                        fontWeight: 700,
+                                        color: grpAbsentCount > 0 ? '#B91C1C' : '#64748B',
+                                        background: grpAbsentCount > 0 ? '#FEE2E2' : '#F1F5F9',
+                                        border: grpAbsentCount > 0 ? '1px solid #FCA5A5' : '1px solid #E2E8F0',
+                                        padding: '1px 6px',
+                                        borderRadius: '8px'
+                                      }}>
+                                        <span>✕</span> {grpAbsentCount} Absent
+                                      </span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleMarkGroupAllPresent(grp.sessions)}
+                                      style={{
+                                        background: '#F0FDF4',
+                                        color: '#15803D',
+                                        border: '1px solid #BBF7D0',
+                                        borderRadius: '6px',
+                                        padding: '2px 9px',
+                                        fontSize: '11px',
+                                        fontWeight: 700,
+                                        cursor: 'pointer',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '4px',
+                                        transition: 'all 0.15s ease'
+                                      }}
+                                      title="Mark all students in this group as Present"
+                                    >
+                                      <span>✓</span>
+                                      <span>Mark All Present</span>
+                                    </button>
                                   </div>
                                   <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                    {grp.sessions.map((sess, sIdx) => (
-                                      <div
-                                        key={sess.id || sIdx}
-                                        style={{
-                                          display: 'flex',
-                                          alignItems: 'center',
-                                          justifyContent: 'space-between',
-                                          background: '#FFFFFF',
-                                          border: '1px solid #E2E8F0',
-                                          borderRadius: '8px',
-                                          padding: '6px 10px'
-                                        }}
-                                      >
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                          <UserAvatar src={sess.image || ''} name={sess.student} size={26} />
-                                          <div>
-                                            <span style={{ fontWeight: 700, color: '#0F172A', fontSize: '13px' }}>
-                                              {sess.student}
-                                            </span>
-                                            <span style={{ fontSize: '11px', color: '#64748B', marginLeft: '6px' }}>
-                                              &bull; {sess.type || 'General'}
-                                            </span>
+                                    {grp.sessions.map((sess, sIdx) => {
+                                      const currentAtt = dayAttendanceMap[sess.id] !== undefined
+                                        ? dayAttendanceMap[sess.id]
+                                        : (sess.attendance || '');
+                                      const isPresent = currentAtt === 'Present';
+                                      const isAbsent = currentAtt === 'Absent';
+                                      const isLoadingThis = Boolean(sess.id && attendanceLoadingIds[sess.id]);
+
+                                      return (
+                                        <div
+                                          key={sess.id || sIdx}
+                                          style={{
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'space-between',
+                                            background: isPresent ? '#F0FDF4' : isAbsent ? '#FEF2F2' : '#FFFFFF',
+                                            border: isPresent ? '1.5px solid #86EFAC' : isAbsent ? '1.5px solid #FECACA' : '1px solid #E2E8F0',
+                                            borderRadius: '8px',
+                                            padding: '6px 10px',
+                                            gap: '8px',
+                                            transition: 'all 0.15s ease'
+                                          }}
+                                        >
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flex: 1 }}>
+                                            <UserAvatar src={sess.image || ''} name={sess.student} size={26} />
+                                            <div style={{ minWidth: 0 }}>
+                                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                <span style={{ fontWeight: 700, color: '#0F172A', fontSize: '13px' }}>
+                                                  {sess.student}
+                                                </span>
+                                                {isPresent && (
+                                                  <span style={{ fontSize: '10px', fontWeight: 800, color: '#15803D', background: '#DCFCE7', padding: '1px 6px', borderRadius: '10px', border: '1px solid #86EFAC' }}>
+                                                    ✓ PRESENT
+                                                  </span>
+                                                )}
+                                                {isAbsent && (
+                                                  <span style={{ fontSize: '10px', fontWeight: 800, color: '#B91C1C', background: '#FEE2E2', padding: '1px 6px', borderRadius: '10px', border: '1px solid #FCA5A5' }}>
+                                                    ✕ ABSENT
+                                                  </span>
+                                                )}
+                                              </div>
+                                              <span style={{ fontSize: '11px', color: '#64748B' }}>
+                                                &bull; {sess.type || 'General'}
+                                              </span>
+                                            </div>
+                                          </div>
+
+                                          {/* Present / Absent Action Buttons */}
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0 }}>
+                                            {(() => {
+                                              const phone = resolveStudentPhone(sess);
+                                              const cleanDigits = phone ? phone.replace(/[^\d+]/g, '') : '';
+                                              const finalTel = cleanDigits
+                                                ? (cleanDigits.startsWith('+') ? cleanDigits : (cleanDigits.length === 10 ? `+91${cleanDigits}` : cleanDigits))
+                                                : '';
+
+                                              return (
+                                                <a
+                                                  href={finalTel ? `tel:${finalTel}` : undefined}
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    if (!finalTel) {
+                                                      e.preventDefault();
+                                                      showToast(`No phone number available for ${sess.student || 'student'}`, 'info');
+                                                    }
+                                                  }}
+                                                  title={phone ? `Call ${sess.student}: ${phone}` : `No phone number for ${sess.student}`}
+                                                  style={{
+                                                    display: 'inline-flex',
+                                                    alignItems: 'center',
+                                                    gap: '4px',
+                                                    padding: '4px 9px',
+                                                    borderRadius: '6px',
+                                                    fontSize: '11px',
+                                                    fontWeight: 700,
+                                                    textDecoration: 'none',
+                                                    cursor: finalTel ? 'pointer' : 'not-allowed',
+                                                    transition: 'all 0.15s ease',
+                                                    border: finalTel ? '1px solid #0284C7' : '1px solid #E2E8F0',
+                                                    background: finalTel ? '#F0F9FF' : '#F8FAFC',
+                                                    color: finalTel ? '#0284C7' : '#94A3B8',
+                                                    boxShadow: finalTel ? '0 1px 2px rgba(2, 132, 199, 0.1)' : 'none'
+                                                  }}
+                                                >
+                                                  <span style={{ fontSize: '11px' }}>📞</span>
+                                                  <span>Call</span>
+                                                </a>
+                                              );
+                                            })()}
+
+                                            <button
+                                              type="button"
+                                              disabled={isLoadingThis}
+                                              onClick={() => handleToggleAttendance(sess, 'Present')}
+                                              title={isPresent ? "Click to clear attendance" : "Mark as Present"}
+                                              style={{
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '4px',
+                                                padding: '4px 10px',
+                                                borderRadius: '6px',
+                                                fontSize: '11px',
+                                                fontWeight: 700,
+                                                cursor: isLoadingThis ? 'wait' : 'pointer',
+                                                transition: 'all 0.15s ease',
+                                                border: isPresent ? '1.5px solid #16A34A' : '1px solid #CBD5E1',
+                                                background: isPresent ? '#16A34A' : '#FFFFFF',
+                                                color: isPresent ? '#FFFFFF' : '#475569',
+                                                boxShadow: isPresent ? '0 2px 4px rgba(22, 163, 74, 0.25)' : 'none'
+                                              }}
+                                            >
+                                              <span>✓</span>
+                                              <span>Present</span>
+                                            </button>
+
+                                            <button
+                                              type="button"
+                                              disabled={isLoadingThis}
+                                              onClick={() => handleToggleAttendance(sess, 'Absent')}
+                                              title={isAbsent ? "Click to clear attendance" : "Mark as Absent"}
+                                              style={{
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '4px',
+                                                padding: '4px 10px',
+                                                borderRadius: '6px',
+                                                fontSize: '11px',
+                                                fontWeight: 700,
+                                                cursor: isLoadingThis ? 'wait' : 'pointer',
+                                                transition: 'all 0.15s ease',
+                                                border: isAbsent ? '1.5px solid #DC2626' : '1px solid #CBD5E1',
+                                                background: isAbsent ? '#DC2626' : '#FFFFFF',
+                                                color: isAbsent ? '#FFFFFF' : '#475569',
+                                                boxShadow: isAbsent ? '0 2px 4px rgba(220, 38, 38, 0.25)' : 'none'
+                                              }}
+                                            >
+                                              <span>✕</span>
+                                              <span>Absent</span>
+                                            </button>
                                           </div>
                                         </div>
-                                      </div>
-                                    ))}
+                                      );
+                                    })}
                                   </div>
                                 </div>
 
@@ -5840,31 +6800,186 @@ const Sessions = () => {
                           })}
 
                           {/* Ungrouped sessions */}
-                          {modalUngrouped.map((sess, uIdx) => (
-                            <div
-                              key={sess.id || uIdx}
-                              style={{
-                                background: '#FFFFFF',
-                                border: '1.5px solid #E2E8F0',
-                                borderRadius: '12px',
-                                padding: '14px 16px'
-                              }}
-                            >
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          {filteredUngrouped.length > 0 && (
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '14px 0 8px', flexWrap: 'wrap', gap: '6px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                                  Individual Sessions ({filteredUngrouped.length}):
+                                </span>
+                                <span style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px',
+                                  fontSize: '10.5px',
+                                  fontWeight: 700,
+                                  color: '#15803D',
+                                  background: '#DCFCE7',
+                                  border: '1px solid #86EFAC',
+                                  padding: '1px 6px',
+                                  borderRadius: '8px'
+                                }}>
+                                  <span>✓</span> {filteredUngrouped.filter(s => (dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '')) === 'Present').length} Present
+                                </span>
+                                <span style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px',
+                                  fontSize: '10.5px',
+                                  fontWeight: 700,
+                                  color: filteredUngrouped.filter(s => (dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '')) === 'Absent').length > 0 ? '#B91C1C' : '#64748B',
+                                  background: filteredUngrouped.filter(s => (dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '')) === 'Absent').length > 0 ? '#FEE2E2' : '#F1F5F9',
+                                  border: filteredUngrouped.filter(s => (dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '')) === 'Absent').length > 0 ? '1px solid #FCA5A5' : '1px solid #E2E8F0',
+                                  padding: '1px 6px',
+                                  borderRadius: '8px'
+                                }}>
+                                  <span>✕</span> {filteredUngrouped.filter(s => (dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '')) === 'Absent').length} Absent
+                                </span>
+                              </div>
+                            </div>
+                          )}
+
+                          {filteredUngrouped.map((sess, uIdx) => {
+                            const currentAtt = dayAttendanceMap[sess.id] !== undefined
+                              ? dayAttendanceMap[sess.id]
+                              : (sess.attendance || '');
+                            const isPresent = currentAtt === 'Present';
+                            const isAbsent = currentAtt === 'Absent';
+                            const isLoadingThis = Boolean(sess.id && attendanceLoadingIds[sess.id]);
+
+                            return (
+                              <div
+                                key={sess.id || uIdx}
+                                style={{
+                                  background: isPresent ? '#F0FDF4' : isAbsent ? '#FEF2F2' : '#FFFFFF',
+                                  border: isPresent ? '1.5px solid #86EFAC' : isAbsent ? '1.5px solid #FECACA' : '1px solid #E2E8F0',
+                                  borderRadius: '12px',
+                                  padding: '12px 16px',
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  alignItems: 'center',
+                                  gap: '12px',
+                                  transition: 'all 0.15s ease'
+                                }}
+                              >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1 }}>
                                   <UserAvatar src={sess.image || ''} name={sess.student} size={32} />
-                                  <div>
-                                    <h4 style={{ margin: 0, fontSize: '14.5px', color: '#0F172A', fontWeight: 700 }}>
-                                      {sess.student}
-                                    </h4>
+                                  <div style={{ minWidth: 0 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                      <h4 style={{ margin: 0, fontSize: '14.5px', color: '#0F172A', fontWeight: 700 }}>
+                                        {sess.student}
+                                      </h4>
+                                      {isPresent && (
+                                        <span style={{ fontSize: '10px', fontWeight: 800, color: '#15803D', background: '#DCFCE7', padding: '1px 6px', borderRadius: '10px', border: '1px solid #86EFAC' }}>
+                                          ✓ PRESENT
+                                        </span>
+                                      )}
+                                      {isAbsent && (
+                                        <span style={{ fontSize: '10px', fontWeight: 800, color: '#B91C1C', background: '#FEE2E2', padding: '1px 6px', borderRadius: '10px', border: '1px solid #FCA5A5' }}>
+                                          ✕ ABSENT
+                                        </span>
+                                      )}
+                                    </div>
                                     <span style={{ fontSize: '12px', color: '#64748B' }}>
                                       ⏰ {sess.time} &bull; Coach: {sess.instructor || 'Coach'}
                                     </span>
                                   </div>
                                 </div>
+
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0 }}>
+                                  {(() => {
+                                    const phone = resolveStudentPhone(sess);
+                                    const cleanDigits = phone ? phone.replace(/[^\d+]/g, '') : '';
+                                    const finalTel = cleanDigits
+                                      ? (cleanDigits.startsWith('+') ? cleanDigits : (cleanDigits.length === 10 ? `+91${cleanDigits}` : cleanDigits))
+                                      : '';
+
+                                    return (
+                                      <a
+                                        href={finalTel ? `tel:${finalTel}` : undefined}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          if (!finalTel) {
+                                            e.preventDefault();
+                                            showToast(`No phone number available for ${sess.student || 'student'}`, 'info');
+                                          }
+                                        }}
+                                        title={phone ? `Call ${sess.student}: ${phone}` : `No phone number for ${sess.student}`}
+                                        style={{
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '4px',
+                                          padding: '5px 10px',
+                                          borderRadius: '6px',
+                                          fontSize: '11px',
+                                          fontWeight: 700,
+                                          textDecoration: 'none',
+                                          cursor: finalTel ? 'pointer' : 'not-allowed',
+                                          transition: 'all 0.15s ease',
+                                          border: finalTel ? '1px solid #0284C7' : '1px solid #E2E8F0',
+                                          background: finalTel ? '#F0F9FF' : '#F8FAFC',
+                                          color: finalTel ? '#0284C7' : '#94A3B8',
+                                          boxShadow: finalTel ? '0 1px 2px rgba(2, 132, 199, 0.1)' : 'none'
+                                        }}
+                                      >
+                                        <span style={{ fontSize: '11px' }}>📞</span>
+                                        <span>Call</span>
+                                      </a>
+                                    );
+                                  })()}
+
+                                  <button
+                                    type="button"
+                                    disabled={isLoadingThis}
+                                    onClick={() => handleToggleAttendance(sess, 'Present')}
+                                    title={isPresent ? "Click to clear attendance" : "Mark as Present"}
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      padding: '5px 12px',
+                                      borderRadius: '6px',
+                                      fontSize: '11px',
+                                      fontWeight: 700,
+                                      cursor: isLoadingThis ? 'wait' : 'pointer',
+                                      transition: 'all 0.15s ease',
+                                      border: isPresent ? '1.5px solid #16A34A' : '1px solid #CBD5E1',
+                                      background: isPresent ? '#16A34A' : '#FFFFFF',
+                                      color: isPresent ? '#FFFFFF' : '#475569',
+                                      boxShadow: isPresent ? '0 2px 4px rgba(22, 163, 74, 0.25)' : 'none'
+                                    }}
+                                  >
+                                    <span>✓</span>
+                                    <span>Present</span>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    disabled={isLoadingThis}
+                                    onClick={() => handleToggleAttendance(sess, 'Absent')}
+                                    title={isAbsent ? "Click to clear attendance" : "Mark as Absent"}
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      padding: '5px 12px',
+                                      borderRadius: '6px',
+                                      fontSize: '11px',
+                                      fontWeight: 700,
+                                      cursor: isLoadingThis ? 'wait' : 'pointer',
+                                      transition: 'all 0.15s ease',
+                                      border: isAbsent ? '1.5px solid #DC2626' : '1px solid #CBD5E1',
+                                      background: isAbsent ? '#DC2626' : '#FFFFFF',
+                                      color: isAbsent ? '#FFFFFF' : '#475569',
+                                      boxShadow: isAbsent ? '0 2px 4px rgba(220, 38, 38, 0.25)' : 'none'
+                                    }}
+                                  >
+                                    <span>✕</span>
+                                    <span>Absent</span>
+                                  </button>
+                                </div>
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </>
                       )}
                     </div>
@@ -5875,7 +6990,7 @@ const Sessions = () => {
                         type="button"
                         className="ses-btn-secondary"
                         style={{ fontSize: '12px', padding: '6px 14px' }}
-                        onClick={() => setSelectedDayDetailsModal(null)}
+                        onClick={() => { setSelectedDayDetailsModal(null); setDayModalStudentSearch(''); }}
                       >
                         Close
                       </button>
@@ -6538,15 +7653,24 @@ const Sessions = () => {
 
         /* Calendar & Ground Ops Modal */
         .ses-modal-overlay {
-          position: fixed; inset: 0; background: rgba(5, 11, 26, 0.8); backdrop-filter: blur(6px);
+          position: fixed; inset: 0; background: rgba(5, 11, 26, 0.8);
+          -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
           display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 24px;
           overflow-y: auto;
           overscroll-behavior: contain;
+          -webkit-transform: translate3d(0, 0, 0);
+          transform: translate3d(0, 0, 0);
+          -webkit-backface-visibility: hidden;
+          backface-visibility: hidden;
         }
         .ses-modal-box {
           background: #FFFFFF; border-radius: 20px; max-width: 1100px; width: 100%; max-height: 90vh;
           display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 24px 60px rgba(0,0,0,0.35);
           border: 1px solid rgba(255,255,255,0.2);
+          -webkit-transform: translate3d(0, 0, 0);
+          transform: translate3d(0, 0, 0);
+          -webkit-backface-visibility: hidden;
+          backface-visibility: hidden;
         }
         .ses-hub-modal {
           max-width: 1020px !important;
@@ -6665,12 +7789,21 @@ const Sessions = () => {
 
         /* Detail Popup */
         .ses-detail-popup-overlay {
-          position: fixed; inset: 0; background: rgba(5, 11, 26, 0.5); backdrop-filter: blur(2px);
+          position: fixed; inset: 0; background: rgba(5, 11, 26, 0.65);
+          -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
           display: flex; align-items: center; justify-content: center; z-index: 1100;
+          -webkit-transform: translate3d(0, 0, 0);
+          transform: translate3d(0, 0, 0);
+          -webkit-backface-visibility: hidden;
+          backface-visibility: hidden;
         }
         .ses-detail-popup {
           background: #FFFFFF; border-radius: 16px; max-width: 480px; width: 90%; padding: 24px;
           box-shadow: 0 20px 40px rgba(0,0,0,0.25);
+          -webkit-transform: translate3d(0, 0, 0);
+          transform: translate3d(0, 0, 0);
+          -webkit-backface-visibility: hidden;
+          backface-visibility: hidden;
         }
         .ses-detail-row {
           display: flex; justify-content: space-between; align-items: center;

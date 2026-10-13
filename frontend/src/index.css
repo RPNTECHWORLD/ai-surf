@@ -709,3 +709,23 @@ h2 {
     grid-template-columns: 1fr !important;
   }
 }
+
+/* ==========================================================================
+   Modal Scroll Isolation
+   Prevents background page from scroll-chaining when any popup/modal is open
+   ========================================================================== */
+
+/* Modal overlays and inner dialogs: prevent scroll chaining to parent */
+[class*="modal-overlay"],
+[class*="-modal-overlay"],
+.modal-overlay {
+  overscroll-behavior: contain !important;
+}
+
+[class*="modal-overlay"] > div,
+[class*="-modal-overlay"] > div,
+.modal-overlay > div,
+[class*="-modal"],
+.modal {
+  overscroll-behavior: contain !important;
+}

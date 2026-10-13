@@ -112,6 +112,7 @@ const AuthPage = () => {
     dob: '',
     age: '',
     gender: '',
+    level: 'Beginner',
     stance: '',
     swimming_ability: 'Swimmer',
     specializations: [],
@@ -312,6 +313,10 @@ const AuthPage = () => {
     const { name, value } = e.target;
     let next = { ...formData, [name]: value };
     if (name === 'dob') next.age = calculateAge(value);
+    if (name === 'phone' || name === 'whatsapp_number') {
+      next.phone = value;
+      next.whatsapp_number = value;
+    }
     setFormData(next);
   };
 
@@ -578,6 +583,14 @@ const AuthPage = () => {
     if (pwd.length < 6) {
       setErrorMsg('Password must be at least 6 characters.'); return;
     }
+    const userPhone = (formData.phone || formData.whatsapp_number || '').trim();
+    if (!userPhone) {
+      setErrorMsg('Please enter your phone number.'); return;
+    }
+    const phoneDigits = userPhone.replace(/\D/g, '');
+    if (phoneDigits.length < 10) {
+      setErrorMsg('Please enter a valid 10-digit phone number.'); return;
+    }
     if (role === 'athlete' && !formData.gender) {
       setErrorMsg('Please select your gender.'); return;
     }
@@ -586,10 +599,6 @@ const AuthPage = () => {
       setErrorMsg('Please select your course start date.'); return;
     }
     if (role === 'coach') {
-      const coachPhone = (formData.phone || formData.whatsapp_number || '').trim();
-      if (!coachPhone) {
-        setErrorMsg('Please enter your phone number.'); return;
-      }
       if (!isCoachSchoolAffiliated && !formData.location?.trim()) {
         setErrorMsg('Please enter your coaching location / region.'); return;
       }
@@ -610,7 +619,8 @@ const AuthPage = () => {
           dob: formData.dob,
           age: formData.dob ? calculateAge(formData.dob) : (formData.age ? parseInt(formData.age) : null),
           gender: formData.gender,
-          stance: formData.stance,
+          level: formData.level || 'Beginner',
+          stance: formData.stance || '',
           swimming_ability: formData.swimming_ability || 'Swimmer',
           specializations: formData.specializations,
           rates: formData.rates,
@@ -1548,13 +1558,15 @@ const AuthPage = () => {
                             </select>
                           </div>
 
-                          {/* Row 2: Surf Stance & Swimming Ability */}
+                          {/* Row 2: Surf Level & Swimming Ability */}
                           <div className="auth-field">
-                            <label>Surf Stance</label>
-                            <select name="stance" value={formData.stance || ''} onChange={handleChange}>
-                              <option value="">-- Select Surf Stance --</option>
-                              <option value="regular">Regular</option>
-                              <option value="goofy">Goofy</option>
+                            <label>🏄 Surf Level <span style={{ color: '#FF4D6D', fontWeight: 700 }}>*</span></label>
+                            <select name="level" value={formData.level || 'Beginner'} onChange={handleChange} required>
+                              <option value="Beginner"> Beginner</option>
+                              <option value="Advance Beginner">Advance Beginner</option>
+                              <option value="Intermediate">Intermediate</option>
+                              <option value="Advance Intermediate">Advance Intermediate</option>
+                              <option value="Pro">Pro</option>
                             </select>
                           </div>
 
@@ -1566,17 +1578,18 @@ const AuthPage = () => {
                             </select>
                           </div>
 
-                          {/* Row 3: WhatsApp Number & Accompanying Guests */}
+                          {/* Row 3: Phone / WhatsApp Number & Accompanying Guests */}
                           <div className="auth-field">
                             <label style={{ display: 'flex', alignItems: 'center', height: '22px', margin: '0 0 6px 0' }}>
-                              <span>📱 WhatsApp Number</span>
+                              <span>📱 Phone / WhatsApp Number <span style={{ color: '#FF4D6D', fontWeight: 700 }}>*</span></span>
                             </label>
                             <input 
                               type="tel" 
                               name="whatsapp_number" 
-                              placeholder="9876543210 (+91 auto)"
-                              value={formData.whatsapp_number} 
+                              placeholder="e.g. 9876543210 (10 digits)"
+                              value={formData.whatsapp_number || formData.phone || ''} 
                               onChange={handleChange} 
+                              required
                             />
                           </div>
 
@@ -2016,18 +2029,20 @@ const AuthPage = () => {
                                     </select>
                                   </div>
 
-                                  {/* Surf Stance */}
+                                  {/* Surf Level */}
                                   <div className="auth-field" style={{ minWidth: 0 }}>
                                     <label style={{ fontSize: '11.5px', color: '#94A3B8', fontWeight: 600, height: '18px', display: 'flex', alignItems: 'center' }}>
-                                      Surf Stance
+                                      Surf Level
                                     </label>
                                     <select
-                                      value={formData.guests_details?.[gIdx]?.stance || ''}
-                                      onChange={e => handleGuestChange(gIdx, 'stance', e.target.value)}
+                                      value={formData.guests_details?.[gIdx]?.level || 'Beginner'}
+                                      onChange={e => handleGuestChange(gIdx, 'level', e.target.value)}
                                     >
-                                      <option value="">-- Select Surf Stance --</option>
-                                      <option value="regular">Regular</option>
-                                      <option value="goofy">Goofy</option>
+                                      <option value="Beginner">Beginner</option>
+                                      <option value="Advance Beginner">Advance Beginner</option>
+                                      <option value="Intermediate">Intermediate</option>
+                                      <option value="Advance Intermediate">Advance Intermediate</option>
+                                      <option value="Pro">Pro</option>
                                     </select>
                                   </div>
 
@@ -2133,11 +2148,11 @@ const AuthPage = () => {
 
                         {/* Coach Phone Number */}
                         <div className="auth-field" style={{ marginBottom: '12px' }}>
-                          <label>Phone Number (WhatsApp) <span style={{ color: '#EF4444', fontWeight: 700 }}>*</span></label>
+                          <label>Phone / WhatsApp Number <span style={{ color: '#EF4444', fontWeight: 700 }}>*</span></label>
                           <input
                             type="tel"
                             name="phone"
-                            placeholder="e.g. +91 98765 43210"
+                            placeholder="e.g. 9876543210 (10 digits)"
                             value={formData.phone || formData.whatsapp_number || ''}
                             onChange={(e) => {
                               const val = e.target.value;
@@ -2232,6 +2247,23 @@ const AuthPage = () => {
                             value={formData.school || ''} onChange={handleChange} required />
                           <small style={{ color: '#94A3B8', fontSize: '11px', marginTop: '4px', display: 'block' }}>
                             This name will be saved dynamically as your official school dashboard name.
+                          </small>
+                        </div>
+                        <div className="auth-field">
+                          <label>Phone / WhatsApp Number <span style={{ color: '#EF4444', fontWeight: 700 }}>*</span></label>
+                          <input
+                            type="tel"
+                            name="phone"
+                            placeholder="e.g. 9876543210 (10 digits)"
+                            value={formData.phone || formData.whatsapp_number || ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setFormData(prev => ({ ...prev, phone: val, whatsapp_number: val }));
+                            }}
+                            required
+                          />
+                          <small style={{ color: '#94A3B8', fontSize: '11px', marginTop: '4px', display: 'block' }}>
+                            Official contact phone number for your surf school.
                           </small>
                         </div>
                         <div className="auth-field">
@@ -2402,40 +2434,67 @@ const styles = `
 .auth-page {
   display: flex;
   flex-direction: row-reverse;
+  height: 100vh;
   min-height: 100vh;
+  max-height: 100vh;
   background: #050B1A;
   font-family: 'Inter', sans-serif;
   overflow: hidden;
+  position: relative;
+  width: 100%;
 }
 
 .auth-panel-left {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  justify-content: center;
-  padding: 40px 80px;
+  justify-content: flex-start;
+  padding: 40px 70px 80px 70px;
   width: 720px;
-  min-height: 100vh;
+  height: 100vh;
+  max-height: 100vh;
   background: #050B1A;
   border-left: 1px solid rgba(255, 255, 255, 0.1);
   box-sizing: border-box;
   overflow-y: auto;
+  overflow-x: hidden;
   flex-shrink: 0;
+  -webkit-overflow-scrolling: touch;
+}
+
+.auth-panel-left::-webkit-scrollbar {
+  width: 6px;
+}
+.auth-panel-left::-webkit-scrollbar-track {
+  background: rgba(5, 11, 26, 0.6);
+}
+.auth-panel-left::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+.auth-panel-left::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.35);
 }
 
 .auth-panel-right {
   flex: 1;
   height: 100vh;
-  background-image: linear-gradient(90deg, rgba(5,11,26,0.1) 0%, #050B1A 100%),
-    url('https://images.unsplash.com/photo-1502680390469-be75c86b636f?auto=format&fit=crop&q=80&w=1200');
+  min-height: 100vh;
+  max-height: 100vh;
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  background-image: linear-gradient(90deg, rgba(5,11,26,0.15) 0%, #050B1A 100%),
+    url('https://images.unsplash.com/photo-1502680390469-be75c86b636f?auto=format&fit=crop&q=80&w=1600');
   background-size: cover;
-  background-position: center;
+  background-position: center center;
+  background-repeat: no-repeat;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   padding: 60px 80px;
   box-sizing: border-box;
-  position: relative;
+  overflow: hidden;
 }
 
 @media (min-width: 1025px) {
@@ -2445,8 +2504,20 @@ const styles = `
 }
 
 @media (max-width: 1024px) {
+  .auth-page {
+    height: auto !important;
+    min-height: 100vh !important;
+    max-height: none !important;
+    overflow-y: auto !important;
+  }
   .auth-panel-right { display: none; }
-  .auth-panel-left { width: 100%; padding: 40px; }
+  .auth-panel-left {
+    width: 100% !important;
+    height: auto !important;
+    max-height: none !important;
+    padding: 40px 24px 60px 24px !important;
+    overflow-y: visible !important;
+  }
 }
 
 .auth-form, .auth-tabs, .auth-brand, .auth-title, .auth-subtitle,

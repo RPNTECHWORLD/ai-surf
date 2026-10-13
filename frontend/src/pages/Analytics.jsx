@@ -4,13 +4,143 @@ import Sidebar from '../components/Sidebar';
 const API = import.meta.env.VITE_API_URL || '';
 
 const BADGE_COLORS = {
-  WHITE: { bg: '#E2E8F0', text: '#64748B' },
-  YELLOW: { bg: '#F59E0B', text: '#F59E0B' },
-  GREEN: { bg: '#10B981', text: '#10B981' },
-  BLUE: { bg: '#3B82F6', text: '#3B82F6' },
-  RED: { bg: '#F43F5E', text: '#F43F5E' },
+  WHITE: { bg: '#E2E8F0', border: '#94A3B8', text: '#64748B', label: 'Beginner' },
+  YELLOW: { bg: '#F59E0B', border: '#D97706', text: '#D97706', label: 'Advance Beginner' },
+  GREEN: { bg: '#10B981', border: '#059669', text: '#059669', label: 'Intermediate' },
+  BLUE: { bg: '#3B82F6', border: '#2563EB', text: '#2563EB', label: 'Advance Intermediate' },
+  RED: { bg: '#F43F5E', border: '#E11D48', text: '#E11D48', label: 'Pro' },
 };
 const BADGE_ORDER = ['WHITE', 'YELLOW', 'GREEN', 'BLUE', 'RED'];
+
+function parseLocalDateOnly(dateStr) {
+  if (!dateStr) return null;
+  if (dateStr instanceof Date) {
+    return new Date(dateStr.getFullYear(), dateStr.getMonth(), dateStr.getDate());
+  }
+  const s = String(dateStr).trim();
+  if (!s) return null;
+
+  const ymd = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (ymd) {
+    return new Date(parseInt(ymd[1], 10), parseInt(ymd[2], 10) - 1, parseInt(ymd[3], 10));
+  }
+  const dmy = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+  if (dmy) {
+    return new Date(parseInt(dmy[3], 10), parseInt(dmy[2], 10) - 1, parseInt(dmy[1], 10));
+  }
+  const d = new Date(s);
+  if (!isNaN(d.getTime())) {
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  }
+  return null;
+}
+
+function getStudentCourseTotalDays(student) {
+  if (!student) return 3;
+  if (student.totalDays && !isNaN(parseInt(student.totalDays, 10))) {
+    return parseInt(student.totalDays, 10);
+  }
+  if (student.total_days && !isNaN(parseInt(student.total_days, 10))) {
+    return parseInt(student.total_days, 10);
+  }
+  const durStr = student.course_duration || student.courseDuration || student.course || student.waitlistGroup || '';
+  const match = String(durStr).match(/(\d+)\s*Day/i);
+  if (match) return parseInt(match[1], 10);
+  return 3;
+}
+
+function isStudentActive(student, targetDate = new Date()) {
+  if (!student) return false;
+  const status = (student.status || student.approval_status || '').toLowerCase().trim();
+  if (status === 'inactive' || status === 'pending' || status === 'rejected') return false;
+
+  const rawStart = student.startDate || student.start_date;
+  if (!rawStart) return false;
+
+  const startDate = parseLocalDateOnly(rawStart);
+  if (!startDate) return false;
+
+  const totalDays = getStudentCourseTotalDays(student);
+  const target = targetDate instanceof Date ? targetDate : (parseLocalDateOnly(targetDate) || new Date());
+  const targetClean = new Date(target.getFullYear(), target.getMonth(), target.getDate());
+  const startClean = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+
+  const diffMs = targetClean.getTime() - startClean.getTime();
+  const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+  const dayNumber = diffDays + 1;
+
+  return dayNumber >= 1 && dayNumber <= totalDays;
+}
+
+function mapLevelToBadgeInfo(rawLevel, existingBadgeLevels = []) {
+  const lvl = String(rawLevel || '').toLowerCase().trim();
+  let baseBadge = 'WHITE';
+  let badgeRank = 1;
+  let nextTime = '3 weeks';
+  let nextColor = '#64748B';
+
+  if (lvl.includes('pro') || lvl.includes('master')) {
+    baseBadge = 'RED';
+    badgeRank = 5;
+    nextTime = 'Max Level';
+    nextColor = '#0D9488';
+  } else if (lvl.includes('advance intermediate') || lvl.includes('advanced intermediate')) {
+    baseBadge = 'BLUE';
+    badgeRank = 4;
+    nextTime = '3 months';
+    nextColor = '#64748B';
+  } else if (lvl.includes('intermediate')) {
+    baseBadge = 'GREEN';
+    badgeRank = 3;
+    nextTime = 'Ready Now';
+    nextColor = '#0D9488';
+  } else if (lvl.includes('advance beginner') || lvl.includes('advanced beginner') || lvl.includes('yellow')) {
+    baseBadge = 'YELLOW';
+    badgeRank = 2;
+    nextTime = '1 month';
+    nextColor = '#64748B';
+  } else if (lvl.includes('advanced')) {
+    baseBadge = 'RED';
+    badgeRank = 5;
+    nextTime = 'Max Level';
+    nextColor = '#0D9488';
+  } else {
+    baseBadge = 'WHITE';
+    badgeRank = 1;
+    nextTime = '3 weeks';
+    nextColor = '#64748B';
+  }
+
+  const dbCount = Array.isArray(existingBadgeLevels) ? existingBadgeLevels.length : 0;
+  const effectiveRank = rawLevel ? badgeRank : (dbCount > 0 ? dbCount : 1);
+  const earnedLevels = BADGE_ORDER.slice(0, effectiveRank);
+  const currentBadge = BADGE_ORDER[effectiveRank - 1] || baseBadge;
+
+  if (effectiveRank >= 5) {
+    nextTime = 'Max Level';
+    nextColor = '#0D9488';
+  } else if (effectiveRank === 4) {
+    nextTime = '3 months';
+    nextColor = '#64748B';
+  } else if (effectiveRank === 3) {
+    nextTime = 'Ready Now';
+    nextColor = '#0D9488';
+  } else if (effectiveRank === 2) {
+    nextTime = '1 month';
+    nextColor = '#64748B';
+  } else if (effectiveRank === 1) {
+    nextTime = '3 weeks';
+    nextColor = '#64748B';
+  }
+
+  return {
+    currentBadge,
+    badgeCount: effectiveRank,
+    badgeLevels: earnedLevels,
+    nextTime,
+    nextColor
+  };
+}
 
 const Analytics = () => {
   const [badgeStats, setBadgeStats] = useState([
@@ -58,10 +188,14 @@ const Analytics = () => {
     }
     const qStr = queryParams.toString() ? `?${queryParams.toString()}` : '';
 
+    const stdSchoolParam = (activeSchool && activeSchool.toLowerCase() !== 'super admin' && activeSchool.toLowerCase() !== 'all')
+      ? `?school=${encodeURIComponent(activeSchool)}`
+      : '?school=all';
+
     Promise.all([
       fetch(`${API}/api/analytics/badges${qStr}`).then(r => r.json()).catch(() => []),
       fetch(`${API}/api/analytics/students${qStr}`).then(r => r.json()).catch(() => []),
-      fetch(`${API}/api/students`).then(r => r.json()).catch(() => []),
+      fetch(`${API}/api/students${stdSchoolParam}`).then(r => r.json()).catch(() => []),
       fetch(`${API}/api/sessions`).then(r => r.json()).catch(() => []),
     ])
       .then(([badges, studs, stdsList, sessList]) => {
@@ -78,7 +212,7 @@ const Analytics = () => {
 
   const getGuestsForStudent = (student) => {
     if (!student) return [];
-    const guestNames = new Set();
+    const guestMap = new Map();
 
     const parseGuests = (val) => {
       if (!val) return [];
@@ -92,11 +226,21 @@ const Analytics = () => {
       return [];
     };
 
-    // 1. Direct guests_details
-    parseGuests(student.guests_details).forEach(g => {
+    const addGuest = (g) => {
+      if (!g) return;
       const name = typeof g === 'string' ? g.trim() : (g?.name ? String(g.name).trim() : '');
-      if (name) guestNames.add(name);
-    });
+      if (!name) return;
+      const existing = guestMap.get(name.toLowerCase());
+      const level = (typeof g === 'object' && g.level) ? g.level : (existing?.level || student.level || 'Beginner');
+      guestMap.set(name.toLowerCase(), {
+        name,
+        level,
+        ...(typeof g === 'object' ? g : {})
+      });
+    };
+
+    // 1. Direct guests_details
+    parseGuests(student.guests_details).forEach(addGuest);
 
     // 2. Matched student from full students list
     const matchedStd = allStudentsList.find(s => 
@@ -104,10 +248,7 @@ const Analytics = () => {
       ((student.name || '').toLowerCase().trim() === (s.name || '').toLowerCase().trim())
     );
     if (matchedStd) {
-      parseGuests(matchedStd.guests_details).forEach(g => {
-        const name = typeof g === 'string' ? g.trim() : (g?.name ? String(g.name).trim() : '');
-        if (name) guestNames.add(name);
-      });
+      parseGuests(matchedStd.guests_details).forEach(addGuest);
     }
 
     // 3. Sessions list matching student
@@ -116,76 +257,96 @@ const Analytics = () => {
       const matchName = (student.name || '').toLowerCase().trim() === (sess.student || sess.student_name || '').toLowerCase().trim();
       if (matchId || matchName) {
         if (sess.guest_name && sess.guest_name.trim()) {
-          guestNames.add(sess.guest_name.trim());
+          addGuest({ name: sess.guest_name.trim(), level: sess.level || student.level || 'Beginner' });
         } else if (sess.is_guest && sess.student && sess.student.trim()) {
-          guestNames.add(sess.student.trim());
+          addGuest({ name: sess.student.trim(), level: sess.level || student.level || 'Beginner' });
         }
       }
     });
 
     // 4. Storage fallback
-    if (guestNames.size === 0) {
+    if (guestMap.size === 0) {
       try {
         const savedUser = JSON.parse(sessionStorage.getItem('user') || '{}');
         const stNameLower = (student.name || '').toLowerCase().trim();
         if (stNameLower && (savedUser.name || '').toLowerCase().trim() === stNameLower) {
-          parseGuests(savedUser.guests_details).forEach(g => {
-            const name = typeof g === 'string' ? g.trim() : (g?.name ? String(g.name).trim() : '');
-            if (name) guestNames.add(name);
-          });
+          parseGuests(savedUser.guests_details).forEach(addGuest);
         }
       } catch (e) {}
     }
 
-    return Array.from(guestNames);
+    return Array.from(guestMap.values());
   };
 
   const filteredStudents = useMemo(() => {
-    if (!students || students.length === 0) return [];
+    // Merge students from allStudentsList and analytics students
+    // allStudentsList has start_date, course_duration, and level
+    const sourceList = (allStudentsList && allStudentsList.length > 0) ? allStudentsList : students;
+    if (!sourceList || sourceList.length === 0) return [];
 
     // STUDENT ROLE: Show only their own record + their own guests
     if (isStudent) {
-      const me = students.find(s => {
+      const me = sourceList.find(s => {
         if (studentId && (String(s.id) === String(studentId) || String(s.user_id) === String(studentId))) return true;
         if (studentEmail && (s.email || '').toLowerCase().trim() === studentEmail) return true;
         if (studentName && (s.name || '').toLowerCase().trim() === studentName) return true;
         return false;
       });
       if (!me) return [];
-      const result = [{ ...me, isGuest: false, displayKey: `student_${me.id}` }];
-      getGuestsForStudent(me).forEach(gName => {
+      const badgeInfo = mapLevelToBadgeInfo(me.level, me.badge_levels);
+      const result = [{
+        ...me,
+        isGuest: false,
+        displayKey: `student_${me.id}`,
+        badges: badgeInfo.badgeCount,
+        badge_levels: badgeInfo.badgeLevels,
+        currentBadge: badgeInfo.currentBadge,
+        nextTime: badgeInfo.nextTime,
+        nextColor: badgeInfo.nextColor
+      }];
+      getGuestsForStudent(me).forEach(g => {
+        const gBadgeInfo = mapLevelToBadgeInfo(g.level || me.level, []);
         result.push({
-          id: `guest_${me.id}_${gName}`,
-          name: gName,
+          id: `guest_${me.id}_${g.name}`,
+          name: g.name,
           isGuest: true,
           parentName: me.name,
           parentId: me.id,
           school: me.school,
           instructor: me.instructor || '—',
-          badges: 0,
-          badge_levels: [],
-          nextTime: '3 weeks',
-          nextColor: '#64748B',
-          displayKey: `guest_${me.id}_${gName}`
+          badges: gBadgeInfo.badgeCount,
+          badge_levels: gBadgeInfo.badgeLevels,
+          currentBadge: gBadgeInfo.currentBadge,
+          nextTime: gBadgeInfo.nextTime,
+          nextColor: gBadgeInfo.nextColor,
+          displayKey: `guest_${me.id}_${g.name}`
         });
       });
       return result;
     }
     
-    // Base filter by coach or school
-    const scoped = students.filter(s => {
+    // Base filter: MUST BE CURRENTLY ACTIVE, and match coach or school
+    const scoped = sourceList.filter(s => {
+      // 1. MUST BE ACTIVE:
+      if (!isStudentActive(s)) return false;
+
+      // 2. Coach Filter
       if (isCoach && (coachId || coachName)) {
         const cNameLower = (coachName || '').toLowerCase().trim();
+        const instMatch = (s.instructor_id && (s.instructor_id === coachId || String(s.instructor_id) === String(coachId))) ||
+          ((s.instructor || '').toLowerCase().trim() === cNameLower);
+        if (instMatch) return true;
+
         const hasSessionWithCoach = allSessionsList.some(sess => {
           const sessStatus = (sess.status || '').toLowerCase().trim();
           if (sessStatus === 'cancelled' || sessStatus === 'canceled') return false;
 
           const sInstLower = (sess.instructor || sess.instructor_name || '').toLowerCase().trim();
-          const instMatch = 
+          const matchCoach = 
             (cNameLower && sInstLower && (sInstLower === cNameLower || sInstLower.includes(cNameLower) || cNameLower.includes(sInstLower))) ||
             (coachId && (sess.instructor_id === coachId || String(sess.instructor_id) === String(coachId) || parseInt(sess.instructor_id) === parseInt(coachId)));
 
-          if (!instMatch) return false;
+          if (!matchCoach) return false;
 
           const matchId = s.id && (String(sess.student_id) === String(s.id));
           const sNameLower = (s.name || '').toLowerCase().trim();
@@ -199,8 +360,10 @@ const Analytics = () => {
 
         return hasSessionWithCoach;
       }
+
+      // 3. School Filter
       if (activeSchool && activeSchool.toLowerCase() !== 'super admin' && activeSchool.toLowerCase() !== 'all') {
-        const sSchool = (s.school || '').toLowerCase().trim();
+        const sSchool = (s.school || s.school_name || '').toLowerCase().trim();
         const actSchool = activeSchool.toLowerCase().trim();
         return sSchool === actSchool;
       }
@@ -210,28 +373,40 @@ const Analytics = () => {
     // Expand students with accompanying guests
     const expanded = [];
     scoped.forEach(student => {
+      const anStudent = students.find(an => an.id === student.id || (an.name && an.name.toLowerCase().trim() === (student.name || '').toLowerCase().trim()));
+      const instName = student.instructor || student.instructor_name || anStudent?.instructor || '—';
+      const badgeInfo = mapLevelToBadgeInfo(student.level, student.badge_levels || anStudent?.badge_levels);
+
       expanded.push({
         ...student,
+        instructor: instName,
         isGuest: false,
+        badges: badgeInfo.badgeCount,
+        badge_levels: badgeInfo.badgeLevels,
+        currentBadge: badgeInfo.currentBadge,
+        nextTime: badgeInfo.nextTime,
+        nextColor: badgeInfo.nextColor,
         displayKey: `student_${student.id || student.name}`
       });
 
       const guests = getGuestsForStudent(student);
-      guests.forEach(gName => {
+      guests.forEach(g => {
+        const gBadgeInfo = mapLevelToBadgeInfo(g.level || student.level || 'Beginner');
         expanded.push({
-          id: `guest_${student.id}_${gName}`,
-          name: gName,
+          id: `guest_${student.id}_${g.name}`,
+          name: g.name,
           isGuest: true,
           parentName: student.name,
           parentId: student.id,
           school: student.school,
           instructor_id: student.instructor_id,
-          instructor: student.instructor || '—',
-          badges: 0,
-          badge_levels: [],
-          nextTime: '3 weeks',
-          nextColor: '#64748B',
-          displayKey: `guest_${student.id}_${gName}`
+          instructor: instName,
+          badges: gBadgeInfo.badgeCount,
+          badge_levels: gBadgeInfo.badgeLevels,
+          currentBadge: gBadgeInfo.currentBadge,
+          nextTime: gBadgeInfo.nextTime,
+          nextColor: gBadgeInfo.nextColor,
+          displayKey: `guest_${student.id}_${g.name}`
         });
       });
     });
@@ -239,7 +414,21 @@ const Analytics = () => {
     return expanded;
   }, [students, isCoach, isStudent, coachId, coachName, studentId, studentName, studentEmail, activeSchool, allStudentsList, allSessionsList]);
 
-  const maxCount = badgeStats.length > 0 ? Math.max(...badgeStats.map(b => b.count), 1) : 1;
+  // Compute stats dynamically from the active students
+  const displayBadgeStats = useMemo(() => {
+    const counts = { WHITE: 0, YELLOW: 0, GREEN: 0, BLUE: 0, RED: 0 };
+    filteredStudents.forEach(st => {
+      if (st.currentBadge && counts[st.currentBadge] !== undefined) {
+        counts[st.currentBadge]++;
+      }
+    });
+    return BADGE_ORDER.map(label => ({
+      label,
+      count: counts[label] || 0
+    }));
+  }, [filteredStudents]);
+
+  const maxCount = displayBadgeStats.length > 0 ? Math.max(...displayBadgeStats.map(b => b.count), 1) : 1;
 
   return (
     <div className="an-page">
@@ -249,7 +438,7 @@ const Analytics = () => {
         <header className="an-header">
           <div className="an-header-text">
             <h1 className="an-title">Badge Progression</h1>
-            <p className="an-sub">Track the distribution of skills and levels across the entire student population.</p>
+            <p className="an-sub">Track active students, registrations, and skill badges across your school.</p>
           </div>
           <button className="an-export-btn">Export PDF Report</button>
         </header>
@@ -260,18 +449,20 @@ const Analytics = () => {
           <>
             {/* Stats Row */}
             <div className="an-stats-row">
-              {badgeStats.map(stat => {
-                const colors = BADGE_COLORS[stat.label] || { bg: '#E2E8F0', text: '#64748B' };
+              {displayBadgeStats.map(stat => {
+                const colors = BADGE_COLORS[stat.label] || { bg: '#E2E8F0', border: '#94A3B8', text: '#64748B', label: 'Beginner' };
                 return (
                   <div key={stat.label} className="an-stat-card">
                     <div className="an-stat-top">
                       <span className="an-stat-label">{stat.label}</span>
-                      <div className="an-stat-dot" style={{ backgroundColor: colors.bg, border: `2px solid ${colors.text}` }} />
+                      <div className="an-stat-dot" style={{ backgroundColor: colors.bg, border: `2px solid ${colors.border || colors.text}` }} />
                     </div>
-                    <div className="an-stat-count" style={{ color: colors.text === '#64748B' ? '#0F172A' : colors.text }}>
+                    <div className="an-stat-count" style={{ color: stat.label === 'WHITE' ? '#0F172A' : colors.text }}>
                       {stat.count}
                     </div>
-                    <div className="an-stat-desc">Students currently at this level</div>
+                    <div className="an-stat-desc">
+                      Active: <strong style={{ color: colors.text }}>{colors.label}</strong>
+                    </div>
                   </div>
                 );
               })}
@@ -281,19 +472,20 @@ const Analytics = () => {
             <div className="an-funnel-card">
               <h2 className="an-funnel-title">Retention Funnel</h2>
               <div className="an-funnel-chart">
-                {badgeStats.map(stat => {
+                {displayBadgeStats.map(stat => {
                   const widthPct = (stat.count / maxCount) * 100;
-                  const colors = BADGE_COLORS[stat.label] || { bg: '#E2E8F0', text: '#64748B' };
+                  const colors = BADGE_COLORS[stat.label] || { bg: '#E2E8F0', text: '#64748B', label: 'Beginner' };
                   return (
                     <div key={stat.label} className="an-funnel-row">
-                      <span className="an-funnel-label">
-                        {stat.label.charAt(0).toUpperCase() + stat.label.slice(1).toLowerCase()}
+                      <span className="an-funnel-label" style={{ minWidth: '160px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span>{stat.label.charAt(0).toUpperCase() + stat.label.slice(1).toLowerCase()}</span>
+                        <span style={{ fontSize: '11px', opacity: 0.65, fontWeight: 500 }}>({colors.label})</span>
                       </span>
                       <div className="an-funnel-bar-container">
                         <div
                           className="an-funnel-bar"
                           style={{
-                            width: `${widthPct}%`,
+                            width: `${Math.max(widthPct, stat.count > 0 ? 6 : 0)}%`,
                             backgroundColor: colors.bg,
                             color: stat.label === 'WHITE' ? '#0F172A' : '#FFFFFF'
                           }}
@@ -356,10 +548,10 @@ const Analytics = () => {
                               <div
                                 key={index}
                                 className="an-badge-circle"
-                                title={earned ? `${badgeLevel} Badge (Earned)` : `${badgeLevel} Badge`}
+                                title={earned ? `${badgeLevel} Badge (Earned - ${colors.label})` : `${badgeLevel} Badge (${colors.label})`}
                                 style={{
-                                  backgroundColor: earned ? colors.bg : 'transparent',
-                                  border: `2px solid ${earned ? colors.bg : '#E2E8F0'}`
+                                  backgroundColor: earned ? (badgeLevel === 'WHITE' ? '#CBD5E1' : colors.bg) : 'transparent',
+                                  border: `2px solid ${earned ? (colors.border || colors.text || colors.bg) : '#E2E8F0'}`
                                 }}
                               />
                             );
@@ -373,7 +565,7 @@ const Analytics = () => {
                   {filteredStudents.length === 0 && (
                     <tr>
                       <td colSpan="4" style={{ textAlign: 'center', padding: '40px', color: '#94A3B8' }}>
-                        No student data available.
+                        No active students found for today.
                       </td>
                     </tr>
                   )}
@@ -452,7 +644,7 @@ const Analytics = () => {
         .an-funnel-title { font-family: 'Outfit', sans-serif; font-size: 20px; font-weight: 700; color: #FFFFFF; margin: 0; }
         .an-funnel-chart { display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: 600px; box-sizing: border-box; }
         .an-funnel-row { display: flex; align-items: center; gap: 16px; width: 100%; }
-        .an-funnel-label { width: 60px; font-size: 12px; font-weight: 700; color: #FFFFFF; opacity: 0.7; flex-shrink: 0; }
+        .an-funnel-label { width: auto; min-width: 175px; font-size: 12px; font-weight: 700; color: #FFFFFF; opacity: 0.85; flex-shrink: 0; }
         .an-funnel-bar-container { flex: 1; display: flex; align-items: center; gap: 12px; min-width: 0; }
         .an-funnel-bar { height: 26px; border-radius: 4px; transition: width 0.6s ease; min-width: 4px; }
         .an-funnel-value { font-size: 12px; font-weight: 700; color: #FFFFFF; }
@@ -467,8 +659,8 @@ const Analytics = () => {
         .an-table td { padding: 16px 20px; vertical-align: middle; font-size: 12px; }
         .an-student-name { font-weight: 600; color: #0F172A; }
         .an-instructor-name { color: #0F172A; }
-        .an-badge-history { display: flex; gap: 8px; }
-        .an-badge-circle { width: 16px; height: 16px; border-radius: 50%; transition: transform 0.2s; cursor: help; }
+        .an-badge-history { display: flex; gap: 8px; align-items: center; }
+        .an-badge-circle { width: 18px; height: 18px; border-radius: 50%; transition: transform 0.2s; cursor: help; box-sizing: border-box; }
         .an-badge-circle:hover { transform: scale(1.3); }
 
         @media (max-width: 768px) {

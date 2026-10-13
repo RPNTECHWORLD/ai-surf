@@ -221,6 +221,8 @@ window.fetch = async function (input, init) {
           approval_status: approvalStatus,
           start_date: body.start_date || '2026-08-26',
           session_time: body.session_time || '',
+          whatsapp_number: body.whatsapp_number || body.phone || '',
+          phone: body.phone || body.whatsapp_number || '',
           image: newUser.image,
           last_active: "Today",
           bio: "",
@@ -237,6 +239,8 @@ window.fetch = async function (input, init) {
         newUser.student_id = newStudent.id;
         newUser.approval_status = approvalStatus;
         newUser.school = selectedSchool;
+        newUser.phone = body.phone || body.whatsapp_number || '';
+        newUser.whatsapp_number = body.whatsapp_number || body.phone || '';
 
         // If direct signup without invite link, record a pending join request for the school dashboard only if school chosen
         if (!isInvited && selectedSchool) {
@@ -291,10 +295,14 @@ window.fetch = async function (input, init) {
           rates: body.rates || "$50 / hr",
           location: coachLocation,
           school: coachSchool,
+          phone: body.phone || body.whatsapp_number || '',
+          whatsapp_number: body.whatsapp_number || body.phone || '',
           reviews: []
         };
         state.instructors.push(newInstructor);
         newUser.instructor_id = newInstructor.id;
+        newUser.phone = body.phone || body.whatsapp_number || '';
+        newUser.whatsapp_number = body.whatsapp_number || body.phone || '';
         state.activityLogs.unshift({ id: Date.now(), text: `New Coach ${body.name} registered on the platform`, type: "group", time: "Just now" });
       } else if (role === 'admin') {
         const schName = (body.school || "").trim() || `${body.name}'s Surf School`;
@@ -703,7 +711,12 @@ window.fetch = async function (input, init) {
 
     // ─── 6. Sessions Routes ───
     if (path === '/api/sessions' && method === 'GET') {
-      return jsonResponse(state.sessions);
+      const enriched = state.sessions.map(sess => {
+        if (sess.phone || sess.whatsapp_number) return sess;
+        const st = state.students.find(s => s.id === sess.student_id || (s.name && sess.student && s.name.trim().toLowerCase() === sess.student.trim().toLowerCase()));
+        return st ? { ...sess, phone: st.whatsapp_number || st.phone || '', whatsapp_number: st.whatsapp_number || st.phone || '' } : sess;
+      });
+      return jsonResponse(enriched);
     }
 
     if (path === '/api/sessions' && method === 'POST') {

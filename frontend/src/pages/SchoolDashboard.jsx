@@ -488,7 +488,7 @@ const SchoolDashboard = () => {
                   <span className="stat-card-label">Active Students</span>
                   <span className="stat-card-value">{stats?.total_people || stats?.active_students || 0}</span>
                   <span className="stat-card-micro" style={{ color: '#0284C7' }}>
-                    Enrolled Athletes
+                    Enrolled Students
                   </span>
                 </div>
                 <div className="stat-card-right" style={{ color: '#0284C7', background: '#0284C718' }}>

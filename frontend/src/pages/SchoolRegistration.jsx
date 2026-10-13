@@ -25,8 +25,13 @@ const SchoolRegistration = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setLoading(true);
     setErrorMsg('');
+    const cleanPhone = (formData.phone || '').trim().replace(/\D/g, '');
+    if (!cleanPhone || cleanPhone.length < 10) {
+      setErrorMsg('Please enter a valid 10-digit phone number.');
+      return;
+    }
+    setLoading(true);
     try {
       const res = await fetch(`${API}/api/schools`, {
         method: 'POST',
@@ -35,7 +40,7 @@ const SchoolRegistration = () => {
           name: formData.schoolName,
           owner: formData.ownerName,
           email: formData.email,
-          phone: formData.phone,
+          phone: formData.phone.trim(),
           country: formData.country,
           city: formData.city,
           instructor_count: formData.instructorCount,
@@ -138,8 +143,8 @@ const SchoolRegistration = () => {
                   <input id="email" name="email" type="email" placeholder="hello@school.com" value={formData.email} onChange={handleChange} required />
                 </div>
                 <div className="reg-field">
-                  <label htmlFor="phone">Phone Number</label>
-                  <input id="phone" name="phone" type="tel" placeholder="+1 808 555 0100" value={formData.phone} onChange={handleChange} />
+                  <label htmlFor="phone">Phone Number <span style={{ color: '#FF4D6D', fontWeight: 700 }}>*</span></label>
+                  <input id="phone" name="phone" type="tel" placeholder="+91 98765 43210 (10 digits)" value={formData.phone} onChange={handleChange} required />
                 </div>
               </div>
               <div className="reg-form-row">

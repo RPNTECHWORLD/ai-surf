@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
+import re
 import uuid
 # pyrefly: ignore [missing-import]
 from pydantic import BaseModel
@@ -19,7 +20,7 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 # ─── SQLAlchemy Setup ────────────────────────────────────────────────────────
 from sqlalchemy import (
     create_engine, Column, Integer, String, Text,
-    DateTime, Date, ForeignKey, func, Float, Boolean, or_, and_
+    DateTime, Date, ForeignKey, func, Float, Boolean, or_, and_, text
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, Session as OrmSession
@@ -78,9 +79,17 @@ try:
                 )
                 cparams["password"] = token
 
-            # Verify connection
+            # Verify connection and ensure non-destructive columns exist
             with engine.connect() as test_conn:
-                pass
+                try:
+                    test_conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS attendance VARCHAR DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS group_name VARCHAR DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS student_name VARCHAR DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS guest_name VARCHAR DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS image_url VARCHAR DEFAULT '';"))
+                    test_conn.commit()
+                except Exception as mig_err:
+                    print(f"Notice: Non-destructive migration note ({mig_err}).")
         else:
             engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=300)
 except Exception as err:
@@ -90,6 +99,13 @@ except Exception as err:
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+try:
+    with engine.connect() as _c:
+        _c.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS attendance VARCHAR DEFAULT '';"))
+        _c.commit()
+except Exception as _e:
+    pass
 
 # ─── Models ──────────────────────────────────────────────────────────────────
 
@@ -242,6 +258,7 @@ class SurfSession(Base):
     group_name = Column(String, nullable=True, default="")  # e.g. "Group A (Beginner)"
     student_name = Column(String, nullable=True, default="")
     guest_name = Column(String, nullable=True, default="")
+    attendance = Column(String, default="", nullable=True) # "Present" / "Absent" / ""
     student_rel = relationship("Student", back_populates="sessions")
     instructor_rel = relationship("Instructor", back_populates="sessions")
 
@@ -358,6 +375,7 @@ class SchoolInviteLink(Base):
     id = Column(Integer, primary_key=True, index=True)
     code = Column(String, unique=True, index=True)
     school = Column(String, nullable=False, index=True)
+    nickname = Column(String(150), default="", nullable=True)
     max_count = Column(Integer, default=1)
     used_count = Column(Integer, default=0)
     course_duration = Column(String, default="3 Days Course")
@@ -595,6 +613,10 @@ try:
             db_migrate.execute(text("ALTER TABLE school_invite_links ADD COLUMN IF NOT EXISTS start_date VARCHAR(50) DEFAULT NULL"))
         except Exception:
             pass
+        try:
+            db_migrate.execute(text("ALTER TABLE school_invite_links ADD COLUMN IF NOT EXISTS nickname VARCHAR(150) DEFAULT ''"))
+        except Exception:
+            pass
         db_migrate.execute(text("""
             CREATE TABLE IF NOT EXISTS instructor_leaves (
                 id SERIAL PRIMARY KEY,
@@ -667,7 +689,8 @@ try:
                 "ALTER TABLE sessions ADD COLUMN guest_name VARCHAR(200) DEFAULT ''",
                 "ALTER TABLE activity_log ADD COLUMN school VARCHAR(150) DEFAULT 'Aquatic Indica Surf School'",
                 "ALTER TABLE school_invite_links ADD COLUMN course_duration VARCHAR(100) DEFAULT '3 Days Course'",
-                "ALTER TABLE school_invite_links ADD COLUMN start_date VARCHAR(50) DEFAULT NULL"
+                "ALTER TABLE school_invite_links ADD COLUMN start_date VARCHAR(50) DEFAULT NULL",
+                "ALTER TABLE school_invite_links ADD COLUMN nickname VARCHAR(150) DEFAULT ''"
             ]
             for cmd in sqlite_alters:
                 try:
@@ -1345,11 +1368,13 @@ class SessionUpdate(BaseModel):
     location: Optional[str] = None
     condition: Optional[str] = None
     type: Optional[str] = None
+    level: Optional[str] = None
     status: Optional[str] = None
     notes: Optional[str] = None
     video_url: Optional[str] = None
     image_url: Optional[str] = None
     group_name: Optional[str] = None
+    attendance: Optional[str] = None
 
 
 class SessionBulkCreate(BaseModel):
@@ -1388,6 +1413,7 @@ class UserSignup(BaseModel):
     image: Optional[str] = ""
     # Athlete fields
     gender: Optional[str] = "Male"
+    level: Optional[str] = "Beginner"
     swimming_ability: Optional[str] = "Swimmer"
     stance: Optional[str] = "regular"
     dob: Optional[str] = ""
@@ -1419,6 +1445,11 @@ class SchoolInviteCreate(BaseModel):
     max_count: int = 1
     course_duration: Optional[str] = "3 Days Course"
     start_date: Optional[str] = None
+    nickname: Optional[str] = ""
+
+
+class SchoolInviteUpdate(BaseModel):
+    nickname: Optional[str] = ""
 
 
 class UserLogin(BaseModel):
@@ -1796,6 +1827,57 @@ def session_to_dict(s: SurfSession):
     if not disp_student or not disp_student.strip():
         disp_student = s.student_rel.name if s.student_rel else ""
     g_name = getattr(s, 'guest_name', None) or ""
+
+    phone = ""
+    whatsapp = ""
+    if s.student_rel:
+        phone = s.student_rel.whatsapp_number or ""
+        whatsapp = s.student_rel.whatsapp_number or ""
+        if g_name and getattr(s.student_rel, 'guests_details', None):
+            try:
+                raw_g = s.student_rel.guests_details
+                g_list = json.loads(raw_g) if isinstance(raw_g, str) else raw_g
+                if isinstance(g_list, list):
+                    for gd in g_list:
+                        if isinstance(gd, dict) and gd.get("name", "").strip().lower() == g_name.strip().lower():
+                            g_phone = gd.get("whatsapp_number") or gd.get("phone") or ""
+                            if g_phone:
+                                phone = g_phone
+                                whatsapp = g_phone
+                                break
+            except Exception:
+                pass
+
+    if not phone and disp_student:
+        try:
+            from sqlalchemy import inspect, func
+            db_sess = inspect(s).session
+            if db_sess:
+                matched_st = db_sess.query(Student).filter(func.lower(Student.name) == disp_student.strip().lower()).first()
+                if matched_st and matched_st.whatsapp_number:
+                    phone = matched_st.whatsapp_number
+                    whatsapp = matched_st.whatsapp_number
+        except Exception:
+            pass
+
+    st_level = ""
+    if s.student_rel and s.student_rel.level:
+        st_level = s.student_rel.level
+    if g_name and s.student_rel and s.student_rel.guests_details:
+        try:
+            raw_g = s.student_rel.guests_details
+            g_list = json.loads(raw_g) if isinstance(raw_g, str) else raw_g
+            if isinstance(g_list, list):
+                for gd in g_list:
+                    if isinstance(gd, dict) and gd.get("name", "").strip().lower() == g_name.strip().lower():
+                        if gd.get("level"):
+                            st_level = gd.get("level")
+                            break
+        except Exception:
+            pass
+    if not st_level:
+        st_level = s.type or "Beginner"
+
     return {
         "id": s.id,
         "date": s.date,
@@ -1806,17 +1888,21 @@ def session_to_dict(s: SurfSession):
         "student_name": disp_student,
         "guest_name": g_name,
         "is_guest": bool(g_name and g_name.strip()),
+        "phone": phone,
+        "whatsapp_number": whatsapp,
         "school": s.student_rel.school if (s.student_rel and s.student_rel.school) else (s.instructor_rel.school if (s.instructor_rel and s.instructor_rel.school) else ""),
         "instructor_id": s.instructor_id,
         "instructor": s.instructor_rel.name if s.instructor_rel else "",
         "location": s.location,
         "condition": s.condition,
         "type": s.type,
+        "level": st_level,
         "status": s.status,
         "notes": s.notes or "",
         "video_url": s.video_url or "",
         "image_url": getattr(s, 'image_url', '') or "",
         "group_name": getattr(s, 'group_name', '') or "",
+        "attendance": getattr(s, 'attendance', '') or "",
     }
 
 
@@ -1898,6 +1984,8 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
         res["student_id"] = student_obj.id
         res["name"] = student_obj.name
         res["image"] = student_obj.image
+        res["phone"] = student_obj.whatsapp_number or ""
+        res["whatsapp_number"] = student_obj.whatsapp_number or ""
         # If student has no instructor directly, check their sessions
         inst_id = student_obj.instructor_id
         inst_name = student_obj.instructor_rel.name if student_obj.instructor_rel else ""
@@ -1918,6 +2006,8 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
         res["instructor_id"] = instructor_obj.id
         res["name"] = instructor_obj.name
         res["image"] = instructor_obj.image
+        res["phone"] = instructor_obj.phone or ""
+        res["whatsapp_number"] = instructor_obj.phone or ""
         res["school"] = instructor_obj.school or "Individual / Freelance Coach"
     else:
         res["name"] = "School Admin"
@@ -1933,6 +2023,8 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
                 res["school_id"] = sch.id
                 res["school"] = sch.name
                 res["school_details"] = {"id": sch.id, "name": sch.name, "owner": sch.owner, "email": sch.email}
+                res["phone"] = sch.phone or ""
+                res["whatsapp_number"] = sch.phone or ""
                 if sch.owner and user.role == "admin":
                     res["name"] = sch.owner
     except Exception as e:
@@ -1962,14 +2054,18 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
         role_label = "Student" if existing.role == "athlete" else ("Coach" if existing.role == "coach" else "School Admin")
         raise HTTPException(status_code=400, detail=f"This email is already registered as {role_label}. Please log in instead.")
 
+    phone_clean = (data.phone or data.whatsapp_number or "").strip()
+    phone_digits = "".join(ch for ch in phone_clean if ch.isdigit())
+    if not phone_clean:
+        raise HTTPException(status_code=400, detail="Phone number is required for registration.")
+    if len(phone_digits) < 10:
+        raise HTTPException(status_code=400, detail="Please enter a valid 10-digit phone number.")
+
     selected_school = (data.school or "").strip()
     if role == "coach":
         coach_school = selected_school or "Individual / Freelance Coach"
         if coach_school == "Individual / Freelance Coach" and not (data.location or "").strip():
             raise HTTPException(status_code=400, detail="Location / region is required for individual coaches.")
-        coach_phone = (data.phone or data.whatsapp_number or "").strip()
-        if not coach_phone:
-            raise HTTPException(status_code=400, detail="Phone number is required for coach registration.")
     initial_approval = "approved" if (data.invite_token or data.invite_code or role != "athlete" or not selected_school) else "pending"
 
     # If signup is via school invite link, validate and lock early
@@ -2038,8 +2134,11 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
             existing_student.dob = data.dob or existing_student.dob or ""
             existing_student.age = computed_age or existing_student.age
             existing_student.stance = data.stance or existing_student.stance or "regular"
+            if data.level:
+                existing_student.level = data.level
             if data.swimming_ability:
                 existing_student.swimming_ability = data.swimming_ability
+            existing_student.whatsapp_number = phone_clean
             # Keep invite_token permanent so portal link in email remains permanently valid
             existing_student.last_active = "Today"
             existing_student.approval_status = "approved"
@@ -2049,7 +2148,7 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
                 user_id=user.id,
                 name=data.name,
                 email=data.email.lower(),
-                level="Beginner",
+                level=data.level or "Beginner",
                 bio="",
                 dob=data.dob or "",
                 age=computed_age,
@@ -2060,7 +2159,7 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
                 performance_logs=json.dumps([]),
                 image=data.image or "",
                 last_active="Today",
-                whatsapp_number=data.whatsapp_number or "",
+                whatsapp_number=phone_clean,
                 guests_count=data.guests_count or 0,
                 course_duration=data.course_duration or "3 Days Course",
                 start_date=data.start_date or "",
@@ -2091,7 +2190,7 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
         if not coach_location:
             coach_location = "North Shore, Oahu"
 
-        coach_phone = (data.phone or data.whatsapp_number or "").strip()
+        coach_phone = phone_clean
         instructor = Instructor(
             user_id=user.id,
             name=data.name,
@@ -2122,15 +2221,19 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
                 name=school_name,
                 owner=data.name,
                 email=data.email.lower(),
+                phone=phone_clean,
                 country="India",
                 city="Kovalam / Chennai",
                 instructor_count="5-15",
                 website=""
             )
             db.add(new_sch)
-        elif requested_school:
-            existing_school.name = requested_school
+        else:
+            if requested_school:
+                existing_school.name = requested_school
             existing_school.owner = data.name
+            if phone_clean:
+                existing_school.phone = phone_clean
         created_sch_name = requested_school if requested_school else (existing_school.name if existing_school else f"{data.name}'s Surf School")
         db.add(ActivityLog(text=f"School Admin account created for {data.name}", type="individual", school=created_sch_name))
 
@@ -2538,6 +2641,12 @@ def update_student(student_id: int, data: StudentUpdate, db: OrmSession = Depend
         student.name = data.name
     if data.level is not None:
         student.level = data.level
+        lvl_key = (data.level or "").lower().strip()
+        badge_name = LEVEL_TO_BADGE_MAP.get(lvl_key, "WHITE")
+        rank = BADGE_ORDER.index(badge_name) + 1 if badge_name in BADGE_ORDER else 1
+        db.query(Badge).filter(Badge.student_id == student.id).delete()
+        for b_name in BADGE_ORDER[:rank]:
+            db.add(Badge(student_id=student.id, badge_level=b_name))
     if data.bio is not None:
         student.bio = data.bio
     if data.stance is not None:
@@ -4123,8 +4232,13 @@ class AttendanceCreate(BaseModel):
 
 
 @app.get("/api/attendance")
-def get_all_attendance(db: OrmSession = Depends(get_db)):
-    records = db.query(AttendanceRecord).order_by(AttendanceRecord.id.desc()).all()
+def get_all_attendance(date: Optional[str] = None, student_id: Optional[int] = None, db: OrmSession = Depends(get_db)):
+    query = db.query(AttendanceRecord)
+    if date:
+        query = query.filter(AttendanceRecord.date == date)
+    if student_id:
+        query = query.filter(AttendanceRecord.student_id == student_id)
+    records = query.order_by(AttendanceRecord.id.desc()).all()
     return [
         {
             "id": r.id,
@@ -4164,23 +4278,51 @@ def get_student_attendance(student_id: int, db: OrmSession = Depends(get_db)):
 
 @app.post("/api/attendance")
 def record_attendance(data: AttendanceCreate, db: OrmSession = Depends(get_db)):
-    """Tamper-proof daily attendance marking endpoint."""
+    """Tamper-proof daily attendance marking & updating endpoint."""
     student = db.query(Student).filter(Student.id == data.student_id).first()
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
     today_str = data.date or datetime.now().strftime("%Y-%m-%d")
 
-    # Prevent backdating and duplicate entries for the same student on the same date
+    # Check for existing record on the same date (allow toggling/updating)
     existing = db.query(AttendanceRecord).filter(
         AttendanceRecord.student_id == data.student_id,
         AttendanceRecord.date == today_str
     ).first()
     if existing:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Attendance already marked for {student.name} on {today_str} (Status: {existing.present_status})"
-        )
+        existing.present_status = data.present_status or "Present"
+        if data.notes is not None:
+            existing.notes = data.notes
+        if data.guests_present is not None:
+            existing.guests_present = data.guests_present
+
+        attended_count = db.query(AttendanceRecord).filter(
+            AttendanceRecord.student_id == data.student_id,
+            AttendanceRecord.present_status == "Present"
+        ).count()
+
+        dur_str = student.course_duration or "3 Days Course"
+        total_days = 3
+        for token in dur_str.split():
+            if token.isdigit():
+                total_days = int(token)
+                break
+
+        existing.day_number = max(1, attended_count)
+        existing.remaining_days = max(0, total_days - attended_count)
+        student.last_active = "Today"
+        db.commit()
+        db.refresh(existing)
+
+        return {
+            "message": f"Attendance updated for {student.name}",
+            "attendance_id": existing.id,
+            "day_number": existing.day_number,
+            "remaining_days": existing.remaining_days,
+            "date": existing.date,
+            "status": existing.present_status
+        }
 
     # Calculate day number from previous attendance count
     attended_count = db.query(AttendanceRecord).filter(
@@ -4223,6 +4365,72 @@ def record_attendance(data: AttendanceCreate, db: OrmSession = Depends(get_db)):
         "date": rec.date,
         "status": rec.present_status
     }
+
+
+class AttendanceBulkItem(BaseModel):
+    student_id: int
+    date: Optional[str] = None
+    present_status: Optional[str] = "Present"
+
+
+class AttendanceBulkCreate(BaseModel):
+    items: List[AttendanceBulkItem]
+
+
+@app.post("/api/attendance/bulk")
+def record_bulk_attendance(payload: AttendanceBulkCreate, db: OrmSession = Depends(get_db)):
+    updated_records = []
+    for item in payload.items:
+        student = db.query(Student).filter(Student.id == item.student_id).first()
+        if not student:
+            continue
+        date_str = item.date or datetime.now().strftime("%Y-%m-%d")
+        existing = db.query(AttendanceRecord).filter(
+            AttendanceRecord.student_id == item.student_id,
+            AttendanceRecord.date == date_str
+        ).first()
+        status_val = item.present_status or "Present"
+        if existing:
+            existing.present_status = status_val
+            updated_records.append({"student_id": item.student_id, "status": status_val, "attendance_id": existing.id})
+        else:
+            attended_count = db.query(AttendanceRecord).filter(
+                AttendanceRecord.student_id == item.student_id,
+                AttendanceRecord.present_status == "Present"
+            ).count()
+            dur_str = student.course_duration or "3 Days Course"
+            total_days = 3
+            for token in dur_str.split():
+                if token.isdigit():
+                    total_days = int(token)
+                    break
+            next_day_num = attended_count + 1 if status_val == "Present" else attended_count
+            remaining = max(0, total_days - next_day_num)
+            rec = AttendanceRecord(
+                student_id=item.student_id,
+                date=date_str,
+                present_status=status_val,
+                day_number=next_day_num,
+                remaining_days=remaining
+            )
+            db.add(rec)
+            updated_records.append({"student_id": item.student_id, "status": status_val})
+        student.last_active = "Today"
+    db.commit()
+    return {"message": f"Updated attendance for {len(updated_records)} students", "records": updated_records}
+
+
+@app.delete("/api/attendance/by-student-date")
+def delete_attendance_by_student_date(student_id: int, date: str, db: OrmSession = Depends(get_db)):
+    rec = db.query(AttendanceRecord).filter(
+        AttendanceRecord.student_id == student_id,
+        AttendanceRecord.date == date
+    ).first()
+    if rec:
+        db.delete(rec)
+        db.commit()
+        return {"message": "Attendance record cleared", "deleted": True}
+    return {"message": "No record found", "deleted": False}
 
 
 @app.post("/api/admin/whatsapp-dispatch")
@@ -4469,17 +4677,19 @@ def set_instructor_password(instructor_id: int, data: dict, db: OrmSession = Dep
 
 @app.post("/api/school-invites")
 def create_school_invite(data: SchoolInviteCreate, db: OrmSession = Depends(get_db)):
-    """Create a new batch/school registration invite link with a strict capacity count and locked course duration."""
+    """Create a new batch/school registration invite link with a strict capacity count, locked course duration, and recipient nickname."""
     import secrets as _secrets
     school_name = data.school.strip() if data.school else ""
     capacity = max(1, int(data.max_count or 1))
     course_dur = (data.course_duration or "3 Days Course").strip()
     s_date = data.start_date.strip() if data.start_date and data.start_date.strip() else None
+    nickname = (data.nickname or "").strip()
     code = f"inv_{_secrets.token_urlsafe(12)}"
 
     invite = SchoolInviteLink(
         code=code,
         school=school_name,
+        nickname=nickname,
         max_count=capacity,
         course_duration=course_dur,
         start_date=s_date,
@@ -4493,6 +4703,7 @@ def create_school_invite(data: SchoolInviteCreate, db: OrmSession = Depends(get_
         "status": "success",
         "code": invite.code,
         "school": invite.school,
+        "nickname": getattr(invite, 'nickname', '') or "",
         "max_count": invite.max_count,
         "locked_guests": max(0, invite.max_count - 1),
         "used_count": invite.used_count,
@@ -4504,13 +4715,30 @@ def create_school_invite(data: SchoolInviteCreate, db: OrmSession = Depends(get_
     }
 
 
+@app.patch("/api/school-invites/{code}")
+def update_school_invite(code: str, data: SchoolInviteUpdate, db: OrmSession = Depends(get_db)):
+    """Update invite link recipient nickname."""
+    invite = db.query(SchoolInviteLink).filter(SchoolInviteLink.code == code.strip()).first()
+    if not invite:
+        raise HTTPException(status_code=404, detail="Invite link not found")
+    if data.nickname is not None:
+        invite.nickname = data.nickname.strip()
+    db.commit()
+    db.refresh(invite)
+    return {
+        "status": "success",
+        "code": invite.code,
+        "nickname": getattr(invite, 'nickname', '') or ""
+    }
+
+
 @app.get("/api/school-invites")
 def list_school_invites(school: Optional[str] = None, db: OrmSession = Depends(get_db)):
     """List school invite links, optionally filtered by school."""
     query = db.query(SchoolInviteLink)
     if school:
         query = query.filter(func.lower(SchoolInviteLink.school) == school.lower().strip())
-    invites = query.order_by(SchoolInviteLink.created_at.desc()).limit(50).all()
+    invites = query.order_by(SchoolInviteLink.created_at.desc()).limit(100).all()
     res = []
     for inv in invites:
         rem = max(0, inv.max_count - inv.used_count)
@@ -4519,6 +4747,7 @@ def list_school_invites(school: Optional[str] = None, db: OrmSession = Depends(g
             "id": inv.id,
             "code": inv.code,
             "school": inv.school,
+            "nickname": getattr(inv, 'nickname', '') or "",
             "max_count": inv.max_count,
             "locked_guests": max(0, inv.max_count - 1),
             "used_count": inv.used_count,
@@ -4544,6 +4773,7 @@ def get_school_invite(code: str, db: OrmSession = Depends(get_db)):
             "valid": False,
             "code": invite.code,
             "school": invite.school,
+            "nickname": getattr(invite, 'nickname', '') or "",
             "max_count": invite.max_count,
             "locked_guests": max(0, invite.max_count - 1),
             "used_count": invite.used_count,
@@ -4557,6 +4787,7 @@ def get_school_invite(code: str, db: OrmSession = Depends(get_db)):
         "valid": True,
         "code": invite.code,
         "school": invite.school,
+        "nickname": getattr(invite, 'nickname', '') or "",
         "max_count": invite.max_count,
         "locked_guests": locked_guests,
         "used_count": invite.used_count,
@@ -4861,6 +5092,30 @@ def update_session(session_id: int, data: SessionUpdate, db: OrmSession = Depend
         s.condition = data.condition
     if data.type is not None:
         s.type = data.type
+    if data.level is not None:
+        s.type = data.level
+        if s.student_id:
+            stud = db.query(Student).filter(Student.id == s.student_id).first()
+            if stud:
+                stud.level = data.level
+                lvl_key = (data.level or "").lower().strip()
+                badge_name = LEVEL_TO_BADGE_MAP.get(lvl_key, "WHITE")
+                rank = BADGE_ORDER.index(badge_name) + 1 if badge_name in BADGE_ORDER else 1
+                db.query(Badge).filter(Badge.student_id == stud.id).delete()
+                for b_name in BADGE_ORDER[:rank]:
+                    db.add(Badge(student_id=stud.id, badge_level=b_name))
+        elif getattr(s, "guest_name", None) and s.student_rel and s.student_rel.guests_details:
+            try:
+                raw_g = s.student_rel.guests_details
+                g_list = json.loads(raw_g) if isinstance(raw_g, str) else raw_g
+                if isinstance(g_list, list):
+                    for gd in g_list:
+                        if isinstance(gd, dict) and gd.get("name", "").strip().lower() == s.guest_name.strip().lower():
+                            gd["level"] = data.level
+                            break
+                    s.student_rel.guests_details = json.dumps(g_list)
+            except Exception:
+                pass
     if data.status is not None:
         s.status = data.status
     if data.notes is not None:
@@ -4871,10 +5126,49 @@ def update_session(session_id: int, data: SessionUpdate, db: OrmSession = Depend
         s.image_url = data.image_url
     if data.group_name is not None:
         s.group_name = data.group_name
+    if data.attendance is not None:
+        s.attendance = data.attendance
 
     db.commit()
     db.refresh(s)
     return session_to_dict(s)
+
+
+class SessionAttendanceUpdate(BaseModel):
+    attendance: str # "Present" / "Absent" / ""
+
+
+@app.patch("/api/sessions/{session_id}/attendance")
+def patch_session_attendance(session_id: int, data: SessionAttendanceUpdate, db: OrmSession = Depends(get_db)):
+    s = db.query(SurfSession).filter(SurfSession.id == session_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+    status_val = (data.attendance or "").strip()
+    s.attendance = status_val
+    db.commit()
+    db.refresh(s)
+    return session_to_dict(s)
+
+
+class BulkSessionAttendanceItem(BaseModel):
+    session_id: int
+    attendance: str
+
+
+class BulkSessionAttendanceRequest(BaseModel):
+    items: List[BulkSessionAttendanceItem]
+
+
+@app.post("/api/sessions/bulk-attendance")
+def bulk_session_attendance(payload: BulkSessionAttendanceRequest, db: OrmSession = Depends(get_db)):
+    results = []
+    for item in payload.items:
+        s = db.query(SurfSession).filter(SurfSession.id == item.session_id).first()
+        if s:
+            s.attendance = item.attendance or ""
+            results.append({"session_id": s.id, "attendance": s.attendance})
+    db.commit()
+    return {"message": f"Updated attendance for {len(results)} sessions", "results": results}
 
 
 @app.delete("/api/sessions/{session_id}")
@@ -4898,10 +5192,88 @@ def delete_session(session_id: int, db: OrmSession = Depends(get_db)):
 
 BADGE_ORDER = ["WHITE", "YELLOW", "GREEN", "BLUE", "RED"]
 
+LEVEL_TO_BADGE_MAP = {
+    "beginner": "WHITE",
+    "advance beginner": "YELLOW",
+    "advanced beginner": "YELLOW",
+    "intermediate": "GREEN",
+    "advance intermediate": "BLUE",
+    "advanced intermediate": "BLUE",
+    "pro": "RED",
+    "master": "RED",
+    "advanced": "RED",
+}
+
+def get_student_course_total_days(student) -> int:
+    dur = getattr(student, "course_duration", "") or ""
+    m = re.search(r"(\d+)\s*Day", str(dur), re.IGNORECASE)
+    if m:
+        try:
+            return int(m.group(1))
+        except Exception:
+            pass
+    return 3
+
+def is_student_active_today(student, target_date=None) -> bool:
+    if not student:
+        return False
+    app_status = (getattr(student, "approval_status", "") or "").lower().strip()
+    if app_status in ["pending", "rejected"]:
+        return False
+    raw_start = getattr(student, "start_date", "") or ""
+    if not raw_start:
+        return False
+    s_date = None
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%d %b %Y"):
+        try:
+            s_date = datetime.strptime(raw_start.strip()[:10], fmt).date()
+            break
+        except Exception:
+            pass
+    if not s_date:
+        return False
+    t_date = target_date or date.today()
+    diff = (t_date - s_date).days + 1
+    total_days = get_student_course_total_days(student)
+    return 1 <= diff <= total_days
+
+def get_student_badge_info(student):
+    lvl = (getattr(student, "level", "") or "").lower().strip()
+    badge = LEVEL_TO_BADGE_MAP.get(lvl, "WHITE")
+    rank = BADGE_ORDER.index(badge) + 1 if badge in BADGE_ORDER else 1
+
+    badges_earned = [b.badge_level for b in getattr(student, "badges", []) if b.badge_level in BADGE_ORDER]
+    if not lvl and badges_earned:
+        rank = len(badges_earned)
+        badge = BADGE_ORDER[rank - 1]
+
+    earned_levels = BADGE_ORDER[:rank]
+
+    if rank >= 5:
+        next_time, next_color = "Max Level", "#0D9488"
+    elif rank == 4:
+        next_time, next_color = "3 months", "#64748B"
+    elif rank == 3:
+        next_time, next_color = "Ready Now", "#0D9488"
+    elif rank == 2:
+        next_time, next_color = "1 month", "#64748B"
+    else:
+        next_time, next_color = "3 weeks", "#64748B"
+
+    return {
+        "current_badge": badge,
+        "badge_count": rank,
+        "badge_levels": earned_levels,
+        "nextTime": next_time,
+        "nextColor": next_color,
+    }
+
+
 @app.get("/api/analytics/badges")
 def analytics_badges(
     school: Optional[str] = None,
     instructor_id: Optional[int] = None,
+    active_only: bool = True,
     db: OrmSession = Depends(get_db)
 ):
     query = db.query(Student).filter(
@@ -4915,14 +5287,23 @@ def analytics_badges(
         query = query.filter(Student.instructor_id == instructor_id)
         
     students = query.all()
+    if active_only:
+        students = [s for s in students if is_student_active_today(s)]
     
     badge_counts = {"WHITE": 0, "YELLOW": 0, "GREEN": 0, "BLUE": 0, "RED": 0}
     for s in students:
-        badges_earned = [b.badge_level for b in s.badges]
-        if badges_earned:
-            highest = badges_earned[-1]
-            if highest in badge_counts:
-                badge_counts[highest] += 1
+        b_info = get_student_badge_info(s)
+        badge_counts[b_info["current_badge"]] += 1
+        if s.guests_details:
+            try:
+                g_list = json.loads(s.guests_details) if isinstance(s.guests_details, str) else s.guests_details
+                if isinstance(g_list, list):
+                    for g in g_list:
+                        g_lvl = (g.get("level") if isinstance(g, dict) else "") or s.level or "Beginner"
+                        g_b = LEVEL_TO_BADGE_MAP.get(str(g_lvl).lower().strip(), "WHITE")
+                        badge_counts[g_b] += 1
+            except Exception:
+                pass
 
     result = []
     for level in BADGE_ORDER:
@@ -4934,6 +5315,7 @@ def analytics_badges(
 def analytics_students(
     school: Optional[str] = None,
     instructor_id: Optional[int] = None,
+    active_only: bool = True,
     db: OrmSession = Depends(get_db)
 ):
     query = db.query(Student).filter(
@@ -4946,23 +5328,13 @@ def analytics_students(
     if instructor_id:
         query = query.filter(Student.instructor_id == instructor_id)
 
-    students = query.all()
+    students = query.order_by(Student.id.desc()).all()
+    if active_only:
+        students = [s for s in students if is_student_active_today(s)]
+
     result = []
     for s in students:
-        badges_earned = [b.badge_level for b in s.badges]
-        badge_count = len(badges_earned)
-        if badge_count >= 5:
-            next_time, next_color = "Max Level", "#0D9488"
-        elif badge_count == 4:
-            next_time, next_color = "3 months", "#64748B"
-        elif badge_count == 3:
-            next_time, next_color = "Ready Now", "#0D9488"
-        elif badge_count == 2:
-            next_time, next_color = "1 month", "#64748B"
-        elif badge_count == 1:
-            next_time, next_color = "3 weeks", "#64748B"
-        else:
-            next_time, next_color = "—", "#94A3B8"
+        b_info = get_student_badge_info(s)
             
         inst_name = s.instructor_rel.name if s.instructor_rel else ""
         if not inst_name or inst_name == "Assigned Surf Coach":
@@ -4976,10 +5348,14 @@ def analytics_students(
             "name": s.name,
             "school": s.school,
             "instructor_id": s.instructor_id,
-            "badges": badge_count,
-            "badge_levels": badges_earned,
-            "nextTime": next_time,
-            "nextColor": next_color,
+            "level": s.level or "Beginner",
+            "start_date": s.start_date,
+            "course_duration": s.course_duration,
+            "badges": b_info["badge_count"],
+            "badge_levels": b_info["badge_levels"],
+            "current_badge": b_info["current_badge"],
+            "nextTime": b_info["nextTime"],
+            "nextColor": b_info["nextColor"],
             "instructor": inst_name,
             "guests_details": s.guests_details,
             "guests_count": s.guests_count,
@@ -5068,9 +5444,15 @@ async def toggle_school_status(school_id: int, request: Request, db: OrmSession 
 
 @app.post("/api/schools")
 def create_school(data: SchoolCreate, db: OrmSession = Depends(get_db)):
+    phone_clean = (data.phone or "").strip()
+    phone_digits = "".join(ch for ch in phone_clean if ch.isdigit())
+    if not phone_clean:
+        raise HTTPException(status_code=400, detail="Phone number is required for registration.")
+    if len(phone_digits) < 10:
+        raise HTTPException(status_code=400, detail="Please enter a valid 10-digit phone number.")
     school = School(
         name=data.name, owner=data.owner, email=data.email,
-        phone=data.phone, country=data.country, city=data.city,
+        phone=phone_clean, country=data.country, city=data.city,
         instructor_count=data.instructor_count, website=data.website,
     )
     db.add(school)

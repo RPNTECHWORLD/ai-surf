@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import { normalizeTimeString, getNextAvailableSlotTime } from './SessionConfigure';
@@ -407,17 +407,47 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     }
   }, [currentUser, canManageSessions, isModal, onClose, navigate]);
 
+  // ─── Draft Management for Session Creation ───
+  const draftKey = useMemo(() => {
+    return `surfing_session_draft_${currentUser?.school_id || currentUser?.id || 'default'}`;
+  }, [currentUser]);
+
+  const initialDraft = useMemo(() => {
+    if (editSession) return null;
+    try {
+      const key = `surfing_session_draft_${currentUser?.school_id || currentUser?.id || 'default'}`;
+      const raw = localStorage.getItem(key);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      const hasSlots = Object.keys(parsed?.slotStudentMap || {}).some(k => Array.isArray(parsed.slotStudentMap[k]) && parsed.slotStudentMap[k].length > 0);
+      const hasGroups = Array.isArray(parsed?.trainingGroups) && parsed.trainingGroups.length > 0;
+      if (parsed && (parsed.currentStep > 1 || hasSlots || hasGroups || (parsed.spotName && parsed.spotName.trim() !== ''))) {
+        return parsed;
+      }
+    } catch (e) {
+      console.warn('Failed loading session draft', e);
+    }
+    return null;
+  }, [editSession, currentUser]);
+
   // Wizard Step State: 1 | 2 | 3
-  const [currentStep, setCurrentStep] = useState(1);
+  const [currentStep, setCurrentStep] = useState(() => initialDraft?.currentStep || 1);
 
   // ─── Step 1 State: Session Setup ───
-  const [currentCalendarDate, setCurrentCalendarDate] = useState(() => new Date());
-  const [selectedDayNumber, setSelectedDayNumber] = useState(() => new Date().getDate());
-  const [capacity, setCapacity] = useState(30);
-  const [slotCapacityMap, setSlotCapacityMap] = useState({});
+  const [currentCalendarDate, setCurrentCalendarDate] = useState(() => {
+    if (initialDraft?.calendarDateStr) {
+      const d = new Date(initialDraft.calendarDateStr);
+      if (!isNaN(d.getTime())) return d;
+    }
+    return new Date();
+  });
+  const [selectedDayNumber, setSelectedDayNumber] = useState(() => initialDraft?.selectedDayNumber || new Date().getDate());
+  const [capacity, setCapacity] = useState(() => initialDraft?.capacity ?? 30);
+  const [slotCapacityMap, setSlotCapacityMap] = useState(() => initialDraft?.slotCapacityMap || {});
 
   // Initialize from initialDate or searchParams
   useEffect(() => {
+    if (initialDraft) return;
     const targetDateStr = initialDate || searchParams.get('date');
     if (targetDateStr) {
       const parts = targetDateStr.split('-');
@@ -431,11 +461,16 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         }
       }
     }
-  }, [initialDate, searchParams]);
+  }, [initialDate, searchParams, initialDraft]);
 
   // Dynamic slots loaded directly from Session Configuration
-  const [slots, setSlots] = useState(() => loadConfiguredSlots());
-  const [selectedSlotId, setSelectedSlotId] = useState(null);
+  const [slots, setSlots] = useState(() => {
+    if (Array.isArray(initialDraft?.slots) && initialDraft.slots.length > 0) {
+      return initialDraft.slots;
+    }
+    return loadConfiguredSlots();
+  });
+  const [selectedSlotId, setSelectedSlotId] = useState(() => initialDraft?.selectedSlotId ?? null);
 
   const getSlotCapacity = (slot) => {
     if (!slot) return capacity || 4;
@@ -493,7 +528,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     }
   };
 
-  const [spotName, setSpotName] = useState('');
+  const [spotName, setSpotName] = useState(() => initialDraft?.spotName || '');
   const [editingSlotModal, setEditingSlotModal] = useState(null);
 
   const modalTimeIsDuplicate = useMemo(() => {
@@ -505,33 +540,38 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
   // ─── Step 2 State: Roster Selector Pool (Real School Students) ───
   const [dbStudents, setDbStudents] = useState([]);
-  const [levelFilter, setLevelFilter] = useState('all'); // 'all' | 'Beginner' | 'Intermediate' | 'Advanced'
-  const [courseDayFilter, setCourseDayFilter] = useState('all'); // 'all' | '1' | '2' | '3' | ... | '7'
-  const [genderFilterStep2, setGenderFilterStep2] = useState('all'); // 'all' | 'male' | 'female'
-  const [swimmingFilterStep2, setSwimmingFilterStep2] = useState('all'); // 'all' | 'swimmer' | 'non-swimmer'
+  const [levelFilter, setLevelFilter] = useState(() => initialDraft?.levelFilter || 'all');
+  const [courseDayFilter, setCourseDayFilter] = useState(() => initialDraft?.courseDayFilter || 'all');
+  const [genderFilterStep2, setGenderFilterStep2] = useState(() => initialDraft?.genderFilterStep2 || 'all');
+  const [swimmingFilterStep2, setSwimmingFilterStep2] = useState(() => initialDraft?.swimmingFilterStep2 || 'all');
   const [dayFilter, setDayFilter] = useState('all');
-  const [selectedSlotStep2, setSelectedSlotStep2] = useState(1);
+  const [selectedSlotStep2, setSelectedSlotStep2] = useState(() => initialDraft?.selectedSlotStep2 || 1);
   const [studentSearchStep2, setStudentSearchStep2] = useState('');
   const [showMoreFiltersMobile, setShowMoreFiltersMobile] = useState(false);
 
   // ─── Step 2 State: Per-Slot Student Selection Mapping ───
   // Map of slotId -> array of studentIds selected for that specific slot
-  const [slotStudentMap, setSlotStudentMap] = useState({});
+  const [slotStudentMap, setSlotStudentMap] = useState(() => initialDraft?.slotStudentMap || {});
 
   // ─── Step 3 State: Instructor Groups Matching (Real School Instructors) ───
   const [dbInstructors, setDbInstructors] = useState([]);
-  const [step3DayFilter, setStep3DayFilter] = useState('all'); // 'all' | '1' | '2' | '3'...
-  const [step3StatusFilter, setStep3StatusFilter] = useState('unassigned'); // 'unassigned' | 'all' | 'assigned'
-  const [step3LevelFilter, setStep3LevelFilter] = useState('all'); // 'all' | 'beginner' | 'intermediate' | 'advanced'
-  const [step3GenderFilter, setStep3GenderFilter] = useState('all'); // 'all' | 'male' | 'female'
-  const [step3SwimmingFilter, setStep3SwimmingFilter] = useState('all'); // 'all' | 'swimmer' | 'non-swimmer'
-  const [step3CoachGenderFilter, setStep3CoachGenderFilter] = useState('all'); // 'all' | 'male' | 'female'
-  const [step3SlotFilter, setStep3SlotFilter] = useState(() => slots[0]?.id || 1);
+  const [step3DayFilter, setStep3DayFilter] = useState(() => initialDraft?.step3DayFilter || 'all');
+  const [step3StatusFilter, setStep3StatusFilter] = useState(() => initialDraft?.step3StatusFilter || 'unassigned');
+  const [step3LevelFilter, setStep3LevelFilter] = useState(() => initialDraft?.step3LevelFilter || 'all');
+  const [step3GenderFilter, setStep3GenderFilter] = useState(() => initialDraft?.step3GenderFilter || 'all');
+  const [step3SwimmingFilter, setStep3SwimmingFilter] = useState(() => initialDraft?.step3SwimmingFilter || 'all');
+  const [step3CoachGenderFilter, setStep3CoachGenderFilter] = useState(() => initialDraft?.step3CoachGenderFilter || 'all');
+  const [step3SlotFilter, setStep3SlotFilter] = useState(() => {
+    if (initialDraft?.step3SlotFilter) return initialDraft.step3SlotFilter;
+    const initialSlots = (Array.isArray(initialDraft?.slots) && initialDraft.slots.length > 0) ? initialDraft.slots : loadConfiguredSlots();
+    return initialSlots[0]?.id || 1;
+  });
   const [studentSearch, setStudentSearch] = useState('');
-  const [step3CheckedStudentIdsBySlot, setStep3CheckedStudentIdsBySlot] = useState({});
+  const [instructorSearch, setInstructorSearch] = useState('');
+  const [step3CheckedStudentIdsBySlot, setStep3CheckedStudentIdsBySlot] = useState(() => initialDraft?.step3CheckedStudentIdsBySlot || {});
 
-  const [trainingGroups, setTrainingGroups] = useState([]);
-  const [activeDropGroupId, setActiveDropGroupId] = useState(null);
+  const [trainingGroups, setTrainingGroups] = useState(() => initialDraft?.trainingGroups || []);
+  const [activeDropGroupId, setActiveDropGroupId] = useState(() => initialDraft?.activeDropGroupId || null);
   const [dragOverGroupId, setDragOverGroupId] = useState(null);
   const [draggingType, setDraggingType] = useState(null);
   const [isPublishing, setIsPublishing] = useState(false);
@@ -540,6 +580,267 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const [uiAlert, setUiAlert] = useState(null);
   const [existingDbSessions, setExistingDbSessions] = useState([]);
   const [dbLeaveRequests, setDbLeaveRequests] = useState([]);
+
+  // ─── Draft Auto-Saving Helpers ───
+  const hasProgressToSave = useMemo(() => {
+    if (editSession) return false;
+    const hasSlots = Object.keys(slotStudentMap).some(k => Array.isArray(slotStudentMap[k]) && slotStudentMap[k].length > 0);
+    const hasGroups = Array.isArray(trainingGroups) && trainingGroups.length > 0;
+    const isPastStep1 = currentStep > 1;
+    const hasCustomSpot = Boolean(spotName && spotName.trim() !== '');
+    return hasSlots || hasGroups || isPastStep1 || hasCustomSpot;
+  }, [editSession, slotStudentMap, trainingGroups, currentStep, spotName]);
+
+  const saveCurrentDraftToStorage = useCallback(() => {
+    if (editSession) return;
+    const hasSlots = Object.keys(slotStudentMap).some(k => Array.isArray(slotStudentMap[k]) && slotStudentMap[k].length > 0);
+    const hasGroups = Array.isArray(trainingGroups) && trainingGroups.length > 0;
+    const isPastStep1 = currentStep > 1;
+    const hasCustomSpot = Boolean(spotName && spotName.trim() !== '');
+
+    if (!hasSlots && !hasGroups && !isPastStep1 && !hasCustomSpot) {
+      return;
+    }
+
+    const payload = {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      currentStep,
+      calendarDateStr: currentCalendarDate ? currentCalendarDate.toISOString() : new Date().toISOString(),
+      selectedDayNumber,
+      capacity,
+      slotCapacityMap,
+      slots,
+      selectedSlotId,
+      spotName,
+      slotStudentMap,
+      trainingGroups,
+      activeDropGroupId,
+      step3SlotFilter,
+      selectedSlotStep2,
+      levelFilter,
+      courseDayFilter,
+      genderFilterStep2,
+      swimmingFilterStep2,
+      step3DayFilter,
+      step3StatusFilter,
+      step3LevelFilter,
+      step3GenderFilter,
+      step3SwimmingFilter,
+      step3CoachGenderFilter,
+      step3CheckedStudentIdsBySlot,
+    };
+
+    try {
+      localStorage.setItem(draftKey, JSON.stringify(payload));
+    } catch (e) {
+      console.warn('Failed saving session draft', e);
+    }
+  }, [
+    editSession,
+    draftKey,
+    currentStep,
+    currentCalendarDate,
+    selectedDayNumber,
+    capacity,
+    slotCapacityMap,
+    slots,
+    selectedSlotId,
+    spotName,
+    slotStudentMap,
+    trainingGroups,
+    activeDropGroupId,
+    step3SlotFilter,
+    selectedSlotStep2,
+    levelFilter,
+    courseDayFilter,
+    genderFilterStep2,
+    swimmingFilterStep2,
+    step3DayFilter,
+    step3StatusFilter,
+    step3LevelFilter,
+    step3GenderFilter,
+    step3SwimmingFilter,
+    step3CoachGenderFilter,
+    step3CheckedStudentIdsBySlot,
+  ]);
+
+  // Auto-save draft whenever user updates the wizard
+  useEffect(() => {
+    if (!editSession && hasProgressToSave) {
+      saveCurrentDraftToStorage();
+    }
+  }, [editSession, hasProgressToSave, saveCurrentDraftToStorage]);
+
+  // Ensure draft is saved when closing tab or navigating away
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (!editSession && hasProgressToSave) {
+        saveCurrentDraftToStorage();
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [editSession, hasProgressToSave, saveCurrentDraftToStorage]);
+
+  const [showCloseConfirmModal, setShowCloseConfirmModal] = useState(false);
+  const showCloseConfirmModalRef = useRef(false);
+  useEffect(() => {
+    showCloseConfirmModalRef.current = showCloseConfirmModal;
+  }, [showCloseConfirmModal]);
+
+  const modalHistoryPushedRef = useRef(false);
+  const hasProgressRef = useRef(hasProgressToSave);
+  const onCloseRef = useRef(onClose);
+  const mountedAtRef = useRef(Date.now());
+
+  // Guarantee confirmation modal is strictly false on mount and initialize cooldown
+  useEffect(() => {
+    mountedAtRef.current = Date.now();
+    setShowCloseConfirmModal(false);
+  }, []);
+
+  useEffect(() => {
+    hasProgressRef.current = hasProgressToSave;
+  }, [hasProgressToSave]);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  // Request close: If unsaved progress exists, ask user whether to save draft or not
+  const handleRequestClose = () => {
+    if (!editSession && hasProgressToSave) {
+      setShowCloseConfirmModal(true);
+    } else {
+      if (isModal && modalHistoryPushedRef.current) {
+        modalHistoryPushedRef.current = false;
+        window.__newSessionIgnorePopState = true;
+        window.history.back();
+      }
+      if (onClose) onClose();
+      else navigate('/sessions');
+    }
+  };
+
+  // User chose: Save draft & close
+  const confirmSaveDraftAndClose = () => {
+    saveCurrentDraftToStorage();
+    setShowCloseConfirmModal(false);
+    if (isModal && modalHistoryPushedRef.current) {
+      modalHistoryPushedRef.current = false;
+      window.__newSessionIgnorePopState = true;
+      window.history.back();
+    }
+    if (onClose) onClose();
+    else navigate('/sessions');
+  };
+
+  // Store the original saved draft snapshot as it existed when the wizard mounted
+  const originalSavedDraftRef = useRef(null);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(draftKey);
+      if (raw) {
+        originalSavedDraftRef.current = raw;
+      }
+    } catch (e) {}
+  }, [draftKey]);
+
+  // User chose: Keep old draft as is (revert to original saved draft snapshot) & close
+  const confirmKeepOldDraftAndClose = () => {
+    try {
+      if (originalSavedDraftRef.current) {
+        localStorage.setItem(draftKey, originalSavedDraftRef.current);
+      }
+    } catch (e) {}
+    setShowCloseConfirmModal(false);
+    if (isModal && modalHistoryPushedRef.current) {
+      modalHistoryPushedRef.current = false;
+      window.__newSessionIgnorePopState = true;
+      window.history.back();
+    }
+    if (onClose) onClose();
+    else navigate('/sessions');
+  };
+
+  // User chose: Don't save (discard) & close
+  const confirmDiscardAndClose = () => {
+    try {
+      localStorage.removeItem(draftKey);
+    } catch (e) {}
+    setShowCloseConfirmModal(false);
+    if (isModal && modalHistoryPushedRef.current) {
+      modalHistoryPushedRef.current = false;
+      window.__newSessionIgnorePopState = true;
+      window.history.back();
+    }
+    if (onClose) onClose();
+    else navigate('/sessions');
+  };
+
+  // User canceled close confirmation
+  const handleCancelCloseConfirm = () => {
+    setShowCloseConfirmModal(false);
+    // If the browser back button was the trigger that popped history, re-push so future back clicks continue to work
+    if (isModal && !modalHistoryPushedRef.current) {
+      window.history.pushState({ isNewSessionModal: true }, '', window.location.href);
+      modalHistoryPushedRef.current = true;
+    }
+  };
+
+  // ─── Browser Back Button Interception (Stay on underlying page) ───
+  useEffect(() => {
+    if (!isModal) return;
+
+    // Push a state entry so the browser back button triggers popstate instead of leaving the route
+    window.history.pushState({ isNewSessionModal: true }, '', window.location.href);
+    modalHistoryPushedRef.current = true;
+
+    const handlePopState = () => {
+      // Ignore programmatic history.back or events during the first 600ms of mount (e.g. StrictMode artifacts)
+      if (window.__newSessionIgnorePopState) {
+        window.__newSessionIgnorePopState = false;
+        return;
+      }
+      if (Date.now() - mountedAtRef.current < 600) {
+        return;
+      }
+
+      // Browser back button was clicked by the user
+      // The history entry was already popped by the browser
+      modalHistoryPushedRef.current = false;
+
+      if (showCloseConfirmModalRef.current) {
+        // Confirmation dialog was already open; back button dismisses it
+        setShowCloseConfirmModal(false);
+        // Re-push history entry so modal remains protected
+        window.history.pushState({ isNewSessionModal: true }, '', window.location.href);
+        modalHistoryPushedRef.current = true;
+        return;
+      }
+
+      if (!editSession && hasProgressRef.current) {
+        // Has progress to save -> prompt user
+        setShowCloseConfirmModal(true);
+      } else {
+        // No progress -> close modal directly, user stays on the underlying page (e.g. /sessions)
+        if (onCloseRef.current) {
+          onCloseRef.current();
+        } else {
+          navigate('/sessions');
+        }
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [isModal, editSession, navigate]);
 
   // Formatted Date String
   const formattedSessionDate = useMemo(() => {
@@ -921,14 +1222,31 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     };
   }, [isIndividualCoach, currentUser, allInstructors]);
 
-  // Filtered Instructors for Step 3 (Coach Gender Filter)
+  // Filtered Instructors for Step 3 (Coach Gender Filter & Search)
   const filteredInstructors = useMemo(() => {
     return allInstructors.filter(inst => {
-      if (step3CoachGenderFilter === 'all') return true;
-      const g = (inst.gender || 'male').toLowerCase();
-      return g === step3CoachGenderFilter.toLowerCase();
+      // 1. Gender filter
+      if (step3CoachGenderFilter !== 'all') {
+        const g = (inst.gender || 'male').toLowerCase();
+        if (g !== step3CoachGenderFilter.toLowerCase()) return false;
+      }
+      // 2. Search query filter
+      if (instructorSearch && instructorSearch.trim()) {
+        const q = instructorSearch.trim().toLowerCase();
+        const name = (inst.name || '').toLowerCase();
+        const role = (inst.role || '').toLowerCase();
+        const spec = (inst.specialization || '').toLowerCase();
+        const specs = Array.isArray(inst.specializations)
+          ? inst.specializations.join(' ').toLowerCase()
+          : (typeof inst.specializations === 'string' ? inst.specializations.toLowerCase() : '');
+        const phone = String(inst.phone || inst.whatsapp_number || '').toLowerCase();
+        if (!name.includes(q) && !role.includes(q) && !spec.includes(q) && !specs.includes(q) && !phone.includes(q)) {
+          return false;
+        }
+      }
+      return true;
     });
-  }, [allInstructors, step3CoachGenderFilter]);
+  }, [allInstructors, step3CoachGenderFilter, instructorSearch]);
 
   // Track active vs on-leave coaches on selected session date
   const onLeaveInstructorsCount = useMemo(() => {
@@ -1645,12 +1963,18 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     return new Set(slotAssignedIds);
   }, [importedStudents, step3SlotFilter, slotStudentMap, editSession]);
 
-  // Checked student IDs strictly scoped to the active slot
+  // Checked student IDs strictly scoped to the active slot and unassigned when filter is unassigned
   const step3CheckedStudentIds = useMemo(() => {
     const slotKey = step3SlotFilter ?? 'default';
     const list = step3CheckedStudentIdsBySlot[slotKey] || [];
-    return list.filter(id => activeSlotStudentIdSet.has(id));
-  }, [step3CheckedStudentIdsBySlot, step3SlotFilter, activeSlotStudentIdSet]);
+    return list.filter(id => {
+      if (!activeSlotStudentIdSet.has(id)) return false;
+      if (step3StatusFilter === 'unassigned' && trainingGroups.some(g => g.studentIds.includes(id))) {
+        return false;
+      }
+      return true;
+    });
+  }, [step3CheckedStudentIdsBySlot, step3SlotFilter, activeSlotStudentIdSet, step3StatusFilter, trainingGroups]);
 
   const setStep3CheckedStudentIds = useCallback((valOrFn) => {
     const slotKey = step3SlotFilter ?? 'default';
@@ -1664,16 +1988,59 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     });
   }, [step3SlotFilter, activeSlotStudentIdSet]);
 
-  // Step 3: Toggle check in Column 1 (Individual row selection so already-grouped guests are never forced in)
+  // Step 3: Toggle check in Column 1 (Selecting main student auto-selects only UNASSIGNED guests)
   const toggleStep3StudentCheck = (id) => {
     // Only allow selecting students that actually belong to the currently active slot
     if (!activeSlotStudentIdSet.has(id) && step3SlotFilter !== 'ALL' && !editSession) {
       return;
     }
 
-    setStep3CheckedStudentIds(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-    );
+    const clickedStudent = importedStudents.find(s => String(s.id) === String(id));
+
+    // If clicked student is an accompanying GUEST:
+    // Allow selecting/deselecting this guest individually without affecting the main student
+    if (clickedStudent?.isGuest) {
+      setStep3CheckedStudentIds(prev =>
+        prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+      );
+      return;
+    }
+
+    // If clicked student is a MAIN student:
+    // Find all their UNASSIGNED accompanying guests in the current active slot
+    const accompanyingGuestIds = importedStudents
+      .filter(s => s.isGuest && String(s.parentStudentId) === String(id))
+      .filter(s => step3SlotFilter === 'ALL' || editSession || activeSlotStudentIdSet.has(s.id))
+      .filter(s => !trainingGroups.some(g => g.studentIds.includes(s.id)))
+      .map(s => s.id);
+
+    setStep3CheckedStudentIds(prev => {
+      const isMainCurrentlyChecked = prev.includes(id);
+      if (isMainCurrentlyChecked) {
+        // User clicked to uncheck the main student: also uncheck their accompanying guests
+        const toRemove = new Set([id, ...accompanyingGuestIds]);
+        return prev.filter(x => !toRemove.has(x));
+      } else {
+        // User clicked to check the main student: automatically check main student and only unassigned guests
+        const toAdd = [id, ...accompanyingGuestIds.filter(gid => !prev.includes(gid))];
+        return [...prev, ...toAdd];
+      }
+    });
+  };
+
+  // Helper to re-index group letters per slot so they always stay sequential (Group A, Group B, Group C...)
+  const reindexGroups = (groupsList) => {
+    const slotCounters = {};
+    return groupsList.map(g => {
+      const slotKey = String(g.slotId || slots[0]?.id || 'default');
+      const count = slotCounters[slotKey] || 0;
+      slotCounters[slotKey] = count + 1;
+      const letter = String.fromCharCode(65 + count);
+      return {
+        ...g,
+        name: `Group ${letter}`
+      };
+    });
   };
 
   // Create Group from checked students or create a fresh empty group card with assigned slot
@@ -1727,7 +2094,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         ...g,
         studentIds: g.studentIds.filter(id => !step3CheckedStudentIds.includes(id))
       }));
-      return [...cleaned, newGroup];
+      return reindexGroups([...cleaned, newGroup]);
     });
     setActiveDropGroupId(newGroup.id);
     setStep3CheckedStudentIds([]);
@@ -1756,19 +2123,28 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     }
   }, [isIndividualCoach, currentIndividualCoach, trainingGroups]);
 
-  // Delete group card
+  // Delete group card and re-sequence remaining group letters per slot
   const deleteGroup = (groupId) => {
-    setTrainingGroups(prev => prev.filter(g => g.id !== groupId));
-    if (activeDropGroupId === groupId) {
-      const remaining = trainingGroups.filter(g => g.id !== groupId);
-      setActiveDropGroupId(remaining.length > 0 ? remaining[0].id : null);
-    }
+    setTrainingGroups(prev => {
+      const remaining = prev.filter(g => g.id !== groupId);
+      return reindexGroups(remaining);
+    });
+    setActiveDropGroupId(prevActiveId => {
+      if (prevActiveId === groupId) {
+        const remaining = trainingGroups.filter(g => g.id !== groupId);
+        return remaining.length > 0 ? remaining[0].id : null;
+      }
+      return prevActiveId;
+    });
   };
 
   // Clear all groups for fresh manual creation (scoped to active slot)
   const clearAllGroups = () => {
     if (step3SlotFilter !== 'ALL' && !editSession) {
-      setTrainingGroups(prev => prev.filter(g => String(g.slotId || slots[0]?.id) !== String(step3SlotFilter)));
+      setTrainingGroups(prev => {
+        const remaining = prev.filter(g => String(g.slotId || slots[0]?.id) !== String(step3SlotFilter));
+        return reindexGroups(remaining);
+      });
     } else {
       setTrainingGroups([]);
     }
@@ -2133,7 +2509,17 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       }
 
       if (publishedCount > 0) {
+        if (!editSession) {
+          try {
+            localStorage.removeItem(draftKey);
+          } catch (e) {}
+        }
         if (editSession) {
+          if (isModal && modalHistoryPushedRef.current) {
+            modalHistoryPushedRef.current = false;
+            window.__newSessionIgnorePopState = true;
+            window.history.back();
+          }
           if (onSessionCreated) onSessionCreated();
           if (onClose) onClose();
           return;
@@ -2253,14 +2639,14 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           </div>
         </div>
 
-        {/* Right: Close Button or Spacer */}
+        {/* Right: Close Button */}
         <div className="ns-header-right">
           {isModal && (
             <div className="ns-header-close-wrap">
               <button
                 type="button"
                 className="ses-modal-close"
-                onClick={onClose}
+                onClick={handleRequestClose}
                 style={{
                   width: '32px',
                   height: '32px',
@@ -2295,6 +2681,166 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           )}
         </div>
       </header>
+
+      {/* Save Draft on Close Confirmation Modal */}
+      {showCloseConfirmModal && (
+        <div
+          className="ns-modal-overlay"
+          style={{
+            zIndex: 1400,
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, 0.65)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px'
+          }}
+          onClick={handleCancelCloseConfirm}
+        >
+          <div
+            className="ns-modal-card"
+            style={{
+              position: 'relative',
+              maxWidth: '420px',
+              width: '100%',
+              background: '#FFFFFF',
+              borderRadius: '20px',
+              padding: '28px 24px',
+              boxShadow: '0 25px 60px rgba(0, 0, 0, 0.3)',
+              textAlign: 'center',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Top-Right Cross Button (Cancel) */}
+            <button
+              type="button"
+              onClick={handleCancelCloseConfirm}
+              title="Cancel / Close"
+              style={{
+                position: 'absolute',
+                top: '16px',
+                right: '16px',
+                width: '32px',
+                height: '32px',
+                borderRadius: '50%',
+                background: '#F1F5F9',
+                border: '1px solid #E2E8F0',
+                cursor: 'pointer',
+                fontWeight: 700,
+                fontSize: '14px',
+                color: '#64748B',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'all 0.15s ease'
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.background = '#EF4444';
+                e.currentTarget.style.color = '#FFFFFF';
+                e.currentTarget.style.borderColor = '#EF4444';
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = '#F1F5F9';
+                e.currentTarget.style.color = '#64748B';
+                e.currentTarget.style.borderColor = '#E2E8F0';
+              }}
+            >
+              ✕
+            </button>
+
+            <div
+              style={{
+                width: '56px',
+                height: '56px',
+                borderRadius: '50%',
+                background: '#F0FDFA',
+                border: '1.5px solid #CCFBF1',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '26px',
+                marginBottom: '16px'
+              }}
+            >
+              💾
+            </div>
+            <h3 style={{ margin: '0 0 8px 0', fontSize: '18px', fontWeight: 800, color: '#0F172A', fontFamily: "'Outfit', sans-serif" }}>
+              Save session as draft?
+            </h3>
+            <p style={{ margin: '0 0 24px 0', fontSize: '13.5px', color: '#64748B', lineHeight: 1.5 }}>
+              Do you want to save your progress so you can resume later, or discard your changes?
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '100%' }}>
+              <button
+                type="button"
+                onClick={confirmSaveDraftAndClose}
+                style={{
+                  width: '100%',
+                  background: '#0D9488',
+                  color: '#FFFFFF',
+                  border: 'none',
+                  padding: '12px 18px',
+                  borderRadius: '10px',
+                  fontWeight: 700,
+                  fontSize: '14px',
+                  cursor: 'pointer',
+                  boxShadow: '0 4px 12px rgba(13, 148, 136, 0.3)',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                💾 Save Current Draft &amp; Close
+              </button>
+
+              {Boolean(originalSavedDraftRef.current) && (
+                <button
+                  type="button"
+                  onClick={confirmKeepOldDraftAndClose}
+                  style={{
+                    width: '100%',
+                    background: '#F1F5F9',
+                    color: '#0F172A',
+                    border: '1.5px solid #CBD5E1',
+                    padding: '11px 18px',
+                    borderRadius: '10px',
+                    fontWeight: 700,
+                    fontSize: '13.5px',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease'
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = '#E2E8F0'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = '#F1F5F9'; }}
+                >
+                  ↩️ Keep Old Draft (Exit Without New Changes)
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={confirmDiscardAndClose}
+                style={{
+                  width: '100%',
+                  background: '#FEF2F2',
+                  color: '#DC2626',
+                  border: '1px solid #FECACA',
+                  padding: '11px 18px',
+                  borderRadius: '10px',
+                  fontWeight: 600,
+                  fontSize: '13.5px',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                🗑️ Delete Draft Completely (Clear All)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main Form Scrollable Container */}
       <div className={isModal ? "ns-modal-body-scroll" : ""} style={isModal ? { padding: '16px 24px', overflowY: 'auto', overflowX: 'hidden', flex: 1, maxHeight: 'calc(92vh - 72px)', display: 'flex', flexDirection: 'column' } : { display: 'flex', flexDirection: 'column', flex: 1 }}>
@@ -3843,6 +4389,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                       const accompanyingGuests = !student.isGuest
                         ? importedStudents.filter(s => s.isGuest && String(s.parentStudentId) === String(student.id))
                         : [];
+                      const unassignedAccompanyingGuests = accompanyingGuests.filter(
+                        g => !trainingGroups.some(grp => grp.studentIds.includes(g.id))
+                      );
 
                       return (
                         <div
@@ -3937,7 +4486,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                   👥 Guest of {student.parentStudentName}
                                 </span>
                               )}
-                              {!student.isGuest && accompanyingGuests.length > 0 && (
+                              {!student.isGuest && unassignedAccompanyingGuests.length > 0 && (
                                 <span style={{
                                   fontSize: '9.5px',
                                   fontWeight: 700,
@@ -3948,8 +4497,23 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                   borderRadius: '4px',
                                   whiteSpace: 'nowrap',
                                   flexShrink: 0
-                                }} title={`Main student with ${accompanyingGuests.length} accompanying guest(s)`}>
-                                  👥 +{accompanyingGuests.length} Guests
+                                }} title={`Main student with ${unassignedAccompanyingGuests.length} unassigned guest(s)`}>
+                                  👥 +{unassignedAccompanyingGuests.length} Guests
+                                </span>
+                              )}
+                              {!student.isGuest && accompanyingGuests.length > 0 && unassignedAccompanyingGuests.length === 0 && (
+                                <span style={{
+                                  fontSize: '9.5px',
+                                  fontWeight: 700,
+                                  color: '#64748B',
+                                  background: '#F1F5F9',
+                                  border: '1px solid #CBD5E1',
+                                  padding: '1px 5px',
+                                  borderRadius: '4px',
+                                  whiteSpace: 'nowrap',
+                                  flexShrink: 0
+                                }} title="Accompanying guest(s) are already assigned to training groups">
+                                  👥 Guest Assigned
                                 </span>
                               )}
                               <span
@@ -4296,7 +4860,10 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                 value={grp.slotId || selectedSlotId || slots[0]?.id}
                                 onChange={(e) => {
                                   const newSlotId = isNaN(parseInt(e.target.value, 10)) ? e.target.value : parseInt(e.target.value, 10);
-                                  setTrainingGroups(prev => prev.map(g => g.id === grp.id ? { ...g, slotId: newSlotId } : g));
+                                  setTrainingGroups(prev => {
+                                    const updated = prev.map(g => g.id === grp.id ? { ...g, slotId: newSlotId } : g);
+                                    return reindexGroups(updated);
+                                  });
                                   setSlotStudentMap(prev => {
                                     const newMap = { ...prev };
                                     Object.keys(newMap).forEach(k => {
@@ -4660,10 +5227,13 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                       {filteredInstructors.length} Staff {onLeaveInstructorsCount > 0 ? `(${onLeaveInstructorsCount} On Leave)` : ''}
                     </span>
                   </div>
-                  {step3CoachGenderFilter !== 'all' && (
+                  {(step3CoachGenderFilter !== 'all' || Boolean(instructorSearch)) && (
                     <button
                       type="button"
-                      onClick={() => setStep3CoachGenderFilter('all')}
+                      onClick={() => {
+                        setStep3CoachGenderFilter('all');
+                        setInstructorSearch('');
+                      }}
                       style={{
                         background: 'none',
                         border: 'none',
@@ -4729,6 +5299,36 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                   </div>
                 </div>
 
+                {/* Search Instructors */}
+                <div className="ns-ws-search">
+                  <span>🔍</span>
+                  <input
+                    type="text"
+                    placeholder="Search instructors..."
+                    value={instructorSearch}
+                    onChange={(e) => setInstructorSearch(e.target.value)}
+                  />
+                  {instructorSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setInstructorSearch('')}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: '#94A3B8',
+                        cursor: 'pointer',
+                        fontSize: '12px',
+                        padding: '0 4px',
+                        display: 'flex',
+                        alignItems: 'center'
+                      }}
+                      title="Clear search"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
                 <div style={{ fontSize: '11px', color: '#64748B', display: 'flex', alignItems: 'center', gap: '4px', background: '#F8FAFC', padding: '6px 10px', borderRadius: '6px' }}>
                   <span>🖐️</span> Drag instructor card into any Group Card in the center.
                 </div>
@@ -4736,9 +5336,11 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                 <div className="ns-instructors-list">
                   {filteredInstructors.length === 0 ? (
                     <div style={{ padding: '24px', textAlign: 'center', color: '#64748B', background: '#FFFFFF', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
-                      {step3CoachGenderFilter !== 'all'
-                        ? `No ${step3CoachGenderFilter} instructors registered.`
-                        : 'No instructors registered for this school yet.'}
+                      {instructorSearch.trim()
+                        ? `No instructors found matching "${instructorSearch}".`
+                        : step3CoachGenderFilter !== 'all'
+                          ? `No ${step3CoachGenderFilter} instructors registered.`
+                          : 'No instructors registered for this school yet.'}
                     </div>
                   ) : (
                     filteredInstructors.map(inst => {
@@ -4851,7 +5453,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                 assignedInstructorId: inst.id,
                                 assignedInstructorIds: [inst.id],
                               };
-                              setTrainingGroups(prev => [...prev, newGroup]);
+                              setTrainingGroups(prev => reindexGroups([...prev, newGroup]));
                               setActiveDropGroupId(newGroup.id);
                             }
                           }}
@@ -7688,7 +8290,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
   if (isModal) {
     return (
-      <div className="ses-modal-overlay" onClick={onClose} style={{ zIndex: 1100, padding: '20px' }}>
+      <div className="ses-modal-overlay" onClick={handleRequestClose} style={{ zIndex: 1100, padding: '20px' }}>
         <div
           className="ses-modal-box ns-modal-container"
           style={{
@@ -7736,6 +8338,11 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                     className="ns-primary-btn"
                     onClick={() => {
                       setShowSuccessModal(false);
+                      if (isModal && modalHistoryPushedRef.current) {
+                        modalHistoryPushedRef.current = false;
+                        window.__newSessionIgnorePopState = true;
+                        window.history.back();
+                      }
                       if (onSessionCreated) onSessionCreated();
                       if (onClose) onClose();
                     }}

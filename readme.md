@@ -553,3 +553,105 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
 08. **Production Backend Deployment (AWS EC2)**:
     - **FastAPI Backend on EC2**: Deployed updated `backend/main.py` containing student creation `gender` field support to AWS EC2 (`i-0c62e04f44a9ea237`) via S3 bucket `aisurf-media-uploads-149051628601` and AWS Systems Manager (SSM Command ID: `6dff0a5e-c60d-43a6-83ac-1b32ec435972`).
     - **Service Restart & Health Verification**: Restarted `aisurf-backend` systemd service on EC2 (`54.242.160.238:8000`) with verified 200 OK live status.
+
+### Changes on 13-10-2026
+
+01. **Student Phone Call Action in Session Roster (`Sessions.jsx`)**:
+    - **Direct Call Link**: Added a direct `📞 Call` trigger button next to attendance check actions for each enrolled student, initiating phone calls (`tel:{student.phone}`) to their verified imported phone numbers.
+    - **Data Sanitization**: Verified and resolved real student contact details across session attendance mappings.
+
+02. **Search Instructors Filter in Assign Instructors Wizard (`NewSession.jsx`)**:
+    - **Instant Filter Input**: Added an interactive search box (`Search instructors...`) in Step 3 (Assign Instructors) enabling admins to quickly filter instructors by name, specialty, or email in real-time.
+
+03. **Automatic Sequential Group Re-Lettering / Re-Indexing (`NewSession.jsx`)**:
+    - **Dynamic Letter Re-Assignment**: Implemented `reindexGroups` so deleting an earlier group (e.g., deleting Group A) automatically shifts and re-labels subsequent groups (Group B becomes Group A, Group C becomes Group B) per time slot.
+    - **Zero Gaps Guarantee**: Maintains clean alphabetical continuity without orphaned letters or broken group card layouts.
+
+04. **Session Wizard Draft Persistence & Non-Intrusive Auto-Restore (`NewSession.jsx`)**:
+    - **Local Draft Storage**: Implemented automatic localStorage draft persistence saving wizard step, selected slot, spot name, student roster mapping, and training groups.
+    - **Clean UI**: Removed intrusive restore banners and alert popups, silently restoring user progress upon re-opening the wizard.
+
+05. **Browser Back Button Route Shield & Popstate Interception (`NewSession.jsx`)**:
+    - **History Stack Synchronization**: Added `popstate` interception when `isModal={true}` so clicking the browser top-left Back button (`←`) closes the modal and keeps the user on the underlying page (`/sessions` or Dashboard) rather than jumping back to the previous route (`/students`).
+    - **Mount Guard & Programmatic Back Handling**: Implemented a 600ms mount cooldown guard and programmatic flag `window.__newSessionIgnorePopState` to prevent React StrictMode and unmount lifecycle events from spuriously triggering close confirmation modals on reopen.
+
+06. **Enhanced Close Confirmation Dialog with "Keep Old Draft" & Cross Button (`NewSession.jsx`)**:
+    - **"Keep Old Draft" Option**: Added a dedicated **`↩️ Keep Old Draft (Exit Without New Changes)`** action allowing users to exit while preserving their previously saved draft intact in storage without overwriting it with current edits.
+    - **Explicit Action Labels**: Clarified options to **`💾 Save Current Draft & Close`**, **`↩️ Keep Old Draft`**, and **`🗑️ Delete Draft Completely (Clear All)`**.
+    - **Top-Right Cross Button (`✕`)**: Replaced the bottom text "Cancel" button with a rounded top-right cross button (`✕`) with hover animations directly on the confirmation card.
+
+07. **Production Backend Deployment (AWS EC2)**:
+    - **FastAPI Backend on EC2**: Successfully deployed updated `backend/main.py` containing session student contact mapping and auto-migration guards to AWS EC2 (`i-0c62e04f44a9ea237`) via S3 bucket `aisurf-media-uploads-149051628601` and AWS Systems Manager (SSM Command ID: `d40a1c6e-200a-4446-9c2d-59139c67b124`).
+    - **Database Schema & Sessions Verification**: Added non-destructive startup column verification ensuring full PostgreSQL RDS compatibility. Verified all **266 live sessions** active and returning `200 OK` on `54.242.160.238:8000/api/sessions`.
+
+08. **Interactive 1-Click Athlete Selector Chips in Session Notes (`Sessions.jsx`)**:
+    - **Always-Visible Athlete Cards**: Replaced the clunky `<select>` dropdown with interactive, always-visible athlete cards in the group evaluation notes modal.
+    - **1-Click Switching**: Coaches and admins can instantly switch between athletes by clicking any student chip, immediately loading their wave count and feedback form without opening dropdown menus.
+    - **Visual Indicators**: Displays athlete initials avatar, full name, guest badge, level tag (`Beginner`), evaluation status (`✓ Evaluated` in green / `Pending`), and highlighted active state with vibrant teal gradients.
+
+09. **Active Student Filtering & Registration Level Badge Mapping (`Analytics.jsx`, `StudentsManagement.jsx`, `main.py`)**:
+    - **Strict Active Student Filtering**: Filtered the Analytics page (`/analytics`) table, badge count cards, and Retention Funnel to show **only currently active students** (`isStudentActive`) based on `start_date` and course duration, excluding past completed courses and future upcoming registrations.
+    - **Registration Level to Badge Mapping**: Mapped student levels directly to badges:
+      - `Beginner` ➔ **WHITE** Badge (Circle 1 filled silver-white, 3 weeks estimated)
+      - `Advance Beginner` ➔ **YELLOW** Badge (Circles 1 & 2 filled, 1 month estimated)
+      - `Intermediate` ➔ **GREEN** Badge (Circles 1, 2 & 3 filled, Ready Now)
+      - `Advance Intermediate` ➔ **BLUE** Badge (Circles 1, 2, 3 & 4 filled, 3 months estimated)
+      - `Pro` ➔ **RED** Badge (All 5 circles filled, Max Level)
+    - **Dynamic Stats & Funnel**: Real-time count of active students at each level displayed in top stat cards and Retention Funnel chart.
+    - **Standardized Registration Options**: Updated student registration forms (Single Add, Bulk Add, Guest forms) in `StudentsManagement.jsx` to offer the 5 standard levels matching badges.
+
+10. **Replaced Surf Stance with Surf Level Dropdown in Registration (`AuthPage.jsx`, `main.py`)**:
+    - **Replaced Field**: Removed `Surf Stance` (`Regular` / `Goofy`) from both the primary student profile setup and accompanying guest sub-forms on the user registration page (`AuthPage.jsx`).
+    - **New Surf Level Selector**: Replaced it with an interactive **`🏄 Surf Level *`** dropdown with options:
+      - ⚪ **Beginner**
+      - 🟡 **Advance Beginner**
+      - 🟢 **Intermediate**
+      - 🔵 **Advance Intermediate**
+      - 🔴 **Pro**
+    - **Backend Sync**: Updated `UserSignup` schema and `/api/auth/signup` in `backend/main.py` to persist `level` directly into the `Student` database model upon registration and invite activation.
+
+11. **Split-Screen Fixed Hero Image & Scroll Layout Fix (`AuthPage.jsx`)**:
+    - **Prevented Image Cutoff**: Resolved issue where scrolling down long registration and guest forms caused the left hero image to end abruptly at 100vh and display empty black space below.
+    - **Sticky Full-Height Hero**: Configured `.auth-panel-right` with `position: sticky; top: 0; height: 100vh; min-height: 100vh; background-size: cover;` so the ocean hero image stays fixed and covers 100% of the screen height without cutting off.
+    - **Independent Panel Scroll**: Configured `.auth-panel-left` with `height: 100vh; max-height: 100vh; overflow-y: auto;` and a custom sleek scrollbar, allowing long forms to scroll comfortably without disturbing the hero panel.
+
+12. **Surfing Level & Badge Progression in Session Notes with Immediate Analytics Sync (`Sessions.jsx`, `Analytics.jsx`, `backend/main.py`)**:
+    - **Current Badge Level Display**: In the Session Hub **Notes** evaluation tab, added an interactive **Surfing Level & Badge Progression** card right above the wave count and scoring cards for the active athlete.
+    - **Visual Badge Icons on Chips**: Updated all athlete selector chips to display their badge icon dot (`⚪`, `🟡`, `🟢`, `🔵`, `🔴`) next to their level name, updating live as changes are made.
+    - **Upgrade & Downgrade Controls**:
+      - Added dedicated **`▲ Upgrade Level`** and **`▼ Downgrade`** buttons with boundary checks (disabled at Rank 1 Beginner or Rank 5 Pro).
+      - Added 5 interactive level selector cards (⚪ Beginner, 🟡 Advance Beginner, 🟢 Intermediate, 🔵 Advance Intermediate, 🔴 Pro) with active glow, rank pill (`Lvl X`, `✓ Earned`, `Current`), and 1-click level switching.
+    - **Immediate Analytics & Database Reflection**:
+      - Updated `backend/main.py` (`PUT /api/sessions/{session_id}` and `PUT /api/students/{student_id}`) so that when a coach saves, the updated level is persisted to both the session and student record, and automatically synchronizes the `badges` table (deletes old and inserts earned badges up to current rank).
+      - Updated `Analytics.jsx` to prioritize the updated level rank, ensuring the top badge cards (WHITE, YELLOW, GREEN, BLUE, RED), the Retention Funnel, and active student list table reflect the upgraded or downgraded level immediately upon saving.
+      - Added a read-only current badge progress banner in the student report card view when logged in as an athlete.
+
+13. **Resolved macOS / Safari Screen Flickering & Stuttering (`StudentsManagement.jsx`, `Sidebar.jsx`, `Sessions.jsx`)**:
+    - **Root Causes Identified**:
+      1. `Sidebar.jsx` contained an aggressive 1000ms `setInterval` calling `setSchool({ ... })` unconditionally with a fresh object reference, forcing a full `Sidebar` re-render every second.
+      2. `StudentsManagement.jsx` contained a 1500ms `setInterval` incrementing `reqRefreshKey`, triggering a complete component re-render of the entire 6,000+ line tree every 1.5 seconds.
+      3. On macOS Retina displays (WebKit/Blink + Apple Metal CoreAnimation compositor), continuous background re-renders underneath `.sm-modal-overlay` with `backdrop-filter: blur(10px)` forced the GPU compositor to invalidate blur texture buffers on every tick, causing visible screen flickering and flashing.
+      4. Missing WebKit vendor prefixes (`-webkit-backdrop-filter`) and missing 3D hardware layer promotion (`transform: translate3d(0,0,0)`, `backface-visibility: hidden`).
+      5. Layout shifts from Windows-centric `paddingRight` scrollbar calculations applied on macOS overlay scrollbars.
+    - **Fixes Applied**:
+      - **Eliminated Rapid Polling Loops**: Removed the 1s and 1.5s intervals; state is now updated cleanly via native `storage`, `focus`, and `user_updated` event listeners only when values actually change.
+      - **WebKit & Metal GPU Layer Promotion**: Added `-webkit-backdrop-filter: blur(...)`, `-webkit-transform: translate3d(0, 0, 0)`, `transform: translate3d(0, 0, 0)`, and `-webkit-backface-visibility: hidden` to all modal overlays and dialog cards to force continuous GPU compositing without frame drops.
+      - **3D Animation Compositing**: Updated `@keyframes sm-slideUp` from 2D `translateY` to `translate3d(0, 20px, 0)` so the GPU compositor avoids software fallback rasterization.
+      - **Mac Overlay Scrollbar Protection**: Added macOS platform detection to prevent layout padding shifts on macOS floating scrollbars.
+
+14. **Simplified & Compact Surfing Level UI in Session Notes (`Sessions.jsx`)**:
+    - **Replaced Bulky Design**: Replaced the previous large multi-box card with a clean, compact horizontal card matching the minimalist aesthetic of Card 1 (Wave Count).
+    - **Clean Header Row**: Displays `🏄 Surfing Level:` alongside a small badge tag showing the active level, with compact `▼ Downgrade` and `▲ Upgrade` buttons placed neatly on the right.
+    - **Single-Row Level Pills**: Rendered 5 compact horizontal pill buttons (`⚪ Beginner`, `🟡 Advance Beginner`, `🟢 Intermediate`, `🔵 Advance Intermediate`, `🔴 Pro`) with a subtle `CURRENT` tag for the selected rank.
+    - **Zero Clutter**: Removed oversized icons, redundant athlete subtitle banners, and bulky footnote text while preserving 100% of the 1-click level switching, upgrade/downgrade logic, and database/analytics sync on save.
+
+15. **Fixed White Screen Crash in `Sidebar.jsx` (`TypeError: Cannot read properties of null (reading 'name')`)**:
+    - **Root Cause**: `school` state in `Sidebar.jsx` was initialized to `null`. On initial render, `setSchool(prev => ...)` evaluated `prev.name`, throwing an unhandled TypeError that crashed the React tree.
+    - **Fix Applied**: Initialized `school` state to `{ name: '', owner: '' }` and added safe optional chaining `prev?.name === newName && prev?.owner === newOwner` to prevent any unhandled null references.
+
+16. **Uniform Fixed-Size Grid for Athlete Chips & Level Pills (`Sessions.jsx`)**:
+    - **Prevented Inconsistent Card Widths & Layout Shift**: Previously, athlete selector chips used flex wrapping with variable text-based widths. When an athlete's level had longer text (e.g. `Advance Beginner`), the card expanded and forced the last athlete (`Lalitha`) onto a second line with an awkward small size, and jumped back when shortened.
+    - **Uniform CSS Grid Layout**: Configured `.sessions.length <= 4` to use `repeat(N, minmax(0, 1fr))` and a fixed `56px` height with text truncation ellipsis. All 4 athlete cards now stay permanently on the exact same row with 100% identical pixel width and height.
+    - **Uniform Level Pills**: Configured the 5 Surfing Level pills to use `repeat(5, minmax(0, 1fr))` so Beginner through Pro buttons share the exact same 20% width and height.
+
+

@@ -7,7 +7,7 @@ const Sidebar = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [user, setUser] = useState(null);
-  const [school, setSchool] = useState(null);
+  const [school, setSchool] = useState({ name: '', owner: '' });
   const [stats, setStats] = useState(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -66,30 +66,33 @@ const Sidebar = () => {
         displayName = activeSch || userSch || '';
       }
 
-      setSchool({
-        name: resolveSchoolName(displayName) || (parsedUser?.role === 'admin' ? 'School Admin' : ''),
-        owner: typeof parsedUser?.name === 'string' ? parsedUser.name : (typeof parsedSchool?.owner === 'string' ? parsedSchool.owner : '')
+      const newName = resolveSchoolName(displayName) || (parsedUser?.role === 'admin' ? 'School Admin' : '');
+      const newOwner = typeof parsedUser?.name === 'string' ? parsedUser.name : (typeof parsedSchool?.owner === 'string' ? parsedSchool.owner : '');
+
+      setSchool(prev => {
+        if (prev?.name === newName && prev?.owner === newOwner) return prev;
+        return { name: newName, owner: newOwner };
       });
     };
 
     updateHeaderInfo();
     window.addEventListener('storage', updateHeaderInfo);
     window.addEventListener('user_updated', updateHeaderInfo);
-    const interval = setInterval(updateHeaderInfo, 1000);
+    window.addEventListener('focus', updateHeaderInfo);
 
-    return () => {
-      window.removeEventListener('storage', updateHeaderInfo);
-      window.removeEventListener('user_updated', updateHeaderInfo);
-      clearInterval(interval);
-    };
-
-    // Fetch quick stats
+    // Fetch quick stats once on mount
     fetch(`${API}/api/dashboard/stats`)
       .then(r => r.json())
       .then(data => setStats(data))
       .catch(() => {
         setStats({ active_instructors: 12, active_students: 87, sessions_this_month: 34, upcoming_sessions: 6 });
       });
+
+    return () => {
+      window.removeEventListener('storage', updateHeaderInfo);
+      window.removeEventListener('user_updated', updateHeaderInfo);
+      window.removeEventListener('focus', updateHeaderInfo);
+    };
   }, []);
 
   const getInitials = (name) => {

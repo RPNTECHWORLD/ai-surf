@@ -51,6 +51,11 @@ const StudentsManagement = () => {
   const [inviteCapacityCount, setInviteCapacityCount] = useState(3);
   const [inviteCourseDuration, setInviteCourseDuration] = useState('3 Days Course');
   const [inviteStartDate, setInviteStartDate] = useState('');
+  const [inviteNickname, setInviteNickname] = useState('');
+  const [editingInviteCode, setEditingInviteCode] = useState(null);
+  const [editingNicknameVal, setEditingNicknameVal] = useState('');
+  const [savingNicknameCode, setSavingNicknameCode] = useState(null);
+  const [inviteSearchQuery, setInviteSearchQuery] = useState('');
   const [createdSchoolInvite, setCreatedSchoolInvite] = useState(null);
   const [schoolInviteLoading, setSchoolInviteLoading] = useState(false);
   const [copiedSchoolInviteCode, setCopiedSchoolInviteCode] = useState(null);
@@ -572,15 +577,17 @@ const StudentsManagement = () => {
     };
     window.addEventListener('storage', onStorageChange);
     window.addEventListener('focus', onStorageChange);
-    const interval = setInterval(() => setReqRefreshKey(k => k + 1), 1500);
+    window.addEventListener('user_updated', onStorageChange);
+    window.addEventListener('session_slots_updated', onStorageChange);
     return () => {
-      clearInterval(interval);
       window.removeEventListener('storage', onStorageChange);
       window.removeEventListener('focus', onStorageChange);
+      window.removeEventListener('user_updated', onStorageChange);
+      window.removeEventListener('session_slots_updated', onStorageChange);
     };
   }, [effectiveSchool, isSuperAdmin]);
 
-  const levels = ['Beginner', 'Intermediate', 'Advanced', 'Master'];
+  const levels = ['Beginner', 'Advance Beginner', 'Intermediate', 'Advance Intermediate', 'Pro'];
 
   const approvedStudents = useMemo(() => {
     // Pure AWS Backend Students Only - Approved students
@@ -1528,6 +1535,41 @@ const StudentsManagement = () => {
     setConfirmDialog(prev => ({ ...prev, isOpen: false }));
   };
 
+  // Lock background body scroll whenever any modal popup is open
+  useEffect(() => {
+    const isAnyModalOpen = Boolean(
+      showSchoolInviteModal || 
+      showModal || 
+      showPendingModal || 
+      attendanceModal || 
+      inviteModalData || 
+      confirmDialog?.isOpen
+    );
+
+    if (isAnyModalOpen) {
+      const originalOverflow = document.body.style.overflow;
+      const originalPaddingRight = document.body.style.paddingRight;
+      const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+      const isMac = typeof navigator !== 'undefined' && (/Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent));
+      if (scrollbarWidth > 0 && !isMac) {
+        document.body.style.paddingRight = `${scrollbarWidth}px`;
+      }
+      document.body.style.overflow = 'hidden';
+
+      return () => {
+        document.body.style.overflow = originalOverflow;
+        document.body.style.paddingRight = originalPaddingRight;
+      };
+    }
+  }, [
+    showSchoolInviteModal, 
+    showModal, 
+    showPendingModal, 
+    attendanceModal, 
+    inviteModalData, 
+    confirmDialog?.isOpen
+  ]);
+
   const handleDeleteStudent = (studentId, studentName, studentEmail) => {
     showConfirm(
       'Remove Student',
@@ -1899,6 +1941,7 @@ const StudentsManagement = () => {
       chosenDuration = n === 1 ? '1 Day Crash Course' : `${n} Days Course`;
     }
     const sDate = inviteStartDate ? inviteStartDate.trim().replace(/\/+$/, '') : null;
+    const nick = (inviteNickname || '').trim();
     setSchoolInviteLoading(true);
     try {
       const res = await fetch(`${API}/api/school-invites`, {
@@ -1908,7 +1951,8 @@ const StudentsManagement = () => {
           school: targetSchool,
           max_count: count,
           course_duration: chosenDuration,
-          start_date: sDate
+          start_date: sDate,
+          nickname: nick
         })
       });
       if (res.ok) {
@@ -1919,7 +1963,7 @@ const StudentsManagement = () => {
         const startDateParam = sDateVal ? `&start_date=${encodeURIComponent(sDateVal)}` : '';
         const coachParam = isCoach && currentCoachName ? `&coach=${encodeURIComponent(currentCoachName)}&coach_id=${encodeURIComponent(currentCoachId || '')}` : '';
         const fullUrl = `${origin}/auth?mode=signup&invite_code=${data.code}&school=${encodeURIComponent(data.school || targetSchool)}&course_duration=${encodeURIComponent(dur)}${startDateParam}${coachParam}`;
-        const newInviteObj = { ...data, course_duration: dur, start_date: sDateVal, fullUrl };
+        const newInviteObj = { ...data, course_duration: dur, start_date: sDateVal, nickname: data.nickname || nick, fullUrl };
         setCreatedSchoolInvite(newInviteObj);
         setSchoolInvitesList(prev => [newInviteObj, ...prev.filter(i => i.code !== data.code)]);
 
@@ -1927,7 +1971,8 @@ const StudentsManagement = () => {
           await navigator.clipboard.writeText(fullUrl);
         }
         setCopiedSchoolInviteCode(data.code);
-        showToast(`✓ Invite link for ${count} student(s) (${dur}${sDateVal ? ` • Starts ${sDateVal}` : ''}) copied to clipboard!`);
+        const nickLabel = nick ? ` for "${nick}"` : '';
+        showToast(`✓ Invite link for ${count} student(s)${nickLabel} (${dur}${sDateVal ? ` • Starts ${sDateVal}` : ''}) copied to clipboard!`);
       } else {
         const err = await res.json().catch(() => ({}));
         showToast(err.detail || '⚠️ Failed to generate invite link on server. Please try again.');
@@ -1937,6 +1982,33 @@ const StudentsManagement = () => {
       showToast('⚠️ Could not connect to server to generate link. Please check your internet connection and try again.');
     } finally {
       setSchoolInviteLoading(false);
+    }
+  };
+
+  const handleUpdateInviteNickname = async (code, newNickname) => {
+    const trimmed = (newNickname || '').trim();
+    setSavingNicknameCode(code);
+    try {
+      const res = await fetch(`${API}/api/school-invites/${code}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nickname: trimmed })
+      });
+      if (res.ok) {
+        setSchoolInvitesList(prev => prev.map(inv => inv.code === code ? { ...inv, nickname: trimmed } : inv));
+        if (createdSchoolInvite && createdSchoolInvite.code === code) {
+          setCreatedSchoolInvite(prev => ({ ...prev, nickname: trimmed }));
+        }
+        setEditingInviteCode(null);
+        showToast(trimmed ? `✓ Recipient nickname saved as "${trimmed}"` : '✓ Recipient nickname cleared');
+      } else {
+        showToast('⚠️ Could not update nickname on server.');
+      }
+    } catch (err) {
+      console.error('Failed to update invite nickname:', err);
+      showToast('⚠️ Network error updating nickname.');
+    } finally {
+      setSavingNicknameCode(null);
     }
   };
 
@@ -1950,7 +2022,7 @@ const StudentsManagement = () => {
       await navigator.clipboard.writeText(link);
     }
     setCopiedSchoolInviteCode(inv.code);
-    showToast('✓ Invite link copied to clipboard!');
+    showToast(inv.nickname ? `✓ Invite link for "${inv.nickname}" copied to clipboard!` : '✓ Invite link copied to clipboard!');
     setTimeout(() => setCopiedSchoolInviteCode(null), 3000);
   };
 
@@ -3586,10 +3658,11 @@ const StudentsManagement = () => {
                     <div className="sm-field">
                       <label>Surf Level *</label>
                       <select value={form.level} onChange={e => setForm({...form, level: e.target.value})}>
-                        <option value="Beginner">Beginner</option>
+                        <option value="Beginner"> Beginner</option>
+                        <option value="Advance Beginner">Advance Beginner </option>
                         <option value="Intermediate">Intermediate</option>
-                        <option value="Advanced">Advanced</option>
-                        <option value="Master">Master</option>
+                        <option value="Advance Intermediate">Advance Intermediate</option>
+                        <option value="Pro">Pro</option>
                       </select>
                     </div>
                     <div className="sm-field">
@@ -3787,10 +3860,11 @@ const StudentsManagement = () => {
                               onChange={e => handleSingleGuestChange(gIdx, 'level', e.target.value)}
                               style={{ height: '36px', fontSize: '12px', padding: '0 6px', borderRadius: '6px', border: '1px solid #CBD5E1', outline: 'none' }}
                             >
-                              <option value="Beginner">🏄 Beginner</option>
-                              <option value="Intermediate">🌊 Intermediate</option>
-                              <option value="Advanced">⚡ Advanced</option>
-                              <option value="Master">🏆 Master</option>
+                              <option value="Beginner">Beginner</option>
+                              <option value="Advance Beginner">Advance Beginner</option>
+                              <option value="Intermediate">Intermediate</option>
+                              <option value="Advance Intermediate">Advance Intermediate</option>
+                              <option value="Pro">Pro</option>
                             </select>
                             <button
                               type="button"
@@ -3926,12 +4000,13 @@ const StudentsManagement = () => {
                               <select
                                 value={row.level}
                                 onChange={e => handleBulkChange(rIdx, 'level', e.target.value)}
-                                style={{ minWidth: '145px' }}
+                                style={{ minWidth: '170px' }}
                               >
-                                <option value="Beginner">🏄 Beginner</option>
-                                <option value="Intermediate">🌊 Intermediate</option>
-                                <option value="Advanced">⚡ Advanced</option>
-                                <option value="Master">🏆 Master</option>
+                                <option value="Beginner">Beginner</option>
+                                <option value="Advance Beginner">Advance Beginner</option>
+                                <option value="Intermediate">Intermediate</option>
+                                <option value="Advance Intermediate">Advance Intermediate</option>
+                                <option value="Pro">Pro</option>
                               </select>
                             </td>
                             <td>
@@ -4261,10 +4336,11 @@ const StudentsManagement = () => {
                                             boxSizing: 'border-box'
                                           }}
                                         >
-                                          <option value="Beginner">🏄 Beginner</option>
-                                          <option value="Intermediate">🌊 Intermediate</option>
-                                          <option value="Advanced">⚡ Advanced</option>
-                                          <option value="Master">🏆 Master</option>
+                                          <option value="Beginner">Beginner</option>
+                                          <option value="Advance Beginner">Advance Beginner</option>
+                                          <option value="Intermediate">Intermediate</option>
+                                          <option value="Advance Intermediate">Advance Intermediate</option>
+                                          <option value="Pro">Pro</option>
                                         </select>
 
                                         <input
@@ -5379,6 +5455,70 @@ const StudentsManagement = () => {
                   </p>
                 </div>
 
+                {/* Recipient Nickname / Reference Name Block */}
+                <div style={{ marginBottom: '20px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <label style={{ fontSize: '12px', fontWeight: '800', color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      👤 Recipient / Nickname <span style={{ fontSize: '11px', fontWeight: 600, color: '#94A3B8', textTransform: 'none' }}>(Optional)</span>
+                    </label>
+                    <span style={{
+                      fontSize: '11px',
+                      fontWeight: '800',
+                      background: inviteNickname.trim() ? '#F0FDFA' : '#F1F5F9',
+                      color: inviteNickname.trim() ? '#0D9488' : '#64748B',
+                      padding: '2px 8px',
+                      borderRadius: '6px',
+                      border: inviteNickname.trim() ? '1px solid #99F6E4' : '1px solid #E2E8F0'
+                    }}>
+                      {inviteNickname.trim() ? `🏷️ ${inviteNickname.trim()}` : '🏷️ Identifies in History'}
+                    </span>
+                  </div>
+                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <input
+                      type="text"
+                      placeholder="e.g. Rahul Family, Vikram & Friends, Anita..."
+                      value={inviteNickname}
+                      onChange={e => setInviteNickname(e.target.value)}
+                      maxLength={100}
+                      style={{
+                        flex: 1,
+                        padding: '10px 14px',
+                        borderRadius: '10px',
+                        border: inviteNickname.trim() ? '1.5px solid #0D9488' : '1.5px solid #CBD5E1',
+                        fontSize: '14px',
+                        fontWeight: '700',
+                        color: '#0F172A',
+                        background: inviteNickname.trim() ? '#F0FDFA' : '#F8FAFC',
+                        outline: 'none',
+                        boxSizing: 'border-box'
+                      }}
+                    />
+                    {inviteNickname && (
+                      <button
+                        type="button"
+                        onClick={() => setInviteNickname('')}
+                        style={{
+                          background: '#FEE2E2',
+                          border: '1px solid #FCA5A5',
+                          color: '#DC2626',
+                          borderRadius: '8px',
+                          padding: '10px 12px',
+                          fontSize: '12px',
+                          fontWeight: '800',
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap'
+                        }}
+                        title="Clear nickname"
+                      >
+                        ✕ Clear
+                      </button>
+                    )}
+                  </div>
+                  <p style={{ margin: '6px 0 0 0', fontSize: '11.5px', color: '#64748B', lineHeight: '1.4' }}>
+                    💡 Give a nickname or recipient name so you can easily identify who this link was shared with in the <strong>History</strong> tab.
+                  </p>
+                </div>
+
                 {/* Generate Button */}
                 <button
                   type="button"
@@ -5408,14 +5548,21 @@ const StudentsManagement = () => {
                 {/* Created Invite Box */}
                 {createdSchoolInvite && (
                   <div style={{ background: '#ECFDF5', border: '1.5px solid #10B981', borderRadius: '16px', padding: '18px', marginBottom: '14px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '6px' }}>
                       <span style={{ fontSize: '13px', fontWeight: 800, color: '#065F46', display: 'flex', alignItems: 'center', gap: '6px' }}>
                         <span>✅</span>
                         <span>Link Ready & Copied!</span>
                       </span>
-                      <span style={{ fontSize: '11px', fontWeight: 800, color: '#15803D', background: '#DCFCE7', padding: '3px 10px', borderRadius: '12px' }}>
-                        1 Main Account + {Math.max(0, createdSchoolInvite.max_count - 1)} Guests
-                      </span>
+                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                        {createdSchoolInvite.nickname && (
+                          <span style={{ fontSize: '11px', fontWeight: 800, color: '#0F766E', background: '#CCFBF1', border: '1px solid #99F6E4', padding: '3px 8px', borderRadius: '12px' }}>
+                            👤 {createdSchoolInvite.nickname}
+                          </span>
+                        )}
+                        <span style={{ fontSize: '11px', fontWeight: 800, color: '#15803D', background: '#DCFCE7', padding: '3px 10px', borderRadius: '12px' }}>
+                          1 Main Account + {Math.max(0, createdSchoolInvite.max_count - 1)} Guests
+                        </span>
+                      </div>
                     </div>
 
                     <div style={{ display: 'flex', gap: '8px' }}>
@@ -5479,6 +5626,55 @@ const StudentsManagement = () => {
 
               return (
               <div>
+                {/* Search Bar for Recipient Nickname or Code */}
+                <div style={{ position: 'relative', marginBottom: '12px' }}>
+                  <input
+                    type="text"
+                    placeholder="🔍 Search history by recipient nickname, code, or course..."
+                    value={inviteSearchQuery}
+                    onChange={e => setInviteSearchQuery(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '9px 36px 9px 14px',
+                      borderRadius: '10px',
+                      border: inviteSearchQuery.trim() ? '1.5px solid #0D9488' : '1.5px solid #CBD5E1',
+                      background: inviteSearchQuery.trim() ? '#F0FDFA' : '#F8FAFC',
+                      fontSize: '12.5px',
+                      fontWeight: '700',
+                      color: '#0F172A',
+                      outline: 'none',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                  {inviteSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setInviteSearchQuery('')}
+                      style={{
+                        position: 'absolute',
+                        right: '10px',
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        background: '#E2E8F0',
+                        border: 'none',
+                        color: '#475569',
+                        borderRadius: '50%',
+                        width: '20px',
+                        height: '20px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '11px',
+                        fontWeight: 800,
+                        cursor: 'pointer'
+                      }}
+                      title="Clear search"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
                 {/* History Header & Filter Pills */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
                   <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -5722,12 +5918,21 @@ const StudentsManagement = () => {
                     filteredByDate = schoolInvitesList.filter(inv => getInviteCreatedDateISO(inv.created_at) === inviteHistoryDateFilter);
                   }
 
-                  const displayedInvites = showActiveInvitesOnly
+                  let displayedInvites = showActiveInvitesOnly
                     ? filteredByDate.filter(inv => {
                         const rem = inv.remaining !== undefined ? inv.remaining : Math.max(0, inv.max_count - (inv.used_count || 0));
                         return rem > 0 && inv.is_active;
                       })
                     : filteredByDate;
+
+                  if (inviteSearchQuery.trim()) {
+                    const q = inviteSearchQuery.trim().toLowerCase();
+                    displayedInvites = displayedInvites.filter(inv =>
+                      (inv.nickname && String(inv.nickname).toLowerCase().includes(q)) ||
+                      (inv.code && String(inv.code).toLowerCase().includes(q)) ||
+                      (inv.course_duration && String(inv.course_duration).toLowerCase().includes(q))
+                    );
+                  }
 
                   if (displayedInvites.length === 0) {
                     return (
@@ -5740,21 +5945,42 @@ const StudentsManagement = () => {
                         color: '#64748B'
                       }}>
                         <div style={{ fontSize: '32px', marginBottom: '8px' }}>
-                          {inviteHistoryDateFilter ? '📅' : '🔗'}
+                          {inviteSearchQuery.trim() ? '🔍' : (inviteHistoryDateFilter ? '📅' : '🔗')}
                         </div>
                         <div style={{ fontWeight: 800, fontSize: '14px', color: '#0F172A', marginBottom: '4px' }}>
-                          {inviteHistoryDateFilter
-                            ? `0 Links Created on ${new Date(inviteHistoryDateFilter + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
-                            : (showActiveInvitesOnly ? 'No Active Invite Links' : 'No Invite Links Created Yet')}
+                          {inviteSearchQuery.trim()
+                            ? `0 Links Found Matching "${inviteSearchQuery}"`
+                            : (inviteHistoryDateFilter
+                                ? `0 Links Created on ${new Date(inviteHistoryDateFilter + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+                                : (showActiveInvitesOnly ? 'No Active Invite Links' : 'No Invite Links Created Yet'))}
                         </div>
                         <div style={{ fontSize: '12.5px', color: '#64748B', maxWidth: '320px', margin: '0 auto 14px' }}>
-                          {inviteHistoryDateFilter
-                            ? 'No registration invite links were created on this date. Select another date or clear the filter.'
-                            : (showActiveInvitesOnly
-                                ? 'All previous invite links are currently full or expired.'
-                                : 'Generate a new batch registration link from the Generate Link tab.')}
+                          {inviteSearchQuery.trim()
+                            ? 'No invite link matching this recipient nickname, code, or duration was found. Try searching another term or clear search.'
+                            : (inviteHistoryDateFilter
+                                ? 'No registration invite links were created on this date. Select another date or clear the filter.'
+                                : (showActiveInvitesOnly
+                                    ? 'All previous invite links are currently full or expired.'
+                                    : 'Generate a new batch registration link from the Generate Link tab.'))}
                         </div>
-                        {inviteHistoryDateFilter ? (
+                        {inviteSearchQuery.trim() ? (
+                          <button
+                            type="button"
+                            onClick={() => setInviteSearchQuery('')}
+                            style={{
+                              background: '#0D9488',
+                              color: '#FFFFFF',
+                              border: 'none',
+                              borderRadius: '8px',
+                              padding: '8px 16px',
+                              fontSize: '12.5px',
+                              fontWeight: 700,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            ✕ Clear Search
+                          </button>
+                        ) : inviteHistoryDateFilter ? (
                           <button
                             type="button"
                             onClick={() => setInviteHistoryDateFilter('')}
@@ -5799,6 +6025,7 @@ const StudentsManagement = () => {
                         const rem = inv.remaining !== undefined ? inv.remaining : Math.max(0, inv.max_count - (inv.used_count || 0));
                         const isFull = rem <= 0 || !inv.is_active;
                         const isCopied = copiedSchoolInviteCode === inv.code;
+                        const isEditingThis = editingInviteCode === inv.code;
 
                         return (
                           <div
@@ -5816,41 +6043,179 @@ const StudentsManagement = () => {
                             }}
                           >
                             <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '4px' }}>
-                                <code style={{
-                                  fontSize: '11.5px',
-                                  fontWeight: 800,
-                                  color: isFull ? '#64748B' : '#0D9488',
-                                  background: isFull ? '#E2E8F0' : '#F0FDFA',
-                                  padding: '2px 8px',
+                              {/* Row 1: Nickname (or Add Nickname button) + Code */}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '6px' }}>
+                                {isEditingThis ? (
+                                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                                    <input
+                                      type="text"
+                                      autoFocus
+                                      placeholder="Recipient / Nickname..."
+                                      value={editingNicknameVal}
+                                      onChange={e => setEditingNicknameVal(e.target.value)}
+                                      onKeyDown={e => {
+                                        if (e.key === 'Enter') handleUpdateInviteNickname(inv.code, editingNicknameVal);
+                                        if (e.key === 'Escape') setEditingInviteCode(null);
+                                      }}
+                                      style={{
+                                        padding: '4px 8px',
+                                        borderRadius: '6px',
+                                        border: '1.5px solid #0D9488',
+                                        fontSize: '12px',
+                                        fontWeight: 700,
+                                        color: '#0F172A',
+                                        background: '#FFFFFF',
+                                        outline: 'none',
+                                        maxWidth: '180px'
+                                      }}
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => handleUpdateInviteNickname(inv.code, editingNicknameVal)}
+                                      disabled={savingNicknameCode === inv.code}
+                                      style={{
+                                        background: '#0D9488',
+                                        color: '#FFF',
+                                        border: 'none',
+                                        borderRadius: '6px',
+                                        padding: '4px 8px',
+                                        fontSize: '11px',
+                                        fontWeight: 800,
+                                        cursor: 'pointer'
+                                      }}
+                                    >
+                                      {savingNicknameCode === inv.code ? '...' : '✓ Save'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingInviteCode(null)}
+                                      style={{
+                                        background: '#F1F5F9',
+                                        color: '#64748B',
+                                        border: '1px solid #CBD5E1',
+                                        borderRadius: '6px',
+                                        padding: '4px 6px',
+                                        fontSize: '11px',
+                                        fontWeight: 700,
+                                        cursor: 'pointer'
+                                      }}
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <>
+                                    {inv.nickname ? (
+                                      <span style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '5px',
+                                        background: isFull ? '#F1F5F9' : 'linear-gradient(135deg, #F0FDFA 0%, #E0F2FE 100%)',
+                                        border: isFull ? '1px solid #CBD5E1' : '1.5px solid #99F6E4',
+                                        color: isFull ? '#475569' : '#0F766E',
+                                        padding: '2px 8px',
+                                        borderRadius: '6px',
+                                        fontSize: '12px',
+                                        fontWeight: 800
+                                      }}>
+                                        <span>👤</span>
+                                        <span>{inv.nickname}</span>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setEditingInviteCode(inv.code);
+                                            setEditingNicknameVal(inv.nickname || '');
+                                          }}
+                                          title="Edit recipient nickname"
+                                          style={{
+                                            background: 'none',
+                                            border: 'none',
+                                            cursor: 'pointer',
+                                            padding: '0 2px',
+                                            fontSize: '11px',
+                                            color: '#0D9488',
+                                            opacity: 0.85
+                                          }}
+                                        >
+                                          ✏️
+                                        </button>
+                                      </span>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setEditingInviteCode(inv.code);
+                                          setEditingNicknameVal('');
+                                        }}
+                                        style={{
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '4px',
+                                          background: '#F8FAFC',
+                                          border: '1px dashed #CBD5E1',
+                                          color: '#64748B',
+                                          padding: '2px 8px',
+                                          borderRadius: '6px',
+                                          fontSize: '11px',
+                                          fontWeight: 700,
+                                          cursor: 'pointer'
+                                        }}
+                                        title="Click to add a recipient nickname or note"
+                                      >
+                                        <span>+ Add Nickname</span>
+                                      </button>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+
+                              {/* Row 2: Capacity, Course Duration, Starts Date - in a single neat line */}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '6px' }}>
+                                <span style={{
+                                  fontSize: '11px',
+                                  color: '#334155',
+                                  fontWeight: 700,
+                                  background: '#F8FAFC',
+                                  padding: '1.5px 7px',
                                   borderRadius: '6px',
-                                  border: isFull ? '1px solid #CBD5E1' : '1px solid #CCFBF1'
+                                  border: '1px solid #E2E8F0',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px'
                                 }}>
-                                  {inv.code}
-                                </code>
-                                <span style={{ fontSize: '12px', color: '#64748B' }}>
-                                  Capacity: <strong style={{ color: '#0F172A' }}>{inv.max_count}</strong>
+                                  <span>👥 Capacity:</span>
+                                  <strong style={{ color: '#0F172A' }}>{inv.max_count}</strong>
                                 </span>
+
                                 <span style={{
                                   fontSize: '11px',
                                   color: '#0D9488',
                                   fontWeight: 700,
                                   background: '#F0FDFA',
-                                  padding: '1px 7px',
+                                  padding: '1.5px 7px',
                                   borderRadius: '6px',
-                                  border: '1px solid #CCFBF1'
+                                  border: '1px solid #CCFBF1',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px'
                                 }}>
                                   🗓️ {inv.course_duration || '3 Days Course'}
                                 </span>
+
                                 {inv.start_date ? (
                                   <span style={{
                                     fontSize: '11px',
                                     color: '#15803D',
                                     fontWeight: 700,
                                     background: '#DCFCE7',
-                                    padding: '1px 7px',
+                                    padding: '1.5px 7px',
                                     borderRadius: '6px',
-                                    border: '1px solid #BBF7D0'
+                                    border: '1px solid #BBF7D0',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '3px'
                                   }}>
                                     🔒 Starts: {inv.start_date}
                                   </span>
@@ -5860,16 +6225,20 @@ const StudentsManagement = () => {
                                     color: '#64748B',
                                     fontWeight: 600,
                                     background: '#F1F5F9',
-                                    padding: '1px 7px',
+                                    padding: '1.5px 7px',
                                     borderRadius: '6px',
-                                    border: '1px solid #E2E8F0'
+                                    border: '1px solid #E2E8F0',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '3px'
                                   }}>
-                                    🔓 Flexible Start Date
+                                    🔓 Flexible Start
                                   </span>
                                 )}
                               </div>
 
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', fontSize: '11.5px' }}>
+                              {/* Row 3: Status & Created Date - in a single neat line */}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', fontSize: '11.5px' }}>
                                 <span style={{
                                   color: isFull ? '#EF4444' : '#15803D',
                                   fontWeight: 800,
@@ -6143,17 +6512,31 @@ const StudentsManagement = () => {
 
         /* Modal */
         .sm-modal-overlay {
-          position: fixed; inset: 0; background: rgba(5,11,26,0.45);
+          position: fixed; inset: 0; background: rgba(5,11,26,0.65);
+          -webkit-backdrop-filter: blur(10px);
           backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: center;
-          z-index: 1000; animation: sm-fadeIn 0.25s ease;
+          z-index: 1000; animation: sm-fadeIn 0.2s ease;
+          -webkit-transform: translate3d(0, 0, 0);
+          transform: translate3d(0, 0, 0);
+          -webkit-backface-visibility: hidden;
+          backface-visibility: hidden;
+          will-change: opacity;
         }
         @keyframes sm-fadeIn { from { opacity: 0; } to { opacity: 1; } }
         .sm-modal {
           background: #FFFFFF; border-radius: 24px; padding: 36px; width: 100%; max-width: 480px;
           box-shadow: 0 24px 60px rgba(5,11,26,0.18);
-          animation: sm-slideUp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+          animation: sm-slideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+          -webkit-transform: translate3d(0, 0, 0);
+          transform: translate3d(0, 0, 0);
+          -webkit-backface-visibility: hidden;
+          backface-visibility: hidden;
+          will-change: transform, opacity;
         }
-        @keyframes sm-slideUp { from { transform: translateY(32px) scale(0.96); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }
+        @keyframes sm-slideUp { 
+          from { -webkit-transform: translate3d(0, 20px, 0) scale(0.98); transform: translate3d(0, 20px, 0) scale(0.98); opacity: 0; } 
+          to { -webkit-transform: translate3d(0, 0, 0) scale(1); transform: translate3d(0, 0, 0) scale(1); opacity: 1; } 
+        }
         .sm-modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 28px; }
         .sm-modal-title { font-family: 'Outfit', sans-serif; font-size: 22px; font-weight: 700; color: #0F172A; margin: 0; }
         .sm-modal-close {
@@ -6236,7 +6619,14 @@ const StudentsManagement = () => {
         .invite-done:hover { background: #e8374f; }
 
         /* Add Students Modal (Multi-Mode) */
-        .sm-add-student-modal { max-width: 1320px; width: 96%; max-height: 92vh; overflow-y: auto; }
+        .sm-add-student-modal { 
+          max-width: 1320px; width: 96%; max-height: 92vh; overflow-y: auto; 
+          -webkit-overflow-scrolling: touch;
+          -webkit-transform: translate3d(0, 0, 0);
+          transform: translate3d(0, 0, 0);
+          -webkit-backface-visibility: hidden;
+          backface-visibility: hidden;
+        }
         
         .sm-tab-cards-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
         .sm-tab-card {
