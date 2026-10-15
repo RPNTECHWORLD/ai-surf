@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
+import DateRangeFilterBar from '../components/DateRangeFilterBar';
 
 const API = import.meta.env.VITE_API_URL || '';
 
@@ -19,6 +20,14 @@ const StudentsManagement = () => {
       }
     }
   }, [location]);
+  const getIsoDate = (offset = 0) => {
+    const d = new Date();
+    if (offset !== 0) d.setDate(d.getDate() + offset);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
   const [students, setStudents] = useState([]);
   const [instructors, setInstructors] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -28,16 +37,13 @@ const StudentsManagement = () => {
   const [sessionTimeFilter, setSessionTimeFilter] = useState('All');
   const [stayFilter, setStayFilter] = useState('All');
   const [dateFilter, setDateFilter] = useState('All');
+  const [dateRange, setDateRange] = useState(() => ({
+    startDate: '',
+    endDate: '',
+    preset: 'all'
+  }));
   const [pendingDateFilter, setPendingDateFilter] = useState('All');
   const [pendingSearch, setPendingSearch] = useState('');
-  const getIsoDate = (offset = 0) => {
-    const d = new Date();
-    if (offset !== 0) d.setDate(d.getDate() + offset);
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  };
   const [swimmingFilter, setSwimmingFilter] = useState('All'); // 'All' | 'Swimmer' | 'Non-Swimmer'
   const [activeStatFilter, setActiveStatFilter] = useState('TOTAL');
   const [showModal, setShowModal] = useState(false);
@@ -679,16 +685,24 @@ const StudentsManagement = () => {
     setActiveStatFilter(label);
     if (label === 'TOTAL') {
       setLevelFilter('All');
+      setDateRange({ startDate: '', endDate: '', preset: 'all' });
+      setDateFilter('All');
     } else if (label === 'ACTIVE') {
       setLevelFilter('All');
     } else if (label === 'UPCOMING') {
       setLevelFilter('All');
     } else if (label === 'BEGINNER') {
       setLevelFilter('Beginner');
+      setDateRange({ startDate: '', endDate: '', preset: 'all' });
+      setDateFilter('All');
     } else if (label === 'INTERMEDIATE') {
       setLevelFilter('Intermediate');
+      setDateRange({ startDate: '', endDate: '', preset: 'all' });
+      setDateFilter('All');
     } else if (label === 'ADVANCED') {
       setLevelFilter('Advanced');
+      setDateRange({ startDate: '', endDate: '', preset: 'all' });
+      setDateFilter('All');
     }
   };
 
@@ -857,9 +871,18 @@ const StudentsManagement = () => {
     const sEmail = (s.email || '').toLowerCase();
     const sPhone = String(s.whatsapp_number || '');
 
+    const guestList = getStudentGuestsDetails(s);
+    const matchGuest = searchLower ? guestList.some(g => {
+      const gName = (g.name || '').toLowerCase();
+      const gEmail = (g.email || '').toLowerCase();
+      const gPhone = String(g.whatsapp_number || g.phone || '');
+      return gName.includes(searchLower) || gEmail.includes(searchLower) || gPhone.includes(searchLower);
+    }) : false;
+
     const matchSearch = sName.includes(searchLower) ||
       sEmail.includes(searchLower) ||
-      sPhone.includes(search);
+      sPhone.includes(search) ||
+      matchGuest;
 
     let matchStat = true;
     if (activeStatFilter === 'ACTIVE') {
@@ -882,10 +905,25 @@ const StudentsManagement = () => {
       (s.session_time && sessionTimeFilter.startsWith(s.session_time));
     const matchStay = stayFilter === 'All' || (stayFilter === 'Lodge' ? s.staying_at_school === 'Yes' : s.staying_at_school === 'No');
     
-    // If a specific date is selected in the top bar (Today, Yesterday, Tomorrow, or custom):
-    // Match students whose course is active on that date or whose start_date is that date!
+    // If a specific date or date range is selected:
     let matchDate = true;
-    if (dateFilter !== 'All') {
+    if (dateRange && (dateRange.startDate || dateRange.endDate)) {
+      if (dateRange.startDate && dateRange.endDate && dateRange.startDate === dateRange.endDate) {
+        matchDate = isStudentActive(s, dateRange.startDate) || s.start_date === dateRange.startDate;
+      } else {
+        const sStart = (s.start_date || '').slice(0, 10);
+        const sEnd = (s.end_date || sStart || '').slice(0, 10);
+        if (sStart && sEnd) {
+          matchDate = (!dateRange.startDate || sEnd >= dateRange.startDate) &&
+                      (!dateRange.endDate || sStart <= dateRange.endDate);
+        } else if (sStart) {
+          matchDate = (!dateRange.startDate || sStart >= dateRange.startDate) &&
+                      (!dateRange.endDate || sStart <= dateRange.endDate);
+        } else {
+          matchDate = true;
+        }
+      }
+    } else if (dateFilter !== 'All') {
       matchDate = isStudentActive(s, targetEvaluationDate) || s.start_date === dateFilter;
     }
 
@@ -2703,144 +2741,19 @@ const StudentsManagement = () => {
               className="sm-search-input"
             />
           </div>
-          {/* Quick Date Filters: Yesterday - Today - Tomorrow - [Date Calendar] */}
-          {(() => {
-            const getIsoDate = (offset = 0) => {
-              const d = new Date();
-              if (offset !== 0) d.setDate(d.getDate() + offset);
-              const y = d.getFullYear();
-              const m = String(d.getMonth() + 1).padStart(2, '0');
-              const day = String(d.getDate()).padStart(2, '0');
-              return `${y}-${m}-${day}`;
-            };
-            const yestIso = getIsoDate(-1);
-            const todayIso = getIsoDate(0);
-            const tomIso = getIsoDate(1);
-            const isCustomDate = dateFilter !== 'All' && dateFilter !== yestIso && dateFilter !== todayIso && dateFilter !== tomIso;
-
-            return (
-              <div className="sm-date-quick-bar" style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                background: '#F8FAFC',
-                border: '1.5px solid #CBD5E1',
-                borderRadius: '12px',
-                padding: '3px 4px',
-                gap: '4px',
-                boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-                flexShrink: 0
-              }}>
-                <button
-                  type="button"
-                  onClick={() => setDateFilter(prev => prev === yestIso ? 'All' : yestIso)}
-                  style={{
-                    padding: '8px 14px',
-                    borderRadius: '8px',
-                    border: dateFilter === yestIso ? '1.5px solid #0D9488' : '1px solid transparent',
-                    background: dateFilter === yestIso ? 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)' : '#FFFFFF',
-                    color: dateFilter === yestIso ? '#FFFFFF' : '#334155',
-                    fontWeight: 700,
-                    fontSize: '12.5px',
-                    fontFamily: "'Outfit', sans-serif",
-                    cursor: 'pointer',
-                    boxShadow: dateFilter === yestIso ? '0 2px 8px rgba(13, 148, 136, 0.35)' : '0 1px 2px rgba(0,0,0,0.04)',
-                    transition: 'all 0.15s ease',
-                    whiteSpace: 'nowrap'
-                  }}
-                  title="Filter students starting yesterday"
-                >
-                  Yesterday
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDateFilter(prev => prev === todayIso ? 'All' : todayIso)}
-                  style={{
-                    padding: '8px 14px',
-                    borderRadius: '8px',
-                    border: dateFilter === todayIso ? '1.5px solid #0D9488' : '1px solid transparent',
-                    background: dateFilter === todayIso ? 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)' : '#FFFFFF',
-                    color: dateFilter === todayIso ? '#FFFFFF' : '#334155',
-                    fontWeight: 700,
-                    fontSize: '12.5px',
-                    fontFamily: "'Outfit', sans-serif",
-                    cursor: 'pointer',
-                    boxShadow: dateFilter === todayIso ? '0 2px 8px rgba(13, 148, 136, 0.35)' : '0 1px 2px rgba(0,0,0,0.04)',
-                    transition: 'all 0.15s ease',
-                    whiteSpace: 'nowrap'
-                  }}
-                  title="Filter students starting today"
-                >
-                  Today
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDateFilter(prev => prev === tomIso ? 'All' : tomIso)}
-                  style={{
-                    padding: '8px 14px',
-                    borderRadius: '8px',
-                    border: dateFilter === tomIso ? '1.5px solid #0D9488' : '1px solid transparent',
-                    background: dateFilter === tomIso ? 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)' : '#FFFFFF',
-                    color: dateFilter === tomIso ? '#FFFFFF' : '#334155',
-                    fontWeight: 700,
-                    fontSize: '12.5px',
-                    fontFamily: "'Outfit', sans-serif",
-                    cursor: 'pointer',
-                    boxShadow: dateFilter === tomIso ? '0 2px 8px rgba(13, 148, 136, 0.35)' : '0 1px 2px rgba(0,0,0,0.04)',
-                    transition: 'all 0.15s ease',
-                    whiteSpace: 'nowrap'
-                  }}
-                  title="Filter students starting tomorrow"
-                >
-                  Tomorrow
-                </button>
-
-                {/* Calendar Date Picker Input */}
-                <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
-                  <input
-                    type="date"
-                    value={dateFilter === 'All' ? '' : dateFilter}
-                    onChange={e => setDateFilter(e.target.value || 'All')}
-                    style={{
-                      height: '36px',
-                      padding: '0 26px 0 10px',
-                      borderRadius: '8px',
-                      border: isCustomDate ? '1.5px solid #0D9488' : '1px solid #CBD5E1',
-                      background: isCustomDate ? '#E6F9F5' : '#FFFFFF',
-                      color: dateFilter !== 'All' ? '#0D9488' : '#64748B',
-                      fontWeight: dateFilter !== 'All' ? 700 : 500,
-                      fontSize: '12.5px',
-                      cursor: 'pointer',
-                      outline: 'none',
-                      boxShadow: isCustomDate ? '0 2px 8px rgba(13, 148, 136, 0.25)' : '0 1px 2px rgba(0,0,0,0.04)',
-                      transition: 'all 0.15s ease'
-                    }}
-                    title="Click to select specific date from calendar"
-                  />
-                  {dateFilter !== 'All' && (
-                    <button
-                      type="button"
-                      onClick={() => setDateFilter('All')}
-                      style={{
-                        position: 'absolute',
-                        right: '7px',
-                        background: 'none',
-                        border: 'none',
-                        color: '#0D9488',
-                        cursor: 'pointer',
-                        fontSize: '14px',
-                        fontWeight: 800,
-                        lineHeight: 1,
-                        padding: '2px'
-                      }}
-                      title="Clear date filter (Show All Dates)"
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })()}
+          {/* Quick Date Range Filter Bar with Presets & From-To Range Picker */}
+          <DateRangeFilterBar
+            startDate={dateRange.startDate}
+            endDate={dateRange.endDate}
+            preset={dateRange.preset}
+            onChange={({ startDate, endDate, preset }) => {
+              setDateRange({ startDate, endDate, preset });
+              setDateFilter(startDate === endDate ? (startDate || 'All') : (startDate || 'All'));
+              if (preset === 'all' && activeStatFilter === 'ACTIVE') {
+                setActiveStatFilter('TOTAL');
+              }
+            }}
+          />
 
           {/* 2. Swimming Ability Filter */}
           <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
@@ -2914,7 +2827,17 @@ const StudentsManagement = () => {
                 <button
                   className="sm-btn-secondary"
                   style={{ margin: '0 auto', height: '36px', padding: '6px 16px', fontSize: '12.5px' }}
-                  onClick={() => { setSearch(''); setDateFilter('All'); setSwimmingFilter('All'); setLevelFilter('All'); setActiveStatFilter('TOTAL'); }}
+                  onClick={() => {
+                    setSearch('');
+                    setDateFilter('All');
+                    setDateRange({ startDate: '', endDate: '', preset: 'all' });
+                    setSwimmingFilter('All');
+                    setLevelFilter('All');
+                    setInstructorFilter('All');
+                    setSessionTimeFilter('All');
+                    setStayFilter('All');
+                    setActiveStatFilter('TOTAL');
+                  }}
                 >
                   Clear Filters
                 </button>

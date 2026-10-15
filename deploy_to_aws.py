@@ -23,7 +23,8 @@ try:
     
     commands = [
         f"aws s3 cp s3://{BUCKET_NAME}/deploy/main.py /home/ec2-user/backend/main.py",
-        "sudo systemctl restart aisurf-backend"
+        "sudo systemctl restart aisurf-backend",
+        "systemctl is-active aisurf-backend"
     ]
     
     response = ssm_client.send_command(
@@ -34,5 +35,31 @@ try:
     
     command_id = response["Command"]["CommandId"]
     print(f"[SUCCESS] SSM deployment command sent! Command ID: {command_id}")
+
+    import time
+    print(f"[INFO] Waiting for SSM command to finish on {INSTANCE_ID}...")
+    for _ in range(15):
+        time.sleep(2)
+        try:
+            inv = ssm_client.get_command_invocation(
+                CommandId=command_id,
+                InstanceId=INSTANCE_ID
+            )
+            status = inv.get("Status")
+            if status in ["Success", "Failed", "Cancelled", "TimedOut"]:
+                print(f"[STATUS] SSM Command Status: {status}")
+                stdout = inv.get("StandardOutputContent", "").strip()
+                stderr = inv.get("StandardErrorContent", "").strip()
+                if stdout:
+                    print(f"[STDOUT]:\n{stdout}")
+                if stderr:
+                    print(f"[STDERR]:\n{stderr}")
+                if status == "Success":
+                    print("[DEPLOYMENT COMPLETE] Backend successfully updated and verified active!")
+                else:
+                    print("[WARNING] Deployment command finished with non-success status.")
+                break
+        except Exception as poll_err:
+            pass
 except Exception as e:
     print("[ERROR] Deployment failed:", str(e))

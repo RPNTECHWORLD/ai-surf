@@ -83,6 +83,11 @@ add_col("users", "auth_provider", "VARCHAR(50)", "'email'")
 add_col("users", "social_id", "VARCHAR", "NULL")
 add_col("users", "password_plain", "VARCHAR", "NULL")
 add_col("users", "name", "VARCHAR", "''")
+add_col("users", "image", "VARCHAR", "''")
+add_col("users", "phone", "VARCHAR", "''")
+add_col("users", "deletion_scheduled_at", "TIMESTAMP", "NULL")
+add_col("schools", "logo", "VARCHAR", "''")
+
 
 # 5. sessions table columns
 add_col("sessions", "image_url", "VARCHAR", "''")

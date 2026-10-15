@@ -1368,7 +1368,7 @@ const SuperAdminDashboard = () => {
                                   </span>
                                 </button>
                               </td>
-                              <td>{sch.city || sch.country ? `${sch.city || ''}, ${sch.country || ''}` : 'Global'}</td>
+                              <td>{[sch.city, sch.country].filter(Boolean).join(', ') || 'Global'}</td>
                               <td>{sch.website ? <a href={sch.website} target="_blank" rel="noreferrer" style={{ color: '#6366F1' }}>{sch.website}</a> : '—'}</td>
                               <td style={{ textAlign: 'right' }}>
                                 <button

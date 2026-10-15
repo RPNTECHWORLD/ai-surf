@@ -104,6 +104,19 @@ const AuthPage = () => {
   const [signupConfirmPassword, setSignupConfirmPassword] = useState('');
   const [isManualDuration, setIsManualDuration] = useState(false);
 
+  // 30-Day Account Deletion Retention & Restoration
+  const [showRestoreModal, setShowRestoreModal] = useState(false);
+  const [pendingDeletionData, setPendingDeletionData] = useState(null);
+  const [restoreLoading, setRestoreLoading] = useState(false);
+  const [restoreError, setRestoreError] = useState('');
+  const [restoreSuccessModal, setRestoreSuccessModal] = useState({
+    isOpen: false,
+    message: '',
+    token: null,
+    user: null
+  });
+
+
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -138,9 +151,17 @@ const AuthPage = () => {
     const clean = schoolName.toLowerCase().trim();
     const found = schoolsData.find(s => (s.name || '').toLowerCase().trim() === clean);
     if (found) {
-      const parts = [found.city, found.country].filter(Boolean);
-      return parts.join(', ') || found.city || found.country || '';
+      const city = (found.city || '').trim();
+      const country = (found.country || '').trim();
+      if (!city && !country) return '';
+      if (!country) return city;
+      if (!city) return country;
+      if (city.toLowerCase().includes(country.toLowerCase())) return city;
+      return `${city}, ${country}`;
     }
+    if (clean.includes('dapoli')) return 'Dapoli, Maharashtra';
+    if (clean.includes('mulki')) return 'Mulki / Mangalore, India';
+    if (clean.includes('kovalam')) return 'Kovalam / Chennai, India';
     return '';
   };
 
@@ -479,11 +500,17 @@ const AuthPage = () => {
       || formData.school
       || (user.role === 'admin' ? 'School Admin' : user.role === 'coach' ? 'Coach Portal' : (user.school ? user.school : 'No School Selected'));
 
-    sessionStorage.setItem('activeSchool', JSON.stringify({
+    const activeSchoolLocation = user.school_location || user.location || formData.schoolLocation || '';
+
+    const schoolPayload = {
       name: activeSchoolName,
       owner: user.name,
       email: user.email,
-    }));
+      city: activeSchoolLocation,
+      location: activeSchoolLocation
+    };
+    sessionStorage.setItem('activeSchool', JSON.stringify(schoolPayload));
+    localStorage.setItem('activeSchool', JSON.stringify(schoolPayload));
     if (user.role === 'athlete') navigate(`/students/${user.student_id || user.id || 1}`);
     else if (user.role === 'coach') navigate(`/instructors/${user.instructor_id || user.id || 1}`);
     else navigate('/dashboard');
@@ -510,12 +537,71 @@ const AuthPage = () => {
         body: JSON.stringify(payload)
       });
       const data = await safeJson(res);
-      if (res.ok) handleAuthSuccess(data.token, data.user);
-      else setErrorMsg(data.detail || 'Incorrect email or password.');
+      if (res.ok) {
+        if (data.status === 'pending_deletion' || data.pending_deletion) {
+          setPendingDeletionData({
+            days_remaining: data.days_remaining,
+            deletion_scheduled_at: data.deletion_scheduled_at,
+            email: data.email,
+            password: pwd,
+            name: data.name || data.email,
+            role: data.role || role
+          });
+          setShowRestoreModal(true);
+          return;
+        }
+        handleAuthSuccess(data.token, data.user);
+      } else {
+        setErrorMsg(data.detail || 'Incorrect email or password.');
+      }
     } catch (err) {
       setErrorMsg('Login request failed. Please try again.');
     } finally { setLoading(false); }
   };
+
+  // ── Account Retention & Restoration (Within 30-Day Window) ───────────────────
+  const handleRestoreAccount = async () => {
+    if (!pendingDeletionData) return;
+    setRestoreLoading(true);
+    setRestoreError('');
+    try {
+      const res = await fetch(`${API}/api/users/restore-account`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: pendingDeletionData.email,
+          password: pendingDeletionData.password,
+          role: pendingDeletionData.role
+        })
+      });
+      const data = await safeJson(res);
+      if (res.ok) {
+        setShowRestoreModal(false);
+        setPendingDeletionData(null);
+        setRestoreSuccessModal({
+          isOpen: true,
+          message: data.message || 'Welcome back! Your account has been retained and all your data is safely restored.',
+          token: data.token,
+          user: data.user
+        });
+      } else {
+        setRestoreError(data.detail || 'Failed to restore account.');
+      }
+    } catch (err) {
+      setRestoreError('Network error while restoring account. Please try again.');
+    } finally {
+      setRestoreLoading(false);
+    }
+  };
+
+  const handleProceedAfterRestore = () => {
+    if (restoreSuccessModal.token && restoreSuccessModal.user) {
+      const { token, user } = restoreSuccessModal;
+      setRestoreSuccessModal({ isOpen: false, message: '', token: null, user: null });
+      handleAuthSuccess(token, user);
+    }
+  };
+
 
   // ── Registration OTP ───────────────────────────────────────────────────────
   const sendOTP = async (isResend = false) => {
@@ -1233,6 +1319,21 @@ const AuthPage = () => {
                   <button type="submit" className="btn-primary auth-submit" disabled={loading}>
                     {loading ? <span className="auth-spinner" /> : 'Log In'}
                   </button>
+
+                  <div style={{
+                    marginTop: '12px',
+                    textAlign: 'center',
+                    fontSize: '11.5px',
+                    color: 'rgba(255, 255, 255, 0.6)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                    fontFamily: "'Outfit', sans-serif"
+                  }}>
+                    <span>🛡️</span>
+                    <span>Account scheduled for deletion? Log in to retain it within 30 days.</span>
+                  </div>
 
                 </form>
               </>
@@ -2268,10 +2369,35 @@ const AuthPage = () => {
                         </div>
                         <div className="auth-field">
                           <label>School Location <span style={{ color: '#EF4444' }}>*</span></label>
-                          <input type="text" name="schoolLocation" placeholder="e.g. Kovalam, Tamil Nadu"
-                            value={formData.schoolLocation || ''} onChange={handleChange} required />
+                          <input
+                            type="text"
+                            name="schoolLocation"
+                            list="auth-school-location-datalist"
+                            placeholder="e.g. Dapoli, Maharashtra or Kovalam, Chennai"
+                            value={formData.schoolLocation || ''}
+                            onChange={handleChange}
+                            autoComplete="off"
+                            required
+                          />
+                          <datalist id="auth-school-location-datalist">
+                            <option value="Dapoli, Maharashtra" />
+                            <option value="Mulki, Karnataka" />
+                            <option value="Mangalore, Karnataka" />
+                            <option value="Kovalam / Chennai, Tamil Nadu" />
+                            <option value="Mahabalipuram, Tamil Nadu" />
+                            <option value="Varkala, Kerala" />
+                            <option value="Gokarna, Karnataka" />
+                            <option value="Goa, India" />
+                            <option value="Pondicherry, India" />
+                            <option value="Puri, Odisha" />
+                            <option value="Visakhapatnam, Andhra Pradesh" />
+                            <option value="Alappuzha, Kerala" />
+                            <option value="Kochi, Kerala" />
+                            <option value="Mumbai, Maharashtra" />
+                            <option value="Bengaluru, Karnataka" />
+                          </datalist>
                           <small style={{ color: '#94A3B8', fontSize: '11px', marginTop: '4px', display: 'block' }}>
-                            Enter your surf school's city or beach location.
+                            Enter your surf school's city or beach location (auto-suggestions will appear as you type).
                           </small>
                         </div>
                       </div>
@@ -2319,6 +2445,262 @@ const AuthPage = () => {
           </p>
         </div>
       </div>
+
+      {/* ── 30-DAY ACCOUNT RETENTION & RESTORE MODAL ── */}
+      {showRestoreModal && pendingDeletionData && (
+
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 99999,
+          background: 'rgba(5, 11, 26, 0.85)', backdropFilter: 'blur(12px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
+        }}>
+          <div style={{
+            background: '#FFFFFF', color: '#0F172A', borderRadius: '24px',
+            width: '100%', maxWidth: '460px', padding: '28px',
+            boxShadow: '0 25px 60px -15px rgba(0,0,0,0.5)',
+            fontFamily: "'Outfit', 'Inter', -apple-system, sans-serif", position: 'relative'
+          }}>
+            <button
+              type="button"
+              onClick={() => {
+                setShowRestoreModal(false);
+                setPendingDeletionData(null);
+                setErrorMsg('Account remains scheduled for deletion.');
+              }}
+              style={{
+                position: 'absolute', top: '18px', right: '18px',
+                width: '32px', height: '32px', borderRadius: '50%',
+                border: 'none', background: '#F1F5F9', color: '#64748B',
+                fontSize: '18px', cursor: 'pointer', display: 'flex',
+                alignItems: 'center', justifyContent: 'center'
+              }}
+            >
+              ×
+            </button>
+
+            <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+              <div style={{
+                width: '56px', height: '56px', borderRadius: '18px',
+                background: 'rgba(14, 165, 233, 0.12)', border: '1px solid rgba(14, 165, 233, 0.25)',
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: '28px', marginBottom: '12px'
+              }}>
+                ⏳
+              </div>
+              <h3 style={{ margin: 0, fontSize: '20px', fontWeight: 800, color: '#0F172A' }}>
+                Account Scheduled for Deletion
+              </h3>
+              <div style={{ marginTop: '6px' }}>
+                <span style={{
+                  display: 'inline-block',
+                  background: '#FEF3C7',
+                  border: '1px solid #FCD34D',
+                  color: '#92400E',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  padding: '3px 10px',
+                  borderRadius: '20px'
+                }}>
+                  {pendingDeletionData.days_remaining} Day(s) Left to Retain
+                </span>
+              </div>
+            </div>
+
+            {restoreError && (
+              <div style={{
+                background: '#FEF2F2', border: '1px solid #FECACA',
+                color: '#DC2626', padding: '10px 14px', borderRadius: '10px',
+                fontSize: '12.5px', fontWeight: 600, marginBottom: '16px'
+              }}>
+                ⚠️ {restoreError}
+              </div>
+            )}
+
+            <div style={{
+              background: '#F8FAFC', border: '1px solid #E2E8F0',
+              borderRadius: '14px', padding: '14px 16px', marginBottom: '20px'
+            }}>
+              <p style={{ margin: '0 0 10px 0', fontSize: '13px', lineHeight: '1.5', color: '#334155' }}>
+                Hello <strong>{pendingDeletionData.name || pendingDeletionData.email}</strong>, this account was scheduled for deletion on <strong>{new Date(pendingDeletionData.deletion_scheduled_at).toLocaleDateString()}</strong>.
+              </p>
+              <div style={{
+                fontSize: '12.5px', color: '#0369A1', background: '#F0F9FF',
+                border: '1px solid #BAE6FD', padding: '10px 12px', borderRadius: '10px',
+                lineHeight: '1.5'
+              }}>
+                🛡️ <strong>All your data has been retained intact!</strong>
+                <div style={{ fontSize: '11.5px', color: '#0284C7', marginTop: '3px' }}>
+                  Your sessions, students, coaches, records, and preferences are fully preserved. Click below to cancel deletion and retain your account immediately.
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <button
+                type="button"
+                onClick={handleRestoreAccount}
+                disabled={restoreLoading}
+                style={{
+                  width: '100%',
+                  padding: '12px 20px',
+                  borderRadius: '12px',
+                  border: 'none',
+                  background: 'linear-gradient(135deg, #0284C7 0%, #06B6D4 100%)',
+                  color: '#FFFFFF',
+                  fontSize: '13.5px',
+                  fontWeight: 800,
+                  cursor: restoreLoading ? 'not-allowed' : 'pointer',
+                  boxShadow: '0 4px 14px rgba(2, 132, 199, 0.4)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px'
+                }}
+              >
+                {restoreLoading ? 'Restoring Account...' : '✅ Retain & Restore My Account'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowRestoreModal(false);
+                  setPendingDeletionData(null);
+                  setErrorMsg('Account remains scheduled for deletion.');
+                }}
+                style={{
+                  width: '100%',
+                  padding: '10px 16px',
+                  borderRadius: '12px',
+                  border: '1px solid #E2E8F0',
+                  background: '#FFFFFF',
+                  color: '#64748B',
+                  fontSize: '12.5px',
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+              >
+                Keep Deletion Scheduled (Leave Deactivated)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── IN-APP SOFTWARE UI MODAL: ACCOUNT RESTORED SUCCESS ── */}
+      {restoreSuccessModal.isOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 999999,
+            background: 'rgba(5, 11, 26, 0.85)',
+            backdropFilter: 'blur(12px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '20px'
+          }}
+        >
+          <div
+            style={{
+              background: '#FFFFFF',
+              color: '#0F172A',
+              borderRadius: '24px',
+              width: '100%',
+              maxWidth: '460px',
+              padding: '34px 28px',
+              boxShadow: '0 25px 60px -15px rgba(0, 0, 0, 0.5)',
+              textAlign: 'center',
+              fontFamily: "'Outfit', 'Inter', -apple-system, sans-serif",
+              position: 'relative'
+            }}
+          >
+            {/* Top Emerald Icon with Glowing Ring */}
+            <div
+              style={{
+                width: '68px',
+                height: '68px',
+                borderRadius: '50%',
+                background: 'rgba(16, 185, 129, 0.12)',
+                border: '2px solid rgba(16, 185, 129, 0.4)',
+                boxShadow: '0 0 24px rgba(16, 185, 129, 0.25)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '32px',
+                marginBottom: '16px'
+              }}
+            >
+              🎉
+            </div>
+
+            <h3 style={{ margin: '0 0 8px 0', fontSize: '22px', fontWeight: 800, color: '#0F172A' }}>
+              Welcome Back!
+            </h3>
+            <div style={{ marginBottom: '16px' }}>
+              <span
+                style={{
+                  display: 'inline-block',
+                  background: '#DCFCE7',
+                  border: '1px solid #86EFAC',
+                  color: '#15803D',
+                  fontSize: '12px',
+                  fontWeight: 800,
+                  padding: '3px 14px',
+                  borderRadius: '20px'
+                }}
+              >
+                ✅ Account Retained & Fully Restored
+              </span>
+            </div>
+
+            <div
+              style={{
+                background: '#F0FDF4',
+                border: '1.5px solid #BBF7D0',
+                borderRadius: '16px',
+                padding: '16px 18px',
+                marginBottom: '22px',
+                textAlign: 'left'
+              }}
+            >
+              <p style={{ margin: '0 0 6px 0', fontSize: '13.5px', lineHeight: '1.5', color: '#166534', fontWeight: 700 }}>
+                Your account is active again and scheduled deletion is cancelled.
+              </p>
+              <p style={{ margin: 0, fontSize: '12px', lineHeight: '1.55', color: '#4B5563' }}>
+                All your student profiles, coaching sessions, instructors, and reports have been safely preserved intact.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleProceedAfterRestore}
+              style={{
+                width: '100%',
+                padding: '13px 20px',
+                borderRadius: '12px',
+                border: 'none',
+                background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
+                color: '#FFFFFF',
+                fontSize: '14px',
+                fontWeight: 800,
+                cursor: 'pointer',
+                boxShadow: '0 4px 16px rgba(16, 185, 129, 0.4)',
+                transition: 'all 0.2s ease',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px'
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.transform = 'translateY(-1px)')}
+              onMouseLeave={(e) => (e.currentTarget.style.transform = 'none')}
+            >
+              <span>Enter Dashboard</span>
+              <span>→</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── GOOGLE ACCOUNT SELECTOR MODAL ── */}
       {showGoogleModal && (

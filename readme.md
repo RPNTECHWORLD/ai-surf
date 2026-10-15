@@ -654,4 +654,60 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
     - **Uniform CSS Grid Layout**: Configured `.sessions.length <= 4` to use `repeat(N, minmax(0, 1fr))` and a fixed `56px` height with text truncation ellipsis. All 4 athlete cards now stay permanently on the exact same row with 100% identical pixel width and height.
     - **Uniform Level Pills**: Configured the 5 Surfing Level pills to use `repeat(5, minmax(0, 1fr))` so Beginner through Pro buttons share the exact same 20% width and height.
 
+---
+
+### Changes on 14-10-2026
+
+1. **Coach Active/Inactive Toggle & School Lock (`InstructorManagement.jsx`, `backend/main.py`)**:
+   - Added toggle switch on instructor cards to set coaches Active or Inactive.
+   - Enforced rule: Active coaches cannot switch schools until marked inactive.
+   - Cleaned up coach profile header by removing redundant status badge.
+
+2. **Streamlined Date Range Filter Bar (`DateRangeFilterBar.jsx`)**:
+   - Integrated unified date filtering across `InstructorManagement`, `StudentsManagement`, and `Sessions`.
+   - Removed `This Week` and `This Month` preset buttons for a clean, spacious bar (`Yesterday`, `Today`, `Tomorrow`, `All`).
+   - Redesigned From/To calendar inputs with clear bordered cards and 1-click calendar picker open (`showPicker`).
+   - Enforced strict fixed dimensions so the filter bar never shifts or changes size when toggling dates.
+
+3. **Header Profile Button & Guest Admin System (`UserProfileMenu.jsx`, `Sidebar.jsx`, `backend/main.py`)**:
+   - Replaced plain logout icon in top header with an interactive, framed Profile Button with avatar, name, role, and chevron badge.
+   - **Guest Admin Creation**: School Admin can create guest admin logins (ID & Password) linked to their school. Guest Admins get full access to all school pages (Dashboard, Instructors, Students, Sessions, Competitions, Analytics), while keeping primary School Admin accounts separate and secure.
+   - **Delete My Account**: Added secure account deletion modal requiring user confirmation.
+   - **Log Out**: Clean sign-out action inside the profile dropdown.
+
+4. **Dynamic Active Today vs Total Students for Coaches (`InstructorManagement.jsx`, `InstructorProfile.jsx`, `backend/main.py`)**:
+   - **Active Today Metric**: Coach cards (`/instructors`) and profile (`/instructors/:id`) now dynamically distinguish between students active *today* versus *total all-time students*.
+   - **Auto-Transition on Subsequent Days**: When a coach is assigned to a student's session today, that student appears under `🟢 Active Today`. On subsequent days, they automatically move to `👥 Total Students` so coaches maintain complete student coaching history while keeping the active daily roster focused only on today's sessions.
+   - **Coach Card 3-Column Stats**: Displays `Active Today: 🟢 X`, `Total Students: Y`, and `Experience`.
+   - **Coach Profile Tabs**: Added `🟢 Active Today (X)` and `👥 Total Students (Y)` view toggle tabs on the Assigned Students card with clean empty states.
+   - **Student Time Format**: Preserved original clean, minimalist subtitle format (`s.last_active || 'Today'`) under each student name.
+   - **Backend API Sync**: Updated `instructor_to_dict` in `backend/main.py` to calculate `active_students` (today's sessions) and `total_students` (all-time sessions) with school isolation.
+
+5. **Student Assignment & Filter Workflow Improvements (`NewSession.jsx`, `Sessions.jsx`)**:
+   - **Cumulative "Select by Filter"**: Applying filters (gender, kids, level) selects newly matched students without deselecting previously chosen ones; students can only be deselected manually.
+   - **Streamlined Card Badges**: Focused badge info on gender, kids, and session day, hiding unnecessary adult tags.
+   - **Previous Coach Hint**: Displays previous day's assigned coach with low opacity for historical context when assigning new sessions.
+   - **Active Sessions Scope**: Displays only currently active sessions.
+
+6. **Stability & Bug Fixes (`InstructorProfile.jsx`)**:
+   - Resolved React runtime error (`Uncaught ReferenceError: useMemo is not defined`) in `InstructorProfile.jsx` by adding `useMemo` to the React import list.
+
+7. **Date Range Filter Bar in Badge Progression / Analytics (`Analytics.jsx`, `DateRangeFilterBar.jsx`)**:
+   - Integrated the unified `DateRangeFilterBar` into the Badge Progression page (`/analytics`), matching `InstructorManagement`, `StudentsManagement`, and `Sessions`.
+   - Offers quick presets (`Yesterday`, `Today`, `Tomorrow`, `All`) and custom `From` / `To` calendar pickers.
+   - Real-time dynamic updates: Stat cards (`WHITE`, `YELLOW`, `GREEN`, `BLUE`, `RED`), the `Retention Funnel`, and the student roster table automatically re-calculate for the chosen date or range.
+8. **Compact Multi-Coach Badge & Touch Tooltip in Sessions Table (`Sessions.jsx`)**:
+   - **Resolved Column Collision**: Fixed UI overlap where long multi-coach strings (e.g. `Dipayan Bhattacharjee & Raavi Sainath`) exceeded the `INSTRUCTOR` column and touched/overlapped the `STATUS` column (`• COMPLETED`).
+   - **Compact `+1` Pill Badge**: Now gracefully shows stacked avatars, the first coach's name (truncated with ellipsis), and a sleek `+1` (or `+{count - 1}`) badge.
+   - **Interactive Touch & Hover Tooltip**: On mobile touch or desktop hover, a floating dark tooltip reveals the full list of assigned coaches (`1. Coach Name`, `2. Coach Name`).
+   - **Full Modal on Click**: Tapping/clicking the badge opens the `MultiCoachModal` with full profiles, star ratings, and review details.
+   - **Multi-Delimiter Parser**: Fully supports both comma (`,`), ampersand (`&`), and `and` delimiters when handling multi-coach assignments.
+
+9. **Student Profile Loading & Multi-Coach Support (`StudentProfile.jsx`, `backend/main.py`)**:
+   - **Resolved 500 Internal Server Error**: Fixed SQLAlchemy `inspect` scoping bug in `backend/main.py` inside `session_to_dict`, allowing students with sessions to load without failing.
+   - **Resolved "School Admin" Profile Display Bug**: When an admin or coach views a student profile, the page no longer falls back to the logged-in admin's name and details.
+   - **Multi-Coach Badges on Student Profile**: If a student is assigned to multiple coaches across their sessions or group notes, all coaches are now displayed individually (`Coaches: [Coach A ★ Review] [Coach B ★ Review]`), allowing each coach's profile to be opened and reviewed independently.
+
+
+
 

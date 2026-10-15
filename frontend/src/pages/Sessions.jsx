@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import NewSession from './NewSession';
 import CoachProfileModal from '../components/CoachProfileModal';
+import DateRangeFilterBar from '../components/DateRangeFilterBar';
 
 const API = import.meta.env.VITE_API_URL || '';
 
@@ -453,6 +454,11 @@ const Sessions = () => {
 
   // Filter States: Default to Today's date so "Today" live schedule is shown immediately
   const [dateFilter, setDateFilter] = useState(() => getTodayYYYYMMDD());
+  const [dateRange, setDateRange] = useState(() => ({
+    startDate: getTodayYYYYMMDD(),
+    endDate: getTodayYYYYMMDD(),
+    preset: 'today'
+  }));
   const [slotFilter, setSlotFilter] = useState('All');
   const [instructorFilter, setInstructorFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
@@ -537,6 +543,7 @@ const Sessions = () => {
 
   // Coach Profile & Review Modal State
   const [selectedCoachForModal, setSelectedCoachForModal] = useState(null); // { id, name }
+  const [multiCoachModalData, setMultiCoachModalData] = useState(null); // { names: [], instId, extra }
 
   const handleOpenCoachModal = (instName, instId, e) => {
     if (e) e.stopPropagation();
@@ -547,9 +554,148 @@ const Sessions = () => {
     });
   };
 
-  const renderCoachBadge = (instName, instId) => {
+  const renderCoachBadge = (instName, instId, extra = null) => {
     if (!instName || instName === '—' || instName.trim() === '') {
       return <span style={{ color: '#94A3B8', fontSize: '13px', fontStyle: 'italic' }}>—</span>;
+    }
+    const names = (typeof instName === 'string' ? instName : '')
+      .split(/[,&]+|\band\b/i)
+      .map(n => n.trim())
+      .filter(Boolean);
+
+    if (names.length > 1) {
+      return (
+        <div
+          className="ses-multi-coach-wrapper"
+          style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}
+          tabIndex={0}
+        >
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setMultiCoachModalData({
+                names,
+                instId,
+                extra
+              });
+            }}
+            title={`Assigned Coaches (${names.length}):\n• ${names.join('\n• ')}\n(Click to view profiles & reviews)`}
+            style={{
+              background: 'linear-gradient(135deg, #F0FDFA 0%, #E6FFFA 100%)',
+              border: '1.5px solid #5EEAD4',
+              borderRadius: '20px',
+              padding: '3px 8px 3px 5px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '5px',
+              cursor: 'pointer',
+              transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+              boxShadow: '0 1px 4px rgba(13, 148, 136, 0.12)',
+              outline: 'none',
+              maxWidth: '160px',
+              boxSizing: 'border-box'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-1px)';
+              e.currentTarget.style.boxShadow = '0 4px 12px rgba(13, 148, 136, 0.25)';
+              e.currentTarget.style.borderColor = '#0D9488';
+              e.currentTarget.style.background = '#CCFBF1';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'none';
+              e.currentTarget.style.boxShadow = '0 1px 4px rgba(13, 148, 136, 0.12)';
+              e.currentTarget.style.borderColor = '#5EEAD4';
+              e.currentTarget.style.background = 'linear-gradient(135deg, #F0FDFA 0%, #E6FFFA 100%)';
+            }}
+          >
+            {/* Stacked Overlapping Dual/Multi Avatars */}
+            <div style={{ display: 'flex', alignItems: 'center', marginRight: '2px', flexShrink: 0 }}>
+              {names.slice(0, 2).map((name, idx) => {
+                const initial = name.charAt(0).toUpperCase();
+                const bgGradients = [
+                  'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
+                  'linear-gradient(135deg, #7C3AED 0%, #2563EB 100%)',
+                  'linear-gradient(135deg, #D97706 0%, #EA580C 100%)',
+                ];
+                return (
+                  <div
+                    key={idx}
+                    style={{
+                      width: '20px',
+                      height: '20px',
+                      borderRadius: '50%',
+                      background: bgGradients[idx % bgGradients.length],
+                      color: '#FFFFFF',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '10px',
+                      fontWeight: 800,
+                      flexShrink: 0,
+                      marginLeft: idx > 0 ? '-7px' : '0px',
+                      border: '1.5px solid #FFFFFF',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.18)',
+                      zIndex: names.length - idx
+                    }}
+                    title={name}
+                  >
+                    {initial}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Primary Coach Name (compact, truncated so it never touches next column) */}
+            <span style={{
+              color: '#0F766E',
+              fontWeight: 700,
+              fontSize: '12.5px',
+              letterSpacing: '-0.2px',
+              maxWidth: '82px',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap'
+            }}>
+              {names[0]}
+            </span>
+
+            {/* +1 Badge */}
+            <span style={{
+              fontSize: '10.5px',
+              background: 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)',
+              color: '#FFFFFF',
+              padding: '1px 6px',
+              borderRadius: '10px',
+              fontWeight: 800,
+              display: 'inline-flex',
+              alignItems: 'center',
+              letterSpacing: '0.2px',
+              boxShadow: '0 1px 3px rgba(13, 148, 136, 0.28)',
+              flexShrink: 0
+            }}>
+              +{names.length - 1}
+            </span>
+          </button>
+
+          {/* Floating Hover/Touch Tooltip showing both/all coaches */}
+          <div className="ses-multi-coach-tooltip">
+            <div className="ses-mct-title">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#2DD4BF" strokeWidth="2.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              <span>{names.length} Assigned Coaches</span>
+            </div>
+            <div className="ses-mct-list">
+              {names.map((n, i) => (
+                <div key={i} className="ses-mct-item">
+                  <span className="ses-mct-num">{i + 1}.</span>
+                  <span className="ses-mct-name">{n}</span>
+                </div>
+              ))}
+            </div>
+            <div className="ses-mct-sub">Click/Tap to view profiles & reviews</div>
+          </div>
+        </div>
+      );
     }
     const initial = instName.charAt(0).toUpperCase();
     return (
@@ -561,14 +707,16 @@ const Sessions = () => {
           background: 'linear-gradient(135deg, #F0FDFA 0%, #E6FFFA 100%)',
           border: '1px solid #99F6E4',
           borderRadius: '20px',
-          padding: '4px 10px 4px 5px',
+          padding: '3px 9px 3px 5px',
           display: 'inline-flex',
           alignItems: 'center',
           gap: '6px',
           cursor: 'pointer',
           transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
           boxShadow: '0 1px 3px rgba(13, 148, 136, 0.08)',
-          outline: 'none'
+          outline: 'none',
+          maxWidth: '170px',
+          boxSizing: 'border-box'
         }}
         onMouseEnter={(e) => {
           e.currentTarget.style.transform = 'translateY(-1px)';
@@ -584,26 +732,30 @@ const Sessions = () => {
         }}
       >
         <div style={{
-          width: '22px',
-          height: '22px',
+          width: '20px',
+          height: '20px',
           borderRadius: '50%',
           background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
           color: '#FFFFFF',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          fontSize: '11px',
+          fontSize: '10.5px',
           fontWeight: 800,
           flexShrink: 0,
-          boxShadow: '0 2px 5px rgba(13, 148, 136, 0.3)'
+          boxShadow: '0 2px 4px rgba(13, 148, 136, 0.25)'
         }}>
           {initial}
         </div>
         <span style={{
           color: '#0F766E',
           fontWeight: 700,
-          fontSize: '13px',
-          letterSpacing: '-0.2px'
+          fontSize: '12.5px',
+          letterSpacing: '-0.2px',
+          maxWidth: '95px',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap'
         }}>
           {instName}
         </span>
@@ -617,7 +769,8 @@ const Sessions = () => {
           display: 'inline-flex',
           alignItems: 'center',
           gap: '2px',
-          letterSpacing: '0.2px'
+          letterSpacing: '0.2px',
+          flexShrink: 0
         }}>
           ★ Coach
         </span>
@@ -1880,9 +2033,17 @@ const Sessions = () => {
 
   // Extract unique instructors and students for dropdowns
   const availableInstructors = useMemo(() => {
-    const names = new Set(roleScopedSessions.map(s => s.instructor).filter(Boolean));
-    allInstructorsList.forEach(i => { if (i.name) names.add(i.name); });
-    return Array.from(names);
+    const names = new Set();
+    roleScopedSessions.forEach(s => {
+      if (s.instructor) {
+        s.instructor.split(/[,&]+|\band\b/i).forEach(n => {
+          const trimmed = n.trim();
+          if (trimmed) names.add(trimmed);
+        });
+      }
+    });
+    allInstructorsList.forEach(i => { if (i.name) names.add(i.name.trim()); });
+    return Array.from(names).sort();
   }, [roleScopedSessions, allInstructorsList]);
 
   const availableStudents = useMemo(() => {
@@ -1989,12 +2150,23 @@ const Sessions = () => {
   // Filtered sessions
   const filteredSessions = useMemo(() => {
     return roleScopedSessions.filter(s => {
-      // Date filter - always filter by selected date (default Today so all sessions are never shown together)
-      const activeDateFilter = dateFilter || getTodayYYYYMMDD();
+      // Date filter / Date Range filter
       const sessionDateISO = normalizeToYYYYMMDD(s.date);
-      const filterISO = normalizeToYYYYMMDD(activeDateFilter);
-      if (sessionDateISO !== filterISO && !String(s.date || '').toLowerCase().includes(activeDateFilter.toLowerCase())) {
-        return false;
+      if (dateRange && (dateRange.startDate || dateRange.endDate)) {
+        if (dateRange.startDate && dateRange.endDate && dateRange.startDate === dateRange.endDate) {
+          if (sessionDateISO !== dateRange.startDate && !String(s.date || '').toLowerCase().includes(dateRange.startDate.toLowerCase())) {
+            return false;
+          }
+        } else {
+          if (dateRange.startDate && sessionDateISO < dateRange.startDate) return false;
+          if (dateRange.endDate && sessionDateISO > dateRange.endDate) return false;
+        }
+      } else if (dateFilter) {
+        const activeDateFilter = dateFilter;
+        const filterISO = normalizeToYYYYMMDD(activeDateFilter);
+        if (sessionDateISO !== filterISO && !String(s.date || '').toLowerCase().includes(activeDateFilter.toLowerCase())) {
+          return false;
+        }
       }
 
       // Slot (Time) filter
@@ -2038,7 +2210,7 @@ const Sessions = () => {
 
       return true;
     });
-  }, [roleScopedSessions, dateFilter, slotFilter, instructorFilter, statusFilter, searchQuery, clockTick]);
+  }, [roleScopedSessions, dateRange, dateFilter, slotFilter, instructorFilter, statusFilter, searchQuery, clockTick]);
 
   // Helper function to group sessions by explicit group_name OR by Date + Time + Instructor
   const buildSessionGrouping = (sessionList) => {
@@ -2059,6 +2231,19 @@ const Sessions = () => {
           const prefix = notesStr.split(' - Coaches:')[0].trim();
           explicitGrp = prefix.replace(/\s*\([^)]*\)/g, '').trim() || prefix;
         }
+      }
+
+      // Sync multi-coach string from notes if present
+      if (session.notes && session.notes.includes('Coaches:')) {
+        try {
+          const m = session.notes.match(/Coaches:\s*([^-\n]+)/i);
+          if (m && m[1]) {
+            const rawCoaches = m[1].trim();
+            if (rawCoaches && rawCoaches !== 'Staff' && rawCoaches.includes(',')) {
+              session.instructor = rawCoaches;
+            }
+          }
+        } catch (e) {}
       }
 
       let key;
@@ -2104,15 +2289,65 @@ const Sessions = () => {
     buckets.forEach(bucket => {
       // Sort students inside each group alphabetically by student name
       bucket.sessions.sort((s1, s2) => (s1.student || '').localeCompare(s2.student || ''));
+      // Combine all coaches from sessions and notes in bucket
+      const allCoachNames = [];
+      const allCoachIds = [];
+      bucket.sessions.forEach(s => {
+        // 1. Extract from s.notes (e.g. "Group A (03:30 AM) - Coaches: Vishal, Dhanya")
+        if (s.notes && s.notes.includes('Coaches:')) {
+          try {
+            const m = s.notes.match(/Coaches:\s*([^-\n]+)/i);
+            if (m && m[1]) {
+              const rawStr = m[1].trim();
+              if (rawStr && rawStr !== 'Staff') {
+                rawStr.split(/[,&]+|\band\b/i).forEach(name => {
+                  const trimmed = name.trim();
+                  if (trimmed && !allCoachNames.includes(trimmed)) allCoachNames.push(trimmed);
+                });
+              }
+            }
+          } catch (e) {}
+        }
+        // 2. Extract from s.instructor
+        if (s.instructor) {
+          s.instructor.split(/[,&]+|\band\b/i).forEach(name => {
+            const trimmed = name.trim();
+            if (trimmed && !allCoachNames.includes(trimmed)) allCoachNames.push(trimmed);
+          });
+        }
+        // 3. Extract instructor IDs
+        if (Array.isArray(s.instructor_ids)) {
+          s.instructor_ids.forEach(id => {
+            const num = Number(id);
+            if (!isNaN(num) && num > 0 && !allCoachIds.includes(num)) allCoachIds.push(num);
+          });
+        } else if (s.instructor_id) {
+          const num = Number(s.instructor_id);
+          if (!isNaN(num) && num > 0 && !allCoachIds.includes(num)) allCoachIds.push(num);
+        }
+      });
+      if (allCoachNames.length > 0) {
+        bucket.instructor = allCoachNames.join(', ');
+      }
+      bucket.instructor_ids = allCoachIds;
+
+      // Propagate combined coach data to each individual session in this bucket
+      bucket.sessions.forEach(sess => {
+        if (bucket.instructor) {
+          sess.instructor = bucket.instructor;
+        }
+        if (bucket.instructor_ids && bucket.instructor_ids.length > 0) {
+          sess.instructor_ids = bucket.instructor_ids;
+        }
+        if (!sess.group_name && bucket.groupName) {
+          sess.group_name = bucket.groupName;
+        }
+      });
+
       // If a group has multiple sessions/participants, always display as a collapsible group row
       if (bucket.sessions.length > 1) {
         groups.push(bucket);
       } else {
-        bucket.sessions.forEach(sess => {
-          if (!sess.group_name && bucket.groupName) {
-            sess.group_name = bucket.groupName;
-          }
-        });
         ungrouped.push(...bucket.sessions);
       }
     });
@@ -2519,7 +2754,8 @@ const Sessions = () => {
                 <button
                   className="ses-btn-primary"
                   onClick={() => {
-                    setScheduleModalInitialDate(null);
+                    const activeFilterDate = (dateRange?.startDate) || (dateFilter && dateFilter !== 'All' ? dateFilter : null);
+                    setScheduleModalInitialDate(activeFilterDate || null);
                     setShowScheduleModal(true);
                   }}
                 >
@@ -2564,148 +2800,19 @@ const Sessions = () => {
               )}
             </div>
 
-            {/* Quick Date Filters: Yesterday - Today - Tomorrow - [Date Calendar] */}
-            {(() => {
-              const getIsoDate = (offset = 0) => {
-                const d = new Date();
-                if (offset !== 0) d.setDate(d.getDate() + offset);
-                const y = d.getFullYear();
-                const m = String(d.getMonth() + 1).padStart(2, '0');
-                const day = String(d.getDate()).padStart(2, '0');
-                return `${y}-${m}-${day}`;
-              };
-              const yestIso = getIsoDate(-1);
-              const todayIso = getIsoDate(0);
-              const tomIso = getIsoDate(1);
-              const isCustomDate = Boolean(dateFilter && dateFilter !== yestIso && dateFilter !== todayIso && dateFilter !== tomIso);
-
-              return (
-                <div className="ses-select-wrap ses-date-quick-wrap" style={{ minWidth: 'auto' }}>
-                  <label className="ses-select-label">Date Filter</label>
-                  <div style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    background: '#F8FAFC',
-                    border: '1.5px solid #E2E8F0',
-                    borderRadius: '12px',
-                    padding: '3px 4px',
-                    gap: '4px',
-                    boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-                    height: '42px',
-                    boxSizing: 'border-box'
-                  }}>
-                    <button
-                      type="button"
-                      onClick={() => setDateFilter(prev => prev === yestIso ? todayIso : yestIso)}
-                      style={{
-                        padding: '6px 12px',
-                        borderRadius: '8px',
-                        border: dateFilter === yestIso ? '1.5px solid #0D9488' : '1px solid transparent',
-                        background: dateFilter === yestIso ? 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)' : '#FFFFFF',
-                        color: dateFilter === yestIso ? '#FFFFFF' : '#334155',
-                        fontWeight: 700,
-                        fontSize: '12px',
-                        fontFamily: "'Outfit', sans-serif",
-                        cursor: 'pointer',
-                        boxShadow: dateFilter === yestIso ? '0 2px 8px rgba(13, 148, 136, 0.35)' : '0 1px 2px rgba(0,0,0,0.04)',
-                        transition: 'all 0.15s ease',
-                        whiteSpace: 'nowrap'
-                      }}
-                      title="Filter sessions from yesterday"
-                    >
-                      Yesterday
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDateFilter(todayIso)}
-                      style={{
-                        padding: '6px 12px',
-                        borderRadius: '8px',
-                        border: (dateFilter === todayIso || !dateFilter) ? '1.5px solid #0D9488' : '1px solid transparent',
-                        background: (dateFilter === todayIso || !dateFilter) ? 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)' : '#FFFFFF',
-                        color: (dateFilter === todayIso || !dateFilter) ? '#FFFFFF' : '#334155',
-                        fontWeight: 700,
-                        fontSize: '12px',
-                        fontFamily: "'Outfit', sans-serif",
-                        cursor: 'pointer',
-                        boxShadow: (dateFilter === todayIso || !dateFilter) ? '0 2px 8px rgba(13, 148, 136, 0.35)' : '0 1px 2px rgba(0,0,0,0.04)',
-                        transition: 'all 0.15s ease',
-                        whiteSpace: 'nowrap'
-                      }}
-                      title="Filter sessions for today"
-                    >
-                      Today
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDateFilter(prev => prev === tomIso ? todayIso : tomIso)}
-                      style={{
-                        padding: '6px 12px',
-                        borderRadius: '8px',
-                        border: dateFilter === tomIso ? '1.5px solid #0D9488' : '1px solid transparent',
-                        background: dateFilter === tomIso ? 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)' : '#FFFFFF',
-                        color: dateFilter === tomIso ? '#FFFFFF' : '#334155',
-                        fontWeight: 700,
-                        fontSize: '12px',
-                        fontFamily: "'Outfit', sans-serif",
-                        cursor: 'pointer',
-                        boxShadow: dateFilter === tomIso ? '0 2px 8px rgba(13, 148, 136, 0.35)' : '0 1px 2px rgba(0,0,0,0.04)',
-                        transition: 'all 0.15s ease',
-                        whiteSpace: 'nowrap'
-                      }}
-                      title="Filter sessions for tomorrow"
-                    >
-                      Tomorrow
-                    </button>
-
-                    {/* Calendar Date Picker Input */}
-                    <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
-                      <input
-                        type="date"
-                        value={dateFilter || todayIso}
-                        onChange={(e) => setDateFilter(e.target.value || todayIso)}
-                        style={{
-                          height: '32px',
-                          padding: isCustomDate ? '0 24px 0 8px' : '0 8px',
-                          borderRadius: '8px',
-                          border: isCustomDate ? '1.5px solid #0D9488' : '1px solid #CBD5E1',
-                          background: isCustomDate ? '#E6F9F5' : '#FFFFFF',
-                          color: isCustomDate ? '#0D9488' : '#64748B',
-                          fontWeight: isCustomDate ? 700 : 500,
-                          fontSize: '12px',
-                          cursor: 'pointer',
-                          outline: 'none',
-                          boxShadow: isCustomDate ? '0 2px 6px rgba(13, 148, 136, 0.25)' : '0 1px 2px rgba(0,0,0,0.04)',
-                          transition: 'all 0.15s ease'
-                        }}
-                        title="Pick custom date"
-                      />
-                      {isCustomDate && (
-                        <button
-                          type="button"
-                          onClick={() => setDateFilter(todayIso)}
-                          style={{
-                            position: 'absolute',
-                            right: '6px',
-                            background: 'none',
-                            border: 'none',
-                            color: '#0D9488',
-                            cursor: 'pointer',
-                            fontSize: '13px',
-                            fontWeight: 800,
-                            lineHeight: 1,
-                            padding: '2px'
-                          }}
-                          title="Reset to today"
-                        >
-                          ×
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
+            {/* Quick Date Range Filter Bar with Presets & From-To Range Picker */}
+            <div className="ses-select-wrap ses-date-quick-wrap" style={{ minWidth: 'auto' }}>
+              <label className="ses-select-label">Date Filter</label>
+              <DateRangeFilterBar
+                startDate={dateRange.startDate}
+                endDate={dateRange.endDate}
+                preset={dateRange.preset}
+                onChange={({ startDate, endDate, preset }) => {
+                  setDateRange({ startDate, endDate, preset });
+                  setDateFilter(startDate === endDate ? startDate : (startDate || ''));
+                }}
+              />
+            </div>
 
             {/* Instructor Filter (Hidden for Coach & Student roles) */}
             {!isCoach && !isStudent && (
@@ -3047,6 +3154,7 @@ const Sessions = () => {
                           status: groupObj.status,
                           instructor: groupObj.instructor,
                           instructor_id: groupObj.sessions[0]?.instructor_id,
+                          instructor_ids: groupObj.instructor_ids || (groupObj.sessions || []).flatMap(s => s.instructor_ids || [s.instructor_id]),
                           sessions: groupObj.sessions,
                           video_url: groupVideoUrl,
                           image_url: groupObj.sessions.find(s => s.image_url)?.image_url || '',
@@ -3184,6 +3292,7 @@ const Sessions = () => {
                                   status: groupObj.status,
                                   instructor: groupObj.instructor,
                                   instructor_id: groupObj.sessions[0]?.instructor_id,
+                                  instructor_ids: groupObj.instructor_ids || (groupObj.sessions || []).flatMap(s => s.instructor_ids || [s.instructor_id]),
                                   sessions: groupObj.sessions,
                                   video_url: groupVideoUrl,
                                   image_url: groupObj.sessions.find(s => s.image_url)?.image_url || '',
@@ -3280,6 +3389,7 @@ const Sessions = () => {
                               student_id: session.student_id,
                               instructor: session.instructor,
                               instructor_id: session.instructor_id,
+                              instructor_ids: session.instructor_ids || (session.instructor_id ? [session.instructor_id] : []),
                               sessions: [session],
                               video_url: session.video_url || '',
                               video_urls: session.video_urls || session.video_url || '',
@@ -3491,6 +3601,7 @@ const Sessions = () => {
                         student_id: session.student_id,
                         instructor: session.instructor,
                         instructor_id: session.instructor_id,
+                        instructor_ids: session.instructor_ids || (session.instructor_id ? [session.instructor_id] : []),
                         sessions: [session],
                         video_url: session.video_url || '',
                         image_url: session.image_url || '',
@@ -3763,7 +3874,12 @@ const Sessions = () => {
                     <span>•</span>
                     <span>{selectedHubSession.time}</span>
                     <span>•</span>
-                    <span>Coach: <strong style={{ color: '#0F172A' }}>{selectedHubSession.instructor || 'Unassigned'}</strong></span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                      {selectedHubSession.instructor?.includes(',') ? 'Coaches:' : 'Coach:'}{' '}
+                      {selectedHubSession.instructor?.includes(',')
+                        ? renderCoachBadge(selectedHubSession.instructor, selectedHubSession.instructor_id)
+                        : <strong style={{ color: '#0F172A' }}>{selectedHubSession.instructor || 'Unassigned'}</strong>}
+                    </span>
                     {selectedHubSession.location && (
                       <>
                         <span>•</span>
@@ -6165,7 +6281,7 @@ const Sessions = () => {
                             </div>
 
                             <div style={{ fontSize: '12px', color: '#64748B', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              <span>Coach: <strong style={{ color: '#0F172A' }}>{grp.instructor || 'Assigned Coach'}</strong></span>
+                              <span>{grp.instructor?.includes(',') ? 'Coaches:' : 'Coach:'} <strong style={{ color: '#0F172A' }}>{grp.instructor || 'Assigned Coach'}</strong></span>
                               {grp.location && <span>&bull; 🌊 {grp.location}</span>}
                             </div>
 
@@ -6244,7 +6360,7 @@ const Sessions = () => {
                             </div>
 
                             <div style={{ fontSize: '12px', color: '#64748B', marginBottom: '10px' }}>
-                              Coach: <strong style={{ color: '#0F172A' }}>{sess.instructor || 'Assigned Coach'}</strong>
+                              {sess.instructor?.includes(',') ? 'Coaches:' : 'Coach:'} <strong style={{ color: '#0F172A' }}>{sess.instructor || 'Assigned Coach'}</strong>
                               {sess.location && <span> &bull; 🌊 {sess.location}</span>}
                             </div>
 
@@ -7299,6 +7415,250 @@ const Sessions = () => {
           </div>
         )}
 
+        {/* Multi-Coach Modal: Displays all assigned coaches with profile & reviews access */}
+        {multiCoachModalData && (
+          <div
+            className="ses-modal-backdrop"
+            onClick={() => setMultiCoachModalData(null)}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              backgroundColor: 'rgba(15, 23, 42, 0.65)',
+              backdropFilter: 'blur(4px)',
+              WebkitBackdropFilter: 'blur(4px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 9999,
+              padding: '16px'
+            }}
+          >
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: '#FFFFFF',
+                borderRadius: '18px',
+                maxWidth: '460px',
+                width: '100%',
+                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+                border: '1px solid #E2E8F0',
+                overflow: 'hidden',
+                animation: 'sesFadeInUp 0.2s cubic-bezier(0.16, 1, 0.3, 1)'
+              }}
+            >
+              {/* Header */}
+              <div style={{
+                background: 'linear-gradient(135deg, #F0FDFA 0%, #E6FFFA 100%)',
+                padding: '20px 24px',
+                borderBottom: '1px solid #CCFBF1',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{
+                    width: '40px',
+                    height: '40px',
+                    borderRadius: '12px',
+                    background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#FFFFFF',
+                    fontSize: '18px',
+                    boxShadow: '0 4px 10px rgba(13, 148, 136, 0.3)'
+                  }}>
+                    🏄‍♂️
+                  </div>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '17px', fontWeight: 800, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      Assigned Coaches
+                      <span style={{
+                        fontSize: '11px',
+                        background: '#0D9488',
+                        color: '#FFFFFF',
+                        padding: '2px 8px',
+                        borderRadius: '12px',
+                        fontWeight: 700
+                      }}>
+                        {multiCoachModalData.names?.length || 2} Total
+                      </span>
+                    </h3>
+                    <p style={{ margin: '3px 0 0', fontSize: '12.5px', color: '#64748B' }}>
+                      Team coaches assigned to this session
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setMultiCoachModalData(null)}
+                  style={{
+                    background: '#FFFFFF',
+                    border: '1px solid #E2E8F0',
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '50%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#64748B',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    fontWeight: 700,
+                    transition: 'all 0.15s ease'
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9'; e.currentTarget.style.color = '#0F172A'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = '#FFFFFF'; e.currentTarget.style.color = '#64748B'; }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Coaches List */}
+              <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {(multiCoachModalData.names || []).map((name, idx) => {
+                  const coachObj = (allInstructorsList || []).find(
+                    c => c.name?.toLowerCase().trim() === name.toLowerCase().trim()
+                  );
+                  const initial = name.charAt(0).toUpperCase();
+                  const bgGradients = [
+                    'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
+                    'linear-gradient(135deg, #7C3AED 0%, #2563EB 100%)',
+                    'linear-gradient(135deg, #D97706 0%, #EA580C 100%)',
+                  ];
+                  const coachId = coachObj?.id || (idx === 0 ? multiCoachModalData.instId : null);
+
+                  return (
+                    <div
+                      key={idx}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '14px 16px',
+                        background: '#F8FAFC',
+                        borderRadius: '12px',
+                        border: '1px solid #E2E8F0',
+                        transition: 'all 0.15s ease'
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#99F6E4'; e.currentTarget.style.background = '#F0FDFA'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#E2E8F0'; e.currentTarget.style.background = '#F8FAFC'; }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        {coachObj?.avatar ? (
+                          <img
+                            src={coachObj.avatar}
+                            alt={name}
+                            style={{
+                              width: '42px',
+                              height: '42px',
+                              borderRadius: '50%',
+                              objectFit: 'cover',
+                              border: '2px solid #0D9488'
+                            }}
+                          />
+                        ) : (
+                          <div
+                            style={{
+                              width: '42px',
+                              height: '42px',
+                              borderRadius: '50%',
+                              background: bgGradients[idx % bgGradients.length],
+                              color: '#FFFFFF',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: '16px',
+                              fontWeight: 800,
+                              boxShadow: '0 2px 8px rgba(0,0,0,0.15)'
+                            }}
+                          >
+                            {initial}
+                          </div>
+                        )}
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontSize: '15px', fontWeight: 700, color: '#0F172A' }}>
+                              {name}
+                            </span>
+                            <span style={{
+                              fontSize: '10px',
+                              fontWeight: 700,
+                              padding: '2px 7px',
+                              borderRadius: '8px',
+                              background: idx === 0 ? '#CCFBF1' : '#E0E7FF',
+                              color: idx === 0 ? '#0F766E' : '#4338CA',
+                              letterSpacing: '0.2px'
+                            }}>
+                              {coachObj?.role || (idx === 0 ? 'Lead Coach' : 'Co-Coach')}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>
+                            {coachObj?.specialization || 'Surfing Coach'}
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMultiCoachModalData(null);
+                          handleOpenCoachModal(name, coachId);
+                        }}
+                        style={{
+                          background: '#FFFFFF',
+                          border: '1.5px solid #0D9488',
+                          color: '#0D9488',
+                          padding: '6px 12px',
+                          borderRadius: '8px',
+                          fontSize: '12px',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          transition: 'all 0.15s ease',
+                          whiteSpace: 'nowrap'
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = '#0D9488'; e.currentTarget.style.color = '#FFFFFF'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = '#FFFFFF'; e.currentTarget.style.color = '#0D9488'; }}
+                      >
+                        Profile & Reviews →
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Footer */}
+              <div style={{
+                padding: '12px 24px 18px',
+                borderTop: '1px solid #F1F5F9',
+                display: 'flex',
+                justifyContent: 'flex-end',
+                background: '#FAFAFA'
+              }}>
+                <button
+                  type="button"
+                  onClick={() => setMultiCoachModalData(null)}
+                  style={{
+                    padding: '8px 18px',
+                    borderRadius: '8px',
+                    border: '1px solid #E2E8F0',
+                    background: '#FFFFFF',
+                    color: '#475569',
+                    fontSize: '13px',
+                    fontWeight: 700,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Coach Profile & Student Review Modal */}
         <CoachProfileModal
           isOpen={Boolean(selectedCoachForModal)}
@@ -7497,6 +7857,92 @@ const Sessions = () => {
         }
         .ses-status-dot {
           width: 6px; height: 6px; border-radius: 50%;
+        }
+
+        /* Multi-Coach Badge & Tooltip Popover */
+        .ses-multi-coach-wrapper {
+          position: relative;
+          display: inline-flex;
+          align-items: center;
+          outline: none;
+        }
+        .ses-multi-coach-tooltip {
+          position: absolute;
+          bottom: calc(100% + 8px);
+          left: 50%;
+          transform: translateX(-50%) translateY(4px);
+          background: #0F172A;
+          color: #FFFFFF;
+          padding: 8px 12px;
+          border-radius: 10px;
+          box-shadow: 0 10px 25px -3px rgba(15, 23, 42, 0.45);
+          font-family: 'Outfit', sans-serif;
+          font-size: 11.5px;
+          z-index: 1000;
+          pointer-events: none;
+          opacity: 0;
+          visibility: hidden;
+          transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+          white-space: nowrap;
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          min-width: 160px;
+        }
+        .ses-multi-coach-tooltip::after {
+          content: '';
+          position: absolute;
+          top: 100%;
+          left: 50%;
+          transform: translateX(-50%);
+          border-width: 5px;
+          border-style: solid;
+          border-color: #0F172A transparent transparent transparent;
+        }
+        .ses-multi-coach-wrapper:hover .ses-multi-coach-tooltip,
+        .ses-multi-coach-wrapper:focus .ses-multi-coach-tooltip,
+        .ses-multi-coach-wrapper:focus-within .ses-multi-coach-tooltip,
+        .ses-multi-coach-wrapper:active .ses-multi-coach-tooltip {
+          opacity: 1;
+          visibility: visible;
+          transform: translateX(-50%) translateY(0);
+        }
+        .ses-mct-title {
+          font-size: 10.5px;
+          font-weight: 800;
+          color: #2DD4BF;
+          margin-bottom: 5px;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          display: flex;
+          align-items: center;
+          gap: 5px;
+        }
+        .ses-mct-list {
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+        }
+        .ses-mct-item {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          font-size: 12px;
+          font-weight: 600;
+          color: #F8FAFC;
+        }
+        .ses-mct-num {
+          color: #94A3B8;
+          font-size: 10.5px;
+          font-weight: 700;
+        }
+        .ses-mct-name {
+          color: #FFFFFF;
+        }
+        .ses-mct-sub {
+          font-size: 9.5px;
+          color: #94A3B8;
+          margin-top: 5px;
+          border-top: 1px solid rgba(255, 255, 255, 0.12);
+          padding-top: 4px;
         }
 
         .ses-actions-row { display: flex; gap: 6px; justify-content: flex-end; align-items: center; white-space: nowrap; flex-shrink: 0; }

@@ -407,18 +407,56 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     }
   }, [currentUser, canManageSessions, isModal, onClose, navigate]);
 
-  // ─── Draft Management for Session Creation ───
-  const draftKey = useMemo(() => {
-    return `surfing_session_draft_${currentUser?.school_id || currentUser?.id || 'default'}`;
-  }, [currentUser]);
+  // ─── Step 1 State: Initial Date Resolution ───
+  const targetInitialDate = useMemo(() => {
+    const targetDateStr = initialDate || searchParams.get('date');
+    if (targetDateStr) {
+      const parts = targetDateStr.split('-');
+      if (parts.length === 3) {
+        let y, m, d;
+        if (parts[0].length === 4) {
+          y = parseInt(parts[0], 10);
+          m = parseInt(parts[1], 10) - 1;
+          d = parseInt(parts[2], 10);
+        } else {
+          d = parseInt(parts[0], 10);
+          m = parseInt(parts[1], 10) - 1;
+          y = parseInt(parts[2], 10);
+        }
+        if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
+          return {
+            calDate: new Date(y, m, 1),
+            dayNumber: d,
+            iso: `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+          };
+        }
+      }
+    }
+    const today = new Date();
+    return {
+      calDate: new Date(today.getFullYear(), today.getMonth(), 1),
+      dayNumber: today.getDate(),
+      iso: `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    };
+  }, [initialDate, searchParams]);
 
+  // ─── Draft Management for Session Creation (Strictly Date-Scoped) ───
   const initialDraft = useMemo(() => {
     if (editSession) return null;
     try {
-      const key = `surfing_session_draft_${currentUser?.school_id || currentUser?.id || 'default'}`;
-      const raw = localStorage.getItem(key);
+      if (sessionStorage.getItem('surfing_session_draft_discarded') === 'true') {
+        sessionStorage.removeItem('surfing_session_draft_discarded');
+        return null;
+      }
+      // Strictly scope draft key to school AND date so assignments from one day never leak into an unassigned day!
+      const key = `surfing_session_draft_${currentUser?.school_id || currentUser?.id || 'default'}_${targetInitialDate.iso}`;
+      let raw = localStorage.getItem(key);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
+      // Validate that this draft actually belongs to the target date
+      if (parsed?.selectedSessionDateYYYYMMDD && parsed.selectedSessionDateYYYYMMDD !== targetInitialDate.iso) {
+        return null;
+      }
       const hasSlots = Object.keys(parsed?.slotStudentMap || {}).some(k => Array.isArray(parsed.slotStudentMap[k]) && parsed.slotStudentMap[k].length > 0);
       const hasGroups = Array.isArray(parsed?.trainingGroups) && parsed.trainingGroups.length > 0;
       if (parsed && (parsed.currentStep > 1 || hasSlots || hasGroups || (parsed.spotName && parsed.spotName.trim() !== ''))) {
@@ -428,7 +466,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       console.warn('Failed loading session draft', e);
     }
     return null;
-  }, [editSession, currentUser]);
+  }, [editSession, currentUser, targetInitialDate]);
 
   // Wizard Step State: 1 | 2 | 3
   const [currentStep, setCurrentStep] = useState(() => initialDraft?.currentStep || 1);
@@ -439,29 +477,56 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       const d = new Date(initialDraft.calendarDateStr);
       if (!isNaN(d.getTime())) return d;
     }
-    return new Date();
+    return targetInitialDate.calDate;
   });
-  const [selectedDayNumber, setSelectedDayNumber] = useState(() => initialDraft?.selectedDayNumber || new Date().getDate());
+  const [selectedDayNumber, setSelectedDayNumber] = useState(() => initialDraft?.selectedDayNumber || targetInitialDate.dayNumber);
   const [capacity, setCapacity] = useState(() => initialDraft?.capacity ?? 30);
   const [slotCapacityMap, setSlotCapacityMap] = useState(() => initialDraft?.slotCapacityMap || {});
 
-  // Initialize from initialDate or searchParams
+  // Normalized Session Date in YYYY-MM-DD
+  const selectedSessionDateYYYYMMDD = useMemo(() => {
+    const year = currentCalendarDate.getFullYear();
+    const month = String(currentCalendarDate.getMonth() + 1).padStart(2, '0');
+    const day = String(selectedDayNumber).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }, [currentCalendarDate, selectedDayNumber]);
+
+  // Formatted Date String
+  const formattedSessionDate = useMemo(() => {
+    const year = currentCalendarDate.getFullYear();
+    const monthName = currentCalendarDate.toLocaleString('default', { month: 'short' });
+    const dayName = new Date(year, currentCalendarDate.getMonth(), selectedDayNumber).toLocaleString('default', { weekday: 'long' });
+    return `${dayName}, ${monthName} ${selectedDayNumber}, ${year}`;
+  }, [currentCalendarDate, selectedDayNumber]);
+
+  // Dynamic draft key strictly scoped to current user/school and selected date
+  const draftKey = useMemo(() => {
+    return `surfing_session_draft_${currentUser?.school_id || currentUser?.id || 'default'}_${selectedSessionDateYYYYMMDD}`;
+  }, [currentUser, selectedSessionDateYYYYMMDD]);
+
+  // Handle Calendar Day Selection in Step 1
+  const handleSelectCalendarDay = (day) => {
+    if (day === selectedDayNumber) return;
+    setSelectedDayNumber(day);
+    // When switching dates in Step 1, reset groups & slot mapping so previous day's grouping doesn't spill over
+    if (!editSession) {
+      setTrainingGroups([]);
+      setSlotStudentMap({});
+      setStep3CheckedStudentIdsBySlot({});
+      setActiveDropGroupId(null);
+      userClearedGroupsRef.current = false;
+      lastSyncedDateRef.current = null;
+    }
+  };
+
+  // Initialize from initialDate or searchParams when prop changes
   useEffect(() => {
     if (initialDraft) return;
-    const targetDateStr = initialDate || searchParams.get('date');
-    if (targetDateStr) {
-      const parts = targetDateStr.split('-');
-      if (parts.length === 3) {
-        const y = parseInt(parts[0], 10);
-        const m = parseInt(parts[1], 10) - 1;
-        const d = parseInt(parts[2], 10);
-        if (!isNaN(y) && !isNaN(m) && !isNaN(d)) {
-          setCurrentCalendarDate(new Date(y, m, 1));
-          setSelectedDayNumber(d);
-        }
-      }
+    if (targetInitialDate) {
+      setCurrentCalendarDate(targetInitialDate.calDate);
+      setSelectedDayNumber(targetInitialDate.dayNumber);
     }
-  }, [initialDate, searchParams, initialDraft]);
+  }, [targetInitialDate, initialDraft]);
 
   // Dynamic slots loaded directly from Session Configuration
   const [slots, setSlots] = useState(() => {
@@ -582,8 +647,11 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const [dbLeaveRequests, setDbLeaveRequests] = useState([]);
 
   // ─── Draft Auto-Saving Helpers ───
+  const isDiscardingRef = useRef(false);
+  const userClearedGroupsRef = useRef(false);
+
   const hasProgressToSave = useMemo(() => {
-    if (editSession) return false;
+    if (editSession || isDiscardingRef.current || userClearedGroupsRef.current) return false;
     const hasSlots = Object.keys(slotStudentMap).some(k => Array.isArray(slotStudentMap[k]) && slotStudentMap[k].length > 0);
     const hasGroups = Array.isArray(trainingGroups) && trainingGroups.length > 0;
     const isPastStep1 = currentStep > 1;
@@ -592,7 +660,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   }, [editSession, slotStudentMap, trainingGroups, currentStep, spotName]);
 
   const saveCurrentDraftToStorage = useCallback(() => {
-    if (editSession) return;
+    if (editSession || isDiscardingRef.current || userClearedGroupsRef.current) return;
     const hasSlots = Object.keys(slotStudentMap).some(k => Array.isArray(slotStudentMap[k]) && slotStudentMap[k].length > 0);
     const hasGroups = Array.isArray(trainingGroups) && trainingGroups.length > 0;
     const isPastStep1 = currentStep > 1;
@@ -675,7 +743,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   // Ensure draft is saved when closing tab or navigating away
   useEffect(() => {
     const handleBeforeUnload = () => {
-      if (!editSession && hasProgressToSave) {
+      if (!editSession && hasProgressToSave && !isDiscardingRef.current && !userClearedGroupsRef.current) {
         saveCurrentDraftToStorage();
       }
     };
@@ -768,9 +836,26 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
   // User chose: Don't save (discard) & close
   const confirmDiscardAndClose = () => {
+    isDiscardingRef.current = true;
+    userClearedGroupsRef.current = true;
     try {
-      localStorage.removeItem(draftKey);
+      Object.keys(localStorage).forEach(key => {
+        if (key.startsWith('surfing_session_draft')) {
+          localStorage.removeItem(key);
+        }
+      });
+      sessionStorage.setItem('surfing_session_draft_discarded', 'true');
     } catch (e) {}
+
+    // Reset in-memory wizard states immediately
+    setTrainingGroups([]);
+    setSlotStudentMap({});
+    setSelectedSlotId(null);
+    setStep3CheckedStudentIdsBySlot({});
+    setSpotName('');
+    setCurrentStep(1);
+    setActiveDropGroupId(null);
+
     setShowCloseConfirmModal(false);
     if (isModal && modalHistoryPushedRef.current) {
       modalHistoryPushedRef.current = false;
@@ -842,22 +927,6 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     };
   }, [isModal, editSession, navigate]);
 
-  // Formatted Date String
-  const formattedSessionDate = useMemo(() => {
-    const year = currentCalendarDate.getFullYear();
-    const monthName = currentCalendarDate.toLocaleString('default', { month: 'short' });
-    const dayName = new Date(year, currentCalendarDate.getMonth(), selectedDayNumber).toLocaleString('default', { weekday: 'long' });
-    return `${dayName}, ${monthName} ${selectedDayNumber}, ${year}`;
-  }, [currentCalendarDate, selectedDayNumber]);
-
-  // Normalized Session Date in YYYY-MM-DD
-  const selectedSessionDateYYYYMMDD = useMemo(() => {
-    const year = currentCalendarDate.getFullYear();
-    const month = String(currentCalendarDate.getMonth() + 1).padStart(2, '0');
-    const day = String(selectedDayNumber).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  }, [currentCalendarDate, selectedDayNumber]);
-
   // Check if an instructor is on approved leave on a given date (or current selected session date)
   const getInstructorLeaveOnDate = useCallback((inst, dateStr) => {
     if (!inst) return null;
@@ -901,47 +970,103 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   }, [dbLeaveRequests, selectedSessionDateYYYYMMDD]);
 
   // Match existing DB sessions on selected session date
-  const existingScheduledStudentNamesOnDate = useMemo(() => {
-    if (!existingDbSessions || existingDbSessions.length === 0) return new Set();
-    const setNames = new Set();
+  const existingDbDateSessions = useMemo(() => {
+    if (!existingDbSessions || existingDbSessions.length === 0) return [];
     const currentYear = currentCalendarDate.getFullYear();
     const currentMonth = currentCalendarDate.getMonth();
     const selectedDateObj = new Date(currentYear, currentMonth, selectedDayNumber);
     const selectedISO = selectedDateObj.toISOString().split('T')[0];
 
-    existingDbSessions.forEach(sess => {
+    return existingDbSessions.filter(sess => {
       const sessDateStr = (sess.date || '').toString();
-      let isMatch = false;
-
       if (sessDateStr.toLowerCase().includes(formattedSessionDate.toLowerCase()) || formattedSessionDate.toLowerCase().includes(sessDateStr.toLowerCase())) {
-        isMatch = true;
-      } else {
-        try {
-          const dObj = new Date(sessDateStr);
-          if (!isNaN(dObj.getTime())) {
-            const dISO = dObj.toISOString().split('T')[0];
-            if (dISO === selectedISO) isMatch = true;
-          }
-        } catch (e) {}
+        return true;
+      }
+      try {
+        const dObj = new Date(sessDateStr);
+        if (!isNaN(dObj.getTime())) {
+          return dObj.toISOString().split('T')[0] === selectedISO;
+        }
+      } catch (e) {}
+      return false;
+    });
+  }, [existingDbSessions, formattedSessionDate, currentCalendarDate, selectedDayNumber]);
+
+  // Map student name / guest name / student id -> existing session scheduled details (group name, time, instructor)
+  const existingDbScheduledInfoMapOnDate = useMemo(() => {
+    const map = new Map();
+    if (!existingDbDateSessions || existingDbDateSessions.length === 0) return map;
+
+    existingDbDateSessions.forEach(sess => {
+      const groupName = sess.group_name || sess.groupName || '';
+      const timeStr = sess.time || '';
+      const instructorName = sess.instructor || sess.instructor_name || '';
+      const instructorId = sess.instructor_id || null;
+      const info = {
+        sessionId: sess.id,
+        groupName: groupName,
+        time: timeStr,
+        instructorName: instructorName,
+        instructorId: instructorId,
+        session: sess
+      };
+
+      if (sess.guest_name && sess.guest_name.trim()) {
+        map.set(sess.guest_name.toLowerCase().trim(), info);
+      }
+      if (sess.student_name && sess.student_name.trim()) {
+        map.set(sess.student_name.toLowerCase().trim(), info);
+      }
+      if (sess.student && sess.student.trim()) {
+        map.set(sess.student.toLowerCase().trim(), info);
+      }
+      if (sess.student_id != null) {
+        map.set(String(sess.student_id), info);
       }
 
-      if (isMatch) {
-        if (sess.student) setNames.add(sess.student.toLowerCase().trim());
-        if (sess.student_name) setNames.add(sess.student_name.toLowerCase().trim());
-        if (Array.isArray(sess.sessions)) {
-          sess.sessions.forEach(sub => {
-            if (sub.student) setNames.add(sub.student.toLowerCase().trim());
-            if (sub.student_name) setNames.add(sub.student_name.toLowerCase().trim());
-          });
-        }
+      if (Array.isArray(sess.sessions)) {
+        sess.sessions.forEach(sub => {
+          const subInfo = {
+            sessionId: sub.id || sess.id,
+            groupName: sub.group_name || sub.groupName || groupName,
+            time: sub.time || timeStr,
+            instructorName: sub.instructor || instructorName,
+            instructorId: sub.instructor_id || instructorId,
+            session: sub
+          };
+          if (sub.guest_name && sub.guest_name.trim()) map.set(sub.guest_name.toLowerCase().trim(), subInfo);
+          if (sub.student_name && sub.student_name.trim()) map.set(sub.student_name.toLowerCase().trim(), subInfo);
+          if (sub.student && sub.student.trim()) map.set(sub.student.toLowerCase().trim(), subInfo);
+          if (sub.student_id != null) map.set(String(sub.student_id), subInfo);
+        });
+      }
+    });
+
+    return map;
+  }, [existingDbDateSessions]);
+
+  const existingScheduledStudentNamesOnDate = useMemo(() => {
+    const setNames = new Set();
+    existingDbDateSessions.forEach(sess => {
+      if (sess.student) setNames.add(sess.student.toLowerCase().trim());
+      if (sess.student_name) setNames.add(sess.student_name.toLowerCase().trim());
+      if (sess.guest_name) setNames.add(sess.guest_name.toLowerCase().trim());
+      if (Array.isArray(sess.sessions)) {
+        sess.sessions.forEach(sub => {
+          if (sub.student) setNames.add(sub.student.toLowerCase().trim());
+          if (sub.student_name) setNames.add(sub.student_name.toLowerCase().trim());
+          if (sub.guest_name) setNames.add(sub.guest_name.toLowerCase().trim());
+        });
       }
     });
     return setNames;
-  }, [existingDbSessions, formattedSessionDate, currentCalendarDate, selectedDayNumber]);
+  }, [existingDbDateSessions]);
 
   const isStudentScheduledInDbOnDate = (student) => {
-    if (!student || !student.name) return false;
-    return existingScheduledStudentNamesOnDate.has(student.name.toLowerCase().trim());
+    if (!student) return false;
+    const nameLow = (student.name || '').toLowerCase().trim();
+    const idStr = String(student.id);
+    return existingScheduledStudentNamesOnDate.has(nameLow) || existingDbScheduledInfoMapOnDate.has(nameLow) || existingDbScheduledInfoMapOnDate.has(idStr);
   };
 
   // Fetch real students & instructors from active school
@@ -1016,6 +1141,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
               startDate: s.start_date || '',
               end_date: s.end_date || '',
               endDate: s.end_date || '',
+              instructor_id: s.instructor_id || null,
+              instructor: s.instructor || '',
               isReal: true,
               isGuest: false,
               age: s.age,
@@ -1056,6 +1183,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                   startDate: s.start_date || '',
                   end_date: s.end_date || '',
                   endDate: s.end_date || '',
+                  instructor_id: s.instructor_id || null,
+                  instructor: s.instructor || '',
                   isReal: true,
                   isGuest: true,
                   age: g.age,
@@ -1332,14 +1461,62 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       setSlotStudentMap({ [targetSlotId]: matchedIds });
     }
 
-    // 4. Pre-populate trainingGroups with existing group name and instructor
+    // 4. Pre-populate trainingGroups with existing group name and ALL assigned instructors
     const existingGroupName = editSession.groupName || editSession.group_name || 'Group A';
     const existingInstructor = editSession.instructor || '';
     const existingInstructorId = editSession.instructor_id || null;
-    const matchedInstructor = dbInstructors.find(i =>
-      String(i.id) === String(existingInstructorId) ||
-      (i.name || '').toLowerCase().trim() === existingInstructor.toLowerCase().trim()
-    );
+
+    // Collect all instructor IDs from editSession
+    let preloadedCoachIds = [];
+    if (Array.isArray(editSession.instructor_ids) && editSession.instructor_ids.length > 0) {
+      preloadedCoachIds = editSession.instructor_ids.map(Number).filter(id => !isNaN(id) && id > 0);
+    }
+    // Also check sessions array inside editSession if available
+    if (Array.isArray(editSession.sessions)) {
+      editSession.sessions.forEach(s => {
+        if (Array.isArray(s.instructor_ids)) {
+          s.instructor_ids.forEach(id => {
+            const num = Number(id);
+            if (!isNaN(num) && num > 0 && !preloadedCoachIds.includes(num)) preloadedCoachIds.push(num);
+          });
+        } else if (s.instructor_id) {
+          const num = Number(s.instructor_id);
+          if (!isNaN(num) && num > 0 && !preloadedCoachIds.includes(num)) preloadedCoachIds.push(num);
+        }
+      });
+    }
+
+    // Also parse comma-separated instructor names in editSession.instructor
+    const coachNamesToFind = [];
+    if (existingInstructor) {
+      existingInstructor.split(',').forEach(n => {
+        const clean = n.trim().toLowerCase();
+        if (clean && !coachNamesToFind.includes(clean)) coachNamesToFind.push(clean);
+      });
+    }
+    // Also check editSession.notes or session notes for "Coaches: Vishal, Dhanya"
+    const notesStr = editSession.notes || (Array.isArray(editSession.sessions) ? editSession.sessions.map(s => s.notes || '').join(' ') : '');
+    const coachMatch = notesStr.match(/Coaches:\s*([^-\n]+)/i);
+    if (coachMatch && coachMatch[1]) {
+      coachMatch[1].split(',').forEach(n => {
+        const clean = n.trim().toLowerCase();
+        if (clean && clean !== 'staff' && !coachNamesToFind.includes(clean)) coachNamesToFind.push(clean);
+      });
+    }
+
+    coachNamesToFind.forEach(cName => {
+      const match = (dbInstructors || []).find(ins => (ins.name || '').toLowerCase().trim() === cName);
+      if (match && !preloadedCoachIds.includes(match.id)) {
+        preloadedCoachIds.push(match.id);
+      }
+    });
+
+    if (existingInstructorId) {
+      const num = Number(existingInstructorId);
+      if (!isNaN(num) && num > 0 && !preloadedCoachIds.includes(num)) {
+        preloadedCoachIds.unshift(num);
+      }
+    }
 
     if (matchedIds.length > 0 || sessionList.length > 0) {
       setTrainingGroups([
@@ -1350,8 +1527,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           level: 'General',
           slotId: targetSlotId || null,
           studentIds: matchedIds,
-          assignedInstructorId: matchedInstructor?.id || existingInstructorId || null,
-          assignedInstructorIds: matchedInstructor ? [matchedInstructor.id] : (existingInstructorId ? [existingInstructorId] : []),
+          assignedInstructorId: preloadedCoachIds[0] || null,
+          assignedInstructorIds: preloadedCoachIds,
         }
       ]);
       setActiveDropGroupId('group-edit-1');
@@ -1360,6 +1537,196 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     // 5. Jump directly to Step 3
     setCurrentStep(3);
   }, [editSession, editSessionPreloaded, dbStudents, dbInstructors, slots]);
+
+  // ── Helper to ensure groups are always strictly sorted by slot and alphabetically: Group A, Group B, Group C... ──
+  const sortGroupsInOrder = (groupsList) => {
+    if (!Array.isArray(groupsList)) return [];
+    return [...groupsList].sort((a, b) => {
+      // 1. If slots differ and slots array available, order by slot index
+      if (String(a.slotId) !== String(b.slotId) && slots && slots.length > 0) {
+        const slotIndexA = slots.findIndex(s => String(s.id) === String(a.slotId));
+        const slotIndexB = slots.findIndex(s => String(s.id) === String(b.slotId));
+        if (slotIndexA !== -1 && slotIndexB !== -1 && slotIndexA !== slotIndexB) {
+          return slotIndexA - slotIndexB;
+        }
+      }
+      // 2. Order naturally by Group Name: Group A, Group B, Group C, Group D...
+      const nameA = (a.name || '').trim();
+      const nameB = (b.name || '').trim();
+      return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+    });
+  };
+
+  // ── Existing DB Groups for Selected Date ──
+  const existingDbGroups = useMemo(() => {
+    if (!existingDbDateSessions || existingDbDateSessions.length === 0 || allPoolStudents.length === 0) return [];
+    
+    const groupsMap = new Map();
+    
+    existingDbDateSessions.forEach(sess => {
+      const groupName = sess.group_name || sess.groupName || 'Group A';
+      const sessTime = (sess.time || '').trim().toLowerCase();
+      
+      const matchedSlot = slots.find(s => {
+        const sTime = (s.time || s.startTime || '').trim().toLowerCase();
+        return sTime === sessTime || sessTime.startsWith(sTime) || sTime.startsWith(sessTime.split(' - ')[0].trim());
+      }) || slots[0];
+      
+      const slotId = matchedSlot?.id || 'slot-1';
+      const key = `${slotId}__${groupName}`;
+      
+      if (!groupsMap.has(key)) {
+        groupsMap.set(key, {
+          id: `db-group-${slotId}-${groupName.replace(/\s+/g, '-').toLowerCase()}`,
+          name: groupName,
+          day: 'Day 1',
+          level: sess.type || 'Intermediate',
+          slotId: slotId,
+          studentIds: [],
+          assignedInstructorId: sess.instructor_id || null,
+          assignedInstructorIds: sess.instructor_id ? [sess.instructor_id] : [],
+          isExistingDbGroup: true,
+          existingSessionIds: []
+        });
+      }
+      
+      const grpObj = groupsMap.get(key);
+      if (sess.id && !grpObj.existingSessionIds.includes(sess.id)) {
+        grpObj.existingSessionIds.push(sess.id);
+      }
+      // Collect all coaches from this sess
+      const sessCoachIds = [];
+      if (Array.isArray(sess.instructor_ids)) {
+        sess.instructor_ids.forEach(cid => {
+          const num = Number(cid);
+          if (!isNaN(num) && num > 0 && !sessCoachIds.includes(num)) sessCoachIds.push(num);
+        });
+      }
+      if (sess.instructor_id) {
+        const num = Number(sess.instructor_id);
+        if (!isNaN(num) && num > 0 && !sessCoachIds.includes(num)) sessCoachIds.push(num);
+      }
+      if (sess.instructor) {
+        sess.instructor.split(',').forEach(n => {
+          const cl = n.trim().toLowerCase();
+          const match = (dbInstructors || []).find(ins => (ins.name || '').toLowerCase().trim() === cl);
+          if (match && !sessCoachIds.includes(match.id)) sessCoachIds.push(match.id);
+        });
+      }
+      const sNotes = sess.notes || '';
+      const cMatch = sNotes.match(/Coaches:\s*([^-\n]+)/i);
+      if (cMatch && cMatch[1]) {
+        cMatch[1].split(',').forEach(n => {
+          const cl = n.trim().toLowerCase();
+          if (cl && cl !== 'staff') {
+            const match = (dbInstructors || []).find(ins => (ins.name || '').toLowerCase().trim() === cl);
+            if (match && !sessCoachIds.includes(match.id)) sessCoachIds.push(match.id);
+          }
+        });
+      }
+      sessCoachIds.forEach(cid => {
+        if (!grpObj.assignedInstructorIds.includes(cid)) {
+          grpObj.assignedInstructorIds.push(cid);
+        }
+      });
+      if (!grpObj.assignedInstructorId && grpObj.assignedInstructorIds.length > 0) {
+        grpObj.assignedInstructorId = grpObj.assignedInstructorIds[0];
+      }
+      
+      // Match student from pool
+      let matchedStudent = null;
+      if (sess.guest_name && sess.guest_name.trim()) {
+        const gNameLow = sess.guest_name.trim().toLowerCase();
+        matchedStudent = allPoolStudents.find(s => s.isGuest && (s.name.toLowerCase().trim() === gNameLow || gNameLow.includes(s.name.toLowerCase().trim())));
+      }
+      if (!matchedStudent && (sess.student_name || sess.student)) {
+        const sNameLow = (sess.student_name || sess.student).trim().toLowerCase();
+        matchedStudent = allPoolStudents.find(s => !s.isGuest && (s.name.toLowerCase().trim() === sNameLow || sNameLow.includes(s.name.toLowerCase().trim())));
+      }
+      if (!matchedStudent && sess.student_id != null) {
+        matchedStudent = allPoolStudents.find(s => !s.isGuest && String(s.id) === String(sess.student_id));
+      }
+      
+      if (matchedStudent && !grpObj.studentIds.includes(matchedStudent.id)) {
+        grpObj.studentIds.push(matchedStudent.id);
+      }
+    });
+    
+    return sortGroupsInOrder(Array.from(groupsMap.values()));
+  }, [existingDbDateSessions, slots, allPoolStudents]);
+
+  // Synchronize existing DB groups into wizard state (slotStudentMap & trainingGroups)
+  const lastSyncedDateRef = useRef(null);
+
+  useEffect(() => {
+    if (editSession) return;
+    if (userClearedGroupsRef.current) return;
+    if (sessionStorage.getItem('surfing_session_draft_discarded') === 'true') return;
+    if (existingDbGroups.length === 0) return;
+    if (lastSyncedDateRef.current === formattedSessionDate) return;
+
+    // Populate / merge into trainingGroups
+    setTrainingGroups(prev => {
+      let merged;
+      if (prev.length === 0) {
+        merged = existingDbGroups;
+      } else {
+        const existingKeys = new Set(prev.map(g => `${g.slotId}__${(g.name || '').toLowerCase()}`));
+        const toAdd = existingDbGroups.filter(g => !existingKeys.has(`${g.slotId}__${(g.name || '').toLowerCase()}`));
+        merged = toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+      }
+      return sortGroupsInOrder(merged);
+    });
+
+
+    // Populate slotStudentMap
+    setSlotStudentMap(prevMap => {
+      const newMap = { ...prevMap };
+      existingDbGroups.forEach(grp => {
+        if (grp.slotId && grp.studentIds.length > 0) {
+          const currentInSlot = newMap[grp.slotId] || [];
+          newMap[grp.slotId] = Array.from(new Set([...currentInSlot, ...grp.studentIds]));
+        }
+      });
+      return newMap;
+    });
+
+    if (existingDbGroups.length > 0 && existingDbGroups[0].slotId) {
+      setSelectedSlotId(existingDbGroups[0].slotId);
+      setStep3SlotFilter(existingDbGroups[0].slotId);
+    }
+
+    lastSyncedDateRef.current = formattedSessionDate;
+  }, [existingDbGroups, formattedSessionDate, editSession]);
+
+  // Helper to get any student's assigned group name (from wizard state or DB sessions)
+  const getStudentAssignedGroup = (student) => {
+    if (!student) return null;
+    // 1. Wizard groups
+    const inWizard = trainingGroups.find(g => (g.studentIds || []).some(id => String(id) === String(student.id)));
+    if (inWizard) {
+      return {
+        name: inWizard.name,
+        slotId: inWizard.slotId,
+        source: 'wizard'
+      };
+    }
+
+    // 2. Existing scheduled DB sessions on this date
+    const nameKey = (student.name || '').toLowerCase().trim();
+    const idKey = String(student.id);
+    const dbInfo = existingDbScheduledInfoMapOnDate.get(nameKey) || existingDbScheduledInfoMapOnDate.get(idKey);
+    if (dbInfo && dbInfo.groupName) {
+      return {
+        name: dbInfo.groupName,
+        time: dbInfo.time,
+        instructorName: dbInfo.instructorName,
+        source: 'db'
+      };
+    }
+
+    return null;
+  };
 
   // Sync with Session Configuration changes (live in same tab or across tabs)
   useEffect(() => {
@@ -1611,9 +1978,23 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   // Next / Prev Month
   const handlePrevMonth = () => {
     setCurrentCalendarDate(new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth() - 1, 1));
+    if (!editSession) {
+      setTrainingGroups([]);
+      setSlotStudentMap({});
+      setStep3CheckedStudentIdsBySlot({});
+      setActiveDropGroupId(null);
+      lastSyncedDateRef.current = null;
+    }
   };
   const handleNextMonth = () => {
     setCurrentCalendarDate(new Date(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth() + 1, 1));
+    if (!editSession) {
+      setTrainingGroups([]);
+      setSlotStudentMap({});
+      setStep3CheckedStudentIdsBySlot({});
+      setActiveDropGroupId(null);
+      lastSyncedDateRef.current = null;
+    }
   };
 
 
@@ -1888,10 +2269,12 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       });
   }, [importedStudents, step3DayFilter, step3StatusFilter, step3LevelFilter, step3GenderFilter, step3SwimmingFilter, step3SlotFilter, slotStudentMap, studentSearch, trainingGroups, editSession]);
 
-  // Step 3: Training groups filtered by slot
+  // Step 3: Training groups filtered by slot (strictly ordered Group A, Group B, Group C...)
   const displayedTrainingGroups = useMemo(() => {
-    if (editSession || step3SlotFilter === 'ALL') return trainingGroups;
-    return trainingGroups.filter(g => String(g.slotId || slots[0]?.id) === String(step3SlotFilter));
+    const list = (editSession || step3SlotFilter === 'ALL')
+      ? trainingGroups
+      : trainingGroups.filter(g => String(g.slotId || slots[0]?.id) === String(step3SlotFilter));
+    return sortGroupsInOrder(list);
   }, [trainingGroups, step3SlotFilter, slots, editSession]);
 
   // Step 3: Current slot students count and assigned instructors count for Ratio display
@@ -2030,8 +2413,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
   // Helper to re-index group letters per slot so they always stay sequential (Group A, Group B, Group C...)
   const reindexGroups = (groupsList) => {
+    const sorted = sortGroupsInOrder(groupsList);
     const slotCounters = {};
-    return groupsList.map(g => {
+    return sorted.map(g => {
       const slotKey = String(g.slotId || slots[0]?.id || 'default');
       const count = slotCounters[slotKey] || 0;
       slotCounters[slotKey] = count + 1;
@@ -2098,6 +2482,19 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     });
     setActiveDropGroupId(newGroup.id);
     setStep3CheckedStudentIds([]);
+
+    // Auto-scroll smoothly to the newly created group card and focus it
+    setTimeout(() => {
+      const el = document.getElementById(`ns-grp-card-${newGroup.id}`);
+      const listContainer = document.querySelector('.ns-training-groups-list');
+      if (listContainer && el) {
+        const targetTop = el.offsetTop - listContainer.offsetTop;
+        listContainer.scrollTo({ top: Math.max(0, targetTop - 12), behavior: 'smooth' });
+      }
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }, 100);
   };
 
   // Auto-assign individual coach to any created or unassigned training groups
@@ -2140,15 +2537,30 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
   // Clear all groups for fresh manual creation (scoped to active slot)
   const clearAllGroups = () => {
+    userClearedGroupsRef.current = true;
+    const currentSlotId = step3SlotFilter !== 'ALL' ? step3SlotFilter : (selectedSlotId || slots[0]?.id);
     if (step3SlotFilter !== 'ALL' && !editSession) {
       setTrainingGroups(prev => {
-        const remaining = prev.filter(g => String(g.slotId || slots[0]?.id) !== String(step3SlotFilter));
+        const remaining = prev.filter(g => String(g.slotId || slots[0]?.id) !== String(currentSlotId));
         return reindexGroups(remaining);
       });
+      // Clear students in slotStudentMap for this slot so they return to unassigned list
+      setSlotStudentMap(prev => ({
+        ...prev,
+        [currentSlotId]: []
+      }));
     } else {
       setTrainingGroups([]);
+      setSlotStudentMap({});
     }
     setActiveDropGroupId(null);
+    try {
+      Object.keys(localStorage).forEach(key => {
+        if (key.startsWith('surfing_session_draft')) {
+          localStorage.removeItem(key);
+        }
+      });
+    } catch (e) {}
   };
 
   // Remove individual student from a group
@@ -2188,6 +2600,115 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     }
     return null;
   };
+
+  // Helper: Find previous / Day 1 coach(es) for students inside a training group
+  const getPreviousCoachesForGroup = useCallback((groupStudents) => {
+    if (!groupStudents || groupStudents.length === 0) return [];
+
+    const coachMap = new Map(); // key: coachId -> { coach, studentNames: Set, count: number }
+    const targetDateObj = parseLocalDateOnly(selectedSessionDateYYYYMMDD);
+
+    groupStudents.forEach(st => {
+      let foundCoach = null;
+
+      // 1. Look in existingDbSessions for earlier sessions (strictly prior to selected date)
+      if (Array.isArray(existingDbSessions) && existingDbSessions.length > 0) {
+        const studentNameClean = (st.name || '').toLowerCase().trim();
+        const parentNameClean = (st.parentStudentName || '').toLowerCase().trim();
+        const studentIdStr = st.id != null ? String(st.id) : null;
+        const parentIdStr = st.parentStudentId != null ? String(st.parentStudentId) : null;
+
+        const matchedSessions = existingDbSessions.filter(sess => {
+          const sessDateStr = sess.date || '';
+          if (targetDateObj && sessDateStr) {
+            const sessDateObj = parseLocalDateOnly(sessDateStr);
+            if (sessDateObj && sessDateObj.getTime() >= targetDateObj.getTime()) {
+              return false; // Skip sessions on or after current session date
+            }
+          }
+
+          const hasCoach = sess.instructor_id || (Array.isArray(sess.instructor_ids) && sess.instructor_ids.length > 0) || sess.instructor;
+          if (!hasCoach) return false;
+
+          const sName = (sess.student || sess.student_name || '').toLowerCase().trim();
+          const gName = (sess.guest_name || '').toLowerCase().trim();
+          const sidStr = sess.student_id != null ? String(sess.student_id) : null;
+
+          if (studentIdStr && sidStr === studentIdStr) return true;
+          if (parentIdStr && sidStr === parentIdStr) return true;
+          if (studentNameClean && (sName === studentNameClean || gName === studentNameClean)) return true;
+          if (parentNameClean && sName === parentNameClean) return true;
+
+          return false;
+        });
+
+        if (matchedSessions.length > 0) {
+          // Sort chronologically ascending so earliest (Day 1 / Mothal Naal) comes first
+          matchedSessions.sort((a, b) => {
+            const dA = parseLocalDateOnly(a.date)?.getTime() || 0;
+            const dB = parseLocalDateOnly(b.date)?.getTime() || 0;
+            return dA - dB;
+          });
+
+          const day1Sess = matchedSessions[0];
+          let cid = day1Sess.instructor_id;
+          if (!cid && Array.isArray(day1Sess.instructor_ids) && day1Sess.instructor_ids.length > 0) {
+            cid = day1Sess.instructor_ids[0];
+          }
+
+          if (cid) {
+            foundCoach = allInstructors.find(i => String(i.id) === String(cid));
+          }
+          if (!foundCoach && day1Sess.instructor) {
+            const firstCoachName = day1Sess.instructor.split(',')[0].trim().toLowerCase();
+            foundCoach = allInstructors.find(i => i.name.toLowerCase().trim() === firstCoachName);
+          }
+        }
+      }
+
+      // 2. If no past session found in DB, fallback to student's initial assigned instructor
+      if (!foundCoach) {
+        const studentInstId = st.instructor_id;
+        if (studentInstId) {
+          foundCoach = allInstructors.find(i => String(i.id) === String(studentInstId));
+        }
+        if (!foundCoach && st.instructor) {
+          const instName = String(st.instructor).split(',')[0].trim().toLowerCase();
+          foundCoach = allInstructors.find(i => i.name.toLowerCase().trim() === instName);
+        }
+      }
+
+      // 3. Fallback: check dbStudents by id or parentStudentId
+      if (!foundCoach && Array.isArray(dbStudents)) {
+        const origStudent = dbStudents.find(ds => String(ds.id) === String(st.id) || (st.parentStudentId && String(ds.id) === String(st.parentStudentId)));
+        if (origStudent && origStudent.instructor_id) {
+          foundCoach = allInstructors.find(i => String(i.id) === String(origStudent.instructor_id));
+        }
+      }
+
+      if (foundCoach) {
+        const key = String(foundCoach.id);
+        if (!coachMap.has(key)) {
+          coachMap.set(key, {
+            coach: foundCoach,
+            studentNames: new Set([st.name]),
+            count: 1
+          });
+        } else {
+          const entry = coachMap.get(key);
+          entry.studentNames.add(st.name);
+          entry.count = entry.studentNames.size;
+        }
+      }
+    });
+
+    return Array.from(coachMap.values())
+      .map(entry => ({
+        ...entry,
+        studentNames: Array.from(entry.studentNames)
+      }))
+      .sort((a, b) => b.count - a.count);
+  }, [existingDbSessions, selectedSessionDateYYYYMMDD, allInstructors, dbStudents]);
 
   // Assign Instructor to Group (Supports Multiple Coaches with Same-Time Conflict Prevention)
   const assignInstructorToGroup = (groupId, instructorId) => {
@@ -2306,7 +2827,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       return;
     }
 
-    const validGroups = trainingGroups.filter(grp => grp.studentIds && grp.studentIds.length > 0);
+    const validGroups = sortGroupsInOrder(trainingGroups.filter(grp => grp.studentIds && grp.studentIds.length > 0));
     if (validGroups.length === 0) {
       setUiAlert({
         title: 'No Students Assigned',
@@ -2447,6 +2968,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           student_ids: numericStudentIds,
           students_data: studentsData,
           instructor_id: primaryInstructorId,
+          instructor_ids: numericCoachIds,
+          instructor: assignedInstNames || coachName,
           location: spotName || 'Main Beach',
           condition: 'Moderate',
           type: grp.level || 'Intermediate',
@@ -2455,38 +2978,46 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           group_name: grp.name || '',
         };
 
-        // ── EDIT MODE: Update existing sessions via PUT ──
-        const existingSessions = editSession ? (Array.isArray(editSession.sessions) && editSession.sessions.length > 0 ? editSession.sessions : (editSession.id ? [editSession] : [])) : [];
-        if (existingSessions.length > 0) {
+        // ── EDIT / EXISTING DB GROUP MODE: Update existing sessions via PUT ──
+        const existingSessionIds = editSession
+          ? (Array.isArray(editSession.sessions) && editSession.sessions.length > 0 ? editSession.sessions.map(s => s.id) : (editSession.id ? [editSession.id] : []))
+          : (grp.existingSessionIds && grp.existingSessionIds.length > 0 ? grp.existingSessionIds : []);
+
+        if (existingSessionIds.length > 0) {
           const grpSlot = slots.find(s => s.id === grp.slotId) || selectedSlot;
-          const slotTimeStr = grpSlot ? (grpSlot.time || grpSlot.startTime) : (editSession.time || '08:30 AM');
+          const slotTimeStr = grpSlot ? (grpSlot.time || grpSlot.startTime) : (editSession?.time || '08:30 AM');
           const slotDuration = grpSlot?.duration ? parseInt(grpSlot.duration, 10) : 90;
           const coachIds = (grp.assignedInstructorIds && grp.assignedInstructorIds.length > 0)
             ? grp.assignedInstructorIds
             : (grp.assignedInstructorId ? [grp.assignedInstructorId] : []);
+          const numericCoachIds = coachIds
+            .map(cid => typeof cid === 'number' ? cid : parseInt(String(cid).replace(/\D/g, ''), 10))
+            .filter(id => !isNaN(id) && id > 0);
           const assignedCoachObjs = allInstructors.filter(i => coachIds.map(String).includes(String(i.id)));
           const assignedCoachObj = allInstructors.find(i => String(i.id) === String(grp.assignedInstructorId || coachIds[0]));
-          const coachName = assignedCoachObj?.name || editSession.instructor || 'Instructor';
+          const coachName = assignedCoachObj?.name || editSession?.instructor || 'Instructor';
           const assignedInstNames = assignedCoachObjs.length > 0 ? assignedCoachObjs.map(i => i.name).join(', ') : coachName;
-          const primaryInstructorId = coachIds[0] || null;
+          const primaryInstructorId = numericCoachIds[0] || coachIds[0] || null;
 
           const updatePayload = {
             date: formattedSessionDate,
             time: slotTimeStr,
             duration_mins: slotDuration,
             instructor_id: primaryInstructorId,
+            instructor_ids: numericCoachIds,
             instructor: assignedInstNames || coachName,
-            location: spotName || editSession.location || 'Main Beach',
-            group_name: grp.name || editSession.groupName || '',
+            notes: `${grp.name} (${slotTimeStr}) - Coaches: ${assignedInstNames || 'Staff'} - ${numericStudentIds.length} students`,
+            location: spotName || editSession?.location || 'Main Beach',
+            group_name: grp.name || editSession?.groupName || '',
           };
 
           await Promise.all(
-            existingSessions.map(sess =>
-              fetch(`${API}/api/sessions/${sess.id}`, {
+            existingSessionIds.map(sId =>
+              fetch(`${API}/api/sessions/${sId}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(updatePayload),
-              }).catch(err => console.error('Failed updating session', sess.id, err))
+              }).catch(err => console.error('Failed updating session', sId, err))
             )
           );
           publishedCount++;
@@ -2913,7 +3444,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                             }}
                             title={isPast ? 'Past dates cannot be selected' : undefined}
                             onClick={() => {
-                              if (cd.isCurrentMonth && !isPast) setSelectedDayNumber(cd.day);
+                              if (cd.isCurrentMonth && !isPast) handleSelectCalendarDay(cd.day);
                             }}
                           >
                             <span className="ns-cal-day-num" style={isPast ? { textDecoration: 'line-through' } : {}}>{cd.day}</span>
@@ -3425,10 +3956,13 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                               return newMap;
                             });
                           } else {
-                            // "filterla ennala select pani irukano avanga mattum select agidanum"
-                            // Automatically expand slot capacity if matching students exceed current capacity
-                            if (matchingFilteredIds.length > slotCap) {
-                              handleUpdateSlotCapacity(activeSlotId, matchingFilteredIds.length);
+                            // Keep previously selected students and ADD matching filtered students!
+                            const currentSelected = slotStudentMap[activeSlotId] || [];
+                            const combinedIds = Array.from(new Set([...currentSelected, ...matchingFilteredIds]));
+
+                            // Automatically expand slot capacity if combined students exceed current capacity
+                            if (combinedIds.length > slotCap) {
+                              handleUpdateSlotCapacity(activeSlotId, combinedIds.length);
                             }
 
                             setSlotStudentMap(prevMap => {
@@ -3439,8 +3973,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                   newMap[sId] = newMap[sId].filter(id => !matchingFilteredIds.includes(id));
                                 }
                               });
-                              // Assign ONLY the filtered students to this active slot
-                              newMap[activeSlotId] = [...matchingFilteredIds];
+                              // PRESERVE existing selected students and append new filtered students!
+                              const existingInActive = newMap[activeSlotId] || [];
+                              newMap[activeSlotId] = Array.from(new Set([...existingInActive, ...matchingFilteredIds]));
                               return newMap;
                             });
 
@@ -3453,8 +3988,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                             ].filter(Boolean).join(', ') || 'All';
 
                             setUiAlert({
-                              title: 'Selected by Filter',
-                              message: `Selected ${matchingFilteredIds.length} student(s) matching active filter (${filterInfo}).`,
+                              title: 'Added by Filter',
+                              message: `Added ${matchingFilteredIds.length} student(s) matching filter (${filterInfo}) to this slot without deselecting your previous selections.`,
                               type: 'success',
                               icon: '🎯'
                             });
@@ -3567,6 +4102,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                     const isOtherSlotStudent = assignment && String(assignment.slot.id) !== String(activeSlotId);
                     const isChecked = isCurrentSlotStudent;
                     const isScheduledInDb = isStudentScheduledInDbOnDate(student);
+                    const assignedGroup = getStudentAssignedGroup(student);
 
                     const cardStyle = () => {
                       const borderSide = isCurrentSlotStudent
@@ -3729,55 +4265,131 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
                         {/* Right Columns Container */}
                         <div className="ns-student-row-right">
-                          {/* Column 1: Slot Status (on mobile: HIDE if Not Selected to keep it simple & compact) */}
-                          <div className={`ns-student-col-slot ${(!isCurrentSlotStudent && !isOtherSlotStudent && !isScheduledInDb) ? 'ns-hide-mobile' : ''}`}>
+                          {/* Column 1: Slot Status & Group Badge (on mobile: HIDE if Not Selected & no group to keep it compact) */}
+                          <div className={`ns-student-col-slot ${(!isCurrentSlotStudent && !isOtherSlotStudent && !isScheduledInDb && !assignedGroup) ? 'ns-hide-mobile' : ''}`}>
                             {isCurrentSlotStudent && assignment ? (
-                              <span className="ns-slot-badge-assigned" style={{
-                                background: '#0F172A',
-                                color: '#FFFFFF',
-                                border: '1px solid #0F172A',
-                                padding: '3px 8px',
-                                borderRadius: '12px',
-                                fontSize: '11px',
-                                fontWeight: 700,
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '3px',
-                                whiteSpace: 'nowrap'
-                              }}>
-                                ✓ {assignment.slot.startTime || assignment.slot.time}
-                              </span>
+                              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
+                                <span className="ns-slot-badge-assigned" style={{
+                                  background: '#0F172A',
+                                  color: '#FFFFFF',
+                                  border: '1px solid #0F172A',
+                                  padding: '3px 8px',
+                                  borderRadius: '12px',
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px',
+                                  whiteSpace: 'nowrap'
+                                }}>
+                                  ✓ {assignment.slot.startTime || assignment.slot.time}
+                                </span>
+                                {assignedGroup && (
+                                  <span className="ns-student-group-tag" style={{
+                                    background: '#EEF2FF',
+                                    color: '#4338CA',
+                                    border: '1px solid #C7D2FE',
+                                    padding: '2.5px 8px',
+                                    borderRadius: '12px',
+                                    fontSize: '11px',
+                                    fontWeight: 700,
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    whiteSpace: 'nowrap',
+                                    boxShadow: '0 1px 2px rgba(67, 56, 202, 0.08)'
+                                  }} title={`Group: ${assignedGroup.name}`}>
+                                    👥 {assignedGroup.name}
+                                  </span>
+                                )}
+                              </div>
                             ) : isOtherSlotStudent && assignment ? (
-                              <span className="ns-slot-badge-other" style={{
-                                background: '#F1F5F9',
-                                color: '#64748B',
-                                border: '1px dashed #CBD5E1',
-                                padding: '3px 8px',
-                                borderRadius: '12px',
-                                fontSize: '11px',
-                                fontWeight: 600,
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '3px',
-                                whiteSpace: 'nowrap'
-                              }} title="Assigned to another time slot. Click row to move to this slot.">
-                                ⏰ {assignment.slot.startTime || assignment.slot.time}
-                              </span>
+                              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
+                                <span className="ns-slot-badge-other" style={{
+                                  background: '#F1F5F9',
+                                  color: '#64748B',
+                                  border: '1px dashed #CBD5E1',
+                                  padding: '3px 8px',
+                                  borderRadius: '12px',
+                                  fontSize: '11px',
+                                  fontWeight: 600,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px',
+                                  whiteSpace: 'nowrap'
+                                }} title="Assigned to another time slot. Click row to move to this slot.">
+                                  ⏰ {assignment.slot.startTime || assignment.slot.time}
+                                </span>
+                                {assignedGroup && (
+                                  <span className="ns-student-group-tag" style={{
+                                    background: '#F1F5F9',
+                                    color: '#475569',
+                                    border: '1px dashed #CBD5E1',
+                                    padding: '2.5px 8px',
+                                    borderRadius: '12px',
+                                    fontSize: '11px',
+                                    fontWeight: 700,
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    whiteSpace: 'nowrap'
+                                  }} title={`Group: ${assignedGroup.name}`}>
+                                    👥 {assignedGroup.name}
+                                  </span>
+                                )}
+                              </div>
                             ) : isScheduledInDb ? (
-                              <span className="ns-slot-badge-scheduled" style={{
-                                background: '#FEF3C7',
-                                color: '#B45309',
-                                border: '1px solid #FDE68A',
-                                padding: '3px 8px',
+                              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
+                                <span className="ns-slot-badge-scheduled" style={{
+                                  background: '#FEF3C7',
+                                  color: '#B45309',
+                                  border: '1px solid #FDE68A',
+                                  padding: '3px 8px',
+                                  borderRadius: '12px',
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px',
+                                  whiteSpace: 'nowrap'
+                                }}>
+                                  ✓ Sched
+                                </span>
+                                {assignedGroup && (
+                                  <span className="ns-student-group-tag" style={{
+                                    background: '#EEF2FF',
+                                    color: '#4338CA',
+                                    border: '1px solid #C7D2FE',
+                                    padding: '2.5px 8px',
+                                    borderRadius: '12px',
+                                    fontSize: '11px',
+                                    fontWeight: 700,
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    whiteSpace: 'nowrap',
+                                    boxShadow: '0 1px 2px rgba(67, 56, 202, 0.08)'
+                                  }} title={`Group: ${assignedGroup.name}${assignedGroup.time ? ` (${assignedGroup.time})` : ''}`}>
+                                    👥 {assignedGroup.name}
+                                  </span>
+                                )}
+                              </div>
+                            ) : assignedGroup ? (
+                              <span className="ns-student-group-tag" style={{
+                                background: '#EEF2FF',
+                                color: '#4338CA',
+                                border: '1px solid #C7D2FE',
+                                padding: '2.5px 8px',
                                 borderRadius: '12px',
                                 fontSize: '11px',
                                 fontWeight: 700,
                                 display: 'inline-flex',
                                 alignItems: 'center',
-                                gap: '3px',
-                                whiteSpace: 'nowrap'
-                              }}>
-                                ✓ Sched
+                                gap: '4px',
+                                whiteSpace: 'nowrap',
+                                boxShadow: '0 1px 2px rgba(67, 56, 202, 0.08)'
+                              }} title={`Group: ${assignedGroup.name}`}>
+                                👥 {assignedGroup.name}
                               </span>
                             ) : (
                               <span className="ns-slot-badge-empty ns-hide-mobile" style={{
@@ -4811,7 +5423,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                       )}
                     </div>
                   ) : (
-                    displayedTrainingGroups.map(grp => {
+                    <>
+                    {displayedTrainingGroups.map(grp => {
                       const assignedInstIds = grp.assignedInstructorIds || (grp.assignedInstructorId ? [grp.assignedInstructorId] : []);
                       const assignedInstructors = assignedInstIds
                         .map(id => allInstructors.find(i => String(i.id) === String(id)))
@@ -4841,6 +5454,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                       return (
                         <div
                           key={grp.id}
+                          id={`ns-grp-card-${grp.id}`}
                           className={`ns-group-card ${activeDropGroupId === grp.id ? 'focused' : ''} ${isDragOver ? 'drag-over' : ''}`}
                           onClick={() => setActiveDropGroupId(grp.id)}
                           onDragOver={(e) => {
@@ -4890,11 +5504,22 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                 }}
                                 title="Change group time slot"
                               >
-                                {slots.map((s, idx) => (
-                                  <option key={s.id} value={s.id}>
-                                    ⏰ {s.startTime || s.time || `Slot ${idx + 1}`}
-                                  </option>
-                                ))}
+                                {(() => {
+                                  const activeSlotsList = activeSlotsForDay.length > 0
+                                    ? activeSlotsForDay
+                                    : slots.filter(s => s.active !== false);
+                                  // Fallback: If current group slot is somehow outside activeSlotsList, include it
+                                  const currentSlot = slots.find(s => s.id === grp.slotId);
+                                  const slotsToRender = (currentSlot && !activeSlotsList.some(s => s.id === currentSlot.id))
+                                    ? [currentSlot, ...activeSlotsList]
+                                    : activeSlotsList;
+
+                                  return slotsToRender.map((s, idx) => (
+                                    <option key={s.id} value={s.id}>
+                                      ⏰ {s.startTime || s.time || `Slot ${idx + 1}`}
+                                    </option>
+                                  ));
+                                })()}
                               </select>
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
@@ -4988,19 +5613,84 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                         </span>
                                       )}
 
-                                      {grpSlot && (
-                                        <span style={{
-                                          fontSize: '9px',
-                                          fontWeight: 700,
-                                          color: grpTheme.primary,
-                                          background: `${grpTheme.primary}18`,
-                                          padding: '1px 5px',
-                                          borderRadius: '4px',
-                                          border: `1px solid ${grpTheme.primary}30`
-                                        }}>
-                                          {grpSlot.startTime || grpSlot.time}
-                                        </span>
-                                      )}
+                                      {/* Gender Badge */}
+                                      {(() => {
+                                        const isFemale = (s.gender || '').toLowerCase() === 'female';
+                                        return (
+                                          <span style={{
+                                            fontSize: '9.5px',
+                                            fontWeight: 700,
+                                            color: isFemale ? '#BE185D' : '#0369A1',
+                                            background: isFemale ? '#FDF2F8' : '#F0F9FF',
+                                            border: `1px solid ${isFemale ? '#FBCFE8' : '#BAE6FD'}`,
+                                            padding: '1px 5px',
+                                            borderRadius: '4px',
+                                            flexShrink: 0,
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '2px'
+                                          }} title={`Gender: ${s.gender || 'Male'}`}>
+                                            {isFemale ? '♀ Female' : '♂ Male'}
+                                          </span>
+                                        );
+                                      })()}
+
+                                      {/* Kids Badge (Kids-only, no Adult badge) */}
+                                      {(() => {
+                                        let stAge = (s.age !== undefined && s.age !== null && s.age !== '') ? Number(s.age) : null;
+                                        if ((stAge === null || isNaN(stAge)) && s.dob) {
+                                          try {
+                                            const bd = new Date(s.dob);
+                                            if (!isNaN(bd.getTime())) {
+                                              const now = new Date();
+                                              let a = now.getFullYear() - bd.getFullYear();
+                                              const m = now.getMonth() - bd.getMonth();
+                                              if (m < 0 || (m === 0 && now.getDate() < bd.getDate())) a--;
+                                              if (a >= 0) stAge = a;
+                                            }
+                                          } catch (e) {}
+                                        }
+                                        const isKid = (stAge !== null && !isNaN(stAge) && stAge > 0 && stAge < 16) ||
+                                          (s.division && /kid|child|junior/i.test(s.division)) ||
+                                          (s.category && /kid|child|junior/i.test(s.category));
+
+                                        if (!isKid) return null;
+
+                                        return (
+                                          <span style={{
+                                            fontSize: '9.5px',
+                                            fontWeight: 800,
+                                            color: '#7C3AED',
+                                            background: '#F5F3FF',
+                                            border: '1px solid #DDD6FE',
+                                            padding: '1px 5px',
+                                            borderRadius: '4px',
+                                            flexShrink: 0,
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '2px'
+                                          }} title={`Kid / Under 16${stAge ? ` (${stAge} yrs)` : ''}`}>
+                                            🧒 Kids
+                                          </span>
+                                        );
+                                      })()}
+
+                                      {/* Which Day Badge */}
+                                      <span style={{
+                                        fontSize: '9.5px',
+                                        fontWeight: 700,
+                                        color: '#047857',
+                                        background: '#ECFDF5',
+                                        border: '1px solid #A7F3D0',
+                                        padding: '1px 5px',
+                                        borderRadius: '4px',
+                                        flexShrink: 0,
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '2px'
+                                      }} title={`Day ${s.whichDay || 1}${s.totalDays ? ` of ${s.totalDays} Days` : ''}`}>
+                                        Day {s.whichDay || 1}{s.totalDays ? `/${s.totalDays}` : ''}
+                                      </span>
 
                                       <button
                                         type="button"
@@ -5123,38 +5813,233 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                 );
                               }
 
+                              // When NO coach is assigned yet to this group:
+                              // Check if students in this group had previous / Day 1 coach(es)
+                              const previousCoaches = getPreviousCoachesForGroup(grpStudents);
+
                               return (
-                                <div
-                                  className="ns-dropzone-box"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setActiveDropGroupId(grp.id);
-                                  }}
-                                  onDragOver={(e) => {
-                                    e.preventDefault();
-                                    e.dataTransfer.dropEffect = 'copy';
-                                    if (dragOverGroupId !== grp.id) setDragOverGroupId(grp.id);
-                                  }}
-                                  onDrop={(e) => handleDropOnGroup(e, grp.id)}
-                                  style={{
-                                    border: '1.5px dashed #CBD5E1',
-                                    borderRadius: '8px',
-                                    padding: '10px',
-                                    textAlign: 'center',
-                                    background: '#F8FAFC',
-                                    cursor: 'pointer',
-                                    fontSize: '12px',
-                                    color: '#64748B'
-                                  }}
-                                >
-                                  <span>🏄‍♂️ <strong>Assign Coach</strong> (Drag or click instructor)</span>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                  {previousCoaches.length > 0 && (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                                      {previousCoaches.map(({ coach, count, studentNames }) => {
+                                        const coachLeave = getInstructorLeaveOnDate(coach, selectedSessionDateYYYYMMDD);
+                                        const isCoachOnLeave = Boolean(coachLeave);
+                                        const conflict = getCoachSlotConflict(grp.id, coach.id);
+
+                                        return (
+                                          <div
+                                            key={`prev-coach-${grp.id}-${coach.id}`}
+                                            style={{
+                                              padding: '7px 10px',
+                                              background: '#F8FAFC',
+                                              border: '1.5px dashed #94A3B8',
+                                              borderRadius: '8px',
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              gap: '8px',
+                                              opacity: 0.55,
+                                              cursor: isCoachOnLeave ? 'not-allowed' : 'pointer',
+                                              transition: 'all 0.18s ease',
+                                              userSelect: 'none'
+                                            }}
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              if (!isCoachOnLeave) {
+                                                assignInstructorToGroup(grp.id, coach.id);
+                                              }
+                                            }}
+                                            title={
+                                              isCoachOnLeave
+                                                ? `${coach.name} is on leave on this date`
+                                                : conflict
+                                                ? `${coach.name} is already coaching ${conflict.conflictingGroup.name} at ${conflict.time}`
+                                                : `Click to assign ${coach.name} (Previous Day Coach for ${count} of ${grpStudents.length} students: ${studentNames.join(', ')})`
+                                            }
+                                            onMouseEnter={(e) => {
+                                              if (!isCoachOnLeave) {
+                                                e.currentTarget.style.opacity = '0.95';
+                                                e.currentTarget.style.borderColor = '#0D9488';
+                                                e.currentTarget.style.background = '#F0FDFA';
+                                              }
+                                            }}
+                                            onMouseLeave={(e) => {
+                                              e.currentTarget.style.opacity = '0.55';
+                                              e.currentTarget.style.borderColor = '#94A3B8';
+                                              e.currentTarget.style.background = '#F8FAFC';
+                                            }}
+                                          >
+                                            <UserAvatar src={coach.avatar} name={coach.name} size={26} />
+                                            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
+                                              <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
+                                                <span style={{ fontSize: '12px', fontWeight: 700, color: '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                  {coach.name}
+                                                </span>
+                                                <span style={{
+                                                  fontSize: '9.5px',
+                                                  background: '#F1F5F9',
+                                                  color: '#475569',
+                                                  padding: '1px 5px',
+                                                  borderRadius: '4px',
+                                                  fontWeight: 700,
+                                                  border: '1px solid #CBD5E1',
+                                                  display: 'inline-flex',
+                                                  alignItems: 'center',
+                                                  gap: '3px'
+                                                }}>
+                                                  🕒 Previous Coach ({count} student{count > 1 ? 's' : ''})
+                                                </span>
+                                              </div>
+                                              {isCoachOnLeave ? (
+                                                <span style={{ fontSize: '10px', color: '#DC2626', fontWeight: 600 }}>
+                                                  ⚠️ On Leave on this date ({coachLeave?.leave_type || 'Leave'})
+                                                </span>
+                                              ) : conflict ? (
+                                                <span style={{ fontSize: '10px', color: '#EA580C', fontWeight: 600 }}>
+                                                  ⚠️ Busy at this time ({conflict.conflictingGroup.name})
+                                                </span>
+                                              ) : (
+                                                <span style={{ fontSize: '10px', color: '#0F766E', fontWeight: 600 }}>
+                                                  💡 Click to assign this coach
+                                                </span>
+                                              )}
+                                            </div>
+
+                                            <button
+                                              type="button"
+                                              style={{
+                                                fontSize: '11px',
+                                                fontWeight: 700,
+                                                padding: '3px 8px',
+                                                borderRadius: '5px',
+                                                border: '1px solid #99F6E4',
+                                                background: '#F0FDFA',
+                                                color: '#0F766E',
+                                                cursor: isCoachOnLeave ? 'not-allowed' : 'pointer',
+                                                flexShrink: 0
+                                              }}
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                if (!isCoachOnLeave) {
+                                                  assignInstructorToGroup(grp.id, coach.id);
+                                                }
+                                              }}
+                                            >
+                                              + Assign
+                                            </button>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+
+                                  <div
+                                    className="ns-dropzone-box"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setActiveDropGroupId(grp.id);
+                                    }}
+                                    onDragOver={(e) => {
+                                      e.preventDefault();
+                                      e.dataTransfer.dropEffect = 'copy';
+                                      if (dragOverGroupId !== grp.id) setDragOverGroupId(grp.id);
+                                    }}
+                                    onDrop={(e) => handleDropOnGroup(e, grp.id)}
+                                    style={{
+                                      border: '1.5px dashed #CBD5E1',
+                                      borderRadius: '8px',
+                                      padding: '9px 10px',
+                                      textAlign: 'center',
+                                      background: '#F8FAFC',
+                                      cursor: 'pointer',
+                                      fontSize: '12px',
+                                      color: '#64748B'
+                                    }}
+                                  >
+                                    <span>🏄‍♂️ <strong>Assign Coach</strong> (Drag or click instructor)</span>
+                                  </div>
                                 </div>
                               );
                             })()}
                           </div>
                         </div>
                       );
-                    })
+                    })}
+
+                    {/* Dynamic Card to Create Second / Next Group Card - matches first group creation style */}
+                    {(() => {
+                      const nextIndex = displayedTrainingGroups.length + 1;
+                      const ordinalWords = ['First', 'Second', 'Third', 'Fourth', 'Fifth', 'Sixth', 'Seventh', 'Eighth', 'Ninth', 'Tenth'];
+                      const nextOrdinal = ordinalWords[nextIndex - 1] || `${nextIndex}th`;
+
+                      // Calculate next letter for active slot
+                      const activeSlotId = step3SlotFilter !== 'ALL' ? step3SlotFilter : (selectedSlotId || slots[0]?.id);
+                      const currentSlotGroups = trainingGroups.filter(g => String(g.slotId || slots[0]?.id) === String(activeSlotId));
+                      const usedLetters = new Set();
+                      currentSlotGroups.forEach(g => {
+                        const m = (g.name || '').match(/Group\s+([A-Za-z])/i);
+                        if (m) usedLetters.add(m[1].toUpperCase());
+                      });
+                      let code = 65;
+                      while (usedLetters.has(String.fromCharCode(code))) {
+                        code++;
+                      }
+                      const nextLetter = String.fromCharCode(code);
+
+                      return (
+                        <div
+                          style={{
+                            padding: '24px 20px',
+                            textAlign: 'center',
+                            color: '#64748B',
+                            background: '#FFFFFF',
+                            borderRadius: '12px',
+                            border: '1.5px dashed #CBD5E1',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'center',
+                            gap: '8px',
+                            marginTop: '4px'
+                          }}
+                        >
+                          <p style={{ margin: 0, fontWeight: 700, fontSize: '13.5px', color: '#0F172A' }}>
+                            Want to create another training group?
+                          </p>
+                          <p style={{ margin: '2px 0 10px 0', fontSize: '12px', color: '#64748B' }}>
+                            Click below to add <strong>Group {nextLetter}</strong> for this session.
+                          </p>
+                          <button
+                            type="button"
+                            className="ns-create-grp-btn"
+                            onClick={handleCreateGroup}
+                            style={{
+                              margin: '0 auto',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              padding: '9px 18px',
+                              fontSize: '13px',
+                              fontWeight: 700
+                            }}
+                            title={step3CheckedStudentIds.length > 0 ? `Create Group ${nextLetter} with ${step3CheckedStudentIds.length} selected student(s)` : `Create Group ${nextLetter}`}
+                          >
+                            <span>+ Create {nextOrdinal} Group (Group {nextLetter})</span>
+                            {step3CheckedStudentIds.length > 0 && (
+                              <span style={{
+                                background: 'rgba(255, 255, 255, 0.28)',
+                                color: '#FFFFFF',
+                                padding: '1px 7px',
+                                borderRadius: '10px',
+                                fontSize: '11px',
+                                fontWeight: 800
+                              }}>
+                                {step3CheckedStudentIds.length}
+                              </span>
+                            )}
+                          </button>
+                        </div>
+                      );
+                    })()}
+                    </>
                   )}
                 </div>
               </div>
@@ -7114,7 +7999,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           display: flex;
           flex-direction: column;
           gap: 14px;
-          min-height: 480px;
+          min-height: 600px;
         }
         .ns-col-head {
           display: flex;
@@ -7181,7 +8066,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           display: flex;
           flex-direction: column;
           gap: 8px;
-          max-height: 400px;
+          min-height: 480px;
+          max-height: calc(88vh - 220px);
           overflow-y: auto;
           overflow-x: auto;
           -webkit-overflow-scrolling: touch;
@@ -7374,8 +8260,25 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           display: flex;
           flex-direction: column;
           gap: 14px;
-          max-height: 440px;
+          min-height: 520px;
+          max-height: calc(88vh - 200px);
           overflow-y: auto;
+          scroll-behavior: smooth;
+          padding-bottom: 32px;
+        }
+        .ns-training-groups-list::-webkit-scrollbar {
+          width: 7px;
+        }
+        .ns-training-groups-list::-webkit-scrollbar-track {
+          background: #F1F5F9;
+          border-radius: 4px;
+        }
+        .ns-training-groups-list::-webkit-scrollbar-thumb {
+          background: #CBD5E1;
+          border-radius: 4px;
+        }
+        .ns-training-groups-list::-webkit-scrollbar-thumb:hover {
+          background: #94A3B8;
         }
         .ns-drag-grip {
           color: #94A3B8;
@@ -7553,7 +8456,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           display: flex;
           flex-direction: column;
           gap: 10px;
-          max-height: 440px;
+          min-height: 480px;
+          max-height: calc(88vh - 220px);
           overflow-y: auto;
         }
         .ns-inst-card {

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import Sidebar from '../components/Sidebar';
+import DateRangeFilterBar, { getIsoDate } from '../components/DateRangeFilterBar';
 
 const API = import.meta.env.VITE_API_URL || '';
 
@@ -49,6 +50,34 @@ function getStudentCourseTotalDays(student) {
   return 3;
 }
 
+function getStudentEndDate(student) {
+  if (!student) return '';
+  const rawStart = student.startDate || student.start_date;
+  if (!rawStart) return student.end_date || student.endDate || '';
+
+  const startDate = parseLocalDateOnly(rawStart);
+  if (!startDate) return student.end_date || student.endDate || '';
+
+  if (student.end_date) {
+    const parsedEnd = parseLocalDateOnly(student.end_date);
+    if (parsedEnd && parsedEnd >= startDate) {
+      const y = parsedEnd.getFullYear();
+      const m = String(parsedEnd.getMonth() + 1).padStart(2, '0');
+      const d = String(parsedEnd.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+  }
+
+  const totalDays = getStudentCourseTotalDays(student);
+  const end = new Date(startDate);
+  end.setDate(startDate.getDate() + (totalDays - 1));
+
+  const y = end.getFullYear();
+  const m = String(end.getMonth() + 1).padStart(2, '0');
+  const d = String(end.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 function isStudentActive(student, targetDate = new Date()) {
   if (!student) return false;
   const status = (student.status || student.approval_status || '').toLowerCase().trim();
@@ -70,6 +99,78 @@ function isStudentActive(student, targetDate = new Date()) {
   const dayNumber = diffDays + 1;
 
   return dayNumber >= 1 && dayNumber <= totalDays;
+}
+
+function isStudentActiveForRange(student, dateRange, sessionsList = []) {
+  if (!student) return false;
+  const status = (student.status || student.approval_status || '').toLowerCase().trim();
+  if (status === 'inactive' || status === 'pending' || status === 'rejected') return false;
+
+  // "All" preset or empty range shows all valid students
+  if (!dateRange || dateRange.preset === 'all' || (!dateRange.startDate && !dateRange.endDate)) {
+    return true;
+  }
+
+  const sIdStr = student.id ? String(student.id) : '';
+  const sNameLower = (student.name || '').toLowerCase().trim();
+
+  // 1. Single day evaluation (Yesterday, Today, Tomorrow, or single custom date)
+  if (dateRange.startDate && dateRange.endDate && dateRange.startDate === dateRange.endDate) {
+    const targetDate = dateRange.startDate;
+
+    if (isStudentActive(student, targetDate)) return true;
+
+    const sStart = (student.start_date || student.startDate || '').slice(0, 10);
+    if (sStart === targetDate) return true;
+
+    const hasSessionToday = sessionsList.some(sess => {
+      const sessStatus = (sess.status || '').toLowerCase().trim();
+      if (sessStatus === 'cancelled' || sessStatus === 'canceled') return false;
+      const matchId = sIdStr && String(sess.student_id) === sIdStr;
+      const matchName = sNameLower && (
+        (sess.student || '').toLowerCase().trim() === sNameLower ||
+        (sess.student_name || '').toLowerCase().trim() === sNameLower ||
+        (sess.guest_name || '').toLowerCase().trim() === sNameLower
+      );
+      if (!matchId && !matchName) return false;
+      const sessDate = (sess.date || '').slice(0, 10);
+      return sessDate === targetDate;
+    });
+    return hasSessionToday;
+  }
+
+  // 2. Date Range evaluation (startDate to endDate)
+  const rangeStart = dateRange.startDate;
+  const rangeEnd = dateRange.endDate || dateRange.startDate;
+
+  const sStart = (student.start_date || student.startDate || '').slice(0, 10);
+  const sEnd = getStudentEndDate(student) || sStart;
+
+  let courseOverlaps = false;
+  if (sStart && sEnd) {
+    courseOverlaps = (!rangeStart || sEnd >= rangeStart) && (!rangeEnd || sStart <= rangeEnd);
+  } else if (sStart) {
+    courseOverlaps = (!rangeStart || sStart >= rangeStart) && (!rangeEnd || sStart <= rangeEnd);
+  }
+
+  if (courseOverlaps) return true;
+
+  const hasSessionInRange = sessionsList.some(sess => {
+    const sessStatus = (sess.status || '').toLowerCase().trim();
+    if (sessStatus === 'cancelled' || sessStatus === 'canceled') return false;
+    const matchId = sIdStr && String(sess.student_id) === sIdStr;
+    const matchName = sNameLower && (
+      (sess.student || '').toLowerCase().trim() === sNameLower ||
+      (sess.student_name || '').toLowerCase().trim() === sNameLower ||
+      (sess.guest_name || '').toLowerCase().trim() === sNameLower
+    );
+    if (!matchId && !matchName) return false;
+    const sessDate = (sess.date || '').slice(0, 10);
+    if (!sessDate) return false;
+    return (!rangeStart || sessDate >= rangeStart) && (!rangeEnd || sessDate <= rangeEnd);
+  });
+
+  return hasSessionInRange;
 }
 
 function mapLevelToBadgeInfo(rawLevel, existingBadgeLevels = []) {
@@ -154,6 +255,14 @@ const Analytics = () => {
   const [allStudentsList, setAllStudentsList] = useState([]);
   const [allSessionsList, setAllSessionsList] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // Date Range Filter State
+  const [dateRange, setDateRange] = useState(() => ({
+    startDate: getIsoDate(0),
+    endDate: getIsoDate(0),
+    preset: 'today'
+  }));
+  const [searchQuery, setSearchQuery] = useState('');
 
   const currentUser = (() => {
     try { return JSON.parse(sessionStorage.getItem('user') || '{}'); } catch (e) { return {}; }
@@ -293,6 +402,8 @@ const Analytics = () => {
         return false;
       });
       if (!me) return [];
+      if (!isStudentActiveForRange(me, dateRange, allSessionsList)) return [];
+
       const badgeInfo = mapLevelToBadgeInfo(me.level, me.badge_levels);
       const result = [{
         ...me,
@@ -325,10 +436,10 @@ const Analytics = () => {
       return result;
     }
     
-    // Base filter: MUST BE CURRENTLY ACTIVE, and match coach or school
+    // Base filter: MUST BE ACTIVE IN SELECTED DATE RANGE, and match coach or school
     const scoped = sourceList.filter(s => {
-      // 1. MUST BE ACTIVE:
-      if (!isStudentActive(s)) return false;
+      // 1. MUST BE ACTIVE IN SELECTED DATE RANGE:
+      if (!isStudentActiveForRange(s, dateRange, allSessionsList)) return false;
 
       // 2. Coach Filter
       if (isCoach && (coachId || coachName)) {
@@ -411,8 +522,18 @@ const Analytics = () => {
       });
     });
 
+    if (searchQuery && searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      return expanded.filter(st => {
+        const nameMatch = (st.name || '').toLowerCase().includes(q);
+        const parentMatch = (st.parentName || '').toLowerCase().includes(q);
+        const instMatch = (st.instructor || '').toLowerCase().includes(q);
+        return nameMatch || parentMatch || instMatch;
+      });
+    }
+
     return expanded;
-  }, [students, isCoach, isStudent, coachId, coachName, studentId, studentName, studentEmail, activeSchool, allStudentsList, allSessionsList]);
+  }, [students, isCoach, isStudent, coachId, coachName, studentId, studentName, studentEmail, activeSchool, allStudentsList, allSessionsList, dateRange, searchQuery]);
 
   // Compute stats dynamically from the active students
   const displayBadgeStats = useMemo(() => {
@@ -440,8 +561,79 @@ const Analytics = () => {
             <h1 className="an-title">Badge Progression</h1>
             <p className="an-sub">Track active students, registrations, and skill badges across your school.</p>
           </div>
-          <button className="an-export-btn">Export PDF Report</button>
+          <button className="an-export-btn" onClick={() => window.print()}>Export PDF Report</button>
         </header>
+
+        {/* Controls Row: Search & Date Range Filter Bar */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '14px',
+          flexWrap: 'wrap'
+        }}>
+          <div style={{
+            position: 'relative',
+            display: 'flex',
+            alignItems: 'center',
+            flex: '1 1 280px',
+            maxWidth: '380px',
+            background: '#FFFFFF',
+            border: '1px solid #E2E8F0',
+            borderRadius: '12px',
+            padding: '0 14px',
+            height: '42px',
+            boxSizing: 'border-box',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.02)'
+          }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              type="text"
+              placeholder="Search student or instructor..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{
+                border: 'none',
+                outline: 'none',
+                background: 'transparent',
+                width: '100%',
+                fontSize: '13.5px',
+                fontFamily: "'Instrument Sans', sans-serif",
+                color: '#0F172A',
+                marginLeft: '10px'
+              }}
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#94A3B8',
+                  fontSize: '14px',
+                  cursor: 'pointer',
+                  padding: '2px 4px',
+                  lineHeight: 1
+                }}
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
+          <DateRangeFilterBar
+            startDate={dateRange.startDate}
+            endDate={dateRange.endDate}
+            preset={dateRange.preset}
+            onChange={({ startDate, endDate, preset }) => {
+              setDateRange({ startDate, endDate, preset });
+            }}
+          />
+        </div>
 
         {loading ? (
           <div className="an-loading"><div className="an-spinner" /></div>
@@ -565,7 +757,7 @@ const Analytics = () => {
                   {filteredStudents.length === 0 && (
                     <tr>
                       <td colSpan="4" style={{ textAlign: 'center', padding: '40px', color: '#94A3B8' }}>
-                        No active students found for today.
+                        No students found for the selected date filter.
                       </td>
                     </tr>
                   )}

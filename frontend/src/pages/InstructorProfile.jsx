@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 
@@ -49,9 +49,17 @@ const InstructorProfile = () => {
     const cleanName = schoolName.toLowerCase().trim();
     const found = schoolsData.find(s => (s.name || '').toLowerCase().trim() === cleanName);
     if (found) {
-      const parts = [found.city, found.country].filter(Boolean);
-      return parts.join(', ') || found.city || found.country || '';
+      const city = (found.city || '').trim();
+      const country = (found.country || '').trim();
+      if (!city && !country) return '';
+      if (!country) return city;
+      if (!city) return country;
+      if (city.toLowerCase().includes(country.toLowerCase())) return city;
+      return `${city}, ${country}`;
     }
+    if (cleanName.includes('dapoli')) return 'Dapoli, Maharashtra';
+    if (cleanName.includes('mulki')) return 'Mulki / Mangalore, India';
+    if (cleanName.includes('kovalam')) return 'Kovalam / Chennai, India';
     return '';
   };
 
@@ -109,6 +117,13 @@ const InstructorProfile = () => {
   // Dynamic data states for students and sessions
   const [assignedStudents, setAssignedStudents] = useState([]);
   const [instructorSessions, setInstructorSessions] = useState([]);
+  const [studentViewTab, setStudentViewTab] = useState('active'); // 'active' | 'total'
+
+  const activeStudentsToday = useMemo(() => {
+    return assignedStudents.filter(s => s.isActiveToday);
+  }, [assignedStudents]);
+
+  const totalStudents = assignedStudents;
 
   // Leave Application State
   const [showLeaveModal, setShowLeaveModal] = useState(false);
@@ -343,6 +358,31 @@ const InstructorProfile = () => {
     }
   };
 
+  const parseLocalDateOnly = (dateStr) => {
+    if (!dateStr) return null;
+    if (dateStr instanceof Date) {
+      return new Date(dateStr.getFullYear(), dateStr.getMonth(), dateStr.getDate());
+    }
+    const s = String(dateStr).trim();
+    if (!s) return null;
+    const ymd = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+    if (ymd) return new Date(parseInt(ymd[1], 10), parseInt(ymd[2], 10) - 1, parseInt(ymd[3], 10));
+    const dmy = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+    if (dmy) return new Date(parseInt(dmy[3], 10), parseInt(dmy[2], 10) - 1, parseInt(dmy[1], 10));
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    return null;
+  };
+
+  const isDateToday = (dateStr) => {
+    const d = parseLocalDateOnly(dateStr);
+    if (!d) return false;
+    const today = new Date();
+    return d.getFullYear() === today.getFullYear() &&
+           d.getMonth() === today.getMonth() &&
+           d.getDate() === today.getDate();
+  };
+
   const matchesCoach = (item, coachId, coachName) => {
     if (!item) return false;
     const targetId = parseInt(coachId);
@@ -450,7 +490,39 @@ const InstructorProfile = () => {
         }
       });
 
-      setAssignedStudents(matchedStudents);
+      // Enrich matchedStudents with session dates & whether they are assigned TODAY
+      const enrichedStudents = matchedStudents.map(st => {
+        const sIdStr = st.id ? String(st.id) : '';
+        const sNameLower = (st.name || '').toLowerCase().trim();
+
+        const stSessions = coachSessions.filter(sess => {
+          const matchId = sess.student_id && String(sess.student_id) === sIdStr;
+          const matchName = (sess.student && sess.student.toLowerCase().trim() === sNameLower) ||
+                            (sess.guest_name && sess.guest_name.toLowerCase().trim() === sNameLower);
+          return matchId || matchName;
+        });
+
+        // Check if there is an active session TODAY
+        const todaySession = stSessions.find(sess => isDateToday(sess.date));
+
+        // Find most recent session date
+        const sorted = [...stSessions].sort((a, b) => {
+          const dA = parseLocalDateOnly(a.date)?.getTime() || 0;
+          const dB = parseLocalDateOnly(b.date)?.getTime() || 0;
+          return dB - dA;
+        });
+        const latestSession = sorted[0];
+
+        return {
+          ...st,
+          isActiveToday: Boolean(todaySession),
+          todaySession: todaySession || null,
+          latestSessionDate: latestSession?.date || st.last_active || st.start_date || 'Past Session',
+          latestSessionTime: latestSession?.time || st.session_time || '',
+        };
+      });
+
+      setAssignedStudents(enrichedStudents);
     }).catch(err => console.error("Error fetching coach dynamic data:", err));
   };
 
@@ -652,6 +724,17 @@ const InstructorProfile = () => {
       const token = sessionStorage.getItem('token');
       const safeImage = (editForm.image && !editForm.image.startsWith('blob:')) ? editForm.image : '';
       const calcAge = calculateAge(editForm.dob);
+
+      // School switch restriction if coach is active
+      if (instructor?.is_active !== false) {
+        const origSchool = (instructor?.school || 'Individual / Freelance Coach').trim().toLowerCase();
+        const newSchool = (editForm.school || 'Individual / Freelance Coach').trim().toLowerCase();
+        if (origSchool && origSchool !== 'individual / freelance coach' && origSchool !== newSchool) {
+          alert(`Coach "${instructor.name}" is currently Active at "${instructor.school}". An Active coach cannot switch to another school. Please set status to Inactive before transferring.`);
+          setSaving(false);
+          return;
+        }
+      }
       const payload = {
         name: editForm.name,
         phone: editForm.phone || '',
@@ -724,7 +807,8 @@ const InstructorProfile = () => {
         fetchDynamicData(updatedInst);
         fetchInstructor();
       } else {
-        alert('Failed to save profile changes.');
+        const errData = await res.json().catch(() => ({}));
+        alert(errData.detail || 'Failed to save profile changes.');
       }
     } catch (err) {
       console.error(err);
@@ -814,7 +898,6 @@ const InstructorProfile = () => {
             <p className="ip-hero-sub">Age {instructor.age || '—'} • {instructor.location || 'Not Specified'}</p>
             <div className="ip-hero-badges">
               <span className="ip-badge-primary">ISA CERTIFIED</span>
-              <span className="ip-badge-active">ACTIVE</span>
               {(() => {
                 const rawL = instructor.languages;
                 let lList = [];
@@ -1221,15 +1304,110 @@ const InstructorProfile = () => {
             {/* Assigned Students (Admin & Coach only) */}
             {!isStudent && (
               <div className="ip-card">
-                <h3 className="ip-card-title">Assigned Students ({assignedStudents.length})</h3>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
+                  <h3 className="ip-card-title" style={{ margin: 0 }}>
+                    Students ({studentViewTab === 'active' ? activeStudentsToday.length : totalStudents.length})
+                  </h3>
+
+                  {/* Active Today vs Total Students Tabs */}
+                  <div style={{ display: 'inline-flex', background: '#F1F5F9', padding: '3px', borderRadius: '10px', gap: '3px' }}>
+                    <button
+                      type="button"
+                      onClick={() => setStudentViewTab('active')}
+                      style={{
+                        padding: '5px 12px',
+                        borderRadius: '8px',
+                        border: 'none',
+                        fontSize: '12px',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        background: studentViewTab === 'active' ? '#FFFFFF' : 'transparent',
+                        color: studentViewTab === 'active' ? '#16A34A' : '#64748B',
+                        boxShadow: studentViewTab === 'active' ? '0 1px 4px rgba(0,0,0,0.08)' : 'none',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      <span>🟢 Active Today</span>
+                      <span style={{
+                        background: studentViewTab === 'active' ? '#DCFCE7' : '#E2E8F0',
+                        color: studentViewTab === 'active' ? '#15803D' : '#475569',
+                        padding: '1px 6px',
+                        borderRadius: '10px',
+                        fontSize: '11px',
+                        fontWeight: 800
+                      }}>
+                        {activeStudentsToday.length}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setStudentViewTab('total')}
+                      style={{
+                        padding: '5px 12px',
+                        borderRadius: '8px',
+                        border: 'none',
+                        fontSize: '12px',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        background: studentViewTab === 'total' ? '#FFFFFF' : 'transparent',
+                        color: studentViewTab === 'total' ? '#0F172A' : '#64748B',
+                        boxShadow: studentViewTab === 'total' ? '0 1px 4px rgba(0,0,0,0.08)' : 'none',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      <span>👥 Total Students</span>
+                      <span style={{
+                        background: studentViewTab === 'total' ? '#F1F5F9' : '#E2E8F0',
+                        color: studentViewTab === 'total' ? '#0F172A' : '#475569',
+                        padding: '1px 6px',
+                        borderRadius: '10px',
+                        fontSize: '11px',
+                        fontWeight: 800
+                      }}>
+                        {totalStudents.length}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+
                 <div className="ip-student-list">
-                  {assignedStudents.length > 0 ? (
-                    assignedStudents.map((s, i) => (
+                  {(() => {
+                    const displayedList = studentViewTab === 'active' ? activeStudentsToday : totalStudents;
+
+                    if (displayedList.length === 0) {
+                      return (
+                        <div style={{ padding: '24px 16px', textAlign: 'center', color: '#64748B', fontSize: '13px', background: '#F8FAFC', borderRadius: '12px', border: '1px dashed #CBD5E1' }}>
+                          {studentViewTab === 'active' ? (
+                            <>
+                              <div style={{ fontSize: '20px', marginBottom: '4px' }}>🏄‍♂️</div>
+                              <strong>No active students scheduled for today.</strong>
+                              <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#94A3B8' }}>
+                                Students assigned to this coach today will appear here. Click <strong>"Total Students"</strong> to view all past and registered students.
+                              </p>
+                            </>
+                          ) : (
+                            <>
+                              <div style={{ fontSize: '20px', marginBottom: '4px' }}>👥</div>
+                              <strong>No students have been assigned to this coach yet.</strong>
+                            </>
+                          )}
+                        </div>
+                      );
+                    }
+
+                    return displayedList.map((s, i) => (
                       <div 
                         key={s.id} 
                         className="ip-student-row" 
                         style={{ 
-                          borderBottom: i === assignedStudents.length - 1 ? 'none' : '1px solid #E2E8F0',
+                          borderBottom: i === displayedList.length - 1 ? 'none' : '1px solid #E2E8F0',
                           cursor: 'pointer'
                         }}
                         onClick={() => navigate(`/students/${s.id}`)}
@@ -1273,12 +1451,8 @@ const InstructorProfile = () => {
                         </div>
                         <span className={`ip-level-badge level-${(s.level || 'Beginner').toLowerCase()}`}>{s.level || 'Beginner'}</span>
                       </div>
-                    ))
-                  ) : (
-                    <div style={{ padding: '20px 0', textAlign: 'center', color: '#94A3B8', fontSize: '13px' }}>
-                      No students assigned to this coach yet.
-                    </div>
-                  )}
+                    ));
+                  })()}
                 </div>
               </div>
             )}
@@ -1514,9 +1688,18 @@ const InstructorProfile = () => {
                   </div>
 
                   <div className="sp-form-field">
-                    <label>Affiliation / Surf School <span style={{ color: '#EF4444' }}>*</span></label>
+                    <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>Affiliation / Surf School <span style={{ color: '#EF4444' }}>*</span></span>
+                      {instructor?.is_active !== false && (
+                        <span style={{ fontSize: '11px', color: '#D97706', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                          🔒 Active Coach (School Locked)
+                        </span>
+                      )}
+                    </label>
                     <select
                       value={editForm.school || 'Individual / Freelance Coach'}
+                      disabled={instructor?.is_active !== false}
+                      style={instructor?.is_active !== false ? { background: '#F1F5F9', color: '#64748B', cursor: 'not-allowed', borderColor: '#CBD5E1' } : {}}
                       onChange={(e) => {
                         const chosen = e.target.value;
                         const isAff = chosen && chosen !== 'Individual / Freelance Coach';
@@ -1533,6 +1716,11 @@ const InstructorProfile = () => {
                         <option key={s} value={s}>🏫 {s}</option>
                       ))}
                     </select>
+                    {instructor?.is_active !== false && (
+                      <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: '#B45309', fontWeight: 500 }}>
+                        Active coaches cannot switch schools. Your School Admin must set your status to Inactive before transferring to another school.
+                      </p>
+                    )}
                   </div>
 
                   <div className="sp-form-field">

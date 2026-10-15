@@ -605,31 +605,43 @@ const StudentProfile = () => {
     }
   };
 
-  // Dynamic fallback for registered surfer (never hardcoded Chloe Kim)
+  // Dynamic fallback for registered surfer (never use School Admin details when admin views a student)
   const getFallbackStudent = () => {
     const savedUser = JSON.parse(sessionStorage.getItem('user') || '{}');
+    const isStudentSelf = Boolean(
+      savedUser && (savedUser.role === 'athlete' || savedUser.role === 'student' || savedUser.role === 'user') &&
+      (!id || String(savedUser.student_id) === String(id) || String(savedUser.id) === String(id))
+    );
+
     const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
     const savedAccs = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
     const mockStudents = JSON.parse(localStorage.getItem('mock_students_data') || '[]');
-    
-    const emailLower = (savedUser.email || '').toLowerCase().trim();
-    const nameLower = (savedUser.name || '').toLowerCase().trim();
 
-    const req = reqs.find(r => 
+    // If admin is viewing student by ID, look up matching student in local storage records first
+    const matchedRecord = !isStudentSelf && id
+      ? reqs.find(r => String(r.student_id || r.id) === String(id)) ||
+        mockStudents.find(m => String(m.student_id || m.id) === String(id)) ||
+        savedAccs.find(a => String(a.student_id || a.id) === String(id))
+      : null;
+
+    const emailLower = (isStudentSelf ? (savedUser.email || '') : (matchedRecord?.email || '')).toLowerCase().trim();
+    const nameLower = (isStudentSelf ? (savedUser.name || '') : (matchedRecord?.name || '')).toLowerCase().trim();
+
+    const req = matchedRecord || (isStudentSelf ? reqs.find(r => 
       (emailLower && (r.student_email || r.email || '').toLowerCase().trim() === emailLower) ||
       (nameLower && (r.student_name || r.name || '').toLowerCase().trim() === nameLower)
-    );
-    const acc = savedAccs.find(a => 
+    ) : null);
+    const acc = matchedRecord || (isStudentSelf ? savedAccs.find(a => 
       (emailLower && (a.email || '').toLowerCase().trim() === emailLower) ||
       (nameLower && (a.name || '').toLowerCase().trim() === nameLower)
-    );
-    const mock = mockStudents.find(m => 
+    ) : null);
+    const mock = matchedRecord || (isStudentSelf ? mockStudents.find(m => 
       (emailLower && (m.email || '').toLowerCase().trim() === emailLower) ||
       (nameLower && (m.name || '').toLowerCase().trim() === nameLower)
-    );
+    ) : null);
 
     let isApproved = false;
-    if (savedUser.approval_status === 'approved') isApproved = true;
+    if (isStudentSelf && savedUser.approval_status === 'approved') isApproved = true;
     if (req && req.status === 'approved') isApproved = true;
     if (acc && acc.approval_status === 'approved') isApproved = true;
     if (mock && mock.approval_status === 'approved') isApproved = true;
@@ -640,43 +652,38 @@ const StudentProfile = () => {
 
     const approvalStatus = isApproved ? 'approved' : 'pending';
 
-    if (isApproved && savedUser && savedUser.approval_status !== 'approved') {
-      savedUser.approval_status = 'approved';
-      sessionStorage.setItem('user', JSON.stringify(savedUser));
-    }
+    const fallbackName = isStudentSelf
+      ? (savedUser.name || req?.student_name || req?.name || 'Registered Surfer')
+      : (matchedRecord?.name || req?.student_name || req?.name || (id ? `Student #${id}` : 'Student Profile'));
 
-    const updatedPassEmails = (JSON.parse(localStorage.getItem('passwords_updated_emails') || '[]')).map(e => String(e).toLowerCase().trim());
-    const isPassUpdated = Boolean(
-      savedUser.password_updated || 
-      savedUser.has_password || 
-      (emailLower && updatedPassEmails.includes(emailLower)) ||
-      (req && (req.password_updated || req.has_password || req.password))
-    );
+    const fallbackEmail = isStudentSelf
+      ? (savedUser.email || req?.student_email || req?.email || '')
+      : (matchedRecord?.email || req?.student_email || req?.email || '');
 
     return {
-      id: id || savedUser.student_id || savedUser.id || 1,
-      name: savedUser.name || req?.student_name || req?.name || 'Registered Surfer',
-      email: savedUser.email || req?.student_email || req?.email || '',
-      level: 'Beginner',
-      instructor: savedUser.instructor || req?.instructor || '',
-      image: savedUser.image || '',
+      id: id || (isStudentSelf ? (savedUser.student_id || savedUser.id) : 1),
+      name: fallbackName,
+      email: fallbackEmail,
+      level: matchedRecord?.level || (isStudentSelf ? (savedUser.level || 'Beginner') : 'Beginner'),
+      instructor: matchedRecord?.instructor || (isStudentSelf ? (savedUser.instructor || req?.instructor || '') : ''),
+      image: matchedRecord?.image || (isStudentSelf ? (savedUser.image || '') : ''),
       bio: 'Registered athlete & surf trainee.',
-      age: 24,
-      division: "Men's Open",
-      stance: 'regular',
+      age: matchedRecord?.age || 24,
+      division: matchedRecord?.division || "Men's Open",
+      stance: matchedRecord?.stance || 'regular',
       approval_status: approvalStatus,
-      school: savedUser.school || req?.school_name || req?.school || '',
+      school: matchedRecord?.school || (isStudentSelf ? (savedUser.school || req?.school_name || req?.school || '') : ''),
       surf_stats: { waves_ridden: 0, max_speed: '0 mph', avg_session_mins: 0 },
       performance_logs: [],
-      whatsapp_number: savedUser.whatsapp_number || req?.whatsapp_number || '',
-      guests_count: (savedUser.guests_details && savedUser.guests_details.length) || (req?.guests_details && req.guests_details.length) || (typeof savedUser.guests_count === 'number' ? savedUser.guests_count : (req?.guests_count || 0)),
-      course_duration: savedUser.course_duration || req?.course_duration || '3 Days Course',
-      session_time: savedUser.session_time || req?.session_time || '',
-      staying_at_school: savedUser.staying_at_school || req?.staying_at_school || 'Yes',
+      whatsapp_number: matchedRecord?.whatsapp_number || (isStudentSelf ? (savedUser.whatsapp_number || req?.whatsapp_number || '') : ''),
+      guests_count: (matchedRecord?.guests_details && matchedRecord.guests_details.length) || (isStudentSelf ? (savedUser.guests_details?.length || 0) : 0),
+      course_duration: matchedRecord?.course_duration || (isStudentSelf ? (savedUser.course_duration || '3 Days Course') : '3 Days Course'),
+      session_time: matchedRecord?.session_time || (isStudentSelf ? (savedUser.session_time || '') : ''),
+      staying_at_school: matchedRecord?.staying_at_school || (isStudentSelf ? (savedUser.staying_at_school || 'Yes') : 'Yes'),
       reminder_preference: 'WhatsApp Text',
-      guests_details: savedUser.guests_details || req?.guests_details || [],
-      has_password: isPassUpdated,
-      password_updated: isPassUpdated,
+      guests_details: matchedRecord?.guests_details || (isStudentSelf ? (savedUser.guests_details || []) : []),
+      has_password: false,
+      password_updated: false,
       badges: [
         { id: 1, name: 'White Badge (Student Registered)', date: 'Earned Today', color: '#00F2FE', textColor: '#0F172A' }
       ]
@@ -686,6 +693,10 @@ const StudentProfile = () => {
   const fetchStudent = async () => {
     try {
       const savedUser = JSON.parse(sessionStorage.getItem('user') || '{}');
+      const isStudentSelf = Boolean(
+        savedUser && (savedUser.role === 'athlete' || savedUser.role === 'student' || savedUser.role === 'user') &&
+        (!id || String(savedUser.student_id) === String(id) || String(savedUser.id) === String(id))
+      );
       const emailLower = (savedUser.email || '').toLowerCase().trim();
       const nameLower = (savedUser.name || '').toLowerCase().trim();
 
@@ -723,8 +734,8 @@ const StudentProfile = () => {
         }
       } catch (e) {}
 
-      // If not found by ID, search by email from all students list
-      if (!data && emailLower) {
+      // If not found by ID and user is viewing their OWN profile, search by email from all students list
+      if (!data && emailLower && isStudentSelf) {
         try {
           const listRes = await fetch(`${API}/api/students`);
           if (listRes.ok) {
@@ -736,8 +747,8 @@ const StudentProfile = () => {
         } catch (e) {}
       }
 
-      // Also check remote approval status if user has email
-      if (emailLower) {
+      // Also check remote approval status if user has email (only for own profile)
+      if (emailLower && isStudentSelf) {
         try {
           const appRes = await fetch(`${API}/api/auth/check-approval?email=${encodeURIComponent(emailLower)}`);
           if (appRes.ok) {
@@ -1295,23 +1306,62 @@ const StudentProfile = () => {
     ? pendingReviewSessions[0]
     : (!nextSession && inProgressSessions.length > 0 ? inProgressSessions[0] : null);
 
-  // Latest session coach resolution:
-  // Priority 1: Coach from upcoming next session or pending/in-progress banner session
-  // Priority 2: Coach from latest session sorted descending
-  // Priority 3: Fallback to student.instructor only if no session has an assigned coach
-  const latestSessionWithCoach = (nextSession?.instructor && !['—', 'Coach', 'Not Assigned Yet', 'Assigned Surf Coach'].includes(nextSession.instructor))
-    ? nextSession
-    : (pendingBannerSession?.instructor && !['—', 'Coach', 'Not Assigned Yet', 'Assigned Surf Coach'].includes(pendingBannerSession.instructor))
-      ? pendingBannerSession
-      : sortSessionsDescending(effectiveSessions).find(s => s.instructor && !['—', 'Coach', 'Not Assigned Yet', 'Assigned Surf Coach'].includes(s.instructor));
+  // Comprehensive coach resolution supporting multiple assigned coaches
+  const assignedCoaches = (() => {
+    const list = [];
+    const seenNames = new Set();
 
-  const assignedCoachName = (latestSessionWithCoach?.instructor && latestSessionWithCoach.instructor.trim() !== '')
-    ? latestSessionWithCoach.instructor
-    : ((student?.instructor && student.instructor.trim() !== '' && student.instructor !== 'Assigned Surf Coach' && student.instructor !== 'Not Assigned Yet')
-      ? student.instructor
-      : 'Not Assigned Yet');
+    const addCoach = (rawName, id = null) => {
+      if (!rawName || typeof rawName !== 'string') return;
+      rawName.split(/[,&]+|\band\b/i).forEach(n => {
+        const trimmed = n.trim();
+        const lower = trimmed.toLowerCase();
+        if (trimmed && !seenNames.has(lower) && !['—', 'coach', 'not assigned yet', 'assigned surf coach', 'staff'].includes(lower)) {
+          seenNames.add(lower);
+          list.push({ name: trimmed, id: id || null });
+        }
+      });
+    };
 
-  const assignedCoachId = latestSessionWithCoach?.instructor_id || student?.instructor_id || null;
+    // 1. Upcoming or Pending Banner Session coaches
+    if (nextSession) {
+      if (nextSession.notes && nextSession.notes.includes('Coaches:')) {
+        const m = nextSession.notes.match(/Coaches:\s*([^-\n]+)/i);
+        if (m && m[1]) addCoach(m[1], nextSession.instructor_id);
+      }
+      if (nextSession.instructor) addCoach(nextSession.instructor, nextSession.instructor_id);
+    }
+    if (pendingBannerSession) {
+      if (pendingBannerSession.notes && pendingBannerSession.notes.includes('Coaches:')) {
+        const m = pendingBannerSession.notes.match(/Coaches:\s*([^-\n]+)/i);
+        if (m && m[1]) addCoach(m[1], pendingBannerSession.instructor_id);
+      }
+      if (pendingBannerSession.instructor) addCoach(pendingBannerSession.instructor, pendingBannerSession.instructor_id);
+    }
+
+    // 2. All sessions sorted descending
+    const sorted = sortSessionsDescending(effectiveSessions);
+    sorted.forEach(s => {
+      if (s.notes && s.notes.includes('Coaches:')) {
+        const m = s.notes.match(/Coaches:\s*([^-\n]+)/i);
+        if (m && m[1]) addCoach(m[1], s.instructor_id);
+      }
+      if (s.instructor) addCoach(s.instructor, s.instructor_id);
+    });
+
+    // 3. Student direct instructor field
+    if (student?.instructor) {
+      addCoach(student.instructor, student.instructor_id);
+    }
+
+    return list;
+  })();
+
+  const assignedCoachName = assignedCoaches.length > 0
+    ? assignedCoaches.map(c => c.name).join(', ')
+    : 'Not Assigned Yet';
+
+  const assignedCoachId = assignedCoaches.length > 0 ? assignedCoaches[0].id : null;
 
   const nextSessionTime = nextSession
     ? `${nextSession.date ? nextSession.date + ', ' : ''}${nextSession.time || ''}`
@@ -1648,6 +1698,47 @@ const StudentProfile = () => {
                       </>
                     )}
                   </div>
+                ) : assignedCoaches.length > 1 ? (
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                    <span style={{
+                      fontSize: '12px',
+                      color: '#0F766E',
+                      fontWeight: 800,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}>
+                      <span>🏄‍♂️</span> Coaches:
+                    </span>
+                    {assignedCoaches.map((c, cIdx) => (
+                      <div 
+                        key={cIdx}
+                        onClick={() => handleOpenCoachModal(c.name, c.id)}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          fontSize: '12px',
+                          color: '#0F766E',
+                          background: '#CCFBF1',
+                          border: '1px solid #99F6E4',
+                          padding: '4px 10px',
+                          borderRadius: '20px',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease'
+                        }}
+                        title={`Click to view coach ${c.name}'s profile & submit a review`}
+                        onMouseEnter={e => { e.currentTarget.style.background = '#99F6E4'; e.currentTarget.style.borderColor = '#0D9488'; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = '#CCFBF1'; e.currentTarget.style.borderColor = '#99F6E4'; }}
+                      >
+                        <span style={{ color: '#0F172A', fontWeight: 800, textDecoration: 'underline' }}>
+                          {c.name}
+                        </span>
+                        <span style={{ fontSize: '11px', color: '#0D9488', fontWeight: 800 }}>★ Review</span>
+                      </div>
+                    ))}
+                  </div>
                 ) : (
                   <div 
                     style={{
@@ -1665,15 +1756,15 @@ const StudentProfile = () => {
                       transition: 'all 0.15s ease'
                     }}
                     onClick={() => {
-                      handleOpenCoachModal(assignedCoachName, assignedCoachId);
+                      handleOpenCoachModal(assignedCoaches[0]?.name || assignedCoachName, assignedCoaches[0]?.id || assignedCoachId);
                     }}
                     title="Click to view coach profile & submit a review"
                   >
                     <span>🏄‍♂️ Coach:</span>
                     <span style={{ color: '#0F172A', fontWeight: 800, textDecoration: 'underline' }}>
-                      {assignedCoachName}
+                      {assignedCoaches[0]?.name || assignedCoachName}
                     </span>
-                    {assignedCoachName !== 'Not Assigned Yet' && (
+                    {(assignedCoaches.length > 0 || (assignedCoachName && assignedCoachName !== 'Not Assigned Yet')) && (
                       <span style={{ fontSize: '11px', color: '#0D9488', fontWeight: 800 }}>★ Review</span>
                     )}
                   </div>

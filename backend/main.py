@@ -20,7 +20,7 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 # ─── SQLAlchemy Setup ────────────────────────────────────────────────────────
 from sqlalchemy import (
     create_engine, Column, Integer, String, Text,
-    DateTime, Date, ForeignKey, func, Float, Boolean, or_, and_, text
+    DateTime, Date, ForeignKey, func, Float, Boolean, or_, and_, text, inspect
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, Session as OrmSession
@@ -82,11 +82,25 @@ try:
             # Verify connection and ensure non-destructive columns exist
             with engine.connect() as test_conn:
                 try:
+                    test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS school_name VARCHAR DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS school_id INTEGER;"))
+                    test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_by_school BOOLEAN DEFAULT FALSE;"))
+                    test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
+                    test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS deletion_scheduled_at TIMESTAMP;"))
+                    test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_plain VARCHAR DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider VARCHAR DEFAULT 'email';"))
+                    test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS social_id VARCHAR DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS approval_status VARCHAR DEFAULT 'approved';"))
+                    test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS image VARCHAR DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS logo VARCHAR DEFAULT '';"))
                     test_conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS attendance VARCHAR DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS instructor_ids VARCHAR DEFAULT '[]';"))
                     test_conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS group_name VARCHAR DEFAULT '';"))
                     test_conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS student_name VARCHAR DEFAULT '';"))
                     test_conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS guest_name VARCHAR DEFAULT '';"))
                     test_conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS image_url VARCHAR DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
                     test_conn.commit()
                 except Exception as mig_err:
                     print(f"Notice: Non-destructive migration note ({mig_err}).")
@@ -102,10 +116,69 @@ Base = declarative_base()
 
 try:
     with engine.connect() as _c:
-        _c.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS attendance VARCHAR DEFAULT '';"))
+        if engine.dialect.name == "sqlite":
+            u_cols = [row[1] for row in _c.execute(text("PRAGMA table_info(users)")).fetchall()]
+            if "school_name" not in u_cols:
+                _c.execute(text("ALTER TABLE users ADD COLUMN school_name VARCHAR DEFAULT '';"))
+            if "school_id" not in u_cols:
+                _c.execute(text("ALTER TABLE users ADD COLUMN school_id INTEGER;"))
+            if "created_by_school" not in u_cols:
+                _c.execute(text("ALTER TABLE users ADD COLUMN created_by_school BOOLEAN DEFAULT 0;"))
+            if "is_active" not in u_cols:
+                _c.execute(text("ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT 1;"))
+            if "deletion_scheduled_at" not in u_cols:
+                _c.execute(text("ALTER TABLE users ADD COLUMN deletion_scheduled_at TIMESTAMP;"))
+            if "password_plain" not in u_cols:
+                _c.execute(text("ALTER TABLE users ADD COLUMN password_plain VARCHAR DEFAULT '';"))
+            if "image" not in u_cols:
+                _c.execute(text("ALTER TABLE users ADD COLUMN image VARCHAR DEFAULT '';"))
+            if "phone" not in u_cols:
+                _c.execute(text("ALTER TABLE users ADD COLUMN phone VARCHAR DEFAULT '';"))
+
+            sc_cols = [row[1] for row in _c.execute(text("PRAGMA table_info(schools)")).fetchall()]
+            if "logo" not in sc_cols:
+                _c.execute(text("ALTER TABLE schools ADD COLUMN logo VARCHAR DEFAULT '';"))
+
+            s_cols = [row[1] for row in _c.execute(text("PRAGMA table_info(sessions)")).fetchall()]
+            if "attendance" not in s_cols:
+                _c.execute(text("ALTER TABLE sessions ADD COLUMN attendance VARCHAR DEFAULT '';"))
+            if "instructor_ids" not in s_cols:
+                _c.execute(text("ALTER TABLE sessions ADD COLUMN instructor_ids VARCHAR DEFAULT '[]';"))
+            if "group_name" not in s_cols:
+                _c.execute(text("ALTER TABLE sessions ADD COLUMN group_name VARCHAR DEFAULT '';"))
+            if "student_name" not in s_cols:
+                _c.execute(text("ALTER TABLE sessions ADD COLUMN student_name VARCHAR DEFAULT '';"))
+            if "guest_name" not in s_cols:
+                _c.execute(text("ALTER TABLE sessions ADD COLUMN guest_name VARCHAR DEFAULT '';"))
+            if "image_url" not in s_cols:
+                _c.execute(text("ALTER TABLE sessions ADD COLUMN image_url VARCHAR DEFAULT '';"))
+
+            i_cols = [row[1] for row in _c.execute(text("PRAGMA table_info(instructors)")).fetchall()]
+            if "is_active" not in i_cols:
+                _c.execute(text("ALTER TABLE instructors ADD COLUMN is_active BOOLEAN DEFAULT 1;"))
+        else:
+            _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS school_name VARCHAR DEFAULT '';"))
+            _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS school_id INTEGER;"))
+            _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_by_school BOOLEAN DEFAULT FALSE;"))
+            _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
+            _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS deletion_scheduled_at TIMESTAMP;"))
+            _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_plain VARCHAR DEFAULT '';"))
+            _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider VARCHAR DEFAULT 'email';"))
+            _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS social_id VARCHAR DEFAULT '';"))
+            _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS approval_status VARCHAR DEFAULT 'approved';"))
+            _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS image VARCHAR DEFAULT '';"))
+            _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR DEFAULT '';"))
+            _c.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS logo VARCHAR DEFAULT '';"))
+            _c.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS attendance VARCHAR DEFAULT '';"))
+            _c.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS instructor_ids VARCHAR DEFAULT '[]';"))
+            _c.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS group_name VARCHAR DEFAULT '';"))
+            _c.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS student_name VARCHAR DEFAULT '';"))
+            _c.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS guest_name VARCHAR DEFAULT '';"))
+            _c.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS image_url VARCHAR DEFAULT '';"))
+            _c.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
         _c.commit()
 except Exception as _e:
-    pass
+    print(f"Notice: Non-destructive DB check ({_e}).")
 
 # ─── Models ──────────────────────────────────────────────────────────────────
 
@@ -115,13 +188,20 @@ class User(Base):
     email = Column(String, index=True, nullable=True)
     password_hash = Column(String, nullable=True)
     password_plain = Column(String, nullable=True)
-    role = Column(String, nullable=False)  # "athlete", "coach", "admin"
+    name = Column(String, nullable=True)
+    role = Column(String, nullable=False)  # "athlete", "coach", "admin", "guest_admin"
+    school_name = Column(String, nullable=True)
+    school_id = Column(Integer, nullable=True)
+    image = Column(String, nullable=True, default="")
+    phone = Column(String, nullable=True, default="")
     auth_provider = Column(String, default="email")  # "email", "google", "apple"
     social_id = Column(String, nullable=True)
     approval_status = Column(String, default="approved")
     created_by_school = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
+    deletion_scheduled_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
 
     # Relationships
     student = relationship("Student", back_populates="user_rel", uselist=False)
@@ -139,6 +219,7 @@ class School(Base):
     city = Column(String)
     instructor_count = Column(String)
     website = Column(String)
+    logo = Column(String, nullable=True, default="")
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -168,6 +249,7 @@ class Instructor(Base):
     intro_video = Column(String, default="")
     price = Column(Float, default=100.00)
     school = Column(String, default="Individual / Freelance Coach", nullable=True)
+    is_active = Column(Boolean, default=True)
 
     user_rel = relationship("User", back_populates="instructor")
     students = relationship("Student", back_populates="instructor_rel")
@@ -259,6 +341,7 @@ class SurfSession(Base):
     student_name = Column(String, nullable=True, default="")
     guest_name = Column(String, nullable=True, default="")
     attendance = Column(String, default="", nullable=True) # "Present" / "Absent" / ""
+    instructor_ids = Column(String, default="[]", nullable=True)
     student_rel = relationship("Student", back_populates="sessions")
     instructor_rel = relationship("Instructor", back_populates="sessions")
 
@@ -1349,6 +1432,8 @@ class SessionCreate(BaseModel):
     duration_mins: Optional[int] = 60
     student_id: int
     instructor_id: int
+    instructor_ids: Optional[List[int]] = None
+    instructor: Optional[str] = None
     location: str
     condition: str
     type: str
@@ -1365,6 +1450,8 @@ class SessionUpdate(BaseModel):
     duration_mins: Optional[int] = None
     student_id: Optional[int] = None
     instructor_id: Optional[int] = None
+    instructor_ids: Optional[List[int]] = None
+    instructor: Optional[str] = None
     location: Optional[str] = None
     condition: Optional[str] = None
     type: Optional[str] = None
@@ -1384,6 +1471,8 @@ class SessionBulkCreate(BaseModel):
     student_ids: List[int]
     students_data: Optional[List[dict]] = None
     instructor_id: int
+    instructor_ids: Optional[List[int]] = None
+    instructor: Optional[str] = None
     location: str
     condition: str
     type: str
@@ -1434,6 +1523,7 @@ class UserSignup(BaseModel):
     rates: Optional[str] = ""
     location: Optional[str] = ""
     school: Optional[str] = ""
+    school_location: Optional[str] = ""
     # Invite token (pre-links to an existing student record created by admin)
     invite_token: Optional[str] = None
     # School batch invite code (locks school and limits total capacity)
@@ -1456,6 +1546,8 @@ class UserLogin(BaseModel):
     email: str
     password: str
     role: Optional[str] = None
+    restore: Optional[bool] = False
+
 
 
 class SSOLogin(BaseModel):
@@ -1514,6 +1606,7 @@ class InstructorUpdate(BaseModel):
     languages: Optional[Any] = None
     image: Optional[str] = None
     school: Optional[str] = None
+    is_active: Optional[bool] = None
 
 
 class InstructorReviewCreate(BaseModel):
@@ -1699,6 +1792,7 @@ def instructor_to_dict(i: Instructor, target_date: Optional[str] = None):
         "location": i.location or "",
         "reviews": json.loads(i.reviews) if i.reviews else [],
         "school": i.school or "Individual / Freelance Coach",
+        "is_active": True if getattr(i, 'is_active', None) is None else bool(i.is_active),
         "user_id": i.user_id,
         "has_password": has_pwd,
         "password_plain": plain_pwd,
@@ -1822,11 +1916,20 @@ def student_to_dict(s: Student):
     }
 
 
-def session_to_dict(s: SurfSession):
+def session_to_dict(s: SurfSession, db: Optional[OrmSession] = None):
     disp_student = getattr(s, 'student_name', None)
     if not disp_student or not disp_student.strip():
         disp_student = s.student_rel.name if s.student_rel else ""
     g_name = getattr(s, 'guest_name', None) or ""
+
+    # Safely obtain db session using global inspect
+    db_sess = db
+    if not db_sess:
+        try:
+            s_insp = inspect(s)
+            db_sess = s_insp.session if s_insp else None
+        except Exception:
+            db_sess = None
 
     phone = ""
     whatsapp = ""
@@ -1848,15 +1951,12 @@ def session_to_dict(s: SurfSession):
             except Exception:
                 pass
 
-    if not phone and disp_student:
+    if not phone and disp_student and db_sess:
         try:
-            from sqlalchemy import inspect, func
-            db_sess = inspect(s).session
-            if db_sess:
-                matched_st = db_sess.query(Student).filter(func.lower(Student.name) == disp_student.strip().lower()).first()
-                if matched_st and matched_st.whatsapp_number:
-                    phone = matched_st.whatsapp_number
-                    whatsapp = matched_st.whatsapp_number
+            matched_st = db_sess.query(Student).filter(func.lower(Student.name) == disp_student.strip().lower()).first()
+            if matched_st and matched_st.whatsapp_number:
+                phone = matched_st.whatsapp_number
+                whatsapp = matched_st.whatsapp_number
         except Exception:
             pass
 
@@ -1878,6 +1978,64 @@ def session_to_dict(s: SurfSession):
     if not st_level:
         st_level = s.type or "Beginner"
 
+    # Resolve multiple instructors
+    inst_ids = []
+    inst_names = []
+    raw_inst_ids = getattr(s, 'instructor_ids', None)
+    if raw_inst_ids:
+        try:
+            parsed = json.loads(raw_inst_ids) if isinstance(raw_inst_ids, str) else raw_inst_ids
+            if isinstance(parsed, list):
+                inst_ids = [int(x) for x in parsed if str(x).isdigit()]
+        except Exception:
+            pass
+
+    # Extract all coach names from notes if present (e.g. "Coaches: Vishal, Dhanya")
+    notes_coach_names = []
+    if s.notes and "Coaches:" in s.notes:
+        try:
+            import re
+            m = re.search(r"Coaches:\s*([^-\n]+)", s.notes)
+            if m:
+                extracted = m.group(1).strip()
+                if extracted and extracted != "Staff":
+                    notes_coach_names = [n.strip() for n in extracted.split(",") if n.strip()]
+        except Exception:
+            pass
+
+    # If notes has multiple coach names, look up their instructor IDs in DB
+    if notes_coach_names and db_sess:
+        try:
+            from sqlalchemy import func
+            lower_names = [n.lower() for n in notes_coach_names]
+            matched_from_notes = db_sess.query(Instructor).filter(func.lower(Instructor.name).in_(lower_names)).all()
+            for mi in matched_from_notes:
+                if mi.id not in inst_ids:
+                    inst_ids.append(mi.id)
+        except Exception:
+            pass
+
+    if s.instructor_id and s.instructor_id not in inst_ids:
+        inst_ids.insert(0, s.instructor_id)
+
+    if inst_ids and db_sess:
+        try:
+            matched_insts = db_sess.query(Instructor).filter(Instructor.id.in_(inst_ids)).all()
+            inst_map = {mi.id: mi.name for mi in matched_insts}
+            inst_names = [inst_map[i_id] for i_id in inst_ids if i_id in inst_map]
+        except Exception:
+            pass
+
+    # Include any coach name from notes that was not matched in the DB
+    for nc in notes_coach_names:
+        if not any(nc.lower() == n.lower() for n in inst_names):
+            inst_names.append(nc)
+
+    if not inst_names and s.instructor_rel:
+        inst_names = [s.instructor_rel.name]
+
+    resolved_instructor_name = ", ".join(inst_names) if inst_names else (s.instructor_rel.name if s.instructor_rel else "")
+
     return {
         "id": s.id,
         "date": s.date,
@@ -1892,7 +2050,8 @@ def session_to_dict(s: SurfSession):
         "whatsapp_number": whatsapp,
         "school": s.student_rel.school if (s.student_rel and s.student_rel.school) else (s.instructor_rel.school if (s.instructor_rel and s.instructor_rel.school) else ""),
         "instructor_id": s.instructor_id,
-        "instructor": s.instructor_rel.name if s.instructor_rel else "",
+        "instructor_ids": inst_ids if inst_ids else ([s.instructor_id] if s.instructor_id else []),
+        "instructor": resolved_instructor_name,
         "location": s.location,
         "condition": s.condition,
         "type": s.type,
@@ -1924,9 +2083,17 @@ def get_current_user(authorization: Optional[str] = Header(None), db: OrmSession
     payload = verify_token(token)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
+    user_id = payload.get("user_id")
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+    if user.deletion_scheduled_at:
+        elapsed = datetime.utcnow() - user.deletion_scheduled_at
+        if elapsed.total_seconds() > 30 * 86400:
+            delete_user_by_id(user.id, db)
+            raise HTTPException(status_code=401, detail="Account deleted (30-day retention grace period expired).")
+        else:
+            raise HTTPException(status_code=403, detail="Account is scheduled for deletion. Please log in to retain and restore your account.")
     if user.is_active is False:
         raise HTTPException(status_code=403, detail="Your account has been deactivated by administrator.")
     if user.role == "admin" and user.email:
@@ -1944,7 +2111,9 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
         "role": user.role,
         "auth_provider": user.auth_provider,
         "created_by_school": user.created_by_school,
+        "deletion_scheduled_at": user.deletion_scheduled_at.isoformat() if getattr(user, "deletion_scheduled_at", None) else None,
     }
+
     session = db_session
     if not session:
         try:
@@ -1983,9 +2152,9 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
     if student_obj:
         res["student_id"] = student_obj.id
         res["name"] = student_obj.name
-        res["image"] = student_obj.image
-        res["phone"] = student_obj.whatsapp_number or ""
-        res["whatsapp_number"] = student_obj.whatsapp_number or ""
+        res["image"] = student_obj.image or getattr(user, "image", None) or ""
+        res["phone"] = student_obj.whatsapp_number or getattr(user, "phone", None) or ""
+        res["whatsapp_number"] = student_obj.whatsapp_number or getattr(user, "phone", None) or ""
         # If student has no instructor directly, check their sessions
         inst_id = student_obj.instructor_id
         inst_name = student_obj.instructor_rel.name if student_obj.instructor_rel else ""
@@ -2005,27 +2174,63 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
     elif instructor_obj:
         res["instructor_id"] = instructor_obj.id
         res["name"] = instructor_obj.name
-        res["image"] = instructor_obj.image
-        res["phone"] = instructor_obj.phone or ""
-        res["whatsapp_number"] = instructor_obj.phone or ""
+        res["image"] = instructor_obj.image or getattr(user, "image", None) or ""
+        res["phone"] = instructor_obj.phone or getattr(user, "phone", None) or ""
+        res["whatsapp_number"] = instructor_obj.phone or getattr(user, "phone", None) or ""
         res["school"] = instructor_obj.school or "Individual / Freelance Coach"
+    elif user.role == "guest_admin":
+        res["name"] = getattr(user, "name", None) or "Guest Admin"
+        res["image"] = getattr(user, "image", None) or ""
+        res["phone"] = getattr(user, "phone", None) or ""
+        res["school"] = getattr(user, "school_name", None) or ""
+        res["school_name"] = getattr(user, "school_name", None) or ""
+        res["school_id"] = getattr(user, "school_id", None)
     else:
-        res["name"] = "School Admin"
-        res["image"] = ""
+        res["name"] = getattr(user, "name", None) or "School Admin"
+        res["image"] = getattr(user, "image", None) or ""
+        res["phone"] = getattr(user, "phone", None) or ""
 
-    # Check matching school by email
+    # Check matching school by school_id, school_name, or email
     try:
         session = db_session or inspect(user).session
         if session:
-            sch = session.query(School).filter(func.lower(School.email) == user.email.lower()).first()
+            sch = None
+            if getattr(user, "school_id", None):
+                sch = session.query(School).filter(School.id == user.school_id).first()
+            if not sch and getattr(user, "school_name", None):
+                sch = session.query(School).filter(func.lower(School.name) == user.school_name.lower().strip()).first()
+            if not sch and user.email:
+                sch = session.query(School).filter(func.lower(School.email) == user.email.lower().strip()).first()
             if sch:
                 res["school_name"] = sch.name
                 res["school_id"] = sch.id
                 res["school"] = sch.name
-                res["school_details"] = {"id": sch.id, "name": sch.name, "owner": sch.owner, "email": sch.email}
-                res["phone"] = sch.phone or ""
-                res["whatsapp_number"] = sch.phone or ""
-                if sch.owner and user.role == "admin":
+                sch_logo = getattr(sch, "logo", None) or ""
+                sch_city = getattr(sch, "city", None) or ""
+                sch_country = getattr(sch, "country", None) or ""
+                res["school_logo"] = sch_logo
+                res["school_city"] = sch_city
+                res["school_country"] = sch_country
+                res["school_location"] = sch_city
+                res["location"] = res.get("location") or sch_city
+                res["school_details"] = {
+                    "id": sch.id,
+                    "name": sch.name,
+                    "owner": sch.owner,
+                    "email": sch.email,
+                    "logo": sch_logo,
+                    "city": sch_city,
+                    "country": sch_country,
+                    "location": sch_city
+                }
+                if not res.get("image"):
+                    res["image"] = sch_logo or getattr(user, "image", None) or ""
+                if not res.get("phone"):
+                    res["phone"] = sch.phone or getattr(user, "phone", None) or ""
+                    res["whatsapp_number"] = sch.phone or getattr(user, "phone", None) or ""
+                if getattr(user, "name", None) and user.name.strip():
+                    res["name"] = user.name
+                elif sch.owner and user.role == "admin":
                     res["name"] = sch.owner
     except Exception as e:
         pass
@@ -2214,16 +2419,18 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
         db.add(ActivityLog(text=f"New coach {data.name} joined the academy", type="individual", school=instructor.school or "Individual / Freelance Coach"))
     elif role == "admin":
         requested_school = (data.school or "").strip()
+        requested_location = (getattr(data, "school_location", None) or getattr(data, "location", None) or "").strip()
         existing_school = db.query(School).filter(func.lower(School.email) == data.email.lower()).first()
         if not existing_school:
             school_name = requested_school if requested_school else f"{data.name}'s Surf School"
+            school_city = requested_location if requested_location else ""
             new_sch = School(
                 name=school_name,
                 owner=data.name,
                 email=data.email.lower(),
                 phone=phone_clean,
-                country="India",
-                city="Kovalam / Chennai",
+                country="",
+                city=school_city,
                 instructor_count="5-15",
                 website=""
             )
@@ -2231,6 +2438,8 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
         else:
             if requested_school:
                 existing_school.name = requested_school
+            if requested_location:
+                existing_school.city = requested_location
             existing_school.owner = data.name
             if phone_clean:
                 existing_school.phone = phone_clean
@@ -2544,6 +2753,47 @@ def auth_login(data: UserLogin, db: OrmSession = Depends(get_db)):
     if not matched_user:
         raise HTTPException(status_code=400, detail="Invalid email or password")
 
+    # Check if account is scheduled for deletion (30-day grace period)
+    if getattr(matched_user, "deletion_scheduled_at", None):
+        elapsed = datetime.utcnow() - matched_user.deletion_scheduled_at
+        if elapsed.total_seconds() > 30 * 86400:
+            # 30-day grace period has expired -> hard delete account and cascade
+            delete_user_by_id(matched_user.id, db)
+            raise HTTPException(
+                status_code=403,
+                detail="Your account's 30-day retention grace period has expired and the account has been permanently deleted."
+            )
+        
+        # User is within the 30-day retention window
+        if data.restore:
+            # User confirmed to retain and restore the account!
+            matched_user.deletion_scheduled_at = None
+            matched_user.is_active = True
+            if matched_user.role == "admin" and matched_user.email:
+                sch = db.query(School).filter(func.lower(School.email) == matched_user.email.lower()).first()
+                if sch:
+                    sch.is_active = True
+            db.add(ActivityLog(
+                text=f"Account successfully retained and restored for {matched_user.email}",
+                type="individual",
+                school=matched_user.school_name or ""
+            ))
+            db.commit()
+            db.refresh(matched_user)
+        else:
+            days_left = max(1, 30 - elapsed.days)
+            return {
+                "status": "pending_deletion",
+                "pending_deletion": True,
+                "days_remaining": days_left,
+                "deletion_scheduled_at": matched_user.deletion_scheduled_at.isoformat(),
+                "email": matched_user.email,
+                "user_id": matched_user.id,
+                "name": matched_user.name,
+                "role": matched_user.role,
+                "message": f"Your account is scheduled for deletion. You have {days_left} day(s) left to retain and restore your account along with all your data."
+            }
+
     if matched_user.is_active is False:
         raise HTTPException(status_code=403, detail="Your account has been deactivated by Super Admin. Please contact support.")
 
@@ -2565,6 +2815,21 @@ def auth_sso(data: SSOLogin, db: OrmSession = Depends(get_db)):
         (User.email == data.email.lower()) | 
         ((User.auth_provider == data.provider) & (User.social_id == data.social_id))
     ).first()
+    
+    if user and getattr(user, "deletion_scheduled_at", None):
+        elapsed = datetime.utcnow() - user.deletion_scheduled_at
+        if elapsed.total_seconds() > 30 * 86400:
+            delete_user_by_id(user.id, db)
+            raise HTTPException(
+                status_code=403,
+                detail="Your account's 30-day retention grace period has expired and the account has been permanently deleted."
+            )
+        # Restore SSO user
+        user.deletion_scheduled_at = None
+        user.is_active = True
+        db.commit()
+        db.refresh(user)
+
 
     if not user:
         role = (data.role or "athlete").lower()
@@ -3375,6 +3640,28 @@ def get_instructor(instructor_id: int, db: OrmSession = Depends(get_db)):
             elif sess_student_school.lower() == instructor_school.lower():
                 assigned_students_map[s.student_rel.id] = student_to_dict(s.student_rel)
 
+    today_iso = date.today().strftime("%Y-%m-%d")
+    today_str1 = date.today().strftime("%A, %b %d, %Y")
+    today_str2 = date.today().strftime("%d %b %Y")
+
+    active_students_map = {}
+    for s in i.sessions:
+        s_date = str(s.date or "").strip()
+        is_today = (
+            today_iso in s_date or
+            today_str1.lower() in s_date.lower() or
+            today_str2.lower() in s_date.lower() or
+            s_date.lower() in today_str1.lower()
+        )
+        if is_today and s.student_rel:
+            sess_student_school = (s.student_rel.school or "").strip()
+            if instructor_school.lower() == "individual / freelance coach" or sess_student_school.lower() == instructor_school.lower():
+                active_students_map[s.student_rel.id] = student_to_dict(s.student_rel)
+
+    d["active_students"] = list(active_students_map.values())
+    d["active_students_count"] = len(active_students_map)
+    d["total_students"] = list(assigned_students_map.values())
+    d["total_students_count"] = len(assigned_students_map)
     d["assigned_students"] = list(assigned_students_map.values())
     d["student_count"] = len(assigned_students_map)
     d["leaves"] = [leave_to_dict(l) for l in getattr(i, 'leaves', [])]
@@ -3479,6 +3766,19 @@ def create_instructor(data: InstructorCreate, request: Request, db: OrmSession =
     email_clean = (data.email or "").strip().lower()
     
     if email_clean:
+        # Check if this instructor already exists and is Active at another school
+        existing_inst = db.query(Instructor).filter(func.lower(Instructor.email) == email_clean).first()
+        if existing_inst:
+            existing_active = existing_inst.is_active if getattr(existing_inst, 'is_active', None) is not None else True
+            existing_school = (existing_inst.school or "").strip()
+            target_sch = (data.school or "").strip()
+            if existing_active and existing_school and existing_school.lower() != "individual / freelance coach":
+                if target_sch.lower() != existing_school.lower():
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Coach {existing_inst.name} is currently Active at '{existing_school}'. An Active coach cannot switch to or be added by another school ('{target_sch}'). Please deactivate them at '{existing_school}' first."
+                    )
+
         existing_user = db.query(User).filter(func.lower(User.email) == email_clean).first()
         if existing_user:
             user_id = existing_user.id
@@ -3627,7 +3927,21 @@ def update_instructor(instructor_id: int, data: InstructorUpdate, db: OrmSession
         i.rates = data.rates
     if data.location is not None:
         i.location = data.location
+    if data.is_active is not None:
+        i.is_active = bool(data.is_active)
+        if i.user_rel:
+            i.user_rel.is_active = bool(data.is_active)
+
     if data.school is not None:
+        target_school = data.school.strip()
+        current_school = (i.school or "").strip()
+        is_currently_active = i.is_active if getattr(i, 'is_active', None) is not None else True
+        if is_currently_active and target_school.lower() != current_school.lower():
+            if current_school and current_school.lower() != "individual / freelance coach":
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Coach {i.name} is currently Active at '{current_school}'. Active coaches cannot switch to another school. Please set status to Inactive before transferring."
+                )
         i.school = data.school
     if data.image is not None:
         i.image = data.image
@@ -3645,6 +3959,36 @@ def update_instructor(instructor_id: int, data: InstructorUpdate, db: OrmSession
         if not parsed_langs:
             parsed_langs = ["English"]
         i.languages = json.dumps(parsed_langs)
+
+    db.commit()
+    db.refresh(i)
+    return instructor_to_dict(i)
+
+
+@app.patch("/api/instructors/{instructor_id}/toggle-status")
+@app.put("/api/instructors/{instructor_id}/status")
+async def toggle_instructor_status(instructor_id: int, request: Request, db: OrmSession = Depends(get_db)):
+    i = db.query(Instructor).filter(
+        (Instructor.id == instructor_id) | (Instructor.user_id == instructor_id)
+    ).first()
+    if not i:
+        raise HTTPException(status_code=404, detail="Instructor not found")
+
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+
+    if "is_active" in body and body["is_active"] is not None:
+        new_active = bool(body["is_active"])
+    else:
+        current_active = i.is_active if getattr(i, 'is_active', None) is not None else True
+        new_active = not current_active
+
+    i.is_active = new_active
+    if i.user_rel:
+        i.user_rel.is_active = new_active
 
     db.commit()
     db.refresh(i)
@@ -3702,20 +4046,32 @@ def delete_instructor(instructor_id: int, db: OrmSession = Depends(get_db)):
             except Exception:
                 pass
 
-            # 6. Delete the instructor record itself FIRST (to release FK to users.id)
+            # 6. Delete the instructor record itself FIRST
             db.delete(i)
-            db.flush()
+            db.commit()
 
-            # 7. Delete linked user account (after instructor is deleted)
+            # 7. Delete linked user account (after instructor is successfully deleted)
             if target_user_id:
                 try:
-                    db.query(User).filter(User.id == target_user_id).delete(
-                        synchronize_session=False
-                    )
-                except Exception as user_err:
-                    print(f"Warning: could not delete user {target_user_id}: {user_err}")
+                    # Clean any student child logs if this user account was also tested as a student
+                    stud_ids = [s.id for s in db.query(Student).filter(Student.user_id == target_user_id).all()]
+                    if stud_ids:
+                        db.query(AttendanceRecord).filter(AttendanceRecord.student_id.in_(stud_ids)).delete(synchronize_session=False)
+                        db.query(SurfSession).filter(SurfSession.student_id.in_(stud_ids)).delete(synchronize_session=False)
+                        db.query(MockHeat).filter(MockHeat.student_id.in_(stud_ids)).delete(synchronize_session=False)
+                        db.query(Badge).filter(Badge.student_id.in_(stud_ids)).delete(synchronize_session=False)
+                        db.query(NutritionLog).filter(NutritionLog.student_id.in_(stud_ids)).delete(synchronize_session=False)
+                        db.query(SCLog).filter(SCLog.student_id.in_(stud_ids)).delete(synchronize_session=False)
+                        db.query(TechnicalLog).filter(TechnicalLog.student_id.in_(stud_ids)).delete(synchronize_session=False)
+                        db.query(MentalLog).filter(MentalLog.student_id.in_(stud_ids)).delete(synchronize_session=False)
+                        db.query(Student).filter(Student.id.in_(stud_ids)).delete(synchronize_session=False)
 
-            db.commit()
+                    db.query(User).filter(User.id == target_user_id).delete(synchronize_session=False)
+                    db.commit()
+                except Exception as user_err:
+                    db.rollback()
+                    print(f"Warning: could not delete user account {target_user_id}: {user_err}")
+
             return {"message": "Instructor deleted successfully"}
 
         # Fallback: no instructor record found, but a user record may exist
@@ -4939,14 +5295,18 @@ def delete_student(student_id: int, db: OrmSession = Depends(get_db)):
 
 @app.get("/api/sessions")
 def get_sessions(school: Optional[str] = None, db: OrmSession = Depends(get_db)):
-    query = db.query(SurfSession).order_by(SurfSession.id.desc())
-    if school and school.lower().strip() not in ["all", "super admin", "school admin"]:
-        clean_sch = school.lower().strip()
-        query = query.outerjoin(Student, SurfSession.student_id == Student.id)\
-                     .outerjoin(Instructor, SurfSession.instructor_id == Instructor.id)\
-                     .filter(or_(func.lower(Student.school) == clean_sch, func.lower(Instructor.school) == clean_sch))
-    sessions = query.all()
-    return [session_to_dict(s) for s in sessions]
+    try:
+        query = db.query(SurfSession).order_by(SurfSession.id.desc())
+        if school and school.lower().strip() not in ["all", "super admin", "school admin"]:
+            clean_sch = school.lower().strip()
+            query = query.outerjoin(Student, SurfSession.student_id == Student.id)\
+                         .outerjoin(Instructor, SurfSession.instructor_id == Instructor.id)\
+                         .filter(or_(func.lower(Student.school) == clean_sch, func.lower(Instructor.school) == clean_sch))
+        sessions = query.all()
+        return [session_to_dict(s, db=db) for s in sessions]
+    except Exception as e:
+        print(f"Error in get_sessions: {e}")
+        return []
 
 
 @app.get("/api/sessions/{session_id}")
@@ -4954,7 +5314,7 @@ def get_session(session_id: int, db: OrmSession = Depends(get_db)):
     s = db.query(SurfSession).filter(SurfSession.id == session_id).first()
     if not s:
         raise HTTPException(status_code=404, detail="Session not found")
-    return session_to_dict(s)
+    return session_to_dict(s, db=db)
 
 
 @app.post("/api/sessions")
@@ -4966,9 +5326,11 @@ def create_session(data: SessionCreate, db: OrmSession = Depends(get_db)):
             student.instructor_id = data.instructor_id
         if data.time:
             student.session_time = data.time
+    inst_ids = data.instructor_ids if data.instructor_ids else ([data.instructor_id] if data.instructor_id else [])
     session = SurfSession(
         date=data.date, time=data.time, duration_mins=data.duration_mins,
         student_id=data.student_id, instructor_id=data.instructor_id,
+        instructor_ids=json.dumps(inst_ids),
         location=data.location, condition=data.condition,
         type=data.type, status=data.status or "Upcoming",
         notes=data.notes or "",
@@ -4988,7 +5350,7 @@ def create_session(data: SessionCreate, db: OrmSession = Depends(get_db)):
         school=session_school
     ))
     db.commit()
-    return session_to_dict(session)
+    return session_to_dict(session, db=db)
 
 
 @app.post("/api/sessions/bulk")
@@ -4997,6 +5359,8 @@ def create_sessions_bulk(data: SessionBulkCreate, db: OrmSession = Depends(get_d
     instructor_name = instructor.name if instructor else "Coach"
     created = []
     student_names = []
+    bulk_inst_ids = data.instructor_ids if data.instructor_ids else ([data.instructor_id] if data.instructor_id else [])
+    bulk_inst_ids_str = json.dumps(bulk_inst_ids)
     
     if data.students_data and len(data.students_data) > 0:
         for item in data.students_data:
@@ -5015,6 +5379,7 @@ def create_sessions_bulk(data: SessionBulkCreate, db: OrmSession = Depends(get_d
             session = SurfSession(
                 date=data.date, time=data.time, duration_mins=data.duration_mins,
                 student_id=sid, instructor_id=data.instructor_id,
+                instructor_ids=bulk_inst_ids_str,
                 student_name=resolved_name,
                 guest_name=g_name or (resolved_name if is_guest else ""),
                 location=data.location, condition=data.condition,
@@ -5039,6 +5404,7 @@ def create_sessions_bulk(data: SessionBulkCreate, db: OrmSession = Depends(get_d
             session = SurfSession(
                 date=data.date, time=data.time, duration_mins=data.duration_mins,
                 student_id=sid, instructor_id=data.instructor_id,
+                instructor_ids=bulk_inst_ids_str,
                 student_name=resolved_name,
                 guest_name="",
                 location=data.location, condition=data.condition,
@@ -5065,7 +5431,7 @@ def create_sessions_bulk(data: SessionBulkCreate, db: OrmSession = Depends(get_d
         school=bulk_session_school
     ))
     db.commit()
-    return [session_to_dict(s) for s in created]
+    return [session_to_dict(s, db=db) for s in created]
 
 
 @app.put("/api/sessions/{session_id}")
@@ -5084,6 +5450,13 @@ def update_session(session_id: int, data: SessionUpdate, db: OrmSession = Depend
         s.duration_mins = data.duration_mins
     if data.student_id is not None:
         s.student_id = data.student_id
+    if data.instructor_ids is not None:
+        try:
+            s.instructor_ids = json.dumps(data.instructor_ids)
+        except Exception:
+            pass
+        if data.instructor_ids and not data.instructor_id:
+            s.instructor_id = data.instructor_ids[0]
     if data.instructor_id is not None:
         s.instructor_id = data.instructor_id
     if data.location is not None:
@@ -5120,6 +5493,12 @@ def update_session(session_id: int, data: SessionUpdate, db: OrmSession = Depend
         s.status = data.status
     if data.notes is not None:
         s.notes = data.notes
+    elif data.instructor is not None:
+        if not s.notes:
+            s.notes = f"{s.group_name or 'Group'} ({s.time or ''}) - Coaches: {data.instructor}"
+        elif "Coaches:" in s.notes:
+            import re
+            s.notes = re.sub(r"Coaches:\s*[^-\n]+", f"Coaches: {data.instructor}", s.notes)
     if data.video_url is not None:
         s.video_url = data.video_url
     if data.image_url is not None:
@@ -5131,7 +5510,7 @@ def update_session(session_id: int, data: SessionUpdate, db: OrmSession = Depend
 
     db.commit()
     db.refresh(s)
-    return session_to_dict(s)
+    return session_to_dict(s, db=db)
 
 
 class SessionAttendanceUpdate(BaseModel):
@@ -5147,7 +5526,7 @@ def patch_session_attendance(session_id: int, data: SessionAttendanceUpdate, db:
     s.attendance = status_val
     db.commit()
     db.refresh(s)
-    return session_to_dict(s)
+    return session_to_dict(s, db=db)
 
 
 class BulkSessionAttendanceItem(BaseModel):
@@ -5888,5 +6267,324 @@ def delete_user_by_id(user_id: int, db: OrmSession = Depends(get_db)):
         db.rollback()
         print(f"Error in delete_user_by_id {user_id}: {e}")
         return {"message": "User deletion processed"}
+
+
+# ─── Guest Admin Management & Account Deletion ───────────────────────────────
+
+class GuestAdminCreateRequest(BaseModel):
+    name: str
+    email: str
+    password: str
+    school_id: Optional[int] = None
+    school_name: Optional[str] = None
+
+@app.post("/api/school/guest-admins")
+def create_guest_admin(data: GuestAdminCreateRequest, db: OrmSession = Depends(get_db)):
+    email_clean = data.email.lower().strip()
+    if not email_clean or not data.password.strip():
+        raise HTTPException(status_code=400, detail="Email and password are required")
+    
+    existing = db.query(User).filter(func.lower(User.email) == email_clean).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="This email / ID is already registered in the system")
+
+    guest_user = User(
+        email=email_clean,
+        name=data.name.strip() or "Guest Admin",
+        password_hash=hash_password(data.password),
+        password_plain=data.password,
+        role="guest_admin",
+        school_id=data.school_id,
+        school_name=data.school_name,
+        approval_status="approved",
+        created_by_school=True,
+        is_active=True
+    )
+    db.add(guest_user)
+    db.commit()
+    db.refresh(guest_user)
+    return {
+        "id": guest_user.id,
+        "name": guest_user.name,
+        "email": guest_user.email,
+        "role": guest_user.role,
+        "school_name": guest_user.school_name,
+        "school_id": guest_user.school_id,
+        "password": guest_user.password_plain or data.password,
+        "password_plain": guest_user.password_plain or data.password,
+        "created_at": guest_user.created_at.isoformat() if guest_user.created_at else None
+    }
+
+@app.get("/api/school/guest-admins")
+def list_guest_admins(school_name: Optional[str] = None, school_id: Optional[int] = None, db: OrmSession = Depends(get_db)):
+    query = db.query(User).filter(User.role == "guest_admin")
+    if school_id:
+        query = query.filter(User.school_id == school_id)
+    elif school_name:
+        query = query.filter(func.lower(User.school_name) == school_name.lower().strip())
+    
+    admins = query.order_by(User.id.desc()).all()
+    return [{
+        "id": u.id,
+        "name": u.name or "Guest Admin",
+        "email": u.email,
+        "role": u.role,
+        "school_name": u.school_name,
+        "school_id": u.school_id,
+        "password": u.password_plain or "",
+        "password_plain": u.password_plain or "",
+        "is_active": u.is_active,
+        "created_at": u.created_at.isoformat() if u.created_at else None
+    } for u in admins]
+
+@app.delete("/api/school/guest-admins/{guest_id}")
+def delete_guest_admin(guest_id: int, db: OrmSession = Depends(get_db)):
+    u = db.query(User).filter(User.id == guest_id, User.role == "guest_admin").first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Guest admin not found")
+    db.delete(u)
+    db.commit()
+    return {"message": "Guest admin account deleted successfully"}
+
+class DeleteAccountRequest(BaseModel):
+    user_id: Optional[int] = None
+    email: Optional[str] = None
+    password: Optional[str] = None
+
+@app.post("/api/users/delete-my-account")
+def delete_my_account(data: DeleteAccountRequest, db: OrmSession = Depends(get_db)):
+    user = None
+    if data.user_id:
+        user = db.query(User).filter(User.id == data.user_id).first()
+    if not user and data.email:
+        user = db.query(User).filter(func.lower(User.email) == data.email.lower().strip()).first()
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User account not found")
+    
+    # 1. Require account password
+    pwd = (data.password or "").strip()
+    if not pwd:
+        raise HTTPException(status_code=400, detail="Please enter your account password to confirm deletion.")
+    
+    valid = False
+    if user.password_hash and verify_password(pwd, user.password_hash):
+        valid = True
+    elif user.password_plain and user.password_plain == pwd:
+        valid = True
+    
+    if not valid:
+        raise HTTPException(status_code=400, detail="Incorrect account password. Please enter your valid password.")
+    
+    # 2. DO NOT delete data! Keep all data for 30-day retention grace period
+    user.deletion_scheduled_at = datetime.utcnow()
+    user.is_active = False
+    
+    if user.role == "admin" and user.email:
+        sch = db.query(School).filter(func.lower(School.email) == user.email.lower()).first()
+        if sch:
+            sch.is_active = False
+    
+    db.add(ActivityLog(
+        text=f"Account deletion scheduled for {user.email} (30-day retention grace period active)",
+        type="individual",
+        school=user.school_name or ""
+    ))
+    db.commit()
+    
+    return {
+        "message": "Your account has been scheduled for deletion. All your data is safely retained for 30 days. You can log back in anytime within 30 days to retain and restore your account.",
+        "deletion_scheduled_at": user.deletion_scheduled_at.isoformat(),
+        "days_remaining": 30
+    }
+
+
+class RestoreAccountRequest(BaseModel):
+    email: str
+    password: str
+    role: Optional[str] = None
+
+@app.post("/api/users/restore-account")
+def restore_my_account(data: RestoreAccountRequest, db: OrmSession = Depends(get_db)):
+    email_clean = data.email.lower().strip()
+    query = db.query(User).filter(func.lower(User.email) == email_clean)
+    if data.role:
+        query = query.filter(User.role == data.role.lower().strip())
+    candidates = query.all()
+    if not candidates:
+        raise HTTPException(status_code=404, detail="User account not found")
+    
+    matched_user = None
+    for u in candidates:
+        valid = False
+        if u.password_hash and verify_password(data.password, u.password_hash):
+            valid = True
+        elif u.password_plain and u.password_plain == data.password:
+            valid = True
+        if valid:
+            matched_user = u
+            break
+            
+    if not matched_user:
+        raise HTTPException(status_code=400, detail="Incorrect email or password")
+        
+    if not matched_user.deletion_scheduled_at:
+        token = generate_token({"user_id": matched_user.id, "email": matched_user.email, "role": matched_user.role})
+        return {
+            "message": "Account is already active.",
+            "token": token,
+            "user": make_user_response(matched_user, db)
+        }
+        
+    elapsed = datetime.utcnow() - matched_user.deletion_scheduled_at
+    if elapsed.total_seconds() > 30 * 86400:
+        delete_user_by_id(matched_user.id, db)
+        raise HTTPException(
+            status_code=403,
+            detail="The 30-day retention grace period has expired. This account has been permanently deleted."
+        )
+        
+    # Retain and restore account!
+    matched_user.deletion_scheduled_at = None
+    matched_user.is_active = True
+    if matched_user.role == "admin" and matched_user.email:
+        sch = db.query(School).filter(func.lower(School.email) == matched_user.email.lower()).first()
+        if sch:
+            sch.is_active = True
+            
+    db.add(ActivityLog(
+        text=f"Account successfully retained and restored for {matched_user.email}",
+        type="individual",
+        school=matched_user.school_name or ""
+    ))
+    db.commit()
+    db.refresh(matched_user)
+    
+    token = generate_token({"user_id": matched_user.id, "email": matched_user.email, "role": matched_user.role})
+    return {
+        "message": "Welcome back! Your account has been retained and all your data is safely restored.",
+        "token": token,
+        "user": make_user_response(matched_user, db)
+    }
+
+
+class UpdateProfileRequest(BaseModel):
+    user_id: Optional[int] = None
+    email: Optional[str] = None
+    name: Optional[str] = None
+    phone: Optional[str] = None
+    image: Optional[str] = None
+    school_name: Optional[str] = None
+    school_location: Optional[str] = None
+    location: Optional[str] = None
+    bio: Optional[str] = None
+
+@app.put("/api/users/profile")
+@app.put("/api/users/{target_user_id}/profile")
+def update_user_profile(
+    data: UpdateProfileRequest,
+    target_user_id: Optional[int] = None,
+    authorization: Optional[str] = Header(None),
+    db: OrmSession = Depends(get_db)
+):
+    user = None
+    uid = target_user_id or data.user_id
+    if uid:
+        user = db.query(User).filter(User.id == uid).first()
+    if not user and authorization and authorization.startswith("Bearer "):
+        try:
+            token = authorization.split(" ")[1]
+            payload = verify_token(token)
+            if payload and payload.get("user_id"):
+                user = db.query(User).filter(User.id == payload.get("user_id")).first()
+        except Exception:
+            pass
+    if not user and data.email:
+        user = db.query(User).filter(func.lower(User.email) == data.email.lower().strip()).first()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User account not found")
+
+    # Update basic User fields
+    if data.name is not None and data.name.strip():
+        user.name = data.name.strip()
+    if data.phone is not None:
+        user.phone = data.phone.strip()
+    if data.image is not None:
+        user.image = data.image.strip()
+
+    # If Admin, update school details
+    if user.role == "admin":
+        sch = None
+        if user.school_id:
+            sch = db.query(School).filter(School.id == user.school_id).first()
+        if not sch and user.school_name:
+            sch = db.query(School).filter(func.lower(School.name) == user.school_name.lower().strip()).first()
+        if not sch and user.email:
+            sch = db.query(School).filter(func.lower(School.email) == user.email.lower().strip()).first()
+        if sch:
+            if data.school_name is not None and data.school_name.strip():
+                sch.name = data.school_name.strip()
+                user.school_name = sch.name
+            if data.name is not None and data.name.strip():
+                sch.owner = data.name.strip()
+            if data.phone is not None:
+                sch.phone = data.phone.strip()
+            if data.image is not None and data.image.strip():
+                sch.logo = data.image.strip()
+            loc_val = data.school_location if data.school_location is not None else data.location
+            if loc_val is not None:
+                sch.city = loc_val.strip()
+                sch.country = ""
+                # Also sync location for all instructors affiliated with this school
+                try:
+                    db.query(Instructor).filter(func.lower(Instructor.school) == sch.name.lower()).update({"location": loc_val.strip()}, synchronize_session=False)
+                except Exception:
+                    pass
+
+    # If Coach, update linked Instructor details
+    if user.role == "coach":
+        inst = None
+        if user.id:
+            inst = db.query(Instructor).filter(Instructor.user_id == user.id).first()
+        if not inst and user.email:
+            inst = db.query(Instructor).filter(func.lower(Instructor.email) == user.email.lower().strip()).first()
+        if inst:
+            if data.name is not None and data.name.strip():
+                inst.name = data.name.strip()
+            if data.phone is not None:
+                inst.phone = data.phone.strip()
+            if data.image is not None and data.image.strip():
+                inst.image = data.image.strip()
+            if data.bio is not None:
+                inst.bio = data.bio.strip()
+
+    # If Student, update linked Student details
+    if user.role in ["athlete", "student", "user"]:
+        st = None
+        if user.id:
+            st = db.query(Student).filter(Student.user_id == user.id).first()
+        if not st and user.email:
+            st = db.query(Student).filter(func.lower(Student.email) == user.email.lower().strip()).first()
+        if st:
+            if data.name is not None and data.name.strip():
+                st.name = data.name.strip()
+            if data.phone is not None:
+                st.whatsapp_number = data.phone.strip()
+            if data.image is not None and data.image.strip():
+                st.image = data.image.strip()
+            if data.bio is not None:
+                st.bio = data.bio.strip()
+
+    db.commit()
+    db.refresh(user)
+
+    return {
+        "message": "Profile updated successfully",
+        "user": make_user_response(user, db)
+    }
+
+
+
 
 

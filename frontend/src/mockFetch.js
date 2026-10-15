@@ -306,6 +306,7 @@ window.fetch = async function (input, init) {
         state.activityLogs.unshift({ id: Date.now(), text: `New Coach ${body.name} registered on the platform`, type: "group", time: "Just now" });
       } else if (role === 'admin') {
         const schName = (body.school || "").trim() || `${body.name}'s Surf School`;
+        const schLoc = (body.school_location || body.schoolLocation || body.location || "").trim();
         newUser.school_name = schName;
         newUser.name = body.name || "School Admin";
         if (!state.schools.some(s => s.email === email || s.name === schName)) {
@@ -315,8 +316,8 @@ window.fetch = async function (input, init) {
             owner: body.name,
             email: email,
             phone: body.whatsapp_number || "+91 9876543210",
-            country: "India",
-            city: "Kovalam / Chennai",
+            country: "",
+            city: schLoc || (schName.toLowerCase().includes('dapoli') ? "Dapoli, Maharashtra" : "Kovalam / Chennai"),
             instructor_count: "5-15",
             website: ""
           });

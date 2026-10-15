@@ -729,3 +729,98 @@ h2 {
 .modal {
   overscroll-behavior: contain !important;
 }
+
+/* ==========================================================================
+   User Profile Dropdown & Dark Mode Styling
+   ========================================================================== */
+@keyframes profileDropdownFade {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Global Dark Mode System */
+[data-theme="dark"], body.dark-mode {
+  background-color: #0B1120 !important;
+  color: #F8FAFC !important;
+}
+
+[data-theme="dark"] .im-page,
+[data-theme="dark"] .sm-page,
+[data-theme="dark"] .ses-page,
+[data-theme="dark"] .db-page,
+[data-theme="dark"] .an-page,
+[data-theme="dark"] .cmp-page,
+[data-theme="dark"] .ai-page,
+[data-theme="dark"] .im-main,
+[data-theme="dark"] .sm-main,
+[data-theme="dark"] .ses-main,
+[data-theme="dark"] .db-main {
+  background-color: #0B1120 !important;
+  color: #F8FAFC !important;
+}
+
+[data-theme="dark"] .im-card,
+[data-theme="dark"] .sm-card,
+[data-theme="dark"] .db-card,
+[data-theme="dark"] .im-table-card,
+[data-theme="dark"] .im-table-container,
+[data-theme="dark"] .ses-table-wrap,
+[data-theme="dark"] .ses-card,
+[data-theme="dark"] .stat-card {
+  background-color: #1E293B !important;
+  border-color: #334155 !important;
+  color: #F8FAFC !important;
+}
+
+[data-theme="dark"] .im-table th,
+[data-theme="dark"] .sm-table th,
+[data-theme="dark"] .ses-table th {
+  background-color: #0F172A !important;
+  color: #94A3B8 !important;
+  border-color: #334155 !important;
+}
+
+[data-theme="dark"] .im-table td,
+[data-theme="dark"] .sm-table td,
+[data-theme="dark"] .ses-table td {
+  border-color: #334155 !important;
+  color: #F8FAFC !important;
+}
+
+[data-theme="dark"] .im-search-bar,
+[data-theme="dark"] .sm-search-bar,
+[data-theme="dark"] .ses-search-box {
+  background-color: #1E293B !important;
+  border-color: #334155 !important;
+  color: #F8FAFC !important;
+}
+
+[data-theme="dark"] .im-search-bar input,
+[data-theme="dark"] .sm-search-bar input,
+[data-theme="dark"] .ses-search-box input {
+  color: #F8FAFC !important;
+}
+
+[data-theme="dark"] .date-range-filter-container {
+  background: #1E293B !important;
+  border-color: #334155 !important;
+}
+
+[data-theme="dark"] .date-range-filter-container button {
+  background: #0F172A !important;
+  color: #E2E8F0 !important;
+}
+
+[data-theme="dark"] .date-range-filter-container input[type="date"] {
+  background: #0F172A !important;
+  color: #F8FAFC !important;
+  border-color: #334155 !important;
+  color-scheme: dark;
+}
+

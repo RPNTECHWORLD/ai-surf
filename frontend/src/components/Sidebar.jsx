@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import UserProfileMenu from './UserProfileMenu';
 
 const API = import.meta.env.VITE_API_URL || '';
 
@@ -111,7 +112,7 @@ const Sidebar = () => {
     const role = user?.role || 'admin';
     const items = [];
 
-    if (role === 'admin') {
+    if (role === 'admin' || role === 'guest_admin') {
       items.push({ label: 'Dashboard', path: '/dashboard' });
     }
 
@@ -178,31 +179,12 @@ const Sidebar = () => {
 
         {/* Right Info Section */}
         <div className="db-header-right">
-          <div className="db-header-userinfo">
-            <div className="db-header-usertext">
-              <div className="db-header-user-name">
-                {user?.name || user?.username || (typeof school?.owner === 'string' ? school.owner : '') || (user?.email ? user.email.split('@')[0] : 'User')}
-              </div>
-              {school?.name && (
-                <div className="db-header-school-name">
-                  {typeof school?.name === 'string' ? school.name : (school?.name?.name || '')}
-                </div>
-              )}
-              <div className="db-header-user-role" style={{ textTransform: 'capitalize' }}>
-                {user ? (user.role === 'admin' ? 'School Admin' : (user.role === 'athlete' ? 'Student' : (user.role === 'coach' ? 'Coach' : user.role))) : 'School Admin'}
-              </div>
-            </div>
-            <div className="db-header-avatar" style={{ backgroundImage: user?.image ? `url(${user.image})` : 'none', backgroundSize: 'cover', backgroundPosition: 'center' }}>
-              {!user?.image && getInitials(user?.name || (typeof school?.owner === 'string' ? school.owner : '') || 'School Admin')}
-            </div>
-            <button className="db-header-logout" onClick={handleLogout} title="Log Out">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-                <polyline points="16 17 21 12 16 7"></polyline>
-                <line x1="21" y1="12" x2="9" y2="12"></line>
-              </svg>
-            </button>
-          </div>
+          {/* User Profile & Settings Menu (replaces raw logout button) */}
+          <UserProfileMenu
+            user={user}
+            school={school}
+            onLogout={handleLogout}
+          />
 
           {/* Mobile Menu Icon Toggle */}
           <button className="db-mobile-toggle" onClick={() => setMobileMenuOpen(!mobileMenuOpen)}>

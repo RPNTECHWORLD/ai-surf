@@ -43,6 +43,12 @@ const isDateInLeaveRange = (dateStr, leave) => {
   return dateStr >= start && dateStr <= end;
 };
 
+const getIsoDate = (daysOffset = 0) => {
+  const d = new Date();
+  d.setDate(d.getDate() + daysOffset);
+  return d.toISOString().split('T')[0];
+};
+
 const fitnessColors = { Elite: '#FF9800', Advanced: '#7C3AED', Intermediate: '#F59E0B', Beginner: '#6B7280' };
 
 const getCoverImage = (name) => {
@@ -135,9 +141,20 @@ const InstructorManagement = () => {
   const [showFormPass, setShowFormPass] = useState(false);
   const [showModalPass, setShowModalPass] = useState(false);
 
+  // Status Toggle (Active / Inactive) State
+  const [togglingStatusId, setTogglingStatusId] = useState(null);
+  const [statusToast, setStatusToast] = useState({ show: false, text: '', isSuccess: true });
+
   // Leave Requests State for School Admin
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [leaveRequests, setLeaveRequests] = useState([]);
+
+  // Date Range Filter State
+  const [dateRange, setDateRange] = useState(() => ({
+    startDate: getIsoDate(0),
+    endDate: getIsoDate(0),
+    preset: 'today'
+  }));
   const [leaveLoading, setLeaveLoading] = useState(false);
   const [leaveFilterStatus, setLeaveFilterStatus] = useState('All'); // 'All' | 'Pending' | 'Approved' | 'Rejected'
   const [leaveSearch, setLeaveSearch] = useState('');
@@ -254,9 +271,17 @@ const InstructorManagement = () => {
     const cleanName = schoolName.toLowerCase().trim();
     const found = schoolsData.find(s => (s.name || '').toLowerCase().trim() === cleanName);
     if (found) {
-      const parts = [found.city, found.country].filter(Boolean);
-      return parts.join(', ') || found.city || found.country || '';
+      const city = (found.city || '').trim();
+      const country = (found.country || '').trim();
+      if (!city && !country) return '';
+      if (!country) return city;
+      if (!city) return country;
+      if (city.toLowerCase().includes(country.toLowerCase())) return city;
+      return `${city}, ${country}`;
     }
+    if (cleanName.includes('dapoli')) return 'Dapoli, Maharashtra';
+    if (cleanName.includes('mulki')) return 'Mulki / Mangalore, India';
+    if (cleanName.includes('kovalam')) return 'Kovalam / Chennai, India';
     return '';
   };
 
@@ -342,6 +367,32 @@ const InstructorManagement = () => {
   };
 
   const [allStudents, setAllStudents] = useState([]);
+  const [allSessions, setAllSessions] = useState([]);
+
+  const parseLocalDateOnly = (dateStr) => {
+    if (!dateStr) return null;
+    if (dateStr instanceof Date) {
+      return new Date(dateStr.getFullYear(), dateStr.getMonth(), dateStr.getDate());
+    }
+    const s = String(dateStr).trim();
+    if (!s) return null;
+    const ymd = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+    if (ymd) return new Date(parseInt(ymd[1], 10), parseInt(ymd[2], 10) - 1, parseInt(ymd[3], 10));
+    const dmy = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+    if (dmy) return new Date(parseInt(dmy[3], 10), parseInt(dmy[2], 10) - 1, parseInt(dmy[1], 10));
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    return null;
+  };
+
+  const isDateToday = (dateStr) => {
+    const d = parseLocalDateOnly(dateStr);
+    if (!d) return false;
+    const today = new Date();
+    return d.getFullYear() === today.getFullYear() &&
+           d.getMonth() === today.getMonth() &&
+           d.getDate() === today.getDate();
+  };
 
   const fetchInstructors = () => {
     const url = (!isSuperAdmin && currentSchool)
@@ -371,6 +422,18 @@ const InstructorManagement = () => {
       .then(data => {
         if (Array.isArray(data)) {
           setAllStudents(data);
+        }
+      })
+      .catch(() => {});
+
+    const sessUrl = (!isSuperAdmin && currentSchool)
+      ? `${API}/api/sessions?school=${encodeURIComponent(currentSchool)}`
+      : `${API}/api/sessions`;
+    fetch(sessUrl)
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          setAllSessions(data);
         }
       })
       .catch(() => {});
@@ -604,6 +667,16 @@ const InstructorManagement = () => {
     e.preventDefault();
     if (!selected || uploadingPhoto) return;
     setSaving(true);
+    if (selected && selected.is_active !== false && form.school) {
+      const origSchool = (selected.school || '').trim().toLowerCase();
+      const newSchool = form.school.trim().toLowerCase();
+      if (origSchool && origSchool !== 'individual / freelance coach' && origSchool !== newSchool) {
+        alert(`Cannot switch school while coach is Active at '${selected.school}'. Please set status to Inactive before transferring.`);
+        setSaving(false);
+        return;
+      }
+    }
+
     try {
       const certs = typeof form.certifications === 'string'
         ? form.certifications.split(',').map(c => c.trim()).filter(Boolean)
@@ -640,9 +713,55 @@ const InstructorManagement = () => {
         setPhotoPreview('');
         setForm({ name: '', email: '', phone: '', dob: '', age: '', gender: 'Male', fitness_level: 'Elite', experience: '', certifications: '', languages: '', biography: '', image: '', school: getActiveSchoolName(), location: '' });
         fetchInstructors();
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        alert(errData.detail || 'Failed to update instructor.');
       }
-    } catch (err) {}
+    } catch (err) {
+      alert('Error updating instructor: ' + (err.message || err));
+    }
     setSaving(false);
+  };
+
+  const handleToggleInstructorStatus = async (e, instructor) => {
+    e && e.stopPropagation();
+    if (togglingStatusId === instructor.id) return;
+    const currentActive = instructor.is_active !== false;
+    const nextActive = !currentActive;
+
+    // Optimistic UI update
+    setInstructors(prev => prev.map(inst => inst.id === instructor.id ? { ...inst, is_active: nextActive } : inst));
+    setTogglingStatusId(instructor.id);
+
+    try {
+      const res = await fetch(`${API}/api/instructors/${instructor.id}/toggle-status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_active: nextActive })
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setInstructors(prev => prev.map(inst => inst.id === instructor.id ? { ...inst, ...updated } : inst));
+        setStatusToast({
+          show: true,
+          text: nextActive 
+            ? `Coach "${instructor.name}" is now ACTIVE (Locked to ${instructor.school || 'school'}).` 
+            : `Coach "${instructor.name}" is now INACTIVE (Released / Can switch schools).`,
+          isSuccess: true
+        });
+        setTimeout(() => setStatusToast(prev => ({ ...prev, show: false })), 4000);
+      } else {
+        // Revert on failure
+        setInstructors(prev => prev.map(inst => inst.id === instructor.id ? { ...inst, is_active: currentActive } : inst));
+        const errData = await res.json().catch(() => ({}));
+        alert(errData.detail || 'Failed to update coach status. Please try again.');
+      }
+    } catch (err) {
+      setInstructors(prev => prev.map(inst => inst.id === instructor.id ? { ...inst, is_active: currentActive } : inst));
+      alert('Network error while toggling status: ' + (err.message || err));
+    } finally {
+      setTogglingStatusId(null);
+    }
   };
 
   const handleDelete = (e, instructor) => {
@@ -663,8 +782,12 @@ const InstructorManagement = () => {
               setShowAddModal(false);
             }
             fetchInstructors();
+          } else {
+            const errData = await res.json().catch(() => ({}));
+            alert(errData.detail || 'Could not delete instructor. Please try again.');
           }
         } catch (err) {
+          alert('Network error while deleting instructor: ' + (err.message || err));
         } finally {
           setDeletingId(null);
         }
@@ -1016,16 +1139,54 @@ const InstructorManagement = () => {
             </button>
           </div>
         </div>
-            {/* Search Bar */}
-            <div className="im-search-bar">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
-          <input
-            type="text"
-            placeholder="Search by name, certification, or language..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+        {/* Search Bar Row */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '14px',
+          marginBottom: '18px'
+        }}>
+          <div className="im-search-bar" style={{ flex: '1', margin: 0 }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
+            <input
+              type="text"
+              placeholder="Search by name, certification, or language..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
         </div>
+
+        {/* Status Toast Alert */}
+        {statusToast.show && (
+          <div style={{
+            background: statusToast.isSuccess ? '#F0FDF4' : '#FEF2F2',
+            border: `1px solid ${statusToast.isSuccess ? '#86EFAC' : '#FECACA'}`,
+            color: statusToast.isSuccess ? '#15803D' : '#DC2626',
+            padding: '10px 16px',
+            borderRadius: '12px',
+            marginBottom: '16px',
+            fontSize: '13px',
+            fontWeight: '600',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
+            transition: 'all 0.3s ease'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span>{statusToast.isSuccess ? '✅' : '⚠️'}</span>
+              <span>{statusToast.text}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setStatusToast(prev => ({ ...prev, show: false }))}
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'inherit', fontWeight: 700, fontSize: '14px' }}
+            >
+              ✕
+            </button>
+          </div>
+        )}
 
         {/* Layout: Left Column (List) & Right Column (Add/Edit Sidebar) */}
         <div className="im-content-layout">
@@ -1041,8 +1202,54 @@ const InstructorManagement = () => {
                 )}
                 {filtered.map((instructor) => {
                   const hasValidImage = instructor.image && !instructor.image.startsWith('blob:');
+                  const isCoachActive = instructor.is_active !== false;
                   return (
-                    <div key={instructor.id} className="im-card">
+                    <div key={instructor.id} className={`im-card ${!isCoachActive ? 'im-card-inactive' : ''}`}>
+                      {/* Top Left: Active / Inactive Status Toggle */}
+                      <div className="im-card-top-status">
+                        <button
+                          type="button"
+                          className={`im-status-toggle ${isCoachActive ? 'is-active' : 'is-inactive'}`}
+                          disabled={togglingStatusId === instructor.id}
+                          onClick={(e) => handleToggleInstructorStatus(e, instructor)}
+                          title={isCoachActive 
+                            ? `Active: ${instructor.name} is locked to ${instructor.school || 'this school'}. Click to set Inactive.` 
+                            : `Inactive: ${instructor.name} is released / can switch schools. Click to set Active.`}
+                        >
+                          <span className="im-toggle-track">
+                            <span className="im-toggle-thumb" />
+                          </span>
+                          <span className="im-toggle-text">
+                            {togglingStatusId === instructor.id ? '...' : (isCoachActive ? 'Active' : 'Inactive')}
+                          </span>
+                        </button>
+                      </div>
+
+                      {canDeleteInstructor && (
+                        <div className="im-card-top-actions">
+                          <button
+                            type="button"
+                            className="im-card-top-btn im-btn-top-delete"
+                            title={`Delete ${instructor.name}`}
+                            disabled={deletingId === instructor.id}
+                            onClick={(e) => handleDelete(e, instructor)}
+                            style={{
+                              border: '1px solid #FECACA',
+                              color: '#EF4444',
+                              background: '#FFF1F2'
+                            }}
+                          >
+                            {deletingId === instructor.id ? (
+                              <span style={{ fontSize: '10px', fontWeight: 700 }}>...</span>
+                            ) : (
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="3 6 5 6 21 6" />
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                              </svg>
+                            )}
+                          </button>
+                        </div>
+                      )}
                       {/* Profile photo avatar only */}
                       <div className="im-avatar-header">
                         <div className="im-avatar-wrapper">
@@ -1117,47 +1324,113 @@ const InstructorManagement = () => {
                               </span>
                             );
                           })()}
-                          {(instructor.is_on_leave || instructor.active_leave) && (
-                            <span 
-                              style={{ 
-                                background: '#FEE2E2', 
-                                color: '#DC2626', 
-                                border: '1px solid #FCA5A5', 
-                                padding: '3px 8px', 
-                                borderRadius: '12px', 
-                                fontSize: '11px', 
-                                fontWeight: 800,
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '3px'
-                              }}
-                              title={instructor.active_leave ? `On Leave: ${instructor.active_leave.start_date} to ${instructor.active_leave.end_date}` : 'Currently On Leave'}
-                            >
-                              🏖️ On Leave
-                            </span>
-                          )}
+                          {(() => {
+                            const leaves = instructor.approved_leaves || [];
+                            let onLeaveInRange = false;
+                            let matchingLeave = null;
+                            if (dateRange.startDate && dateRange.endDate) {
+                              matchingLeave = leaves.find(l => {
+                                const lStart = (l.start_date || '').slice(0, 10);
+                                const lEnd = (l.end_date || lStart || '').slice(0, 10);
+                                return lStart && lEnd && lStart <= dateRange.endDate && lEnd >= dateRange.startDate;
+                              });
+                              onLeaveInRange = Boolean(matchingLeave);
+                            } else {
+                              onLeaveInRange = instructor.is_on_leave || Boolean(instructor.active_leave);
+                              matchingLeave = instructor.active_leave;
+                            }
+                            if (!onLeaveInRange) return null;
+                            return (
+                              <span 
+                                style={{ 
+                                  background: '#FEE2E2', 
+                                  color: '#DC2626', 
+                                  border: '1px solid #FCA5A5', 
+                                  padding: '3px 8px', 
+                                  borderRadius: '12px', 
+                                  fontSize: '11px', 
+                                  fontWeight: 800,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px'
+                                }}
+                                title={matchingLeave ? `On Leave: ${matchingLeave.start_date} to ${matchingLeave.end_date}` : 'On Leave'}
+                              >
+                                🏖️ On Leave
+                              </span>
+                            );
+                          })()}
                         </div>
 
                         <div className="im-card-divider" />
 
 
 
-                        <div className="im-card-stats">
-                          <div className="im-card-stat">
-                            <span className="stat-label">Students</span>
-                            <span className="stat-value">
-                              {allStudents.filter(s => 
-                                s.instructor_id === instructor.id || 
-                                s.instructor_id === parseInt(instructor.id) ||
-                                (s.instructor && instructor.name && s.instructor.toLowerCase().trim() === instructor.name.toLowerCase().trim())
-                              ).length}
-                            </span>
-                          </div>
-                          <div className="im-card-stat">
-                            <span className="stat-label">Experience</span>
-                            <span className="stat-value">{formatExperience(instructor.experience)}</span>
-                          </div>
-                        </div>
+                        {(() => {
+                          const instId = instructor.id;
+                          const instName = (instructor.name || '').toLowerCase().trim();
+
+                          // Sessions for this coach
+                          const coachSessions = allSessions.filter(s => {
+                            const matchId = (s.instructor_id && (String(s.instructor_id) === String(instId) || parseInt(s.instructor_id) === parseInt(instId)));
+                            const matchIds = Array.isArray(s.instructor_ids) && (s.instructor_ids.includes(instId) || s.instructor_ids.includes(String(instId)) || s.instructor_ids.includes(parseInt(instId)));
+                            const sCoachName = (s.instructor || s.instructor_name || '').toLowerCase().trim();
+                            const matchName = instName && sCoachName && (sCoachName === instName || sCoachName.includes(instName) || instName.includes(sCoachName));
+                            return matchId || matchIds || matchName;
+                          });
+
+                          // 1. Active Students TODAY (only students who have an assigned session TODAY)
+                          const activeTodaySet = new Set();
+                          coachSessions.forEach(sess => {
+                            if (isDateToday(sess.date)) {
+                              const sid = sess.student_id ? String(sess.student_id) : null;
+                              const sname = (sess.student || sess.student_name || sess.guest_name || '').toLowerCase().trim();
+                              if (sid) activeTodaySet.add(sid);
+                              else if (sname) activeTodaySet.add(sname);
+                            }
+                          });
+
+                          // 2. Total Students (All-time students ever assigned or coached)
+                          const totalStudentsSet = new Set();
+                          coachSessions.forEach(sess => {
+                            const sid = sess.student_id ? String(sess.student_id) : null;
+                            const sname = (sess.student || sess.student_name || sess.guest_name || '').toLowerCase().trim();
+                            if (sid) totalStudentsSet.add(sid);
+                            else if (sname) totalStudentsSet.add(sname);
+                          });
+                          allStudents.forEach(s => {
+                            const matchesInst = s.instructor_id === instId || 
+                              s.instructor_id === parseInt(instId) ||
+                              (s.instructor && instName && s.instructor.toLowerCase().trim() === instName);
+                            if (matchesInst) {
+                              totalStudentsSet.add(s.id ? String(s.id) : (s.name || '').toLowerCase().trim());
+                            }
+                          });
+
+                          const activeCount = activeTodaySet.size;
+                          const totalCount = totalStudentsSet.size;
+
+                          return (
+                            <div className="im-card-stats" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px' }}>
+                              <div className="im-card-stat" title="Students assigned to this coach today">
+                                <span className="stat-label">Active Today</span>
+                                <span className="stat-value" style={{ color: activeCount > 0 ? '#16A34A' : '#64748B', fontWeight: 800 }}>
+                                  {activeCount > 0 ? `🟢 ${activeCount}` : '0'}
+                                </span>
+                              </div>
+                              <div className="im-card-stat" title="Total all-time students coached">
+                                <span className="stat-label">Total Students</span>
+                                <span className="stat-value" style={{ fontWeight: 800 }}>
+                                  {totalCount}
+                                </span>
+                              </div>
+                              <div className="im-card-stat">
+                                <span className="stat-label">Experience</span>
+                                <span className="stat-value">{formatExperience(instructor.experience)}</span>
+                              </div>
+                            </div>
+                          );
+                        })()}
 
                         <div className="im-card-footer">
                           <button className="im-card-view-profile" onClick={() => navigate(`/instructors/${instructor.id}`)}>
@@ -1202,24 +1475,6 @@ const InstructorManagement = () => {
                               </>
                             )}
                           </button>
-                          {canDeleteInstructor && (
-                            <button
-                              type="button"
-                              className="im-card-delete"
-                              title="Delete Instructor"
-                              disabled={deletingId === instructor.id}
-                              onClick={(e) => handleDelete(e, instructor)}
-                            >
-                              {deletingId === instructor.id ? (
-                                <span style={{ fontSize: '10px', fontWeight: 700 }}>...</span>
-                              ) : (
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                  <polyline points="3 6 5 6 21 6" />
-                                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                                </svg>
-                              )}
-                            </button>
-                          )}
                         </div>
                       </div>
                     </div>
@@ -1426,7 +1681,14 @@ const InstructorManagement = () => {
                 </div>
 
                 <div className="form-group">
-                  <label>Affiliation / Surf School <span style={{ color: '#EF4444' }}>*</span></label>
+                  <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>Affiliation / Surf School <span style={{ color: '#EF4444' }}>*</span></span>
+                    {selected && selected.is_active !== false && (
+                      <span style={{ fontSize: '11px', color: '#D97706', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                        🔒 Active (Locked)
+                      </span>
+                    )}
+                  </label>
                   {!isSuperAdmin && currentSchool ? (
                     <select
                       value={currentSchool}
@@ -1439,6 +1701,8 @@ const InstructorManagement = () => {
                   ) : (
                     <select
                       value={form.school || 'Individual / Freelance Coach'}
+                      disabled={selected && selected.is_active !== false}
+                      style={selected && selected.is_active !== false ? { background: '#F1F5F9', color: '#64748B', cursor: 'not-allowed' } : {}}
                       onChange={e => {
                         const chosen = e.target.value;
                         const isAff = chosen && chosen !== 'Individual / Freelance Coach';
@@ -1455,6 +1719,11 @@ const InstructorManagement = () => {
                         <option key={s} value={s}>🏫 {s}</option>
                       ))}
                     </select>
+                  )}
+                  {selected && selected.is_active !== false && (
+                    <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: '#B45309', fontWeight: 500 }}>
+                      Active coaches cannot switch schools. Toggle to Inactive on the coach card to allow school change.
+                    </p>
                   )}
                 </div>
 
@@ -3274,6 +3543,96 @@ const InstructorManagement = () => {
           box-shadow: 0 12px 24px rgba(5, 11, 26, 0.06);
           border-color: #CBD5E1;
         }
+        .im-card-inactive {
+          background: #FAFAFA;
+          border-color: #E2E8F0;
+        }
+        .im-card-top-status {
+          position: absolute;
+          top: 12px;
+          left: 12px;
+          z-index: 5;
+        }
+        .im-status-toggle {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 3px 8px 3px 6px;
+          border-radius: 20px;
+          border: 1px solid;
+          cursor: pointer;
+          transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+          font-family: 'Outfit', sans-serif;
+          font-size: 11px;
+          font-weight: 700;
+          line-height: 1;
+          outline: none;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+        }
+        .im-status-toggle:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+        .im-status-toggle.is-active {
+          background: #F0FDF4;
+          border-color: #86EFAC;
+          color: #15803D;
+        }
+        .im-status-toggle.is-active:hover:not(:disabled) {
+          background: #DCFCE7;
+          border-color: #4ADE80;
+          box-shadow: 0 2px 6px rgba(22, 163, 74, 0.15);
+          transform: translateY(-1px);
+        }
+        .im-status-toggle.is-inactive {
+          background: #F8FAFC;
+          border-color: #CBD5E1;
+          color: #64748B;
+        }
+        .im-status-toggle.is-inactive:hover:not(:disabled) {
+          background: #F1F5F9;
+          border-color: #94A3B8;
+          color: #334155;
+          box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+          transform: translateY(-1px);
+        }
+        .im-toggle-track {
+          width: 22px;
+          height: 13px;
+          border-radius: 10px;
+          position: relative;
+          transition: background-color 0.25s ease;
+          display: inline-block;
+          flex-shrink: 0;
+        }
+        .im-status-toggle.is-active .im-toggle-track {
+          background: #22C55E;
+        }
+        .im-status-toggle.is-inactive .im-toggle-track {
+          background: #CBD5E1;
+        }
+        .im-toggle-thumb {
+          width: 9px;
+          height: 9px;
+          border-radius: 50%;
+          background: #FFFFFF;
+          position: absolute;
+          top: 2px;
+          left: 2px;
+          transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+          box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+        }
+        .im-status-toggle.is-active .im-toggle-thumb {
+          transform: translateX(9px);
+        }
+        .im-status-toggle.is-inactive .im-toggle-thumb {
+          transform: translateX(0);
+        }
+        .im-toggle-text {
+          font-size: 11px;
+          letter-spacing: 0.2px;
+          user-select: none;
+        }
         .im-card-top-actions {
           position: absolute;
           top: 12px;
@@ -3408,22 +3767,23 @@ const InstructorManagement = () => {
         }
         .im-card-footer {
           display: flex;
-          justify-content: space-between;
           align-items: center;
           gap: 8px;
           margin-top: 8px;
+          width: 100%;
         }
         .im-card-view-profile {
           flex: 1;
-          padding: 10px;
+          padding: 9px 12px;
           background: #F8FAFC;
           border: 1px solid #E2E8F0;
           border-radius: 10px;
-          font-size: 13.5px;
+          font-size: 13px;
           font-weight: 700;
           color: #0F172A;
           cursor: pointer;
           transition: all 0.2s;
+          text-align: center;
         }
         .im-card-view-profile:hover {
           background: #0F172A;
