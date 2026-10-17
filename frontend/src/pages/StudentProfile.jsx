@@ -1116,7 +1116,10 @@ const StudentProfile = () => {
 
   const userRole = (currentUser?.role || '').toLowerCase().trim();
   const isSchoolAdmin = userRole === 'admin' || userRole === 'superadmin' || userRole === 'school_admin' || userRole === 'schooladmin' || userRole === 'school';
-  const isCoach = currentUser?.role === 'coach';
+  const isCoach = userRole === 'coach' || userRole === 'instructor';
+  const userSchool = (currentUser?.school || currentUser?.school_name || '').toLowerCase().trim();
+  const isCoachFreelance = isCoach && (userSchool === 'individual / freelance coach' || !userSchool);
+  const isSchoolCoach = isCoach && !isCoachFreelance;
   const currentCoachName = (currentUser?.name || currentUser?.instructor_name || '').toLowerCase().trim();
   const currentCoachId = currentUser?.instructor_id || currentUser?.id;
   const isAssignedToCurrentCoach = Boolean(
@@ -2041,8 +2044,8 @@ const StudentProfile = () => {
                               })()}
                               {g.gender && <span>• {g.gender}</span>}
                               {g.stance && <span>• Stance: {g.stance}</span>}
-                              {g.whatsapp_number && <span>📱 {g.whatsapp_number}</span>}
-                              {g.email && <span>✉️ {g.email}</span>}
+                              {!isSchoolCoach && g.whatsapp_number && <span>📱 {g.whatsapp_number}</span>}
+                              {!isSchoolCoach && g.email && <span>✉️ {g.email}</span>}
                             </div>
                           </div>
                           {/* ⇄ Swap button — visible to athlete (own profile), coach, or admin */}

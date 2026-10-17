@@ -328,16 +328,16 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const [searchParams] = useSearchParams();
 
   // User Context and Permission Control
-  const currentUser = (() => {
+  const currentUser = useMemo(() => {
     try {
       const saved = sessionStorage.getItem('user') || localStorage.getItem('user');
       return saved ? JSON.parse(saved) : null;
     } catch (e) {
       return null;
     }
-  })();
+  }, []);
 
-  const activeSchoolName = (() => {
+  const activeSchoolName = useMemo(() => {
     try {
       const savedSchool = sessionStorage.getItem('activeSchool');
       if (savedSchool) {
@@ -354,12 +354,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       }
     } catch (e) {}
     return null;
-  })();
+  }, [currentUser]);
 
   const schoolLower = (activeSchoolName || '').toLowerCase().trim();
-  const isSuperAdmin = currentUser?.role === 'superadmin' || schoolLower === 'super admin';
-  const isAdminOrSuperAdmin = isSuperAdmin || currentUser?.role === 'admin' || currentUser?.role === 'school_admin' || currentUser?.role === 'schooladmin' || schoolLower === 'school admin';
-
   const resolveSchoolStr = (val) => {
     if (!val) return '';
     if (typeof val === 'string') return val;
@@ -373,29 +370,45 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const isStudent = currentUser?.role === 'athlete' || currentUser?.role === 'student' || currentUser?.role === 'user';
   const isCoach = currentUser?.role === 'coach' || currentUser?.role === 'instructor';
 
-  const userSchoolStr = resolveSchoolStr(currentUser?.school || currentUser?.school_name).trim();
-  const isIndividualSurfer = (
-    userSchoolStr.toLowerCase().includes('individual') ||
-    userSchoolStr.toLowerCase().includes('freelance') ||
-    currentUser?.is_individual === true ||
-    schoolLower.includes('individual') ||
-    schoolLower.includes('freelance')
+  const isAdminOrSuperAdmin = !isCoach && !isStudent && (
+    currentUser?.role === 'superadmin' ||
+    currentUser?.role === 'admin' ||
+    currentUser?.role === 'school_admin' ||
+    currentUser?.role === 'schooladmin' ||
+    schoolLower === 'super admin' ||
+    schoolLower === 'school admin'
   );
 
-  const isCoachFreelance = isCoach && (
-    userSchoolStr.toLowerCase().includes('individual') ||
-    userSchoolStr.toLowerCase().includes('freelance') ||
-    schoolLower.includes('individual') ||
-    schoolLower.includes('freelance') ||
-    isIndividualSurfer
+  // Coach's assigned school
+  const coachSchool = resolveSchoolStr(
+    currentUser?.school ||
+    currentUser?.school_name
+  ).trim();
+  const coachSchoolLower = coachSchool.toLowerCase();
+
+  // If coach belongs to a real school (not individual and not freelance), they are assigned to a school!
+  const isSchoolCoach = isCoach && Boolean(
+    coachSchool &&
+    !coachSchoolLower.includes('individual') &&
+    !coachSchoolLower.includes('freelance') &&
+    !coachSchoolLower.includes('independent')
   );
 
+  // A coach is freelance ONLY if they do NOT belong to any school
+  const isCoachFreelance = isCoach && !isSchoolCoach;
   const isIndividualCoach = Boolean(isCoachFreelance);
-  const isSchoolCoach = isCoach && !isCoachFreelance;
 
-  // Only School Admins and Individual/Freelance Surfers/Coaches can Schedule sessions
-  // Coaches assigned to a school cannot schedule sessions
-  const canManageSessions = !isStudent && !isSchoolCoach && Boolean(isAdminOrSuperAdmin || isCoachFreelance || (!isCoach && isIndividualSurfer));
+  // Individual surfer: independent athlete (not in a school)
+  const userSchoolStr = resolveSchoolStr(currentUser?.school || currentUser?.school_name).trim();
+  const isIndividualSurfer = !isCoach && !isStudent && (
+    userSchoolStr.toLowerCase().includes('individual') ||
+    userSchoolStr.toLowerCase().includes('freelance') ||
+    currentUser?.is_individual === true
+  );
+
+  // Only School Admins and Freelance Coaches can Schedule sessions
+  // Coaches assigned to a school and students can NEVER schedule sessions
+  const canManageSessions = !isStudent && !isSchoolCoach && Boolean(isAdminOrSuperAdmin || isCoachFreelance || isIndividualSurfer);
 
   useEffect(() => {
     if (currentUser && !canManageSessions) {
@@ -456,6 +469,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       // Validate that this draft actually belongs to the target date
       if (parsed?.selectedSessionDateYYYYMMDD && parsed.selectedSessionDateYYYYMMDD !== targetInitialDate.iso) {
         return null;
+      }
+      if (parsed && typeof parsed === 'object') {
+        delete parsed.slots;
       }
       const hasSlots = Object.keys(parsed?.slotStudentMap || {}).some(k => Array.isArray(parsed.slotStudentMap[k]) && parsed.slotStudentMap[k].length > 0);
       const hasGroups = Array.isArray(parsed?.trainingGroups) && parsed.trainingGroups.length > 0;
@@ -528,14 +544,64 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     }
   }, [targetInitialDate, initialDraft]);
 
-  // Dynamic slots loaded directly from Session Configuration
-  const [slots, setSlots] = useState(() => {
-    if (Array.isArray(initialDraft?.slots) && initialDraft.slots.length > 0) {
-      return initialDraft.slots;
-    }
-    return loadConfiguredSlots();
-  });
+  // Dynamic slots loaded directly from Session Configuration (always live, never frozen by old drafts)
+  const [slots, setSlots] = useState(() => loadConfiguredSlots());
+  const [isCustomForDate, setIsCustomForDate] = useState(false);
+  const [customDatesList, setCustomDatesList] = useState([]);
+  const [isSlotsLoading, setIsSlotsLoading] = useState(false);
   const [selectedSlotId, setSelectedSlotId] = useState(() => initialDraft?.selectedSlotId ?? null);
+
+  // Fetch central database slots for this specific date (or master default)
+  useEffect(() => {
+    let isCancelled = false;
+    const fetchSlotsForDate = async () => {
+      try {
+        setIsSlotsLoading(true);
+        const schoolId = currentUser?.school_id || null;
+        const rawSchool = currentUser?.school || currentUser?.school_name || activeSchoolName || '';
+        const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
+
+        const params = new URLSearchParams();
+        if (schoolId) params.set('school_id', schoolId);
+        if (schoolName) params.set('school_name', schoolName);
+        if (selectedSessionDateYYYYMMDD) params.set('date', selectedSessionDateYYYYMMDD);
+
+        const res = await fetch(`${API}/api/session-slots?${params.toString()}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (isCancelled) return;
+
+        if (data && data.status === 'success' && Array.isArray(data.slots) && data.slots.length > 0) {
+          const norm = normalizeConfiguredSlots(data.slots);
+          setSlots(norm);
+          setIsCustomForDate(Boolean(data.is_custom_date));
+          if (Array.isArray(data.custom_dates)) setCustomDatesList(data.custom_dates);
+
+          // Update slotCapacityMap with capacities from DB slots
+          setSlotCapacityMap(prev => {
+            const next = { ...prev };
+            norm.forEach(s => {
+              const maxS = parseInt(s.maxStudents, 10);
+              if (!isNaN(maxS) && maxS > 0 && next[s.id] === undefined) {
+                next[s.id] = maxS;
+              }
+            });
+            return next;
+          });
+        }
+      } catch (err) {
+        console.warn('Failed loading slots for date:', err);
+      } finally {
+        if (!isCancelled) setIsSlotsLoading(false);
+      }
+    };
+
+    fetchSlotsForDate();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [selectedSessionDateYYYYMMDD, currentUser]);
 
   const getSlotCapacity = (slot) => {
     if (!slot) return capacity || 4;
@@ -546,15 +612,49 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     return (!isNaN(defaultMax) && defaultMax > 0) ? defaultMax : 4;
   };
 
+  const slotSaveTimerRef = useRef(null);
+
   const handleUpdateSlotCapacity = (slotId, newVal) => {
+    const parsedNum = newVal === '' ? '' : Math.max(1, parseInt(newVal, 10));
     setSlotCapacityMap(prev => ({
       ...prev,
-      [slotId]: newVal
+      [slotId]: parsedNum
     }));
+    let updatedSlots = slots;
+    if (parsedNum !== '') {
+      updatedSlots = slots.map(s => s.id === slotId ? { ...s, maxStudents: parsedNum } : s);
+      setSlots(updatedSlots);
+    }
     if (slotId === selectedSlotId) {
-      if (newVal !== '' && !isNaN(parseInt(newVal, 10))) {
-        setCapacity(Math.max(1, parseInt(newVal, 10)));
+      if (parsedNum !== '') {
+        setCapacity(parsedNum);
       }
+    }
+
+    // Customizing slot capacity marks this date as custom on the calendar and persists to DB
+    if (parsedNum !== '') {
+      setIsCustomForDate(true);
+      setCustomDatesList(prev => Array.from(new Set([...prev, selectedSessionDateYYYYMMDD])));
+
+      if (slotSaveTimerRef.current) clearTimeout(slotSaveTimerRef.current);
+      slotSaveTimerRef.current = setTimeout(() => {
+        try {
+          const schoolId = currentUser?.school_id || null;
+          const rawSchool = currentUser?.school || currentUser?.school_name || activeSchoolName || '';
+          const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
+
+          fetch(`${API}/api/session-slots`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              school_id: schoolId,
+              school_name: schoolName,
+              date: selectedSessionDateYYYYMMDD,
+              slots: updatedSlots
+            })
+          }).catch(err => console.warn('Failed saving custom slot capacity to DB:', err));
+        } catch (err) {}
+      }, 500);
     }
   };
 
@@ -563,6 +663,196 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     setSelectedSlotId(slot.id);
     const cap = getSlotCapacity(slot);
     setCapacity(cap);
+  };
+
+  // Toggle Slot Active / Inactive directly from the schedule wizard (Custom to this date)
+  const handleToggleSlotActive = async (slotId, e) => {
+    if (e) e.stopPropagation();
+
+    const updated = slots.map(s => {
+      if (s.id === slotId) {
+        const nextActive = s.active === false ? true : false;
+        return { ...s, active: nextActive };
+      }
+      return s;
+    });
+
+    setSlots(updated);
+    setIsCustomForDate(true);
+    setCustomDatesList(prev => Array.from(new Set([...prev, selectedSessionDateYYYYMMDD])));
+
+    // If currently selected slot was turned inactive, auto-fallback to an active slot
+    const currentToggled = updated.find(s => s.id === slotId);
+    if (currentToggled && currentToggled.active === false && selectedSlotId === slotId) {
+      const otherActive = updated.find(s => s.id !== slotId && s.active !== false);
+      if (otherActive) {
+        setSelectedSlotId(otherActive.id);
+      }
+    } else if (currentToggled && currentToggled.active === true && (!selectedSlotId || selectedSlotId === slotId)) {
+      setSelectedSlotId(currentToggled.id);
+    }
+
+    // Persist to central PostgreSQL database specifically for THIS DATE
+    try {
+      const schoolId = currentUser?.school_id || null;
+      const rawSchool = currentUser?.school || currentUser?.school_name || activeSchoolName || '';
+      const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
+
+      fetch(`${API}/api/session-slots`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          school_id: schoolId,
+          school_name: schoolName,
+          date: selectedSessionDateYYYYMMDD,
+          slots: updated
+        })
+      }).catch(err => console.warn('Failed saving custom date slot toggle to DB:', err));
+    } catch (err) {}
+  };
+
+  // Open modal to edit this slot's time, duration, and capacity
+  const handleEditSlot = (slot, e) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    if (!slot) return;
+    const dur = parseInt(slot.duration, 10) || 90;
+    const cap = getSlotCapacity(slot);
+    const start = slot.startTime || (slot.time ? slot.time.split(' - ')[0].trim() : '08:30 AM');
+    setEditingSlotModal({
+      mode: 'edit',
+      id: slot.id,
+      time: start,
+      duration: dur,
+      maxStudents: cap,
+      days: slot.days || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+      active: slot.active !== false
+    });
+  };
+
+  // Delete a slot specifically for this session date
+  const handleDeleteSlot = (slotId, e) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+
+    const slotToDelete = slots.find(s => s.id === slotId);
+    const slotLabel = slotToDelete ? (slotToDelete.time || slotToDelete.startTime || 'this slot') : 'this slot';
+
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete Time Slot?',
+      message: `Delete "${slotLabel}" for ${formattedSessionDate}?\n\nThis slot will be removed for today and marked as a custom schedule. You can restore it anytime with "Reset to Default".`,
+      confirmText: 'Delete Slot',
+      cancelText: 'Cancel',
+      isDanger: true,
+      iconType: 'trash',
+      onConfirm: () => {
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        executeDeleteSlot(slotId);
+      }
+    });
+  };
+
+  const executeDeleteSlot = (slotId) => {
+    const updated = slots.filter(s => s.id !== slotId);
+    setSlots(updated);
+    setIsCustomForDate(true);
+    setCustomDatesList(prev => Array.from(new Set([...prev, selectedSessionDateYYYYMMDD])));
+
+    // If currently selected slot was deleted, auto-fallback to another active slot
+    if (selectedSlotId === slotId) {
+      const nextActive = updated.find(s => s.active !== false) || updated[0];
+      if (nextActive) {
+        setSelectedSlotId(nextActive.id);
+        const cap = getSlotCapacity(nextActive);
+        setCapacity(cap);
+      } else {
+        setSelectedSlotId(null);
+      }
+    }
+
+    // Also remove slot from slotStudentMap if students were assigned to it
+    setSlotStudentMap(prevMap => {
+      if (!prevMap || !prevMap[slotId]) return prevMap;
+      const nextMap = { ...prevMap };
+      delete nextMap[slotId];
+      return nextMap;
+    });
+
+    // Persist custom date slots to central PostgreSQL database
+    try {
+      const schoolId = currentUser?.school_id || null;
+      const rawSchool = currentUser?.school || currentUser?.school_name || activeSchoolName || '';
+      const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
+
+      fetch(`${API}/api/session-slots`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          school_id: schoolId,
+          school_name: schoolName,
+          date: selectedSessionDateYYYYMMDD,
+          slots: updated
+        })
+      }).catch(err => console.warn('Failed saving custom slots after delete:', err));
+    } catch (err) {}
+  };
+
+  // Reset this specific date's schedule back to the Default Template
+  const handleResetToDefault = (e) => {
+    if (e) e.stopPropagation();
+
+    setConfirmModal({
+      isOpen: true,
+      title: 'Reset to Default?',
+      message: `Reset slots for ${formattedSessionDate} back to Default Template?\n\nThis will remove custom slots configured specifically for this date.`,
+      confirmText: 'Reset to Default',
+      cancelText: 'Cancel',
+      isDanger: false,
+      iconType: 'reset',
+      onConfirm: () => {
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        executeResetToDefault();
+      }
+    });
+  };
+
+  const executeResetToDefault = async () => {
+    try {
+      const schoolId = currentUser?.school_id || null;
+      const rawSchool = currentUser?.school || currentUser?.school_name || activeSchoolName || '';
+      const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
+
+      const queryParams = new URLSearchParams();
+      if (schoolId) queryParams.set('school_id', schoolId);
+      if (schoolName) queryParams.set('school_name', schoolName);
+      queryParams.set('date', selectedSessionDateYYYYMMDD);
+
+      await fetch(`${API}/api/session-slots?${queryParams.toString()}`, {
+        method: 'DELETE'
+      });
+
+      // Refetch the default master slots
+      const getParams = new URLSearchParams();
+      if (schoolId) getParams.set('school_id', schoolId);
+      if (schoolName) getParams.set('school_name', schoolName);
+
+      const res = await fetch(`${API}/api/session-slots?${getParams.toString()}`);
+      const data = await res.json();
+      if (data && data.status === 'success' && Array.isArray(data.slots) && data.slots.length > 0) {
+        setSlots(normalizeConfiguredSlots(data.slots));
+      } else {
+        setSlots(loadConfiguredSlots());
+      }
+      setIsCustomForDate(false);
+      setCustomDatesList(prev => prev.filter(d => d !== selectedSessionDateYYYYMMDD));
+    } catch (err) {
+      console.warn('Failed resetting to default slots:', err);
+    }
   };
 
   // Auto-sync capacity when selected slot changes so each slot retains its own capacity limit
@@ -606,6 +896,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   // ─── Step 2 State: Roster Selector Pool (Real School Students) ───
   const [dbStudents, setDbStudents] = useState([]);
   const [levelFilter, setLevelFilter] = useState(() => initialDraft?.levelFilter || 'all');
+  const [selectionFilter, setSelectionFilter] = useState(() => initialDraft?.selectionFilter || 'all');
   const [courseDayFilter, setCourseDayFilter] = useState(() => initialDraft?.courseDayFilter || 'all');
   const [genderFilterStep2, setGenderFilterStep2] = useState(() => initialDraft?.genderFilterStep2 || 'all');
   const [swimmingFilterStep2, setSwimmingFilterStep2] = useState(() => initialDraft?.swimmingFilterStep2 || 'all');
@@ -628,7 +919,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const [step3CoachGenderFilter, setStep3CoachGenderFilter] = useState(() => initialDraft?.step3CoachGenderFilter || 'all');
   const [step3SlotFilter, setStep3SlotFilter] = useState(() => {
     if (initialDraft?.step3SlotFilter) return initialDraft.step3SlotFilter;
-    const initialSlots = (Array.isArray(initialDraft?.slots) && initialDraft.slots.length > 0) ? initialDraft.slots : loadConfiguredSlots();
+    const initialSlots = loadConfiguredSlots();
     return initialSlots[0]?.id || 1;
   });
   const [studentSearch, setStudentSearch] = useState('');
@@ -643,6 +934,16 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [publishedStats, setPublishedStats] = useState({ sessionsCount: 1, slotsCount: 1 });
   const [uiAlert, setUiAlert] = useState(null);
+  const [confirmModal, setConfirmModal] = useState({
+    isOpen: false,
+    title: '',
+    message: '',
+    confirmText: 'Confirm',
+    cancelText: 'Cancel',
+    isDanger: false,
+    iconType: 'trash',
+    onConfirm: null
+  });
   const [existingDbSessions, setExistingDbSessions] = useState([]);
   const [dbLeaveRequests, setDbLeaveRequests] = useState([]);
 
@@ -658,6 +959,103 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     const hasCustomSpot = Boolean(spotName && spotName.trim() !== '');
     return hasSlots || hasGroups || isPastStep1 || hasCustomSpot;
   }, [editSession, slotStudentMap, trainingGroups, currentStep, spotName]);
+
+  const backendDebounceTimerRef = useRef(null);
+
+  const saveDraftToBackend = useCallback((payload, immediate = false) => {
+    if (backendDebounceTimerRef.current) {
+      clearTimeout(backendDebounceTimerRef.current);
+      backendDebounceTimerRef.current = null;
+    }
+
+    const doFetch = async () => {
+      try {
+        const schoolId = currentUser?.school_id || null;
+        const rawSchool = currentUser?.school || currentUser?.school_name || activeSchoolName || '';
+        const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
+
+        await fetch(`${API}/api/session-drafts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            school_id: schoolId,
+            school_name: schoolName,
+            date: selectedSessionDateYYYYMMDD,
+            draft_data: payload
+          })
+        });
+      } catch (err) {
+        console.warn('Failed saving draft to backend:', err);
+      }
+    };
+
+    if (immediate) {
+      doFetch();
+    } else {
+      backendDebounceTimerRef.current = setTimeout(doFetch, 800);
+    }
+  }, [currentUser, activeSchoolName, selectedSessionDateYYYYMMDD]);
+
+  // Fetch session draft from Database on mount and whenever selected session date changes
+  useEffect(() => {
+    if (editSession) return;
+    let isCancelled = false;
+
+    const fetchDbDraft = async () => {
+      try {
+        const schoolId = currentUser?.school_id || null;
+        const rawSchool = currentUser?.school || currentUser?.school_name || activeSchoolName || '';
+        const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
+
+        const params = new URLSearchParams();
+        if (schoolId) params.set('school_id', schoolId);
+        if (schoolName) params.set('school_name', schoolName);
+        if (selectedSessionDateYYYYMMDD) params.set('date', selectedSessionDateYYYYMMDD);
+
+        const res = await fetch(`${API}/api/session-drafts?${params.toString()}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (isCancelled) return;
+
+        if (data && data.status === 'success' && data.draft && typeof data.draft === 'object') {
+          const draft = data.draft;
+          if (!isDiscardingRef.current && !userClearedGroupsRef.current) {
+            if (draft.currentStep && draft.currentStep > 1) setCurrentStep(draft.currentStep);
+            if (draft.capacity !== undefined) setCapacity(draft.capacity);
+            if (draft.slotCapacityMap) setSlotCapacityMap(draft.slotCapacityMap);
+            if (draft.selectedSlotId) setSelectedSlotId(draft.selectedSlotId);
+            if (draft.spotName !== undefined) setSpotName(draft.spotName);
+            if (draft.slotStudentMap && Object.keys(draft.slotStudentMap).length > 0) setSlotStudentMap(draft.slotStudentMap);
+            if (Array.isArray(draft.trainingGroups) && draft.trainingGroups.length > 0) setTrainingGroups(draft.trainingGroups);
+            if (draft.activeDropGroupId !== undefined) setActiveDropGroupId(draft.activeDropGroupId);
+            if (draft.selectedSlotStep2) setSelectedSlotStep2(draft.selectedSlotStep2);
+            if (draft.step3SlotFilter) setStep3SlotFilter(draft.step3SlotFilter);
+            if (draft.step3CheckedStudentIdsBySlot) setStep3CheckedStudentIdsBySlot(draft.step3CheckedStudentIdsBySlot);
+            if (draft.levelFilter) setLevelFilter(draft.levelFilter);
+            if (draft.selectionFilter) setSelectionFilter(draft.selectionFilter);
+            if (draft.courseDayFilter) setCourseDayFilter(draft.courseDayFilter);
+            if (draft.genderFilterStep2) setGenderFilterStep2(draft.genderFilterStep2);
+            if (draft.swimmingFilterStep2) setSwimmingFilterStep2(draft.swimmingFilterStep2);
+            if (draft.step3DayFilter) setStep3DayFilter(draft.step3DayFilter);
+            if (draft.step3StatusFilter) setStep3StatusFilter(draft.step3StatusFilter);
+            if (draft.step3LevelFilter) setStep3LevelFilter(draft.step3LevelFilter);
+            if (draft.step3GenderFilter) setStep3GenderFilter(draft.step3GenderFilter);
+            if (draft.step3SwimmingFilter) setStep3SwimmingFilter(draft.step3SwimmingFilter);
+            if (draft.step3CoachGenderFilter) setStep3CoachGenderFilter(draft.step3CoachGenderFilter);
+
+            try {
+              localStorage.setItem(draftKey, JSON.stringify(draft));
+            } catch (e) {}
+          }
+        }
+      } catch (err) {
+        console.warn('Failed fetching session draft from DB:', err);
+      }
+    };
+
+    fetchDbDraft();
+    return () => { isCancelled = true; };
+  }, [selectedSessionDateYYYYMMDD, editSession, currentUser, activeSchoolName, draftKey]);
 
   const saveCurrentDraftToStorage = useCallback(() => {
     if (editSession || isDiscardingRef.current || userClearedGroupsRef.current) return;
@@ -678,7 +1076,6 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       selectedDayNumber,
       capacity,
       slotCapacityMap,
-      slots,
       selectedSlotId,
       spotName,
       slotStudentMap,
@@ -687,6 +1084,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       step3SlotFilter,
       selectedSlotStep2,
       levelFilter,
+      selectionFilter,
       courseDayFilter,
       genderFilterStep2,
       swimmingFilterStep2,
@@ -701,6 +1099,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
     try {
       localStorage.setItem(draftKey, JSON.stringify(payload));
+      saveDraftToBackend(payload, false);
     } catch (e) {
       console.warn('Failed saving session draft', e);
     }
@@ -712,7 +1111,6 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     selectedDayNumber,
     capacity,
     slotCapacityMap,
-    slots,
     selectedSlotId,
     spotName,
     slotStudentMap,
@@ -721,6 +1119,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     step3SlotFilter,
     selectedSlotStep2,
     levelFilter,
+    selectionFilter,
     courseDayFilter,
     genderFilterStep2,
     swimmingFilterStep2,
@@ -731,6 +1130,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     step3SwimmingFilter,
     step3CoachGenderFilter,
     step3CheckedStudentIdsBySlot,
+    saveDraftToBackend,
   ]);
 
   // Auto-save draft whenever user updates the wizard
@@ -752,6 +1152,122 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
   }, [editSession, hasProgressToSave, saveCurrentDraftToStorage]);
+
+  const [draftSavedToast, setDraftSavedToast] = useState(false);
+
+  const handleManualSaveDraft = (e) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    const payload = {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      currentStep,
+      calendarDateStr: currentCalendarDate ? currentCalendarDate.toISOString() : new Date().toISOString(),
+      selectedDayNumber,
+      capacity,
+      slotCapacityMap,
+      selectedSlotId,
+      spotName,
+      slotStudentMap,
+      trainingGroups,
+      activeDropGroupId,
+      step3SlotFilter,
+      selectedSlotStep2,
+      levelFilter,
+      selectionFilter,
+      courseDayFilter,
+      genderFilterStep2,
+      swimmingFilterStep2,
+      step3DayFilter,
+      step3StatusFilter,
+      step3LevelFilter,
+      step3GenderFilter,
+      step3SwimmingFilter,
+      step3CoachGenderFilter,
+      step3CheckedStudentIdsBySlot,
+    };
+
+    try {
+      localStorage.setItem(draftKey, JSON.stringify(payload));
+      saveDraftToBackend(payload, true);
+      setDraftSavedToast(true);
+      setTimeout(() => setDraftSavedToast(false), 2200);
+    } catch (err) {
+      console.warn('Failed saving session draft', err);
+    }
+  };
+
+  const [clearDraftToast, setClearDraftToast] = useState(false);
+
+  const handleClearDraft = (e) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+
+    setConfirmModal({
+      isOpen: true,
+      title: 'Clear Session Draft?',
+      message: 'Are you sure you want to clear the draft and reset all selections for this session? All unsaved allocations and groups will be cleared.',
+      confirmText: 'Clear Draft',
+      cancelText: 'Cancel',
+      isDanger: true,
+      iconType: 'trash',
+      onConfirm: () => {
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        executeClearDraft();
+      }
+    });
+  };
+
+  const executeClearDraft = () => {
+    isDiscardingRef.current = true;
+    userClearedGroupsRef.current = true;
+    try {
+      localStorage.removeItem(draftKey);
+      Object.keys(localStorage).forEach(key => {
+        if (key.startsWith('surfing_session_draft') && key.includes(selectedSessionDateYYYYMMDD)) {
+          localStorage.removeItem(key);
+        }
+      });
+      sessionStorage.setItem('surfing_session_draft_discarded', 'true');
+    } catch (err) {
+      console.warn('Failed clearing draft:', err);
+    }
+
+    // Clear draft from Database
+    try {
+      const schoolId = currentUser?.school_id || null;
+      const rawSchool = currentUser?.school || currentUser?.school_name || activeSchoolName || '';
+      const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
+
+      const params = new URLSearchParams();
+      if (schoolId) params.set('school_id', schoolId);
+      if (schoolName) params.set('school_name', schoolName);
+      params.set('date', selectedSessionDateYYYYMMDD);
+
+      fetch(`${API}/api/session-drafts?${params.toString()}`, {
+        method: 'DELETE'
+      }).catch(err => console.warn('Failed deleting draft from DB:', err));
+    } catch (err) {}
+
+    // Reset in-memory wizard states
+    setTrainingGroups([]);
+    setSlotStudentMap({});
+    setSelectedSlotId(slots[0]?.id || null);
+    setStep3CheckedStudentIdsBySlot({});
+    setSpotName('');
+    setCurrentStep(1);
+    setActiveDropGroupId(null);
+
+    setClearDraftToast(true);
+    setTimeout(() => {
+      setClearDraftToast(false);
+      isDiscardingRef.current = false;
+    }, 2200);
+  };
 
   const [showCloseConfirmModal, setShowCloseConfirmModal] = useState(false);
   const showCloseConfirmModalRef = useRef(false);
@@ -778,9 +1294,14 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     onCloseRef.current = onClose;
   }, [onClose]);
 
-  // Request close: If unsaved progress exists, ask user whether to save draft or not
+  // Request close: If unsaved progress exists without draft saved, ask user whether to save draft or not
   const handleRequestClose = () => {
-    if (!editSession && hasProgressToSave) {
+    let isDraftAlreadySaved = false;
+    try {
+      isDraftAlreadySaved = Boolean(localStorage.getItem(draftKey));
+    } catch (e) {}
+
+    if (!editSession && hasProgressToSave && !isDraftAlreadySaved) {
       setShowCloseConfirmModal(true);
     } else {
       if (isModal && modalHistoryPushedRef.current) {
@@ -907,11 +1428,16 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         return;
       }
 
-      if (!editSession && hasProgressRef.current) {
+      let isDraftAlreadySaved = false;
+      try {
+        isDraftAlreadySaved = Boolean(localStorage.getItem(draftKey));
+      } catch (e) {}
+
+      if (!editSession && hasProgressRef.current && !isDraftAlreadySaved) {
         // Has progress to save -> prompt user
         setShowCloseConfirmModal(true);
       } else {
-        // No progress -> close modal directly, user stays on the underlying page (e.g. /sessions)
+        // No progress or draft already saved -> close modal directly, user stays on the underlying page (e.g. /sessions)
         if (onCloseRef.current) {
           onCloseRef.current();
         } else {
@@ -1655,6 +2181,15 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     return sortGroupsInOrder(Array.from(groupsMap.values()));
   }, [existingDbDateSessions, slots, allPoolStudents]);
 
+  // Check if session date already has published sessions in DB
+  const isSessionAlreadyPublishedOnDate = useMemo(() => {
+    if (editSession) return true;
+    if (existingDbDateSessions && existingDbDateSessions.length > 0) return true;
+    if (existingDbGroups && existingDbGroups.length > 0) return true;
+    if (trainingGroups.some(g => g.isExistingDbGroup || (g.existingSessionIds && g.existingSessionIds.length > 0))) return true;
+    return false;
+  }, [editSession, existingDbDateSessions, existingDbGroups, trainingGroups]);
+
   // Synchronize existing DB groups into wizard state (slotStudentMap & trainingGroups)
   const lastSyncedDateRef = useRef(null);
 
@@ -1679,7 +2214,14 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     });
 
 
-    // Populate slotStudentMap
+    // Populate slotStudentMap and ensure slot capacities reflect existing published sessions
+    const slotPublishedCounts = {};
+    existingDbGroups.forEach(grp => {
+      if (grp.slotId && Array.isArray(grp.studentIds)) {
+        slotPublishedCounts[grp.slotId] = (slotPublishedCounts[grp.slotId] || 0) + grp.studentIds.length;
+      }
+    });
+
     setSlotStudentMap(prevMap => {
       const newMap = { ...prevMap };
       existingDbGroups.forEach(grp => {
@@ -1690,6 +2232,27 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       });
       return newMap;
     });
+
+    // Ensure slot capacities match or accommodate published sessions
+    setSlotCapacityMap(prev => {
+      const next = { ...prev };
+      let changed = false;
+      Object.entries(slotPublishedCounts).forEach(([sId, count]) => {
+        if (!next[sId] || next[sId] < count) {
+          next[sId] = count;
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+
+    setSlots(prevSlots => prevSlots.map(s => {
+      const pubCount = slotPublishedCounts[s.id];
+      if (pubCount && (parseInt(s.maxStudents, 10) || 0) < pubCount) {
+        return { ...s, maxStudents: pubCount };
+      }
+      return s;
+    }));
 
     if (existingDbGroups.length > 0 && existingDbGroups[0].slotId) {
       setSelectedSlotId(existingDbGroups[0].slotId);
@@ -1730,16 +2293,91 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
   // Sync with Session Configuration changes (live in same tab or across tabs)
   useEffect(() => {
-    const handleSlotsSync = () => {
-      setSlots(loadConfiguredSlots());
+    const handleSlotsSync = (e) => {
+      if (e && e.detail && Array.isArray(e.detail)) {
+        setSlots(normalizeConfiguredSlots(e.detail));
+      } else {
+        setSlots(loadConfiguredSlots());
+      }
     };
+
+    // Immediate initial sync on mount
+    handleSlotsSync();
+
+    // Strip legacy frozen slots from any saved session drafts in storage
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('surfing_session_draft')) {
+          const rawDraft = localStorage.getItem(k);
+          if (rawDraft) {
+            try {
+              const parsed = JSON.parse(rawDraft);
+              if (parsed && typeof parsed === 'object' && parsed.slots) {
+                delete parsed.slots;
+                localStorage.setItem(k, JSON.stringify(parsed));
+              }
+            } catch (err) {}
+          }
+        }
+      }
+    } catch (e) {}
+
     window.addEventListener('storage', handleSlotsSync);
     window.addEventListener('session_slots_updated', handleSlotsSync);
+    window.addEventListener('focus', handleSlotsSync);
     return () => {
       window.removeEventListener('storage', handleSlotsSync);
       window.removeEventListener('session_slots_updated', handleSlotsSync);
+      window.removeEventListener('focus', handleSlotsSync);
     };
   }, []);
+
+  // Live sync with central PostgreSQL Database whenever the selected date or school changes
+  useEffect(() => {
+    let isCancelled = false;
+    const fetchSlotsForDate = async () => {
+      try {
+        setIsSlotsLoading(true);
+        const rawUser = sessionStorage.getItem('user') || localStorage.getItem('user');
+        const user = rawUser ? JSON.parse(rawUser) : null;
+        const schoolId = user?.school_id || null;
+        const rawSchool = user?.school || user?.school_name || activeSchoolName || '';
+        const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
+
+        const queryParams = new URLSearchParams();
+        if (schoolId) queryParams.set('school_id', schoolId);
+        if (schoolName) queryParams.set('school_name', schoolName);
+        if (selectedSessionDateYYYYMMDD) queryParams.set('date', selectedSessionDateYYYYMMDD);
+
+        const res = await fetch(`${API}/api/session-slots?${queryParams.toString()}`);
+        const data = await res.json();
+        if (isCancelled) return;
+
+        if (data && data.status === 'success' && Array.isArray(data.slots) && data.slots.length > 0) {
+          const normalized = normalizeConfiguredSlots(data.slots);
+          setSlots(normalized);
+          setIsCustomForDate(Boolean(data.is_custom_date));
+          if (!data.is_custom_date) {
+            localStorage.setItem('session_slots', JSON.stringify(data.slots));
+          }
+        } else {
+          setIsCustomForDate(false);
+        }
+
+        if (data && Array.isArray(data.custom_dates)) {
+          setCustomDatesList(data.custom_dates);
+        }
+      } catch (err) {
+        console.warn('Failed fetching slots from DB in NewSession:', err);
+      } finally {
+        if (!isCancelled) setIsSlotsLoading(false);
+      }
+    };
+
+    fetchSlotsForDate();
+    return () => { isCancelled = true; };
+  }, [selectedSessionDateYYYYMMDD, activeSchoolName]);
 
   // Selected Slot details (null if user has not picked a slot yet)
   const selectedSlot = useMemo(() => {
@@ -1895,56 +2533,84 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
 
 
-  // Handle Save from Slot Modal (persists to localStorage so Session Configuration is synced)
+  // Handle Save from Slot Modal (persists specifically for this date as custom schedule)
   const handleSaveSlotModal = (modalData) => {
     if (!modalData?.time || !modalData.time.trim()) {
-      alert("Please enter a valid time for the session slot.");
+      setUiAlert({
+        title: 'Start Time Required',
+        message: 'Please enter a valid start time for the session slot (e.g. 08:30 AM).',
+        type: 'warning',
+        icon: '⏰'
+      });
       return;
     }
 
-    let rawConfigSlots = [];
-    try {
-      const raw = localStorage.getItem('session_slots');
-      rawConfigSlots = raw ? JSON.parse(raw) : DEFAULT_CONFIGURED_SLOTS;
-      if (!Array.isArray(rawConfigSlots) || rawConfigSlots.length === 0) {
-        rawConfigSlots = DEFAULT_CONFIGURED_SLOTS;
-      }
-    } catch (e) {
-      rawConfigSlots = DEFAULT_CONFIGURED_SLOTS;
-    }
-
+    const currentSlots = Array.isArray(slots) ? [...slots] : [];
     const targetNorm = normalizeTimeString(modalData.time);
-    const isDuplicate = rawConfigSlots.some(s => s.id !== modalData.id && normalizeTimeString(s.startTime || s.time) === targetNorm);
+    const isDuplicate = currentSlots.some(s => s.id !== modalData.id && normalizeTimeString(s.startTime || s.time) === targetNorm);
     if (isDuplicate) {
-      alert(`Cannot save duplicate time slot!\n\nA session slot with start time "${modalData.time}" already exists.\n\nDuplicate start times are not allowed (e.g. 08:30 AM and 08:31 AM are allowed, but duplicate identical times are not allowed).`);
+      setUiAlert({
+        title: 'Duplicate Time Slot',
+        message: `A session slot with start time "${modalData.time}" already exists. Duplicate start times are not allowed.`,
+        type: 'warning',
+        icon: '⚠️'
+      });
       return;
     }
 
+    let updatedSlots;
     if (modalData.mode === 'edit') {
-      rawConfigSlots = rawConfigSlots.map(s => s.id === modalData.id ? {
+      const capNum = parseInt(modalData.maxStudents, 10) || 4;
+      updatedSlots = currentSlots.map(s => s.id === modalData.id ? {
         ...s,
         time: modalData.time,
-        duration: String(modalData.duration),
-        maxStudents: parseInt(modalData.maxStudents, 10) || 4,
-        days: modalData.days || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
-        active: modalData.active !== false,
+        startTime: modalData.time,
+        duration: String(modalData.duration || 90),
+        maxStudents: capNum,
+        days: modalData.days || s.days || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
+        active: modalData.active !== undefined ? modalData.active : (s.active !== false),
       } : s);
+
+      // Sync capacity map & current capacity if this slot is selected
+      setSlotCapacityMap(prev => ({ ...prev, [modalData.id]: capNum }));
+      if (selectedSlotId === modalData.id) {
+        setCapacity(capNum);
+      }
     } else {
-      rawConfigSlots.push({
+      updatedSlots = [...currentSlots, {
         id: modalData.id || Date.now(),
         time: modalData.time,
-        duration: String(modalData.duration),
+        startTime: modalData.time,
+        duration: String(modalData.duration || 90),
         maxStudents: parseInt(modalData.maxStudents, 10) || 4,
-        days: modalData.days || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+        days: modalData.days || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
         active: modalData.active !== false,
-      });
+      }];
     }
 
-    localStorage.setItem('session_slots', JSON.stringify(rawConfigSlots));
-    window.dispatchEvent(new Event('storage'));
-    window.dispatchEvent(new CustomEvent('session_slots_updated', { detail: rawConfigSlots }));
-    setSlots(normalizeConfiguredSlots(rawConfigSlots));
+    const normalized = normalizeConfiguredSlots(updatedSlots);
+    setSlots(normalized);
+    setIsCustomForDate(true);
+    setCustomDatesList(prev => Array.from(new Set([...prev, selectedSessionDateYYYYMMDD])));
     setEditingSlotModal(null);
+
+    // Persist to central PostgreSQL database specifically for THIS DATE
+    try {
+      const schoolId = currentUser?.school_id || null;
+      const rawSchool = currentUser?.school || currentUser?.school_name || activeSchoolName || '';
+      const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
+
+      fetch(`${API}/api/session-slots`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          school_id: schoolId,
+          school_name: schoolName,
+          date: selectedSessionDateYYYYMMDD,
+          slots: normalized
+        })
+      }).catch(err => console.warn('Failed saving custom date slot to DB:', err));
+    } catch (err) {}
   };
 
   // Calendar Helpers
@@ -2022,22 +2688,30 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     return days;
   }, [allPoolStudents]);
 
-  // Students precisely matching active Step 2 filters (Day, Level, Gender, Swimming, Search)
+  // Students precisely matching active Step 2 filters (Day, Level, Status, Gender, Swimming, Search)
   const filterMatchingStudents = useMemo(() => {
+    const activeSlotIdStep2 = selectedSlotId || activeSlotsForDay[0]?.id || slots[0]?.id;
+    const currentSlotStudentIds = new Set(slotStudentMap[activeSlotIdStep2] || []);
+    const allSelectedSet = new Set(allSelectedStudentIds);
+
     return allPoolStudents.filter(s => {
       // 1. Day Filter (courseDayFilter)
       if (courseDayFilter !== 'all' && String(s.whichDay) !== String(courseDayFilter)) return false;
       // 2. Level Filter
       if (levelFilter !== 'all' && s.level.toLowerCase() !== levelFilter.toLowerCase()) return false;
-      // 3. Gender Filter
+      // 3. Status Filter (Selected vs Not Selected)
+      if (selectionFilter === 'selected' && !allSelectedSet.has(s.id)) return false;
+      if (selectionFilter === 'not_selected' && allSelectedSet.has(s.id)) return false;
+      if (selectionFilter === 'this_slot' && !currentSlotStudentIds.has(s.id)) return false;
+      // 4. Gender Filter
       if (genderFilterStep2 !== 'all' && (s.gender || 'male').toLowerCase() !== genderFilterStep2.toLowerCase()) return false;
-      // 4. Swimming Ability Filter
+      // 5. Swimming Ability Filter
       if (swimmingFilterStep2 !== 'all') {
         const sSwim = (s.swimming_ability || 'Swimmer').toLowerCase();
         if (swimmingFilterStep2 === 'swimmer' && (sSwim.includes('non') || sSwim === 'no')) return false;
         if (swimmingFilterStep2 === 'non-swimmer' && !(sSwim.includes('non') || sSwim === 'no')) return false;
       }
-      // 5. Search Text
+      // 6. Search Text
       if (studentSearchStep2 && studentSearchStep2.trim()) {
         const q = studentSearchStep2.toLowerCase().trim();
         const n = (s.name || '').toLowerCase();
@@ -2046,7 +2720,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       }
       return true;
     });
-  }, [allPoolStudents, courseDayFilter, levelFilter, genderFilterStep2, swimmingFilterStep2, studentSearchStep2]);
+  }, [allPoolStudents, courseDayFilter, levelFilter, selectionFilter, genderFilterStep2, swimmingFilterStep2, studentSearchStep2, allSelectedStudentIds, slotStudentMap, selectedSlotId, activeSlotsForDay, slots]);
 
   // Step 2 Filtered & Sorted students from database:
   // Active slot's assigned students on TOP (0), Unassigned in MIDDLE (1), Other slots' students at BOTTOM (2)
@@ -2070,6 +2744,12 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
     return allPoolStudents
       .filter(s => levelFilter === 'all' || s.level.toLowerCase() === levelFilter.toLowerCase())
+      .filter(s => {
+        if (selectionFilter === 'selected') return allSelectedSet.has(s.id);
+        if (selectionFilter === 'not_selected') return !allSelectedSet.has(s.id);
+        if (selectionFilter === 'this_slot') return currentSlotStudentIds.has(s.id);
+        return true;
+      })
       .filter(s => genderFilterStep2 === 'all' || (s.gender || 'male').toLowerCase() === genderFilterStep2.toLowerCase())
       .filter(s => {
         if (swimmingFilterStep2 === 'all') return true;
@@ -2115,7 +2795,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         const subB = b.isGuest ? (b.guestIndex || 1) : 0;
         return subA - subB;
       });
-  }, [allPoolStudents, levelFilter, courseDayFilter, genderFilterStep2, swimmingFilterStep2, studentSearchStep2, allSelectedStudentIds, slotStudentMap, selectedSlotId, activeSlotsForDay, slots]);
+  }, [allPoolStudents, levelFilter, selectionFilter, courseDayFilter, genderFilterStep2, swimmingFilterStep2, studentSearchStep2, allSelectedStudentIds, slotStudentMap, selectedSlotId, activeSlotsForDay, slots]);
 
   // Transition from Step 2 to Step 3: Multi-slot aware group initialization
   const proceedToStep3 = () => {
@@ -2383,9 +3063,13 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     // If clicked student is an accompanying GUEST:
     // Allow selecting/deselecting this guest individually without affecting the main student
     if (clickedStudent?.isGuest) {
-      setStep3CheckedStudentIds(prev =>
-        prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-      );
+      setStep3CheckedStudentIds(prev => {
+        const willCheck = !prev.includes(id);
+        if (willCheck) {
+          scrollToCreateGroupSection();
+        }
+        return willCheck ? [...prev, id] : prev.filter(x => x !== id);
+      });
       return;
     }
 
@@ -2406,6 +3090,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       } else {
         // User clicked to check the main student: automatically check main student and only unassigned guests
         const toAdd = [id, ...accompanyingGuestIds.filter(gid => !prev.includes(gid))];
+        scrollToCreateGroupSection();
         return [...prev, ...toAdd];
       }
     });
@@ -2425,6 +3110,34 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         name: `Group ${letter}`
       };
     });
+  };
+
+  // Smoothly scroll to the "Want to create another training group?" card so it appears clearly above sticky bar
+  const scrollToCreateGroupSection = (force = false) => {
+    setTimeout(() => {
+      const createCard = document.getElementById('ns-create-next-group-card');
+      const listContainer = document.querySelector('.ns-training-groups-list');
+
+      if (listContainer) {
+        listContainer.scrollTo({
+          top: listContainer.scrollHeight,
+          behavior: 'smooth'
+        });
+      }
+
+      if (createCard) {
+        const rect = createCard.getBoundingClientRect();
+        // Check if card is comfortably visible above bottom sticky bar (sticky bar is ~80px)
+        const isComfortablyInView = rect.top >= 80 && rect.bottom <= (window.innerHeight - 90);
+        if (force || !isComfortablyInView) {
+          createCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        createCard.classList.add('highlight-pulse');
+        setTimeout(() => {
+          createCard.classList.remove('highlight-pulse');
+        }, 1200);
+      }
+    }, 80);
   };
 
   // Create Group from checked students or create a fresh empty group card with assigned slot
@@ -2492,7 +3205,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         listContainer.scrollTo({ top: Math.max(0, targetTop - 12), behavior: 'smooth' });
       }
       if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     }, 100);
   };
@@ -3043,8 +3756,34 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         if (!editSession) {
           try {
             localStorage.removeItem(draftKey);
+            const schoolId = currentUser?.school_id || null;
+            const rawSchool = currentUser?.school || currentUser?.school_name || activeSchoolName || '';
+            const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
+            const delParams = new URLSearchParams();
+            if (schoolId) delParams.set('school_id', schoolId);
+            if (schoolName) delParams.set('school_name', schoolName);
+            delParams.set('date', selectedSessionDateYYYYMMDD);
+            fetch(`${API}/api/session-drafts?${delParams.toString()}`, { method: 'DELETE' }).catch(() => {});
           } catch (e) {}
         }
+        // Immediately refresh existing DB sessions so published indicator turns active
+        try {
+          const activeSchoolStr = sessionStorage.getItem('activeSchool');
+          let sName = '';
+          if (activeSchoolStr) {
+            try {
+              const p = JSON.parse(activeSchoolStr);
+              sName = typeof p.name === 'string' ? p.name : p.name?.name || (typeof p === 'string' ? p : '');
+            } catch(e) { sName = activeSchoolStr; }
+          }
+          const sParam = sName ? `?school=${encodeURIComponent(sName)}` : '';
+          fetch(`${API}/api/sessions${sParam}`)
+            .then(r => r.json())
+            .then(data => {
+              if (Array.isArray(data)) setExistingDbSessions(data);
+            })
+            .catch(() => {});
+        } catch(e) {}
         if (editSession) {
           if (isModal && modalHistoryPushedRef.current) {
             modalHistoryPushedRef.current = false;
@@ -3170,8 +3909,47 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           </div>
         </div>
 
-        {/* Right: Close Button */}
-        <div className="ns-header-right">
+        {/* Right: Clear Draft & Close Button */}
+        <div className="ns-header-right" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {!editSession && (
+            <button
+              type="button"
+              className="ns-clear-draft-btn"
+              onClick={handleClearDraft}
+              title="Clear all saved draft data and reset selections"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                background: clearDraftToast ? '#DC2626' : '#FEF2F2',
+                color: clearDraftToast ? '#FFFFFF' : '#DC2626',
+                border: clearDraftToast ? '1px solid #DC2626' : '1px solid #FECACA',
+                borderRadius: '8px',
+                padding: '6px 12px',
+                fontSize: '12px',
+                fontWeight: 700,
+                cursor: 'pointer',
+                transition: 'all 0.15s ease',
+                whiteSpace: 'nowrap'
+              }}
+              onMouseEnter={(e) => {
+                if (!clearDraftToast) {
+                  e.currentTarget.style.background = '#FEE2E2';
+                  e.currentTarget.style.borderColor = '#FCA5A5';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!clearDraftToast) {
+                  e.currentTarget.style.background = '#FEF2F2';
+                  e.currentTarget.style.borderColor = '#FECACA';
+                }
+              }}
+            >
+              <span>{clearDraftToast ? '✓' : '🗑️'}</span>
+              <span>{clearDraftToast ? 'Draft Cleared!' : 'Clear Draft'}</span>
+            </button>
+          )}
+
           {isModal && (
             <div className="ns-header-close-wrap">
               <button
@@ -3431,27 +4209,51 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                         const isPast = cd.isCurrentMonth && cellDate < today;
                         const isSelected = cd.isCurrentMonth && cd.day === selectedDayNumber;
 
+                        const monthStr = String(month + 1).padStart(2, '0');
+                        const dayStr = String(cd.day).padStart(2, '0');
+                        const cellDateYYYYMMDD = `${year}-${monthStr}-${dayStr}`;
+                        const hasCustomSchedule = cd.isCurrentMonth && customDatesList.includes(cellDateYYYYMMDD);
+
                         return (
                           <div
                             key={idx}
-                            className={`ns-cal-day-cell ${!cd.isCurrentMonth ? 'other-month' : ''} ${isSelected ? 'selected' : ''} ${isPast ? 'disabled-past' : ''}`}
+                            className={`ns-cal-day-cell ${!cd.isCurrentMonth ? 'other-month' : ''} ${isSelected ? 'selected' : ''} ${isPast ? 'disabled-past' : ''} ${hasCustomSchedule ? 'has-custom-schedule' : ''}`}
                             style={{
+                              position: 'relative',
                               opacity: isPast ? 0.3 : (cd.isCurrentMonth ? 1 : 0.4),
                               cursor: (isPast || !cd.isCurrentMonth) ? 'not-allowed' : 'pointer',
                               background: isPast ? '#F1F5F9' : undefined,
                               color: isPast ? '#94A3B8' : undefined,
                               pointerEvents: isPast ? 'none' : 'auto'
                             }}
-                            title={isPast ? 'Past dates cannot be selected' : undefined}
+                            title={
+                              isPast
+                                ? 'Past dates cannot be selected'
+                                : (hasCustomSchedule ? `Custom Schedule Configured (${cellDateYYYYMMDD})` : undefined)
+                            }
                             onClick={() => {
                               if (cd.isCurrentMonth && !isPast) handleSelectCalendarDay(cd.day);
                             }}
                           >
                             <span className="ns-cal-day-num" style={isPast ? { textDecoration: 'line-through' } : {}}>{cd.day}</span>
+                            {hasCustomSchedule && (
+                              <span
+                                className="ns-cal-custom-dot"
+                                title="Custom Schedule Configured"
+                              />
+                            )}
                           </div>
                         );
                       })}
                     </div>
+
+                    {/* Calendar legend for custom schedules */}
+                    {customDatesList.length > 0 && (
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', marginTop: '10px', fontSize: '11px', color: '#B45309', fontWeight: 600 }}>
+                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#D97706', display: 'inline-block' }} />
+                        <span>Dates with Custom Schedule</span>
+                      </div>
+                    )}
                   </div>
                 </section>
 
@@ -3487,16 +4289,86 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                     </div>
                   </div>
                 </div>
-                <div className="ns-pool-footer" style={{ marginTop: '16px' }}>
-                  <span>Selected Roster Count:</span>
-                  <span className="ns-pool-space">{allSelectedStudentIds.length}/{capacity || 30} Students Selected</span>
+                <div className="ns-pool-footer" style={{ marginTop: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', fontSize: '13px' }}>
+                    <span style={{ color: '#64748B' }}>Total Students: <strong style={{ color: '#0F172A', fontWeight: 800 }}>{allPoolStudents.length}</strong></span>
+                    <span style={{ color: '#CBD5E1' }}>•</span>
+                    <span style={{ color: '#0284C7' }}>Selected: <strong style={{ fontWeight: 800 }}>{allSelectedStudentIds.length}</strong></span>
+                    <span style={{ color: '#CBD5E1' }}>•</span>
+                    <span style={{ color: '#64748B' }}>Not Selected: <strong style={{ fontWeight: 800 }}>{Math.max(0, allPoolStudents.length - allSelectedStudentIds.length)}</strong></span>
+                  </div>
+                  <span className="ns-pool-space" style={{ fontSize: '12px', fontWeight: 600 }}>Capacity: {capacity || 30}</span>
                 </div>
               </div>
 
               {/* Row 2 (Full Width): 2. Choose Time Slot */}
               <section className="ns-card ns-step1-slots-card" style={{ gridColumn: '1 / -1' }}>
-                <div className="ns-slots-header-row">
-                  <h3 className="ns-card-heading" style={{ margin: 0 }}>2. Choose Time Slot & Capacity</h3>
+                <div className="ns-slots-header-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginBottom: '14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                    <h3 className="ns-card-heading" style={{ margin: 0 }}>2. Choose Time Slot & Capacity</h3>
+                    {isCustomForDate ? (
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <span style={{
+                          background: '#FEF3C7',
+                          color: '#92400E',
+                          border: '1px solid #FDE68A',
+                          borderRadius: '6px',
+                          padding: '3px 9px',
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '5px'
+                        }}>
+                          <span>🗓️</span>
+                          <span>Custom Schedule for {formattedSessionDate}</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleResetToDefault}
+                          style={{
+                            background: '#FFFFFF',
+                            border: '1.5px solid #CBD5E1',
+                            borderRadius: '6px',
+                            padding: '3px 8px',
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            color: '#475569',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            transition: 'all 0.15s ease'
+                          }}
+                          title="Reset this date back to Default Template"
+                        >
+                          <span>↺</span> Reset to Default
+                        </button>
+                      </div>
+                    ) : (
+                      <span style={{
+                        background: '#F1F5F9',
+                        color: '#475569',
+                        border: '1px solid #E2E8F0',
+                        borderRadius: '6px',
+                        padding: '3px 9px',
+                        fontSize: '11px',
+                        fontWeight: 700,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '5px'
+                      }}>
+                        <span>✓</span>
+                        <span>Default Schedule (All Dates)</span>
+                      </span>
+                    )}
+                    {isSlotsLoading && (
+                      <span style={{ fontSize: '11px', color: '#64748B', fontStyle: 'italic' }}>
+                        Updating slots...
+                      </span>
+                    )}
+                  </div>
+
                   <button
                     type="button"
                     className="ns-config-link-btn"
@@ -3507,7 +4379,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                       <circle cx="12" cy="12" r="3" />
                       <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
                     </svg>
-                    <span>Session Configuration</span>
+                    <span>Session Configure ( Default )</span>
                   </button>
                 </div>
 
@@ -3524,92 +4396,216 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                       >
                         <div className="ns-slot-left">
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                            <h4 className="ns-slot-time">{slot.time}</h4>
-                            {!slot.active ? (
-                              <span className="ns-slot-pill inactive">Inactive in Settings</span>
-                            ) : isDayMatch ? (
-                              <span className="ns-slot-pill active-day">✓ Active ({selectedDayOfWeek})</span>
-                            ) : (
+                            <div
+                              className="ns-slot-time-wrap"
+                              onClick={(e) => handleEditSlot(slot, e)}
+                              title="Click to edit slot time & duration"
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}
+                            >
+                              <h4 className="ns-slot-time">{slot.time}</h4>
+                              <span
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  width: '22px',
+                                  height: '22px',
+                                  borderRadius: '6px',
+                                  background: '#F1F5F9',
+                                  color: '#0284C7',
+                                  fontSize: '11px'
+                                }}
+                                title="Edit Time"
+                              >
+                                ✏️
+                              </span>
+                            </div>
+
+                            {/* Interactive Active / Inactive Toggle Switch */}
+                            <button
+                              type="button"
+                              className={`ns-slot-pill clickable-toggle ${slot.active === false ? 'inactive' : 'active-day'}`}
+                              onClick={(e) => handleToggleSlotActive(slot.id, e)}
+                              title={slot.active === false ? "Click to Activate this slot for today" : "Click to mark Inactive for today"}
+                              style={{
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                border: slot.active === false ? '1.5px solid #FECACA' : '1.5px solid #86EFAC',
+                                background: slot.active === false ? '#FEE2E2' : '#DCFCE7',
+                                color: slot.active === false ? '#B91C1C' : '#15803D',
+                                padding: '4px 10px',
+                                borderRadius: '8px',
+                                fontSize: '11px',
+                                fontWeight: 700,
+                                boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                                transition: 'all 0.15s ease'
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.background = slot.active === false ? '#FECDD3' : '#BBF7D0';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.background = slot.active === false ? '#FEE2E2' : '#DCFCE7';
+                              }}
+                            >
+                              {slot.active === false ? (
+                                <>
+                                  <span style={{ fontSize: '10px' }}>✕</span>
+                                  <span>Inactive</span>
+                                  <span style={{ fontSize: '9px', fontWeight: 600, opacity: 0.85, textDecoration: 'underline', marginLeft: '2px' }}>
+                                    (Click to Activate)
+                                  </span>
+                                </>
+                              ) : (
+                                <>
+                                  <span>✓ Active ({selectedDayOfWeek})</span>
+                                  <span style={{ fontSize: '9px', fontWeight: 600, opacity: 0.85, textDecoration: 'underline', marginLeft: '2px' }}>
+                                    (Click to Deactivate)
+                                  </span>
+                                </>
+                              )}
+                            </button>
+
+                            {slot.active !== false && !isDayMatch && (
                               <span className="ns-slot-pill off-day">Off today ({selectedDayOfWeek})</span>
                             )}
                           </div>
                           <p className="ns-slot-sub">{slot.title}</p>
                         </div>
 
-                        {/* Set Session Capacity directly on each slot card */}
+                        {/* Slot Card Right Actions: Capacity Control + Direct Delete Button */}
                         <div
-                          className="ns-slot-capacity-control"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleSelectSlot(slot);
-                          }}
-                          title="Set session capacity for this time slot"
+                          className="ns-slot-right-actions"
+                          onClick={(e) => e.stopPropagation()}
                         >
-                          <div className="ns-slot-cap-text">
-                            <span className="ns-slot-cap-label">Capacity</span>
-                            <span className="ns-slot-cap-count">
-                              <strong>{slotCap || 0}</strong> Students
-                            </span>
+                          <div
+                            className="ns-slot-capacity-control"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSelectSlot(slot);
+                            }}
+                            title="Set session capacity for this time slot"
+                          >
+                            <div className="ns-slot-cap-text">
+                              <span className="ns-slot-cap-label">Capacity</span>
+                              <span className="ns-slot-cap-count">
+                                <strong>{slotCap || 0}</strong> Students
+                              </span>
+                            </div>
+                            <div className="ns-slot-cap-stepper">
+                              <button
+                                type="button"
+                                className="ns-slot-stepper-btn"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleSelectSlot(slot);
+                                  const cur = parseInt(slotCap, 10) || 1;
+                                  handleUpdateSlotCapacity(slot.id, Math.max(1, cur - 1));
+                                }}
+                                title="Decrease capacity"
+                              >
+                                -
+                              </button>
+                              <input
+                                type="number"
+                                min="1"
+                                max="500"
+                                value={slotCap}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  handleSelectSlot(slot);
+                                  if (val === '') {
+                                    handleUpdateSlotCapacity(slot.id, '');
+                                  } else {
+                                    const num = parseInt(val, 10);
+                                    handleUpdateSlotCapacity(slot.id, isNaN(num) ? '' : Math.max(1, num));
+                                  }
+                                }}
+                                onBlur={() => {
+                                  if (!slotCap || parseInt(slotCap, 10) < 1) {
+                                    handleUpdateSlotCapacity(slot.id, parseInt(slot.maxStudents, 10) || 4);
+                                  }
+                                }}
+                                className="ns-slot-stepper-input"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleSelectSlot(slot);
+                                }}
+                                title="Type slot capacity directly"
+                              />
+                              <button
+                                type="button"
+                                className="ns-slot-stepper-btn"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleSelectSlot(slot);
+                                  const cur = parseInt(slotCap, 10) || 0;
+                                  handleUpdateSlotCapacity(slot.id, cur + 1);
+                                }}
+                                title="Increase capacity"
+                              >
+                                +
+                              </button>
+                            </div>
                           </div>
-                          <div className="ns-slot-cap-stepper">
-                            <button
-                              type="button"
-                              className="ns-slot-stepper-btn"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleSelectSlot(slot);
-                                const cur = parseInt(slotCap, 10) || 1;
-                                handleUpdateSlotCapacity(slot.id, Math.max(1, cur - 1));
-                              }}
-                              title="Decrease capacity"
-                            >
-                              -
-                            </button>
-                            <input
-                              type="number"
-                              min="1"
-                              max="500"
-                              value={slotCap}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                handleSelectSlot(slot);
-                                if (val === '') {
-                                  handleUpdateSlotCapacity(slot.id, '');
-                                } else {
-                                  const num = parseInt(val, 10);
-                                  handleUpdateSlotCapacity(slot.id, isNaN(num) ? '' : Math.max(1, num));
-                                }
-                              }}
-                              onBlur={() => {
-                                if (!slotCap || parseInt(slotCap, 10) < 1) {
-                                  handleUpdateSlotCapacity(slot.id, parseInt(slot.maxStudents, 10) || 4);
-                                }
-                              }}
-                              className="ns-slot-stepper-input"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleSelectSlot(slot);
-                              }}
-                              title="Type slot capacity directly"
-                            />
-                            <button
-                              type="button"
-                              className="ns-slot-stepper-btn"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleSelectSlot(slot);
-                                const cur = parseInt(slotCap, 10) || 0;
-                                handleUpdateSlotCapacity(slot.id, cur + 1);
-                              }}
-                              title="Increase capacity"
-                            >
-                              +
-                            </button>
-                          </div>
+
+                          {/* Direct Edit Slot Button */}
+                          <button
+                            type="button"
+                            className="ns-slot-edit-btn"
+                            onClick={(e) => handleEditSlot(slot, e)}
+                            title="Edit slot time, duration, and capacity"
+                            aria-label={`Edit slot ${slot.time || slot.startTime || ''}`}
+                          >
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                            </svg>
+                          </button>
+
+                          {/* Direct Delete Slot Button */}
+                          <button
+                            type="button"
+                            className="ns-slot-delete-btn"
+                            onClick={(e) => handleDeleteSlot(slot.id, e)}
+                            title="Delete this slot for this date"
+                            aria-label={`Delete slot ${slot.time || slot.startTime || ''}`}
+                          >
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <polyline points="3 6 5 6 21 6" />
+                              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                              <line x1="10" y1="11" x2="10" y2="17" />
+                              <line x1="14" y1="11" x2="14" y2="17" />
+                            </svg>
+                          </button>
                         </div>
                       </div>
                     );
                   })}
+
+                  {slots.length === 0 && (
+                    <div style={{
+                      textAlign: 'center',
+                      padding: '24px 16px',
+                      background: '#F8FAFC',
+                      borderRadius: '12px',
+                      border: '1.5px dashed #CBD5E1',
+                      margin: '6px 0 12px 0'
+                    }}>
+                      <p style={{ margin: '0 0 8px 0', fontSize: '13.5px', color: '#64748B', fontWeight: 600 }}>
+                        All time slots removed for {formattedSessionDate}.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handleResetToDefault}
+                        className="ns-secondary-btn"
+                        style={{ fontSize: '12.5px', padding: '6px 14px', borderRadius: '8px' }}
+                      >
+                        ↺ Restore Default Slots
+                      </button>
+                    </div>
+                  )}
 
                   <div
                     className="ns-add-slot-card"
@@ -3635,16 +4631,39 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           {/* Sticky Floating Bottom Action Bar for Step 1 */}
           <div className="ns-sticky-bar-wrapper">
             <div className="ns-sticky-bar">
-              <div className="ns-sb-left">
-                <span className="ns-sb-target-label" style={{ background: '#0D9488', color: '#FFF', padding: '3px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 800 }}>
-                  SESSION SETUP
-                </span>
+              <div className="ns-sb-left" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                 <span className="ns-sb-capacity" style={{ fontSize: '13px', fontWeight: 600, color: '#E2E8F0' }}>
                   📅 {formattedSessionDate} &bull; ⏰ {selectedSlot ? (selectedSlot.startTime || selectedSlot.time) : 'Select Time Slot'} &bull; 🎯 Capacity: {capacity} Students
                 </span>
               </div>
 
-              <div className="ns-sb-right">
+              <div className="ns-sb-right" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <button
+                  type="button"
+                  className="ns-sb-draft-btn"
+                  onClick={handleManualSaveDraft}
+                  title="Save current progress as draft"
+                  style={{
+                    background: draftSavedToast ? '#059669' : 'rgba(255, 255, 255, 0.12)',
+                    color: '#FFFFFF',
+                    border: draftSavedToast ? '1px solid #10B981' : '1px solid rgba(255, 255, 255, 0.25)',
+                    borderRadius: '10px',
+                    padding: '12px 20px',
+                    fontSize: '14px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    transition: 'all 0.2s ease',
+                    whiteSpace: 'nowrap'
+                  }}
+                  onMouseEnter={(e) => { if (!draftSavedToast) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)'; }}
+                  onMouseLeave={(e) => { if (!draftSavedToast) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)'; }}
+                >
+                  <span>{draftSavedToast ? '✓' : '💾'}</span>
+                  <span>{draftSavedToast ? 'Draft Saved!' : 'Save Draft'}</span>
+                </button>
                 <button
                   type="button"
                   className="ns-primary-btn"
@@ -3785,6 +4804,56 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                   </button>
                 </div>
               </div>
+
+              {/* Filter by Status (Selected vs Not Selected) */}
+              {(() => {
+                const activeSlotIdStep2 = selectedSlotId || activeSlotsForDay[0]?.id || slots[0]?.id;
+                const currentSlotCount = (slotStudentMap[activeSlotIdStep2] || []).length;
+                const totalSelectedCount = allSelectedStudentIds.length;
+                const notSelectedCount = Math.max(0, allPoolStudents.length - totalSelectedCount);
+
+                return (
+                  <div className="ns-filter-row" style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #F1F5F9' }}>
+                    <span className="ns-filter-label">Filter by Status:</span>
+                    <div className="ns-pill-group" style={{ flexWrap: 'wrap', gap: '6px' }}>
+                      <button
+                        type="button"
+                        className={`ns-pill ${selectionFilter === 'all' ? 'active' : ''}`}
+                        onClick={() => setSelectionFilter('all')}
+                      >
+                        All Students ({allPoolStudents.length})
+                      </button>
+                      <button
+                        type="button"
+                        className={`ns-pill ${selectionFilter === 'selected' ? 'active' : ''}`}
+                        onClick={() => setSelectionFilter('selected')}
+                        style={selectionFilter === 'selected' ? { backgroundColor: '#0284C7', borderColor: '#0284C7', color: '#FFFFFF' } : {}}
+                      >
+                        ✓ Selected ({totalSelectedCount})
+                      </button>
+                      {slots.length > 1 && totalSelectedCount > currentSlotCount && currentSlotCount > 0 && (
+                        <button
+                          type="button"
+                          className={`ns-pill ${selectionFilter === 'this_slot' ? 'active' : ''}`}
+                          onClick={() => setSelectionFilter('this_slot')}
+                          style={selectionFilter === 'this_slot' ? { backgroundColor: '#0F172A', borderColor: '#0F172A', color: '#FFFFFF' } : {}}
+                          title="Students selected specifically in this time slot"
+                        >
+                          🎯 In This Slot ({currentSlotCount})
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className={`ns-pill ${selectionFilter === 'not_selected' ? 'active' : ''}`}
+                        onClick={() => setSelectionFilter('not_selected')}
+                        style={selectionFilter === 'not_selected' ? { backgroundColor: '#64748B', borderColor: '#64748B', color: '#FFFFFF' } : {}}
+                      >
+                        ○ Not Selected ({notSelectedCount})
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Mobile More Filters Toggle Button */}
               <div className="ns-more-filters-bar">
@@ -4515,58 +5584,110 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                   const anySlotOver = slots.some(s => (slotStudentMap[s.id] || []).length > getSlotCapacity(s));
                   const totalPoolCount = allPoolStudents.length;
                   const totalSelectedCount = allSelectedStudentIds.length;
+                  const notSelectedCount = Math.max(0, totalPoolCount - totalSelectedCount);
 
                   return (
-                    <div className="ns-sb-left">
-                      <span className="ns-sb-target-label ns-hide-mobile" style={anySlotOver ? { background: '#EF4444', color: '#FFFFFF' } : {}}>
-                        {anySlotOver ? 'CAPACITY EXCEEDED' : 'SELECTED ROSTER'}
+                    <div className="ns-sb-left" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, whiteSpace: 'nowrap' }}>
+                      {anySlotOver && (
+                        <span style={{
+                          background: '#EF4444',
+                          color: '#FFFFFF',
+                          fontSize: '10px',
+                          fontWeight: 800,
+                          padding: '3px 8px',
+                          borderRadius: '4px',
+                          letterSpacing: '0.5px'
+                        }}>
+                          CAPACITY EXCEEDED
+                        </span>
+                      )}
+
+                      <span style={{
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        color: '#E2E8F0',
+                        background: 'rgba(255, 255, 255, 0.08)',
+                        padding: '3px 9px',
+                        borderRadius: '6px',
+                        border: '1px solid rgba(255, 255, 255, 0.12)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '5px'
+                      }}>
+                        <span style={{ color: '#94A3B8' }}>Total:</span>
+                        <strong style={{ color: '#FFFFFF', fontWeight: 800 }}>{totalPoolCount}</strong>
                       </span>
-                      <span className="ns-sb-capacity" style={{ fontSize: '14px', fontWeight: 800, color: anySlotOver ? '#FCA5A5' : '#FFFFFF' }}>
-                        <span className="ns-hide-mobile">Total </span>
-                        {totalSelectedCount}/{totalPoolCount}
-                        <span className="ns-hide-mobile"> Students Selected</span>
-                        <span className="ns-show-mobile"> Selected</span>
+
+                      <span style={{
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        color: '#38BDF8',
+                        background: 'rgba(56, 189, 248, 0.14)',
+                        padding: '3px 9px',
+                        borderRadius: '6px',
+                        border: '1px solid rgba(56, 189, 248, 0.28)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '5px'
+                      }}>
+                        <span>Selected:</span>
+                        <strong style={{ fontWeight: 800 }}>{totalSelectedCount}</strong>
+                      </span>
+
+                      <span style={{
+                        fontSize: '12px',
+                        fontWeight: 600,
+                        color: '#CBD5E1',
+                        background: 'rgba(255, 255, 255, 0.05)',
+                        padding: '3px 9px',
+                        borderRadius: '6px',
+                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '5px'
+                      }}>
+                        <span style={{ color: '#94A3B8' }}>Not Selected:</span>
+                        <strong style={{ color: '#F8FAFC', fontWeight: 800 }}>{notSelectedCount}</strong>
                       </span>
                     </div>
                   );
                 })()}
 
-                <div className="ns-sb-center ns-hide-mobile">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                    {slots.filter(s => (slotStudentMap[s.id] || []).length > 0).map((s) => {
-                      const count = (slotStudentMap[s.id] || []).length;
-                      const sCap = getSlotCapacity(s);
-                      const isSlotOver = count > sCap;
-                      const isSlotFull = count === sCap;
-                      const isActive = s.id === (selectedSlotId || activeSlotsForDay[0]?.id || slots[0]?.id);
+                <div className="ns-sb-center ns-hide-mobile" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                  {slots.filter(s => (slotStudentMap[s.id] || []).length > 0).map((s) => {
+                    const count = (slotStudentMap[s.id] || []).length;
+                    const sCap = getSlotCapacity(s);
+                    const isSlotOver = count > sCap;
+                    const isSlotFull = count === sCap;
+                    const isActive = s.id === (selectedSlotId || activeSlotsForDay[0]?.id || slots[0]?.id);
 
-                      return (
-                        <span
-                          key={s.id}
-                          style={{
-                            fontSize: '12px',
-                            fontWeight: 700,
-                            background: isSlotOver ? 'rgba(239, 68, 68, 0.28)' : (isActive ? 'rgba(255, 255, 255, 0.22)' : 'rgba(255, 255, 255, 0.14)'),
-                            color: isSlotOver ? '#FECACA' : '#FFFFFF',
-                            border: isSlotOver ? '1px solid #EF4444' : (isActive ? '1px solid rgba(255, 255, 255, 0.45)' : '1px solid rgba(255, 255, 255, 0.22)'),
-                            padding: '4px 12px',
-                            borderRadius: '14px',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '6px'
-                          }}
-                        >
-                          <span>⏰ {s.startTime || s.time}:</span>
-                          <strong>{count}/{sCap} {count === 1 ? 'Student' : 'Students'}</strong>
-                          {isSlotOver && <span style={{ fontSize: '10px', background: '#EF4444', color: '#FFF', padding: '1px 5px', borderRadius: '4px' }}>EXCEEDED</span>}
-                          {isSlotFull && !isSlotOver && <span style={{ fontSize: '10px', background: 'rgba(16, 185, 129, 0.3)', color: '#6EE7B7', padding: '1px 5px', borderRadius: '4px' }}>FULL</span>}
-                        </span>
-                      );
-                    })}
-                  </div>
+                    return (
+                      <span
+                        key={s.id}
+                        style={{
+                          fontSize: '12.5px',
+                          fontWeight: 700,
+                          background: isSlotOver ? 'rgba(239, 68, 68, 0.25)' : (isActive ? 'rgba(255, 255, 255, 0.18)' : 'rgba(255, 255, 255, 0.1)'),
+                          color: isSlotOver ? '#FECACA' : '#FFFFFF',
+                          border: isSlotOver ? '1px solid #EF4444' : (isActive ? '1px solid rgba(255, 255, 255, 0.35)' : '1px solid rgba(255, 255, 255, 0.18)'),
+                          padding: '5px 12px',
+                          borderRadius: '12px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          whiteSpace: 'nowrap'
+                        }}
+                      >
+                        <span style={{ whiteSpace: 'nowrap' }}>⏰ {s.startTime || s.time}:</span>
+                        <strong style={{ color: isSlotOver ? '#FCA5A5' : '#00D2B4', whiteSpace: 'nowrap' }}>{count}/{sCap} {count === 1 ? 'Student' : 'Students'}</strong>
+                        {isSlotOver && <span style={{ fontSize: '10px', background: '#EF4444', color: '#FFF', padding: '1px 5px', borderRadius: '4px', whiteSpace: 'nowrap' }}>EXCEEDED</span>}
+                        {isSlotFull && !isSlotOver && <span style={{ fontSize: '10px', background: 'rgba(16, 185, 129, 0.3)', color: '#6EE7B7', padding: '1px 5px', borderRadius: '4px', whiteSpace: 'nowrap' }}>FULL</span>}
+                      </span>
+                    );
+                  })}
                 </div>
 
-                <div className="ns-sb-right" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div className="ns-sb-right" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
                   <button
                     type="button"
                     className="ns-sb-back-btn"
@@ -4577,6 +5698,32 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                       color: '#FFFFFF',
                       border: '1px solid rgba(255, 255, 255, 0.25)',
                       borderRadius: '8px',
+                      padding: '8px 12px',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '5px',
+                      transition: 'all 0.15s ease',
+                      whiteSpace: 'nowrap'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)'}
+                  >
+                    <span className="ns-hide-mobile">← Back to Setup</span>
+                    <span className="ns-show-mobile">← Back</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="ns-sb-draft-btn"
+                    onClick={handleManualSaveDraft}
+                    title="Save current progress as draft"
+                    style={{
+                      background: draftSavedToast ? '#059669' : 'rgba(255, 255, 255, 0.12)',
+                      color: '#FFFFFF',
+                      border: draftSavedToast ? '1px solid #10B981' : '1px solid rgba(255, 255, 255, 0.25)',
+                      borderRadius: '8px',
                       padding: '8px 14px',
                       fontSize: '13px',
                       fontWeight: 600,
@@ -4584,19 +5731,36 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: '6px',
-                      transition: 'all 0.15s ease'
+                      transition: 'all 0.2s ease',
+                      whiteSpace: 'nowrap'
                     }}
-                    onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)'}
-                    onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)'}
+                    onMouseEnter={(e) => { if (!draftSavedToast) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)'; }}
+                    onMouseLeave={(e) => { if (!draftSavedToast) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)'; }}
                   >
-                    <span className="ns-hide-mobile">← Back to Session Setup</span>
-                    <span className="ns-show-mobile">← Back</span>
+                    <span>{draftSavedToast ? '✓' : '💾'}</span>
+                    <span>{draftSavedToast ? 'Draft Saved!' : 'Save Draft'}</span>
                   </button>
                   <button
                     className="ns-primary-btn"
                     onClick={proceedToStep3}
+                    style={{
+                      background: '#00D2B4',
+                      color: '#0F172A',
+                      border: 'none',
+                      padding: '9px 18px',
+                      fontSize: '13px',
+                      fontWeight: 800,
+                      borderRadius: '8px',
+                      cursor: 'pointer',
+                      boxShadow: '0 4px 14px rgba(0, 210, 180, 0.4)',
+                      transition: 'all 0.15s ease',
+                      whiteSpace: 'nowrap',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px'
+                    }}
                   >
-                    <span className="ns-hide-mobile">Import Selected in &amp; Next</span>
+                    <span className="ns-hide-mobile">Import Selected in &amp; Next »</span>
                     <span className="ns-show-mobile">Next →</span>
                   </button>
                 </div>
@@ -4611,11 +5775,29 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         {currentStep === 3 && (
           <div className="ns-step-content ns-step3-wrap">
             {/* Selected Session Info Banner - Compact */}
-            <div className="ns-selected-banner" style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px' }}>
-              <span className="ns-banner-icon">📅</span>
-              <span className="ns-banner-text">
-                Selected Session: <strong>{formattedSessionDate}</strong> | Active Filter: <strong>{slots.find(s => s.id === step3SlotFilter)?.startTime || slots.find(s => s.id === step3SlotFilter)?.time || 'Selected Slot'}</strong>
-              </span>
+            <div className="ns-selected-banner" style={{ padding: '6px 14px', borderRadius: '8px', fontSize: '13px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span className="ns-banner-icon">📅</span>
+                <span className="ns-banner-text">
+                  Selected Session: <strong>{formattedSessionDate}</strong> | Active Filter: <strong>{slots.find(s => s.id === step3SlotFilter)?.startTime || slots.find(s => s.id === step3SlotFilter)?.time || 'Selected Slot'}</strong>
+                </span>
+              </div>
+              {isSessionAlreadyPublishedOnDate && (
+                <span style={{
+                  background: '#ECFDF5',
+                  color: '#065F46',
+                  border: '1px solid #10B981',
+                  borderRadius: '6px',
+                  padding: '2px 8px',
+                  fontSize: '11px',
+                  fontWeight: 800,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}>
+                  <span>✓</span> Session Published
+                </span>
+              )}
             </div>
 
             {/* Stat Summary Cards - Compact Slim Layout */}
@@ -5321,6 +6503,23 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                   <h3 className="ns-col-title">Assigned Training Groups</h3>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <span className="ns-col-badge">{displayedTrainingGroups.length} Groups</span>
+                    {isSessionAlreadyPublishedOnDate && (
+                      <span
+                        className="ns-col-badge"
+                        style={{
+                          background: '#ECFDF5',
+                          color: '#047857',
+                          border: '1px solid #A7F3D0',
+                          fontWeight: 800,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}
+                        title="This session has already been published to the schedule"
+                      >
+                        <span style={{ fontSize: '11px' }}>✓</span> Published
+                      </span>
+                    )}
                   </div>
                   <div style={{ display: 'flex', gap: '6px' }}>
                     {trainingGroups.length > 0 && (
@@ -5335,7 +6534,13 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                     )}
                     <button
                       className="ns-add-grp-btn"
-                      onClick={handleCreateGroup}
+                      onClick={() => {
+                        if (step3CheckedStudentIds.length === 0) {
+                          scrollToCreateGroupSection(true);
+                        } else {
+                          handleCreateGroup();
+                        }
+                      }}
                       style={{
                         display: 'inline-flex',
                         alignItems: 'center',
@@ -5346,7 +6551,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                         fontWeight: 700,
                         transition: 'all 0.15s ease'
                       }}
-                      title={step3CheckedStudentIds.length > 0 ? `Create group with ${step3CheckedStudentIds.length} selected student(s)` : "Create a new group card"}
+                      title={step3CheckedStudentIds.length > 0 ? `Create group with ${step3CheckedStudentIds.length} selected student(s)` : "Scroll to create next group"}
                     >
                       <span>+ Create Group Card</span>
                       {step3CheckedStudentIds.length > 0 && (
@@ -5542,6 +6747,25 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                   ? `🏄‍♂️ ${effectiveGroupCoaches.length} Coach : ${grpStudents.length} ${grpStudents.length === 1 ? 'Student' : 'Students'}`
                                   : `⚠️ 0 Coach : ${grpStudents.length} ${grpStudents.length === 1 ? 'Student' : 'Students'}`}
                               </span>
+                              {(grp.isExistingDbGroup || (grp.existingSessionIds && grp.existingSessionIds.length > 0) || isSessionAlreadyPublishedOnDate) && (
+                                <span
+                                  style={{
+                                    fontSize: '10.5px',
+                                    fontWeight: 700,
+                                    padding: '2px 7px',
+                                    borderRadius: '6px',
+                                    background: '#ECFDF5',
+                                    color: '#047857',
+                                    border: '1.5px solid #A7F3D0',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '3px'
+                                  }}
+                                  title="This group is already published in the database schedule"
+                                >
+                                  <span>✓</span> Published
+                                </span>
+                              )}
                               <button
                                 type="button"
                                 onClick={(e) => {
@@ -5987,6 +7211,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
                       return (
                         <div
+                          id="ns-create-next-group-card"
+                          className="ns-create-next-group-card"
                           style={{
                             padding: '24px 20px',
                             textAlign: 'center',
@@ -5998,7 +7224,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                             flexDirection: 'column',
                             alignItems: 'center',
                             gap: '8px',
-                            marginTop: '4px'
+                            marginTop: '4px',
+                            transition: 'all 0.3s ease'
                           }}
                         >
                           <p style={{ margin: 0, fontWeight: 700, fontSize: '13.5px', color: '#0F172A' }}>
@@ -6397,7 +7624,17 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             <div className="ns-sticky-bar-wrapper">
               <div className="ns-sticky-bar">
                 <div className="ns-sb-left">
-                  <span className="ns-sb-target-label" style={{ background: '#10B981', color: '#FFF', padding: '3px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 800 }}>
+                  <span
+                    className="ns-sb-target-label"
+                    style={{
+                      background: '#10B981',
+                      color: '#FFF',
+                      padding: '3px 8px',
+                      borderRadius: '4px',
+                      fontSize: '10px',
+                      fontWeight: 800
+                    }}
+                  >
                     PUBLISH READY
                   </span>
                   <span className="ns-sb-capacity" style={{ fontSize: '14px', fontWeight: 800, color: '#FFFFFF' }}>
@@ -6430,25 +7667,55 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                     {editSession ? '← Back to Select Students' : '← Back to Import Students'}
                   </button>
                   <button
+                    type="button"
+                    className="ns-sb-draft-btn"
+                    onClick={handleManualSaveDraft}
+                    title="Save current progress as draft"
+                    style={{
+                      background: draftSavedToast ? '#059669' : 'rgba(255, 255, 255, 0.12)',
+                      color: '#FFFFFF',
+                      border: draftSavedToast ? '1px solid #10B981' : '1px solid rgba(255, 255, 255, 0.25)',
+                      borderRadius: '8px',
+                      padding: '10px 18px',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      transition: 'all 0.2s ease',
+                      whiteSpace: 'nowrap'
+                    }}
+                    onMouseEnter={(e) => { if (!draftSavedToast) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)'; }}
+                    onMouseLeave={(e) => { if (!draftSavedToast) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)'; }}
+                  >
+                    <span>{draftSavedToast ? '✓' : '💾'}</span>
+                    <span>{draftSavedToast ? 'Draft Saved!' : 'Save Draft'}</span>
+                  </button>
+                  <button
                     className="ns-primary-btn finalize-btn"
                     onClick={handleFinalizeAndPublish}
                     disabled={isPublishing}
                     style={{
-                      background: 'linear-gradient(135deg, #00D494 0%, #00B37E 100%)',
+                      background: isSessionAlreadyPublishedOnDate
+                        ? 'linear-gradient(135deg, #059669 0%, #047857 100%)'
+                        : 'linear-gradient(135deg, #00D494 0%, #00B37E 100%)',
                       color: '#FFFFFF',
                       fontWeight: 800,
                       fontSize: '14px',
                       padding: '10px 22px',
                       borderRadius: '8px',
                       border: 'none',
-                      boxShadow: '0 4px 14px rgba(0, 212, 148, 0.4)',
+                      boxShadow: isSessionAlreadyPublishedOnDate
+                        ? '0 4px 14px rgba(5, 150, 105, 0.4)'
+                        : '0 4px 14px rgba(0, 212, 148, 0.4)',
                       cursor: isPublishing ? 'not-allowed' : 'pointer',
                       transition: 'all 0.2s ease'
                     }}
                   >
                     {isPublishing
-                      ? (editSession ? 'Saving Changes...' : 'Publishing Sessions...')
-                      : (editSession ? '✓ Save Changes' : '🚀 Finalize & Publish')}
+                      ? (isSessionAlreadyPublishedOnDate ? 'Updating Session...' : 'Publishing Sessions...')
+                      : (isSessionAlreadyPublishedOnDate ? '✓ Update Published Session' : '🚀 Finalize & Publish')}
                   </button>
                 </div>
               </div>
@@ -6491,6 +7758,11 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                       ⚠ A slot with this start time already exists! (e.g. 08:31 AM is allowed, but duplicate identical times are not).
                     </span>
                   )}
+                  {editingSlotModal.time && !modalTimeIsDuplicate && (
+                    <span style={{ color: '#0D9488', fontSize: '11.5px', fontWeight: 700, display: 'block', marginTop: '5px' }}>
+                      ⏰ Calculated Slot: {formatSlotRange(editingSlotModal.time, editingSlotModal.duration || 90)} ({editingSlotModal.duration || 90} min)
+                    </span>
+                  )}
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
@@ -6499,38 +7771,28 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                       Duration (Minutes)
                     </label>
                     <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-                      <select
-                        value={String(editingSlotModal.duration || 90)}
-                        onChange={(e) => setEditingSlotModal({ ...editingSlotModal, duration: e.target.value })}
-                        className="ns-modal-input"
-                        style={{
-                          fontWeight: 700,
-                          cursor: 'pointer',
-                          background: '#FFFFFF',
-                          color: '#0F172A',
-                          appearance: 'none',
-                          WebkitAppearance: 'none',
-                          backgroundImage: `url("data:image/svg+xml,%3Csvg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748B' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`,
-                          backgroundRepeat: 'no-repeat',
-                          backgroundPosition: 'right 12px center',
-                          paddingRight: '32px'
-                        }}
-                        title="Select session duration"
-                      >
-                        {[30, 45, 60, 75, 90, 105, 120, 135, 150, 180, 240].map(m => {
-                          let label = `${m} min`;
-                          if (m === 60) label = '60 min (1 hr)';
-                          else if (m === 90) label = '90 min (1.5 hrs)';
-                          else if (m === 120) label = '120 min (2 hrs)';
-                          else if (m === 150) label = '150 min (2.5 hrs)';
-                          else if (m === 180) label = '180 min (3 hrs)';
-                          else if (m === 240) label = '240 min (4 hrs)';
-                          return <option key={m} value={String(m)}>{label}</option>;
-                        })}
-                        {!([30, 45, 60, 75, 90, 105, 120, 135, 150, 180, 240].includes(Number(editingSlotModal.duration))) && (
-                          <option value={String(editingSlotModal.duration)}>{editingSlotModal.duration} min</option>
-                        )}
-                      </select>
+                      <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      placeholder="Enter duration in minutes"
+                      value={editingSlotModal.duration ?? ''}
+                      onChange={(e) => {
+                        const value = e.target.value;
+
+                        setEditingSlotModal(prev => ({
+                          ...prev,
+                          duration: value === '' ? '' : Number(value)
+                        }));
+                      }}
+                      style={{
+                        width: '100%',
+                        padding: '10px 12px',
+                        border: '1px solid #CBD5E1',
+                        borderRadius: '8px',
+                        fontSize: '14px'
+                      }}
+                    />
                     </div>
                   </div>
                   <div>
@@ -6581,42 +7843,56 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                     })}
                   </div>
                 </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
-                  <input
-                    type="checkbox"
-                    id="slot-active-check"
-                    checked={editingSlotModal.active}
-                    onChange={(e) => setEditingSlotModal({ ...editingSlotModal, active: e.target.checked })}
-                    style={{ width: '16px', height: '16px', accentColor: '#00D1B2', cursor: 'pointer' }}
-                  />
-                  <label htmlFor="slot-active-check" style={{ fontSize: '13px', fontWeight: 600, color: '#0F172A', cursor: 'pointer' }}>
-                    Active slot in scheduling
-                  </label>
-                </div>
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '24px' }}>
-                <button
-                  type="button"
-                  onClick={() => setEditingSlotModal(null)}
-                  className="ns-secondary-btn"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSaveSlotModal(editingSlotModal)}
-                  className="ns-primary-btn"
-                  style={{
-                    padding: '10px 20px',
-                    opacity: modalTimeIsDuplicate ? 0.6 : 1,
-                    cursor: modalTimeIsDuplicate ? 'not-allowed' : 'pointer'
-                  }}
-                  disabled={modalTimeIsDuplicate}
-                >
-                  Save Time Slot
-                </button>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '24px' }}>
+                {editingSlotModal.mode === 'edit' ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const idToDelete = editingSlotModal.id;
+                      setEditingSlotModal(null);
+                      handleDeleteSlot(idToDelete);
+                    }}
+                    style={{
+                      background: '#FEF2F2',
+                      border: '1.5px solid #FECACA',
+                      color: '#DC2626',
+                      borderRadius: '8px',
+                      padding: '8px 14px',
+                      fontSize: '12.5px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '5px'
+                    }}
+                  >
+                    🗑️ Delete Slot
+                  </button>
+                ) : <div />}
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setEditingSlotModal(null)}
+                    className="ns-secondary-btn"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSaveSlotModal(editingSlotModal)}
+                    className="ns-primary-btn"
+                    style={{
+                      padding: '10px 20px',
+                      opacity: modalTimeIsDuplicate ? 0.6 : 1,
+                      cursor: modalTimeIsDuplicate ? 'not-allowed' : 'pointer'
+                    }}
+                    disabled={modalTimeIsDuplicate}
+                  >
+                    Save Time Slot
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -6699,6 +7975,166 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                   onMouseLeave={(e) => e.currentTarget.style.background = '#0F172A'}
                 >
                   Got It
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Software-Native Confirmation Modal (Replaces browser default window.confirm) */}
+        {confirmModal.isOpen && (
+          <div
+            className="ns-modal-overlay"
+            style={{
+              position: 'fixed',
+              inset: 0,
+              backgroundColor: 'rgba(15, 23, 42, 0.65)',
+              backdropFilter: 'blur(6px)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1500,
+              padding: '16px',
+              animation: 'nsFadeIn 0.15s ease-out'
+            }}
+            onClick={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+          >
+            <div
+              className="ns-modal-card"
+              style={{
+                backgroundColor: '#FFFFFF',
+                borderRadius: '20px',
+                padding: '32px 28px',
+                maxWidth: '440px',
+                width: '100%',
+                boxShadow: '0 25px 60px rgba(15, 23, 42, 0.3), 0 0 0 1px rgba(226, 232, 240, 0.8)',
+                textAlign: 'center',
+                position: 'relative'
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Icon Container */}
+              <div
+                style={{
+                  width: '58px',
+                  height: '58px',
+                  borderRadius: '50%',
+                  backgroundColor: confirmModal.isDanger ? '#FEE2E2' : confirmModal.iconType === 'reset' ? '#E0F2FE' : '#FEF3C7',
+                  color: confirmModal.isDanger ? '#DC2626' : confirmModal.iconType === 'reset' ? '#0284C7' : '#D97706',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  margin: '0 auto 16px auto',
+                  border: `2px solid ${confirmModal.isDanger ? '#FECACA' : confirmModal.iconType === 'reset' ? '#BAE6FD' : '#FDE68A'}`,
+                  boxShadow: `0 4px 14px ${confirmModal.isDanger ? 'rgba(220, 38, 38, 0.15)' : 'rgba(2, 132, 199, 0.15)'}`
+                }}
+              >
+                {confirmModal.isDanger ? (
+                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                    <line x1="10" y1="11" x2="10" y2="17" />
+                    <line x1="14" y1="11" x2="14" y2="17" />
+                  </svg>
+                ) : confirmModal.iconType === 'reset' ? (
+                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="1 4 1 10 7 10" />
+                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                  </svg>
+                ) : (
+                  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                )}
+              </div>
+
+              {/* Title & Message */}
+              <h3
+                style={{
+                  fontFamily: "'Outfit', sans-serif",
+                  fontSize: '20px',
+                  fontWeight: 800,
+                  color: '#0F172A',
+                  margin: '0 0 10px 0',
+                  letterSpacing: '-0.3px'
+                }}
+              >
+                {confirmModal.title}
+              </h3>
+
+              <p
+                style={{
+                  fontSize: '14px',
+                  lineHeight: '1.55',
+                  color: '#64748B',
+                  margin: '0 0 26px 0',
+                  whiteSpace: 'pre-line'
+                }}
+              >
+                {confirmModal.message}
+              </p>
+
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
+                <button
+                  type="button"
+                  onClick={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+                  style={{
+                    flex: 1,
+                    padding: '11px 18px',
+                    borderRadius: '10px',
+                    border: '1.5px solid #CBD5E1',
+                    backgroundColor: '#FFFFFF',
+                    color: '#475569',
+                    fontSize: '14px',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = '#F8FAFC';
+                    e.currentTarget.style.borderColor = '#94A3B8';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = '#FFFFFF';
+                    e.currentTarget.style.borderColor = '#CBD5E1';
+                  }}
+                >
+                  {confirmModal.cancelText || 'Cancel'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (confirmModal.onConfirm) confirmModal.onConfirm();
+                  }}
+                  style={{
+                    flex: 1,
+                    padding: '11px 20px',
+                    borderRadius: '10px',
+                    border: 'none',
+                    backgroundColor: confirmModal.isDanger ? '#DC2626' : '#0D9488',
+                    color: '#FFFFFF',
+                    fontSize: '14px',
+                    fontWeight: 800,
+                    cursor: 'pointer',
+                    boxShadow: confirmModal.isDanger
+                      ? '0 4px 14px rgba(220, 38, 38, 0.35)'
+                      : '0 4px 14px rgba(13, 148, 136, 0.35)',
+                    transition: 'all 0.15s ease'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = confirmModal.isDanger ? '#B91C1C' : '#0F766E';
+                    e.currentTarget.style.transform = 'translateY(-1px)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = confirmModal.isDanger ? '#DC2626' : '#0D9488';
+                    e.currentTarget.style.transform = 'translateY(0)';
+                  }}
+                >
+                  {confirmModal.confirmText || 'Confirm'}
                 </button>
               </div>
             </div>
@@ -7045,15 +8481,17 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           gap: 6px;
         }
         .ns-cal-day-cell {
+          position: relative;
           height: 38px;
           display: flex;
+          flex-direction: column;
           align-items: center;
           justify-content: center;
           border-radius: 8px;
           font-size: 13px;
           cursor: pointer;
           color: #1E293B;
-          transition: background-color 0.15s;
+          transition: all 0.15s ease;
         }
         .ns-cal-day-cell:hover:not(.selected) {
           background-color: #F1F5F9;
@@ -7068,6 +8506,27 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           border-radius: 50%;
           width: 38px;
           margin: 0 auto;
+        }
+        .ns-cal-day-cell.has-custom-schedule:not(.selected) {
+          font-weight: 700;
+          color: #B45309;
+        }
+        .ns-cal-custom-dot {
+          position: absolute;
+          bottom: 3px;
+          left: 50%;
+          transform: translateX(-50%);
+          width: 5px;
+          height: 5px;
+          border-radius: 50%;
+          background-color: #D97706;
+          box-shadow: 0 0 3px rgba(217, 119, 6, 0.7);
+          pointer-events: none;
+        }
+        .ns-cal-day-cell.selected .ns-cal-custom-dot {
+          bottom: 4px;
+          background-color: #FEF08A;
+          box-shadow: 0 0 4px #FEF08A;
         }
 
         /* Slots List */
@@ -7198,14 +8657,77 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           color: #0F172A;
           background: transparent;
         }
+        .ns-slot-right-actions {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-shrink: 0;
+        }
+        .ns-slot-time-wrap:hover .ns-slot-time {
+          color: #0284C7;
+        }
+        .ns-slot-edit-btn {
+          width: 36px;
+          height: 36px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          background: #F0F9FF;
+          border: 1.5px solid #BAE6FD;
+          border-radius: 9px;
+          color: #0284C7;
+          cursor: pointer;
+          transition: all 0.15s ease;
+          flex-shrink: 0;
+          padding: 0;
+        }
+        .ns-slot-edit-btn:hover {
+          background: #E0F2FE;
+          border-color: #38BDF8;
+          color: #0369A1;
+          transform: translateY(-1px);
+          box-shadow: 0 2px 6px rgba(2, 132, 199, 0.15);
+        }
+        .ns-slot-edit-btn:active {
+          transform: translateY(0);
+        }
+        .ns-slot-delete-btn {
+          width: 36px;
+          height: 36px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          background: #FEF2F2;
+          border: 1.5px solid #FECACA;
+          border-radius: 9px;
+          color: #DC2626;
+          cursor: pointer;
+          transition: all 0.15s ease;
+          flex-shrink: 0;
+          padding: 0;
+        }
+        .ns-slot-delete-btn:hover {
+          background: #FEE2E2;
+          border-color: #F87171;
+          color: #B91C1C;
+          transform: translateY(-1px);
+          box-shadow: 0 2px 6px rgba(220, 38, 38, 0.15);
+        }
+        .ns-slot-delete-btn:active {
+          transform: translateY(0);
+        }
         @media (max-width: 640px) {
           .ns-slot-card {
             flex-direction: column;
             align-items: flex-start;
             gap: 12px;
           }
-          .ns-slot-capacity-control {
+          .ns-slot-right-actions {
             width: 100%;
+            justify-content: space-between;
+          }
+          .ns-slot-capacity-control {
+            flex: 1;
             justify-content: space-between;
           }
         }
@@ -7244,6 +8766,19 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           background-color: #FEE2E2;
           color: #B91C1C;
           border: 1px solid #FECACA;
+        }
+        .ns-slot-pill.clickable-toggle {
+          cursor: pointer;
+          user-select: none;
+          transition: all 0.15s ease;
+        }
+        .ns-slot-pill.clickable-toggle:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+          filter: brightness(0.95);
+        }
+        .ns-slot-pill.clickable-toggle:active {
+          transform: translateY(0);
         }
 
         .ns-slot-edit-btn {
@@ -7779,10 +9314,11 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           box-sizing: border-box;
           background-color: #0A0F1D;
           color: #FFFFFF;
-          padding: 14px 28px;
+          padding: 11px 20px;
           display: flex;
           align-items: center;
           justify-content: space-between;
+          gap: 12px;
           z-index: 50;
           box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.08);
           border-radius: 14px;
@@ -7797,7 +9333,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           box-sizing: border-box;
           border-radius: 14px;
           margin: 0 auto;
-          padding: 14px 24px;
+          padding: 11px 18px;
+          gap: 12px;
           background-color: #0A0F1D;
           z-index: 50;
           box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.08);
@@ -8243,6 +9780,11 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         }
         .ns-create-grp-btn:active {
           transform: translateY(0);
+        }
+        .ns-create-next-group-card.highlight-pulse {
+          border-color: #0D9488 !important;
+          background: #F0FDFA !important;
+          box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.25) !important;
         }
 
         /* Column 2: Groups */

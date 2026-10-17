@@ -456,7 +456,7 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
       2. `activeAdmitted` loop in `JudgesManagement.jsx` was merging existing judges indiscriminately into the active panel.
     - **Updates**:
       - Configured both `JudgesManagement.jsx` and `HeatManagement.jsx` to pass the logged-in user's school parameter (`/api/instructors?school=<userSchool>`).
-      - Added strict filtering in `activeAdmitted` so non-superadmin accounts only see instructors belonging to their school or guests admitted via competition invite links.
+      - Added strict filtering in `activeAdmitted` so non-superadmin accounts only see instructors belonging to their school or guests admitted via competition invite links. 
       - Removed auto-synced dummy and freelance records from the local judging table.
       - Implemented safe fallback handlers for `handleRemove` and `handleResyncNumbers`.
 
@@ -708,6 +708,18 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
    - **Resolved "School Admin" Profile Display Bug**: When an admin or coach views a student profile, the page no longer falls back to the logged-in admin's name and details.
    - **Multi-Coach Badges on Student Profile**: If a student is assigned to multiple coaches across their sessions or group notes, all coaches are now displayed individually (`Coaches: [Coach A ★ Review] [Coach B ★ Review]`), allowing each coach's profile to be opened and reviewed independently.
 
+10. **Local PostgreSQL Database Migration & Full Live Sync (`pull_live_to_local_pg.py`, `backend/main.py`)**:
+    - **Transition from SQLite to PostgreSQL**: Switched the local development environment from SQLite to local PostgreSQL 17 (`localhost:5432/surfing_db`, user: `postgres`).
+    - **Direct Live RDS Backup Ingestion**: Exported fresh data from live AWS RDS cluster (`aisurf-db-cluster`) via EC2 SSM and S3, restoring complete data parity locally.
+    - **Foreign Key Safe Replication**: Implemented `session_replication_role = 'replica'` during bulk import to preserve relational integrity across users, schools, instructors, students, sessions, and scores.
+    - **Dapoli Location Parity**: Verified and synced Dapoli Surf School location to `"Dapoli, Maharashtra"` across schools and instructors in both local and live environments.
 
+11. **Accompanying Guest Students (`guests_details`) Restoration & Search**:
+    - **Database Guest Sync**: Restored complete accompanying guest details (`guests_details` JSON and `guests_count`) across 82 students totaling 164 guest athletes into local PostgreSQL `surfing_db`.
+    - **Guest Roster Search**: Enhanced student roster search in `StudentsManagement.jsx` to dynamically search within accompanying guests (matching by guest name, phone, or email) in addition to primary student profiles.
+    - **Expandable Guest UI**: Retained clean inline dropdown toggles (`👥 [X] Guests ▼`) under each parent student in the roster table, displaying all accompanying guest profiles in a straight-line grid.
 
-
+12. **Student Roster & Badge Progression Live Parity (`StudentsManagement.jsx`, `Analytics.jsx`, `backend/main.py`)**:
+    - **Students Roster Default View (`StudentsManagement.jsx`)**: Updated default roster view to `TOTAL` and `All` dates so all 130 school students are immediately visible upon opening; clicking `TOTAL` or badge cards automatically clears date restrictions. Fixed `Clear Filters` button to reset `dateRange`.
+    - **Analytics Active Student Calculation**: Root-caused why Analytics showed 0 active students locally: local `students` table previously had empty `start_date` strings. Fully synced live student `start_date` and `course_duration` into local PostgreSQL.
+    - **100% Production Code Parity**: Preserved `active_only = True` in `backend/main.py` (`analytics_badges` & `analytics_students`) and `Today` date filter in `Analytics.jsx`. Verified local Analytics matches Live AWS EC2 1:1, accurately displaying **45 active athletes** (23 active students + 22 guests) today with zero production deployment conflicts.

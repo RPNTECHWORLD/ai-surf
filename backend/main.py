@@ -9,7 +9,7 @@ import re
 import uuid
 # pyrefly: ignore [missing-import]
 from pydantic import BaseModel
-from typing import Optional, List, Union, Any
+from typing import Optional, List, Union, Any, Dict
 from datetime import datetime, date
 import json
 import boto3
@@ -574,11 +574,29 @@ class InstructorLeave(Base):
     instructor_rel = relationship("Instructor", back_populates="leaves")
 
 
+class SchoolSlotConfig(Base):
+    __tablename__ = "school_slot_configs"
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(Integer, nullable=True, index=True)
+    school_name = Column(String, nullable=True, index=True)
+    slot_date = Column(String(20), nullable=True, index=True, default=None)  # None = Master Default; 'YYYY-MM-DD' = Custom Date Override
+    slots_json = Column(Text, nullable=False, default="[]")
+    settings_json = Column(Text, nullable=True, default="{}")
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class SessionDraft(Base):
+    __tablename__ = "session_drafts"
+    id = Column(Integer, primary_key=True, index=True)
+    school_id = Column(Integer, nullable=True, index=True)
+    school_name = Column(String, nullable=True, index=True)
+    session_date = Column(String(20), nullable=False, index=True)  # 'YYYY-MM-DD'
+    draft_data = Column(Text, nullable=False, default="{}")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 # ─── Create tables ────────────────────────────────────────────────────────────
-from sqlalchemy import inspect
-inspector = inspect(engine)
-if "nutrition_logs" not in inspector.get_table_names():
-    Base.metadata.drop_all(bind=engine)
 Base.metadata.create_all(bind=engine)
 
 # Alter table for new coach marketplace columns and backfill seeding
@@ -586,6 +604,50 @@ db_migrate = SessionLocal()
 try:
     from sqlalchemy import text
     # Postgres ADD COLUMN IF NOT EXISTS / SQLite handle fallback
+    try:
+        db_migrate.execute(text("""
+            CREATE TABLE IF NOT EXISTS school_slot_configs (
+                id SERIAL PRIMARY KEY,
+                school_id INTEGER,
+                school_name VARCHAR(255),
+                slot_date VARCHAR(20) DEFAULT NULL,
+                slots_json TEXT NOT NULL DEFAULT '[]',
+                settings_json TEXT DEFAULT '{}',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        db_migrate.commit()
+    except Exception:
+        db_migrate.rollback()
+
+    try:
+        db_migrate.execute(text("""
+            CREATE TABLE IF NOT EXISTS session_drafts (
+                id SERIAL PRIMARY KEY,
+                school_id INTEGER,
+                school_name VARCHAR(255),
+                session_date VARCHAR(20) NOT NULL,
+                draft_data TEXT NOT NULL DEFAULT '{}',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        db_migrate.commit()
+    except Exception:
+        db_migrate.rollback()
+
+    try:
+        db_migrate.execute(text("ALTER TABLE school_slot_configs ADD COLUMN IF NOT EXISTS slot_date VARCHAR(20) DEFAULT NULL"))
+        db_migrate.commit()
+    except Exception:
+        db_migrate.rollback()
+
+    try:
+        db_migrate.execute(text("ALTER TABLE school_slot_configs ADD COLUMN slot_date VARCHAR(20) DEFAULT NULL"))
+        db_migrate.commit()
+    except Exception:
+        db_migrate.rollback()
+
     try:
         db_migrate.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS languages TEXT DEFAULT '[\"English\"]'"))
         db_migrate.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS intro_video VARCHAR(255) DEFAULT ''"))
@@ -1483,6 +1545,21 @@ class SessionBulkCreate(BaseModel):
     group_name: Optional[str] = ""
 
 
+class SaveSlotsRequest(BaseModel):
+    school_id: Optional[int] = None
+    school_name: Optional[str] = None
+    date: Optional[str] = None
+    slots: List[Any] = []
+    settings: Optional[Dict[str, Any]] = None
+
+
+class SaveSessionDraftRequest(BaseModel):
+    school_id: Optional[int] = None
+    school_name: Optional[str] = None
+    date: str
+    draft_data: Dict[str, Any] = {}
+
+
 class SchoolCreate(BaseModel):
     name: str
     owner: str
@@ -2178,6 +2255,18 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
         res["phone"] = instructor_obj.phone or getattr(user, "phone", None) or ""
         res["whatsapp_number"] = instructor_obj.phone or getattr(user, "phone", None) or ""
         res["school"] = instructor_obj.school or "Individual / Freelance Coach"
+        res["dob"] = instructor_obj.dob or ""
+        res["age"] = instructor_obj.age
+        res["gender"] = instructor_obj.gender or "Male"
+        res["fitness_level"] = instructor_obj.fitness_level or "Beginner"
+        res["experience"] = instructor_obj.experience or "1"
+        res["rates"] = instructor_obj.rates or ""
+        res["location"] = instructor_obj.location or ""
+        res["bio"] = instructor_obj.bio or ""
+        res["languages"] = instructor_obj.languages
+        res["certifications"] = instructor_obj.certifications
+        res["specializations"] = instructor_obj.specializations
+        res["is_active"] = instructor_obj.is_active
     elif user.role == "guest_admin":
         res["name"] = getattr(user, "name", None) or "Guest Admin"
         res["image"] = getattr(user, "image", None) or ""
@@ -4235,16 +4324,29 @@ def get_superadmin_students(db: OrmSession = Depends(get_db)):
 
 
 @app.get("/api/students")
-def get_students(school: Optional[str] = None, db: OrmSession = Depends(get_db)):
+def get_students(school: Optional[str] = None, instructor_id: Optional[int] = None, db: OrmSession = Depends(get_db)):
     query = db.query(Student).order_by(Student.id.desc())
     school_clean = (school or "").lower().strip()
 
     if school_clean in ["all", "super admin", "school admin", "superadmin"]:
         # Super admin — can see all students across all schools
-        pass
+        if instructor_id:
+            query = query.filter(Student.instructor_id == instructor_id)
     elif school_clean:
         # Scoped to a specific school or freelance coach
-        query = query.filter(func.trim(func.lower(Student.school)) == school_clean)
+        if instructor_id and school_clean == "individual / freelance coach":
+            query = query.filter(
+                or_(
+                    func.trim(func.lower(Student.school)) == school_clean,
+                    Student.instructor_id == instructor_id
+                )
+            )
+        else:
+            query = query.filter(func.trim(func.lower(Student.school)) == school_clean)
+            if instructor_id:
+                query = query.filter(Student.instructor_id == instructor_id)
+    elif instructor_id:
+        query = query.filter(Student.instructor_id == instructor_id)
     else:
         # ❌ No school param — block to prevent full data leak
         # Return empty list — caller must always pass a school
@@ -5567,6 +5669,322 @@ def delete_session(session_id: int, db: OrmSession = Depends(get_db)):
     return {"message": "Deleted"}
 
 
+# ─── Session Slots Configuration (Database Synced across all Devices) ─────────
+
+def _get_custom_dates_list(db: OrmSession, school_id: Optional[int], clean_name: Optional[str]) -> List[str]:
+    custom_dates_query = db.query(SchoolSlotConfig.slot_date).filter(
+        SchoolSlotConfig.slot_date != None,
+        SchoolSlotConfig.slot_date != ""
+    )
+    if school_id:
+        custom_dates_query = custom_dates_query.filter(SchoolSlotConfig.school_id == school_id)
+    elif clean_name and clean_name.lower() not in ["all", "super admin", "school admin"]:
+        custom_dates_query = custom_dates_query.filter(func.lower(SchoolSlotConfig.school_name) == clean_name.lower())
+    return [r[0] for r in custom_dates_query.distinct().all() if r[0]]
+
+
+@app.get("/api/session-slots/custom-dates")
+def get_custom_slot_dates(
+    school_id: Optional[int] = None,
+    school_name: Optional[str] = None,
+    db: OrmSession = Depends(get_db)
+):
+    clean_name = school_name.strip() if school_name else None
+    dates = _get_custom_dates_list(db, school_id, clean_name)
+    return {"status": "success", "custom_dates": dates}
+
+
+@app.get("/api/session-slots")
+def get_session_slots(
+    school_id: Optional[int] = None,
+    school_name: Optional[str] = None,
+    date: Optional[str] = None,
+    db: OrmSession = Depends(get_db)
+):
+    clean_name = school_name.strip() if school_name else None
+    target_date = date.strip() if date and date.strip() else None
+
+    cfg = None
+    is_custom_date = False
+
+    # 1. If date is requested, first try to find date-specific custom config
+    if target_date:
+        query_date = db.query(SchoolSlotConfig).filter(SchoolSlotConfig.slot_date == target_date)
+        if school_id:
+            cfg = query_date.filter(SchoolSlotConfig.school_id == school_id).first()
+        if not cfg and clean_name and clean_name.lower() not in ["all", "super admin", "school admin"]:
+            cfg = query_date.filter(func.lower(SchoolSlotConfig.school_name) == clean_name.lower()).first()
+        if cfg:
+            is_custom_date = True
+
+    # 2. If no custom config for this date (or no date requested), fall back to Master Default (slot_date IS NULL or empty)
+    if not cfg:
+        query_default = db.query(SchoolSlotConfig).filter(
+            or_(SchoolSlotConfig.slot_date == None, SchoolSlotConfig.slot_date == "")
+        )
+        if school_id:
+            cfg = query_default.filter(SchoolSlotConfig.school_id == school_id).first()
+        if not cfg and clean_name and clean_name.lower() not in ["all", "super admin", "school admin"]:
+            cfg = query_default.filter(func.lower(SchoolSlotConfig.school_name) == clean_name.lower()).first()
+        if not cfg:
+            # Fallback to any master default in table
+            cfg = query_default.order_by(SchoolSlotConfig.id.desc()).first()
+
+    custom_dates = _get_custom_dates_list(db, school_id, clean_name)
+
+    if cfg and cfg.slots_json:
+        try:
+            return {
+                "status": "success",
+                "school_id": cfg.school_id,
+                "school_name": cfg.school_name,
+                "date": cfg.slot_date,
+                "is_custom_date": is_custom_date,
+                "custom_dates": custom_dates,
+                "slots": json.loads(cfg.slots_json),
+                "settings": json.loads(cfg.settings_json or "{}"),
+                "updated_at": cfg.updated_at.isoformat() if cfg.updated_at else None
+            }
+        except Exception as e:
+            print("Error parsing slots_json:", e)
+
+    return {
+        "status": "not_found",
+        "date": target_date,
+        "is_custom_date": False,
+        "custom_dates": custom_dates,
+        "slots": [],
+        "settings": {},
+        "updated_at": None
+    }
+
+
+@app.post("/api/session-slots")
+def save_session_slots(
+    data: SaveSlotsRequest,
+    db: OrmSession = Depends(get_db)
+):
+    clean_name = data.school_name.strip() if data.school_name else None
+    target_date = data.date.strip() if data.date and data.date.strip() else None
+
+    # Find existing config for this school and date (or master default if date is None)
+    if target_date:
+        query = db.query(SchoolSlotConfig).filter(SchoolSlotConfig.slot_date == target_date)
+    else:
+        query = db.query(SchoolSlotConfig).filter(
+            or_(SchoolSlotConfig.slot_date == None, SchoolSlotConfig.slot_date == "")
+        )
+
+    cfg = None
+    if data.school_id:
+        cfg = query.filter(SchoolSlotConfig.school_id == data.school_id).first()
+    if not cfg and clean_name and clean_name.lower() not in ["all", "super admin", "school admin"]:
+        cfg = query.filter(func.lower(SchoolSlotConfig.school_name) == clean_name.lower()).first()
+    if not cfg and not target_date:
+        # Only fallback to any record if saving global default
+        cfg = query.order_by(SchoolSlotConfig.id.desc()).first()
+
+    slots_str = json.dumps(data.slots)
+    settings_str = json.dumps(data.settings or {})
+
+    if not cfg:
+        cfg = SchoolSlotConfig(
+            school_id=data.school_id,
+            school_name=clean_name,
+            slot_date=target_date,
+            slots_json=slots_str,
+            settings_json=settings_str,
+            updated_at=datetime.utcnow()
+        )
+        db.add(cfg)
+    else:
+        if data.school_id:
+            cfg.school_id = data.school_id
+        if clean_name and clean_name.lower() not in ["all", "super admin", "school admin"]:
+            cfg.school_name = clean_name
+        cfg.slot_date = target_date
+        cfg.slots_json = slots_str
+        if data.settings is not None:
+            cfg.settings_json = settings_str
+        cfg.updated_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(cfg)
+
+    custom_dates = _get_custom_dates_list(db, data.school_id, clean_name)
+    return {
+        "status": "success",
+        "school_id": cfg.school_id,
+        "school_name": cfg.school_name,
+        "date": cfg.slot_date,
+        "is_custom_date": bool(cfg.slot_date),
+        "custom_dates": custom_dates,
+        "slots": data.slots,
+        "settings": data.settings or {},
+        "updated_at": cfg.updated_at.isoformat() if cfg.updated_at else None
+    }
+
+
+@app.delete("/api/session-slots")
+def delete_session_slots_override(
+    school_id: Optional[int] = None,
+    school_name: Optional[str] = None,
+    date: Optional[str] = None,
+    db: OrmSession = Depends(get_db)
+):
+    if not date or not date.strip():
+        raise HTTPException(status_code=400, detail="date parameter is required to delete a custom date override.")
+
+    clean_name = school_name.strip() if school_name else None
+    target_date = date.strip()
+
+    query = db.query(SchoolSlotConfig).filter(SchoolSlotConfig.slot_date == target_date)
+    if school_id:
+        cfg = query.filter(SchoolSlotConfig.school_id == school_id).first()
+    elif clean_name and clean_name.lower() not in ["all", "super admin", "school admin"]:
+        cfg = query.filter(func.lower(SchoolSlotConfig.school_name) == clean_name.lower()).first()
+    else:
+        cfg = query.first()
+
+    if cfg:
+        db.delete(cfg)
+        db.commit()
+        custom_dates = _get_custom_dates_list(db, school_id, clean_name)
+        return {
+            "status": "success",
+            "message": f"Custom slots for {target_date} deleted, reverted to default.",
+            "custom_dates": custom_dates
+        }
+
+    custom_dates = _get_custom_dates_list(db, school_id, clean_name)
+    return {
+        "status": "not_found",
+        "message": f"No custom override found for {target_date}.",
+        "custom_dates": custom_dates
+    }
+
+
+# ─── Session Drafts ──────────────────────────────────────────────────────────
+
+@app.get("/api/session-drafts")
+def get_session_draft(
+    date: str,
+    school_id: Optional[int] = None,
+    school_name: Optional[str] = None,
+    db: OrmSession = Depends(get_db)
+):
+    if not date or not date.strip():
+        raise HTTPException(status_code=400, detail="date parameter is required.")
+
+    clean_date = date.strip()
+    clean_name = school_name.strip() if school_name else None
+
+    query = db.query(SessionDraft).filter(SessionDraft.session_date == clean_date)
+    if school_id:
+        draft = query.filter(SessionDraft.school_id == school_id).order_by(SessionDraft.id.desc()).first()
+    elif clean_name and clean_name.lower() not in ["all", "super admin", "school admin"]:
+        draft = query.filter(func.lower(SessionDraft.school_name) == clean_name.lower()).order_by(SessionDraft.id.desc()).first()
+    else:
+        draft = query.order_by(SessionDraft.id.desc()).first()
+
+    if not draft or not draft.draft_data:
+        return {"status": "not_found", "draft": None}
+
+    try:
+        data = json.loads(draft.draft_data)
+    except Exception:
+        data = {}
+
+    return {
+        "status": "success",
+        "draft": data,
+        "updated_at": draft.updated_at.isoformat() if draft.updated_at else None
+    }
+
+
+@app.post("/api/session-drafts")
+def save_session_draft(
+    req: SaveSessionDraftRequest,
+    db: OrmSession = Depends(get_db)
+):
+    if not req.date or not req.date.strip():
+        raise HTTPException(status_code=400, detail="date is required.")
+
+    clean_date = req.date.strip()
+    clean_name = req.school_name.strip() if req.school_name else None
+
+    query = db.query(SessionDraft).filter(SessionDraft.session_date == clean_date)
+    if req.school_id:
+        draft = query.filter(SessionDraft.school_id == req.school_id).first()
+    elif clean_name and clean_name.lower() not in ["all", "super admin", "school admin"]:
+        draft = query.filter(func.lower(SessionDraft.school_name) == clean_name.lower()).first()
+    else:
+        draft = query.first()
+
+    draft_json = json.dumps(req.draft_data or {})
+
+    if draft:
+        draft.draft_data = draft_json
+        draft.updated_at = datetime.utcnow()
+        if req.school_id:
+            draft.school_id = req.school_id
+        if clean_name:
+            draft.school_name = clean_name
+    else:
+        draft = SessionDraft(
+            school_id=req.school_id,
+            school_name=clean_name,
+            session_date=clean_date,
+            draft_data=draft_json,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow()
+        )
+        db.add(draft)
+
+    db.commit()
+    db.refresh(draft)
+    return {
+        "status": "success",
+        "message": "Draft saved successfully",
+        "id": draft.id,
+        "updated_at": draft.updated_at.isoformat() if draft.updated_at else None
+    }
+
+
+@app.delete("/api/session-drafts")
+def delete_session_draft(
+    date: str,
+    school_id: Optional[int] = None,
+    school_name: Optional[str] = None,
+    db: OrmSession = Depends(get_db)
+):
+    if not date or not date.strip():
+        raise HTTPException(status_code=400, detail="date parameter is required.")
+
+    clean_date = date.strip()
+    clean_name = school_name.strip() if school_name else None
+
+    query = db.query(SessionDraft).filter(SessionDraft.session_date == clean_date)
+    if school_id:
+        drafts = query.filter(SessionDraft.school_id == school_id).all()
+    elif clean_name and clean_name.lower() not in ["all", "super admin", "school admin"]:
+        drafts = query.filter(func.lower(SessionDraft.school_name) == clean_name.lower()).all()
+    else:
+        drafts = query.all()
+
+    deleted_count = 0
+    for d in drafts:
+        db.delete(d)
+        deleted_count += 1
+
+    db.commit()
+    return {
+        "status": "success",
+        "message": f"{deleted_count} draft(s) deleted for {clean_date}."
+    }
+
+
+
 # ─── Analytics ────────────────────────────────────────────────────────────────
 
 BADGE_ORDER = ["WHITE", "YELLOW", "GREEN", "BLUE", "RED"]
@@ -6478,6 +6896,21 @@ class UpdateProfileRequest(BaseModel):
     school_location: Optional[str] = None
     location: Optional[str] = None
     bio: Optional[str] = None
+    dob: Optional[str] = None
+    age: Optional[int] = None
+    gender: Optional[str] = None
+    experience: Optional[str] = None
+    fitness_level: Optional[str] = None
+    rates: Optional[str] = None
+    school: Optional[str] = None
+    languages: Optional[Any] = None
+    specializations: Optional[Any] = None
+    certifications: Optional[Any] = None
+    level: Optional[str] = None
+    stance: Optional[str] = None
+    emergency_contact_name: Optional[str] = None
+    emergency_contact_phone: Optional[str] = None
+    address: Optional[str] = None
 
 @app.put("/api/users/profile")
 @app.put("/api/users/{target_user_id}/profile")
@@ -6558,6 +6991,31 @@ def update_user_profile(
                 inst.image = data.image.strip()
             if data.bio is not None:
                 inst.bio = data.bio.strip()
+            if data.dob is not None:
+                inst.dob = data.dob.strip()
+                c_age = calculate_age_from_dob(data.dob)
+                if c_age is not None:
+                    inst.age = c_age
+            if data.age is not None:
+                inst.age = data.age
+            if data.gender is not None:
+                inst.gender = data.gender
+            if data.experience is not None:
+                inst.experience = data.experience
+            if data.fitness_level is not None:
+                inst.fitness_level = data.fitness_level
+            if data.rates is not None:
+                inst.rates = data.rates
+            if data.location is not None:
+                inst.location = data.location
+            if data.school is not None:
+                inst.school = data.school
+            if data.languages is not None:
+                inst.languages = json.dumps(data.languages) if isinstance(data.languages, list) else str(data.languages)
+            if data.specializations is not None:
+                inst.specializations = json.dumps(data.specializations) if isinstance(data.specializations, list) else str(data.specializations)
+            if data.certifications is not None:
+                inst.certifications = json.dumps(data.certifications) if isinstance(data.certifications, list) else str(data.certifications)
 
     # If Student, update linked Student details
     if user.role in ["athlete", "student", "user"]:
@@ -6573,6 +7031,27 @@ def update_user_profile(
                 st.whatsapp_number = data.phone.strip()
             if data.image is not None and data.image.strip():
                 st.image = data.image.strip()
+            if data.bio is not None:
+                st.bio = data.bio.strip()
+            if data.dob is not None:
+                st.dob = data.dob.strip()
+                c_age = calculate_age_from_dob(data.dob)
+                if c_age is not None:
+                    st.age = c_age
+            if data.gender is not None:
+                st.gender = data.gender
+            if data.level is not None:
+                st.level = data.level
+            if data.fitness_level is not None:
+                st.fitness_level = data.fitness_level
+            if data.stance is not None:
+                st.stance = data.stance
+            if data.emergency_contact_name is not None:
+                st.emergency_contact_name = data.emergency_contact_name
+            if data.emergency_contact_phone is not None:
+                st.emergency_contact_phone = data.emergency_contact_phone
+            if data.address is not None:
+                st.address = data.address
             if data.bio is not None:
                 st.bio = data.bio.strip()
 

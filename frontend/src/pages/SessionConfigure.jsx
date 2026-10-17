@@ -90,6 +90,9 @@ const defaultSlots = [
   { id: 5, time: "03:30 PM", duration: "90", maxStudents: 4, days: ["Fri", "Sat", "Sun"], active: false },
   { id: 6, time: "04:00 PM", duration: "90", maxStudents: 4, days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], active: true },
 ];
+
+const API = import.meta.env.VITE_API_URL || '';
+
 const SessionConfigure = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -111,29 +114,144 @@ const SessionConfigure = () => {
     try {
       const rawUser = sessionStorage.getItem('user') || localStorage.getItem('user');
       const user = rawUser ? JSON.parse(rawUser) : null;
-      const role = (user?.role || '').toLowerCase();
-      const school = (user?.school || user?.school_name || '').toLowerCase();
+      const role = (user?.role || '').toLowerCase().trim();
+      const rawSchool = user?.school || user?.school_name || '';
+      const schoolStr = (typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool)).toLowerCase().trim();
       const isStudent = role === 'athlete' || role === 'student' || role === 'user';
       const isCoach = role === 'coach' || role === 'instructor';
-      const isFreelance = school.includes('individual') || school.includes('freelance');
-      if (isStudent || (isCoach && !isFreelance)) {
+      const isSchoolCoach = isCoach && Boolean(schoolStr && !schoolStr.includes('individual') && !schoolStr.includes('freelance') && !schoolStr.includes('independent'));
+      if (isStudent || isSchoolCoach) {
         navigate('/sessions', { replace: true });
       }
     } catch (e) {}
   }, [navigate]);
 
-  const toggleDay = (sid, day) => setSlots(p => p.map(s => { if (s.id !== sid) return s; const h = s.days.includes(day); return { ...s, days: h ? s.days.filter(d => d !== day) : [...s.days, day] }; }));
-  const updateSlot = (sid, f, v) => setSlots(p => p.map(s => s.id === sid ? { ...s, [f]: v } : s));
-  const deleteSlot = (sid) => setSlots(p => p.filter(s => s.id !== sid));
-  const addSlot = () => setSlots(p => [...p, { id: Date.now(), time: "09:00 AM", duration: "90", maxStudents: 4, days: ["Mon", "Tue", "Wed", "Thu", "Fri"], active: true }]);
+  const [loadingMasterSlots, setLoadingMasterSlots] = useState(false);
+
+  // Load School Master Default slots from PostgreSQL Database
+  const loadMasterSlots = React.useCallback(() => {
+    try {
+      setLoadingMasterSlots(true);
+      const rawUser = sessionStorage.getItem('user') || localStorage.getItem('user');
+      const user = rawUser ? JSON.parse(rawUser) : null;
+      const schoolId = user?.school_id || null;
+      const rawSchool = user?.school || user?.school_name || '';
+      const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
+
+      const queryParams = new URLSearchParams();
+      if (schoolId) queryParams.set('school_id', schoolId);
+      if (schoolName) queryParams.set('school_name', schoolName);
+
+      fetch(`${API}/api/session-slots?${queryParams.toString()}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data && data.status === 'success' && Array.isArray(data.slots) && data.slots.length > 0) {
+            setSlots(data.slots);
+            localStorage.setItem('session_slots', JSON.stringify(data.slots));
+            if (data.settings && typeof data.settings === 'object' && Object.keys(data.settings).length > 0) {
+              setSettings(prev => ({ ...prev, ...data.settings }));
+            }
+          }
+        })
+        .catch(err => console.warn('Could not fetch session slots from server:', err))
+        .finally(() => setLoadingMasterSlots(false));
+    } catch (e) {
+      setLoadingMasterSlots(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    loadMasterSlots();
+  }, [loadMasterSlots]);
+
+  const syncToStorageAndDrafts = (updatedSlots, newSettings = null) => {
+    try {
+      localStorage.setItem('session_slots', JSON.stringify(updatedSlots));
+      window.dispatchEvent(new Event('storage'));
+      window.dispatchEvent(new CustomEvent('session_slots_updated', { detail: updatedSlots }));
+
+      // Clean stale frozen slots from any active session drafts in storage so they instantly reflect the new slots
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('surfing_session_draft')) {
+          const rawDraft = localStorage.getItem(k);
+          if (rawDraft) {
+            try {
+              const parsed = JSON.parse(rawDraft);
+              if (parsed && typeof parsed === 'object' && parsed.slots) {
+                delete parsed.slots;
+                localStorage.setItem(k, JSON.stringify(parsed));
+              }
+            } catch (err) {}
+          }
+        }
+      }
+
+      // Persist Master Default template to central PostgreSQL Database (date = null)
+      const rawUser = sessionStorage.getItem('user') || localStorage.getItem('user');
+      const user = rawUser ? JSON.parse(rawUser) : null;
+      const schoolId = user?.school_id || null;
+      const rawSchool = user?.school || user?.school_name || '';
+      const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
+
+      fetch(`${API}/api/session-slots`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          school_id: schoolId,
+          school_name: schoolName,
+          date: null,
+          slots: updatedSlots,
+          settings: newSettings || settings
+        })
+      }).catch(err => console.warn('Failed saving slots to server DB:', err));
+    } catch (e) {
+      console.warn('Failed to sync session slots', e);
+    }
+  };
+
+  const toggleDay = (sid, day) => {
+    setSlots(p => {
+      const updated = p.map(s => {
+        if (s.id !== sid) return s;
+        const h = s.days.includes(day);
+        return { ...s, days: h ? s.days.filter(d => d !== day) : [...s.days, day] };
+      });
+      syncToStorageAndDrafts(updated);
+      return updated;
+    });
+  };
+
+  const updateSlot = (sid, f, v) => {
+    setSlots(p => {
+      const updated = p.map(s => s.id === sid ? { ...s, [f]: v } : s);
+      syncToStorageAndDrafts(updated);
+      return updated;
+    });
+  };
+
+  const deleteSlot = (sid) => {
+    setSlots(p => {
+      const updated = p.filter(s => s.id !== sid);
+      syncToStorageAndDrafts(updated);
+      return updated;
+    });
+  };
+
+  const addSlot = () => {
+    setSlots(p => {
+      const newTime = getNextAvailableSlotTime(p);
+      const updated = [...p, { id: Date.now(), time: newTime, duration: "90", maxStudents: 4, days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], active: true }];
+      syncToStorageAndDrafts(updated);
+      return updated;
+    });
+  };
 
   const inp = { border: "1.5px solid #E2E8F0", borderRadius: "8px", padding: "8px 12px", background: "#F8FAFC", outline: "none", boxSizing: "border-box", fontSize: "14px", fontWeight: 600, color: "#0F172A", width: "100%", fontFamily: "inherit" };
 
   const handleSaveConfiguration = () => {
     setSaving(true);
-    localStorage.setItem('session_slots', JSON.stringify(slots));
-    window.dispatchEvent(new Event('storage'));
-    window.dispatchEvent(new CustomEvent('session_slots_updated', { detail: slots }));
+    syncToStorageAndDrafts(slots);
     setTimeout(() => {
       setSaving(false);
       setShowSuccessModal(true);
@@ -157,6 +275,38 @@ const SessionConfigure = () => {
         </div>
 
         <div className="sc-vertical-layout">
+          {/* Master Default Template Indicator */}
+          <div style={{
+            background: '#F0FDFA',
+            border: '1.5px solid #99F6E4',
+            borderRadius: '12px',
+            padding: '12px 18px',
+            marginBottom: '4px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '12px',
+            boxShadow: '0 1px 3px rgba(13, 148, 136, 0.05)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ fontSize: '18px' }}>🌐</span>
+              <div>
+                <span style={{ fontSize: '13px', fontWeight: 800, color: '#0F766E', display: 'block' }}>
+                  School Master Default Schedule (All Dates)
+                </span>
+                <span style={{ fontSize: '11px', color: '#115E59', fontWeight: 600 }}>
+                  This master schedule applies to all session dates by default. Specific dates can be customized directly in Session Setup.
+                </span>
+              </div>
+            </div>
+            {loadingMasterSlots && (
+              <span style={{ fontSize: '11px', color: '#0D9488', fontStyle: 'italic' }}>
+                Loading default slots...
+              </span>
+            )}
+          </div>
+
           <div className="sc-card-slots">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
               <div>
@@ -306,9 +456,6 @@ const SessionConfigure = () => {
           {/* Sticky Floating Bottom Action Bar matching Photo 1 */}
           <div className="sc-sticky-bar">
             <div className="sc-sb-left">
-              <span className="sc-sb-badge">
-                SESSION SETUP
-              </span>
               <span className="sc-sb-info">
                 ⏰ {slots.filter(s => s.active !== false).length} Active Slot{slots.filter(s => s.active !== false).length === 1 ? '' : 's'} &bull; 🎯 Total Capacity: {slots.filter(s => s.active !== false).reduce((sum, s) => sum + (parseInt(s.maxStudents, 10) || 4), 0)} Students
               </span>
@@ -415,7 +562,7 @@ const SessionConfigure = () => {
               lineHeight: '1.5',
               margin: '0 0 24px 0'
             }}>
-              Session Configuration Saved Successfully! All slot timings and capacity settings are now live across your school.
+              School Master Default session template saved successfully! All dates will use these default slots unless customized in Session Setup.
             </p>
 
             <div style={{ display: 'flex', gap: '10px', width: '100%' }}>

@@ -460,7 +460,6 @@ const StudentsManagement = () => {
   const isSuperAdmin = currentUser?.role === 'superadmin' || schoolLower === 'super admin';
   const isAdminOrSchoolAdmin = isSuperAdmin || userRole === 'admin' || userRole === 'school' || userRole === 'school_admin' || userRole === 'schooladmin';
   const canManagePendingRequests = isAdminOrSchoolAdmin && !isCoach;
-  const canDeleteStudent = isAdminOrSchoolAdmin && !isCoach;
 
   const loggedInCoach = useMemo(() => {
     if (!instructors || instructors.length === 0) return null;
@@ -475,6 +474,9 @@ const StudentsManagement = () => {
     coachAffiliatedSchool.toLowerCase() === 'individual / freelance coach' ||
     (currentUser?.school || '').toLowerCase().trim() === 'individual / freelance coach'
   );
+  // School coach ("schoola assign aagi iruka coach"): cannot see student phone numbers or delete students
+  // Individual / Freelance Coach: works just like a school ("oru school mathiri dhan"), can view phone numbers, add & delete students
+  const isSchoolCoach = isCoach && !isCoachFreelance;
 
   // Both School Admins and Individual / Freelance Coaches can create and share registration invite links
   const canCreateInviteLink = isAdminOrSchoolAdmin || (isCoach && isCoachFreelance);
@@ -482,6 +484,10 @@ const StudentsManagement = () => {
   // If coach belongs to a school ("oru schoola irutha"), they cannot add students.
   // Only Admins and Individual / Freelance Coaches can add students.
   const canAddStudent = isAdminOrSchoolAdmin || (isCoach && isCoachFreelance);
+
+  // If coach belongs to a school ("schoola assion aki iruka coachla dhan athula pana mudiya kudathu"), they cannot delete students.
+  // Only Admins and Individual / Freelance Coaches can delete students.
+  const canDeleteStudent = isAdminOrSchoolAdmin || (isCoach && isCoachFreelance);
 
   const effectiveSchool = (isCoach && isCoachFreelance)
     ? 'Individual / Freelance Coach'
@@ -543,9 +549,12 @@ const StudentsManagement = () => {
 
   const fetchStudents = () => {
     setLoading(true);
-    const url = (effectiveSchool && !isSuperAdmin)
+    let url = (effectiveSchool && !isSuperAdmin)
       ? `${API}/api/students?school=${encodeURIComponent(effectiveSchool)}`
       : `${API}/api/students`;
+    if (isCoach && currentCoachId) {
+      url += (url.includes('?') ? '&' : '?') + `instructor_id=${encodeURIComponent(currentCoachId)}`;
+    }
     fetch(url)
       .then(r => r.json())
       .then(data => setStudents(Array.isArray(data) ? data : []))
@@ -626,7 +635,7 @@ const StudentsManagement = () => {
       return true;
     });
 
-    // Coach Role Isolation: Only show students assigned to THIS coach (via primary instructor assignment or sessions)
+    // Coach Role Isolation: Only show students assigned to THIS coach (via primary instructor assignment, creator, or sessions)
     if (isCoach && (currentCoachName || currentCoachId)) {
       const cNameLower = (currentCoachName || '').toLowerCase().trim();
 
@@ -652,34 +661,68 @@ const StudentsManagement = () => {
         }
       });
 
+      const coachIds = new Set(
+        [
+          currentCoachId,
+          loggedInCoach?.id,
+          currentUser?.instructor_id,
+          currentUser?.id,
+        ].filter(Boolean).map(String)
+      );
+
       return valid.filter(s => {
         const studentSchool = (s.school || s.school_name || '').toLowerCase().trim();
+
+        // Match 1: Primary Instructor ID Assignment
+        const sInstId = s.instructor_id != null ? String(s.instructor_id) : '';
+        const isDirectInstructor = Boolean(sInstId && coachIds.has(sInstId));
+
+        // Match 2: Primary Instructor Name Assignment
+        const sInstNameLower = (s.instructor || s.instructor_name || '').toLowerCase().trim();
+        const isInstructorNameMatch = Boolean(
+          cNameLower && sInstNameLower && (
+            sInstNameLower === cNameLower ||
+            sInstNameLower.includes(cNameLower) ||
+            cNameLower.includes(sInstNameLower)
+          )
+        );
+
+        // Match 3: Created by Coach
+        const sCreatorId = s.created_by_user_id != null ? String(s.created_by_user_id) : '';
+        const isCreatedByCoach = Boolean(sCreatorId && coachIds.has(sCreatorId));
+
+        // Match 4: Session Assignment
+        const sNameLower = (s.name || '').toLowerCase().trim();
+        const sessionMatch = coachStudentIdsFromSessions.has(String(s.id)) || (sNameLower && coachStudentNamesFromSessions.has(sNameLower));
 
         // Affiliation isolation:
         if (isCoachFreelance) {
           // Individual freelance coach: MUST be freelance school or created by this coach
-          const isFreelanceStudent = studentSchool === 'individual / freelance coach' || (!studentSchool && String(s.created_by_user_id) === String(currentCoachId));
+          const isFreelanceStudent = studentSchool === 'individual / freelance coach' || (!studentSchool && (isCreatedByCoach || isDirectInstructor));
           if (!isFreelanceStudent) return false;
+
+          // If explicitly assigned to a DIFFERENT coach, do not show
+          if (sInstId && !coachIds.has(sInstId)) {
+            return false;
+          }
+
+          return isDirectInstructor || isInstructorNameMatch || isCreatedByCoach || sessionMatch;
         } else if (coachAffiliatedSchool) {
           // School coach: student MUST belong to this coach's school
           if (studentSchool && studentSchool !== coachAffiliatedSchool.toLowerCase() && studentSchool !== effectiveSchoolLower) {
             return false;
           }
           if (studentSchool === 'individual / freelance coach') return false;
+
+          return isDirectInstructor || isInstructorNameMatch || sessionMatch;
         }
 
-        const sNameLower = (s.name || '').toLowerCase().trim();
-
-        // Strict Session Assignment: ONLY students assigned in an active session to this coach are shown
-        // If a student has no session, or if their session is deleted, they will not be shown
-        const sessionMatch = coachStudentIdsFromSessions.has(String(s.id)) || (sNameLower && coachStudentNamesFromSessions.has(sNameLower));
-
-        return sessionMatch;
+        return isDirectInstructor || isInstructorNameMatch || isCreatedByCoach || sessionMatch;
       });
     }
 
     return valid;
-  }, [students, instructors, allSessions, isCoach, isCoachFreelance, coachAffiliatedSchool, currentCoachName, currentCoachId, effectiveSchoolLower, isSuperAdmin]);
+  }, [students, instructors, allSessions, isCoach, isCoachFreelance, coachAffiliatedSchool, currentCoachName, currentCoachId, loggedInCoach, currentUser, effectiveSchoolLower, isSuperAdmin]);
 
   const handleStatClick = (label) => {
     setActiveStatFilter(label);
@@ -876,13 +919,18 @@ const StudentsManagement = () => {
       const gName = (g.name || '').toLowerCase();
       const gEmail = (g.email || '').toLowerCase();
       const gPhone = String(g.whatsapp_number || g.phone || '');
+      if (isSchoolCoach) {
+        return gName.includes(searchLower);
+      }
       return gName.includes(searchLower) || gEmail.includes(searchLower) || gPhone.includes(searchLower);
     }) : false;
 
-    const matchSearch = sName.includes(searchLower) ||
-      sEmail.includes(searchLower) ||
-      sPhone.includes(search) ||
-      matchGuest;
+    const matchSearch = isSchoolCoach
+      ? (sName.includes(searchLower) || matchGuest)
+      : (sName.includes(searchLower) ||
+        sEmail.includes(searchLower) ||
+        sPhone.includes(search) ||
+        matchGuest);
 
     let matchStat = true;
     if (activeStatFilter === 'ACTIVE') {
@@ -1035,10 +1083,7 @@ const StudentsManagement = () => {
       });
       if (res.ok) {
         const newStudent = await res.json();
-        
-
-
-
+        setStudents(prev => [newStudent, ...(Array.isArray(prev) ? prev.filter(s => s.id !== newStudent.id) : [])]);
         fetchStudents();
         const baseUrl = window.location.origin;
         let inviteToken = newStudent.invite_token || `inv_${Date.now()}`;
@@ -1307,6 +1352,9 @@ const StudentsManagement = () => {
       });
       if (res.ok) {
         const result = await res.json();
+        if (result.students && result.students.length > 0) {
+          setStudents(prev => [...result.students, ...(Array.isArray(prev) ? prev.filter(s => !result.students.some(ns => ns.id === s.id)) : [])]);
+        }
         await fetchStudents();
         if (result.students && result.students.length > 0) {
           const first = result.students[0];
@@ -2132,7 +2180,9 @@ const StudentsManagement = () => {
                 <span>Invite Link</span>
               </button>
             )}
-            <button className="sm-btn-secondary" onClick={downloadCSVSample}>Export CSV</button>
+            {!isSchoolCoach && (
+              <button className="sm-btn-secondary" onClick={downloadCSVSample}>Export CSV</button>
+            )}
             {canAddStudent && (
               <button className="sm-btn-primary" onClick={() => { setShowModal(true); setAddMode('single'); }}>+ Add Student</button>
             )}
@@ -2735,7 +2785,7 @@ const StudentsManagement = () => {
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>
             <input
               type="text"
-              placeholder="Search students by name, email..."
+              placeholder={isSchoolCoach ? "Search students by name..." : "Search students by name, email, phone..."}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="sm-search-input"
@@ -2851,7 +2901,7 @@ const StudentsManagement = () => {
               <table className="sm-table">
               <thead>
                 <tr>
-                  <th>Student & WhatsApp</th>
+                  <th>{isSchoolCoach ? 'Student' : 'Student & WhatsApp'}</th>
                   <th>Course Progress</th>
                   <th>Date</th>
                   <th>Invite</th>
@@ -2960,9 +3010,32 @@ const StudentsManagement = () => {
                               </span>
                             )}
                           </div>
-                          <div className="sm-student-email">
-                            {s.whatsapp_number ? `📱 +91 ${s.whatsapp_number}` : s.email}
-                          </div>
+                          {!isSchoolCoach && (
+                            <div className="sm-student-email" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px', marginTop: '3px' }}>
+                              {s.whatsapp_number ? (
+                                <a
+                                  href={`https://wa.me/${String(s.whatsapp_number).replace(/\D/g, '')}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  onClick={e => e.stopPropagation()}
+                                  style={{ color: '#0D9488', textDecoration: 'none', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '11.5px' }}
+                                  title="Chat on WhatsApp"
+                                >
+                                  📱 {String(s.whatsapp_number).startsWith('+') ? s.whatsapp_number : (String(s.whatsapp_number).length === 10 ? `+91 ${s.whatsapp_number}` : s.whatsapp_number)}
+                                </a>
+                              ) : null}
+                              {s.whatsapp_number && s.email && <span style={{ color: '#CBD5E1', margin: '0 2px' }}>•</span>}
+                              {s.email && (
+                                <a
+                                  href={`mailto:${s.email}`}
+                                  onClick={e => e.stopPropagation()}
+                                  style={{ color: '#64748B', textDecoration: 'none', fontSize: '11px' }}
+                                >
+                                  {s.email}
+                                </a>
+                              )}
+                            </div>
+                          )}
                           {(() => {
                             const guestList = getStudentGuestsDetails(s);
                             // Inga guest illathavangalukku ethuvume kaatta koodathu
@@ -3024,7 +3097,9 @@ const StudentsManagement = () => {
                                       borderLeft: '3.5px solid #0284C7',
                                       borderRadius: '6px',
                                       display: 'inline-grid',
-                                      gridTemplateColumns: 'max-content max-content max-content max-content max-content',
+                                      gridTemplateColumns: isSchoolCoach
+                                        ? 'max-content max-content max-content'
+                                        : 'max-content max-content max-content max-content max-content',
                                       columnGap: '14px',
                                       rowGap: '6px',
                                       alignItems: 'center',
@@ -3109,41 +3184,45 @@ const StudentsManagement = () => {
                                           </div>
 
                                           {/* Col 4: WhatsApp / Phone */}
-                                          <div style={{ fontSize: '11px', whiteSpace: 'nowrap' }}>
-                                            {gPhone ? (
-                                              <a
-                                                href={`https://wa.me/${String(gPhone).replace(/\D/g, '')}`}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                                onClick={e => e.stopPropagation()}
-                                                style={{
-                                                  color: '#0D9488',
-                                                  textDecoration: 'none',
-                                                  fontWeight: 600,
-                                                  display: 'inline-flex',
-                                                  alignItems: 'center',
-                                                  gap: '3px'
-                                                }}
-                                              >
-                                                📱 +91 {gPhone}
-                                              </a>
-                                            ) : (
-                                              <span style={{ color: '#94A3B8' }}>-</span>
-                                            )}
-                                          </div>
+                                          {!isSchoolCoach && (
+                                            <div style={{ fontSize: '11px', whiteSpace: 'nowrap' }}>
+                                              {gPhone ? (
+                                                <a
+                                                  href={`https://wa.me/${String(gPhone).replace(/\D/g, '')}`}
+                                                  target="_blank"
+                                                  rel="noreferrer"
+                                                  onClick={e => e.stopPropagation()}
+                                                  style={{
+                                                    color: '#0D9488',
+                                                    textDecoration: 'none',
+                                                    fontWeight: 600,
+                                                    display: 'inline-flex',
+                                                    alignItems: 'center',
+                                                    gap: '3px'
+                                                  }}
+                                                >
+                                                  📱 +91 {gPhone}
+                                                </a>
+                                              ) : (
+                                                <span style={{ color: '#94A3B8' }}>-</span>
+                                              )}
+                                            </div>
+                                          )}
 
                                           {/* Col 5: Email */}
-                                          <div style={{ fontSize: '11px', whiteSpace: 'nowrap' }}>
-                                            {g.email ? (
-                                              <a
-                                                href={`mailto:${g.email}`}
-                                                onClick={e => e.stopPropagation()}
-                                                style={{ color: '#64748B', textDecoration: 'none' }}
-                                              >
-                                                ✉️ {g.email}
-                                              </a>
-                                            ) : null}
-                                          </div>
+                                          {!isSchoolCoach && (
+                                            <div style={{ fontSize: '11px', whiteSpace: 'nowrap' }}>
+                                              {g.email ? (
+                                                <a
+                                                  href={`mailto:${g.email}`}
+                                                  onClick={e => e.stopPropagation()}
+                                                  style={{ color: '#64748B', textDecoration: 'none' }}
+                                                >
+                                                  ✉️ {g.email}
+                                                </a>
+                                              ) : null}
+                                            </div>
+                                          )}
                                         </div>
                                       );
                                     })}
@@ -3300,8 +3379,8 @@ const StudentsManagement = () => {
                                   setInviteModalData({
                                     id: s.id,
                                     name: s.name,
-                                    email: s.email,
-                                    phone: s.whatsapp_number,
+                                    email: isSchoolCoach ? '' : s.email,
+                                    phone: isSchoolCoach ? '' : s.whatsapp_number,
                                     link: inviteUrl
                                   });
                                 }
@@ -4985,7 +5064,7 @@ const StudentsManagement = () => {
                   {inviteLinkCopied ? '✓ Copied to Clipboard!' : '📋 Copy Invite Link'}
                 </button>
 
-                {inviteModalData.phone && (
+                {!isSchoolCoach && inviteModalData.phone && (
                   <button
                     type="button"
                     onClick={() => {

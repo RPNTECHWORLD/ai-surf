@@ -321,8 +321,9 @@ const Sessions = () => {
   const [allInstructorsList, setAllInstructorsList] = useState([]);
   const [allStudentsList, setAllStudentsList] = useState([]);
 
-  const isStudent = currentUser?.role === 'athlete' || currentUser?.role === 'student' || currentUser?.role === 'user';
-  const isCoach = currentUser?.role === 'coach';
+  const userRole = (currentUser?.role || '').toLowerCase().trim();
+  const isStudent = userRole === 'athlete' || userRole === 'student' || userRole === 'user';
+  const isCoach = userRole === 'coach' || userRole === 'instructor';
 
   // Automatically resolve the full student profile from allStudentsList
   const loggedInStudent = useMemo(() => {
@@ -419,17 +420,13 @@ const Sessions = () => {
   };
 
   const schoolLower = (activeSchoolName || '').toLowerCase().trim();
-  const isSuperAdmin = currentUser?.role === 'superadmin' || schoolLower === 'super admin';
-  const isAdminOrSuperAdmin = isSuperAdmin || currentUser?.role === 'admin' || currentUser?.role === 'school_admin' || currentUser?.role === 'schooladmin' || schoolLower === 'school admin';
-
-  const userSchoolStr = resolveSchoolStr(currentUser?.school || currentUser?.school_name).trim();
-  const isIndividualSurfer = (
-    userSchoolStr.toLowerCase().includes('individual') ||
-    userSchoolStr.toLowerCase().includes('freelance') ||
-    currentUser?.is_individual === true ||
-    schoolLower.includes('individual') ||
-    schoolLower.includes('freelance')
-  );
+  const isSuperAdmin = !isCoach && !isStudent && (currentUser?.role === 'superadmin' || schoolLower === 'super admin');
+  const isAdminOrSuperAdmin = isSuperAdmin || (!isCoach && !isStudent && (
+    currentUser?.role === 'admin' ||
+    currentUser?.role === 'school_admin' ||
+    currentUser?.role === 'schooladmin' ||
+    schoolLower === 'school admin'
+  ));
 
   const loggedInCoach = useMemo(() => {
     if (!allInstructorsList || allInstructorsList.length === 0) return null;
@@ -439,18 +436,37 @@ const Sessions = () => {
     );
   }, [allInstructorsList, currentCoachId, currentCoachName]);
 
-  const coachAffiliatedSchool = resolveSchoolStr(loggedInCoach?.school || userSchoolStr || activeSchoolName).trim();
-  const isCoachFreelance = isCoach && (
-    coachAffiliatedSchool.toLowerCase() === 'individual / freelance coach' ||
-    userSchoolStr.toLowerCase() === 'individual / freelance coach' ||
-    isIndividualSurfer
+  // Coach's assigned school (strictly from instructor profile or currentUser, NOT from activeSchool switcher!)
+  const coachSchool = resolveSchoolStr(
+    loggedInCoach?.school ||
+    currentUser?.school ||
+    currentUser?.school_name
+  ).trim();
+  const coachAffiliatedSchool = coachSchool;
+  const coachSchoolLower = coachSchool.toLowerCase();
+
+  // If coach belongs to a real school (not individual and not freelance), they are assigned to a school!
+  const isSchoolCoach = isCoach && Boolean(
+    coachSchool &&
+    !coachSchoolLower.includes('individual') &&
+    !coachSchoolLower.includes('freelance') &&
+    !coachSchoolLower.includes('independent')
   );
 
-  // Only Individual/Freelance Surfers/Coaches and Admins can Schedule, Configure & Delete sessions.
-  // School Coaches & School Students cannot schedule/configure/delete school sessions.
-  // Students (athlete/student/user role) can NEVER manage sessions — view only.
-  const isSchoolCoach = isCoach && !isCoachFreelance;
-  const canManageSessions = !isStudent && !isSchoolCoach && Boolean(isAdminOrSuperAdmin || isCoachFreelance || (!isCoach && isIndividualSurfer));
+  // A coach is freelance ONLY if they do NOT belong to any school
+  const isCoachFreelance = isCoach && !isSchoolCoach;
+
+  // Individual surfer: independent athlete (not in a school)
+  const userSchoolStr = resolveSchoolStr(currentUser?.school || currentUser?.school_name).trim();
+  const isIndividualSurfer = !isCoach && !isStudent && (
+    userSchoolStr.toLowerCase().includes('individual') ||
+    userSchoolStr.toLowerCase().includes('freelance') ||
+    currentUser?.is_individual === true
+  );
+
+  // Only School Admins, Super Admins, and Freelance Coaches can Schedule, Configure & Delete sessions.
+  // School Coaches & Students can NEVER schedule/configure/delete sessions — view only!
+  const canManageSessions = !isStudent && !isSchoolCoach && Boolean(isAdminOrSuperAdmin || isCoachFreelance || isIndividualSurfer);
 
   // Filter States: Default to Today's date so "Today" live schedule is shown immediately
   const [dateFilter, setDateFilter] = useState(() => getTodayYYYYMMDD());
@@ -540,6 +556,52 @@ const Sessions = () => {
     }, 3800);
     return () => clearTimeout(timer);
   }, [toast]);
+
+  // Real-time synchronization with Session Configuration changes (localStorage / custom events / focus)
+  const [slotsConfigVersion, setSlotsConfigVersion] = useState(0);
+  useEffect(() => {
+    const handleSync = () => setSlotsConfigVersion(v => v + 1);
+    window.addEventListener('storage', handleSync);
+    window.addEventListener('session_slots_updated', handleSync);
+    window.addEventListener('focus', handleSync);
+    return () => {
+      window.removeEventListener('storage', handleSync);
+      window.removeEventListener('session_slots_updated', handleSync);
+      window.removeEventListener('focus', handleSync);
+    };
+  }, []);
+
+  // Live fetch session slots from central PostgreSQL Database on mount (only once)
+  useEffect(() => {
+    let isCancelled = false;
+    try {
+      const rawUser = sessionStorage.getItem('user') || localStorage.getItem('user');
+      const user = rawUser ? JSON.parse(rawUser) : null;
+      const schoolId = user?.school_id || null;
+      const rawSchool = user?.school || user?.school_name || '';
+      const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
+
+      const queryParams = new URLSearchParams();
+      if (schoolId) queryParams.set('school_id', schoolId);
+      if (schoolName) queryParams.set('school_name', schoolName);
+
+      fetch(`${API}/api/session-slots?${queryParams.toString()}`)
+        .then(res => res.json())
+        .then(data => {
+          if (isCancelled) return;
+          if (data && data.status === 'success' && Array.isArray(data.slots) && data.slots.length > 0) {
+            const rawStored = localStorage.getItem('session_slots');
+            if (rawStored !== JSON.stringify(data.slots)) {
+              localStorage.setItem('session_slots', JSON.stringify(data.slots));
+              setSlotsConfigVersion(v => v + 1);
+            }
+          }
+        })
+        .catch(() => {});
+    } catch (e) {}
+
+    return () => { isCancelled = true; };
+  }, []);
 
   // Coach Profile & Review Modal State
   const [selectedCoachForModal, setSelectedCoachForModal] = useState(null); // { id, name }
@@ -2029,7 +2091,7 @@ const Sessions = () => {
     }
 
     return sessions;
-  }, [sessions, currentUser, isStudent, isCoach, currentStudentName, currentCoachName, currentCoachId, effectiveSchoolLower, isSuperAdmin, studentCandidateNames, studentCandidateIds]);
+  }, [sessions, currentUser, isStudent, isCoach, currentStudentName, currentCoachName, currentCoachId, effectiveSchoolLower, isSuperAdmin, studentCandidateNames, studentCandidateIds, coachAffiliatedSchool, isCoachFreelance]);
 
   // Extract unique instructors and students for dropdowns
   const availableInstructors = useMemo(() => {
@@ -2133,7 +2195,7 @@ const Sessions = () => {
 
     // Sort slots chronologically
     return Array.from(combinedSet).sort((a, b) => parseTimeToMinutes(a) - parseTimeToMinutes(b));
-  }, [roleScopedSessions, dateFilter]);
+  }, [roleScopedSessions, dateFilter, slotsConfigVersion]);
 
   // Auto-reset slotFilter to 'All' if the selected slot is not in the active date's available slots
   useEffect(() => {
@@ -6799,7 +6861,7 @@ const Sessions = () => {
 
                                           {/* Present / Absent Action Buttons */}
                                           <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0 }}>
-                                            {(() => {
+                                            {!isCoach && (() => {
                                               const phone = resolveStudentPhone(sess);
                                               const cleanDigits = phone ? phone.replace(/[^\d+]/g, '') : '';
                                               const finalTel = cleanDigits
@@ -7002,7 +7064,7 @@ const Sessions = () => {
                                 </div>
 
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0 }}>
-                                  {(() => {
+                                  {!isCoach && (() => {
                                     const phone = resolveStudentPhone(sess);
                                     const cleanDigits = phone ? phone.replace(/[^\d+]/g, '') : '';
                                     const finalTel = cleanDigits
