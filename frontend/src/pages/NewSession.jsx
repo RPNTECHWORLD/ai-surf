@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useMemo, useCallback, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import { normalizeTimeString, getNextAvailableSlotTime } from './SessionConfigure';
@@ -92,12 +92,9 @@ const UserAvatar = ({ src, name, size = 32, className = '', style = {} }) => {
 
 // Default slots matching Session Configuration (/sessions/configure)
 const DEFAULT_CONFIGURED_SLOTS = [
-  { id: 1, time: "08:30 AM", duration: "90", maxStudents: 4, days: ["Mon", "Tue", "Wed", "Thu", "Fri"], active: true },
-  { id: 2, time: "10:30 AM", duration: "90", maxStudents: 4, days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"], active: true },
-  { id: 3, time: "11:30 AM", duration: "60", maxStudents: 6, days: ["Mon", "Tue", "Wed"], active: true },
-  { id: 4, time: "01:00 PM", duration: "120", maxStudents: 4, days: ["Tue", "Thu", "Sat", "Sun"], active: true },
-  { id: 5, time: "03:30 PM", duration: "90", maxStudents: 4, days: ["Fri", "Sat", "Sun"], active: false },
-  { id: 6, time: "04:00 PM", duration: "90", maxStudents: 4, days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], active: true },
+  { id: 1, time: "06:30 AM", startTime: "06:30 AM", duration: "120", maxStudents: 5, days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], active: true },
+  { id: 2, time: "09:30 AM", startTime: "09:30 AM", duration: "120", maxStudents: 5, days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], active: true },
+  { id: 3, time: "02:00 PM", startTime: "02:00 PM", duration: "120", maxStudents: 5, days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], active: true },
 ];
 
 const SLOT_THEMES = [
@@ -165,7 +162,7 @@ function normalizeConfiguredSlots(rawSlots) {
   const seen = new Set();
   const uniqueRaw = [];
   for (const s of rawSlots) {
-    const rawTime = s.startTime || s.time || '08:30 AM';
+    const rawTime = s.startTime || s.time || '06:30 AM';
     const norm = normalizeTimeString(rawTime);
     if (!norm || !seen.has(norm)) {
       if (norm) seen.add(norm);
@@ -173,14 +170,14 @@ function normalizeConfiguredSlots(rawSlots) {
     }
   }
   return uniqueRaw.map((s, idx) => {
-    const rawTime = s.startTime || s.time || '08:30 AM';
-    const formattedRange = formatSlotRange(rawTime, s.duration || 90);
+    const rawTime = s.startTime || s.time || '06:30 AM';
+    const formattedRange = formatSlotRange(rawTime, s.duration || 120);
     return {
       id: s.id || (idx + 1),
       startTime: s.time && !s.time.includes(' - ') ? s.time : rawTime.split(' - ')[0].trim(),
-      duration: s.duration || 90,
-      maxStudents: s.maxStudents || 4,
-      days: s.days || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+      duration: s.duration || 120,
+      maxStudents: s.maxStudents || 5,
+      days: s.days || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'],
       active: s.active !== false,
       time: formattedRange,
       title: s.title || getSlotSubtitle({ ...s, startTime: rawTime }),
@@ -189,17 +186,6 @@ function normalizeConfiguredSlots(rawSlots) {
 }
 
 function loadConfiguredSlots() {
-  try {
-    const raw = localStorage.getItem('session_slots');
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return normalizeConfiguredSlots(parsed);
-      }
-    }
-  } catch (e) {
-    console.error('Failed to load session_slots:', e);
-  }
   return normalizeConfiguredSlots(DEFAULT_CONFIGURED_SLOTS);
 }
 
@@ -341,9 +327,13 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     try {
       const savedSchool = sessionStorage.getItem('activeSchool');
       if (savedSchool) {
-        const parsed = JSON.parse(savedSchool);
-        if (parsed.name) {
-          return typeof parsed.name === 'string' ? parsed.name : (parsed.name?.name || null);
+        try {
+          const parsed = JSON.parse(savedSchool);
+          if (parsed && typeof parsed === 'object') {
+            return parsed.name || parsed.school_name || null;
+          }
+        } catch (e) {
+          return savedSchool;
         }
       }
       if (currentUser?.school) {
@@ -453,51 +443,17 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     };
   }, [initialDate, searchParams]);
 
-  // ─── Draft Management for Session Creation (Strictly Date-Scoped) ───
-  const initialDraft = useMemo(() => {
-    if (editSession) return null;
-    try {
-      if (sessionStorage.getItem('surfing_session_draft_discarded') === 'true') {
-        sessionStorage.removeItem('surfing_session_draft_discarded');
-        return null;
-      }
-      // Strictly scope draft key to school AND date so assignments from one day never leak into an unassigned day!
-      const key = `surfing_session_draft_${currentUser?.school_id || currentUser?.id || 'default'}_${targetInitialDate.iso}`;
-      let raw = localStorage.getItem(key);
-      if (!raw) return null;
-      const parsed = JSON.parse(raw);
-      // Validate that this draft actually belongs to the target date
-      if (parsed?.selectedSessionDateYYYYMMDD && parsed.selectedSessionDateYYYYMMDD !== targetInitialDate.iso) {
-        return null;
-      }
-      if (parsed && typeof parsed === 'object') {
-        delete parsed.slots;
-      }
-      const hasSlots = Object.keys(parsed?.slotStudentMap || {}).some(k => Array.isArray(parsed.slotStudentMap[k]) && parsed.slotStudentMap[k].length > 0);
-      const hasGroups = Array.isArray(parsed?.trainingGroups) && parsed.trainingGroups.length > 0;
-      if (parsed && (parsed.currentStep > 1 || hasSlots || hasGroups || (parsed.spotName && parsed.spotName.trim() !== ''))) {
-        return parsed;
-      }
-    } catch (e) {
-      console.warn('Failed loading session draft', e);
-    }
-    return null;
-  }, [editSession, currentUser, targetInitialDate]);
+  // ─── Draft Management for Session Creation (Strictly Date-Scoped via API / PostgreSQL) ───
+  const initialDraft = null;
 
   // Wizard Step State: 1 | 2 | 3
-  const [currentStep, setCurrentStep] = useState(() => initialDraft?.currentStep || 1);
+  const [currentStep, setCurrentStep] = useState(1);
 
   // ─── Step 1 State: Session Setup ───
-  const [currentCalendarDate, setCurrentCalendarDate] = useState(() => {
-    if (initialDraft?.calendarDateStr) {
-      const d = new Date(initialDraft.calendarDateStr);
-      if (!isNaN(d.getTime())) return d;
-    }
-    return targetInitialDate.calDate;
-  });
-  const [selectedDayNumber, setSelectedDayNumber] = useState(() => initialDraft?.selectedDayNumber || targetInitialDate.dayNumber);
-  const [capacity, setCapacity] = useState(() => initialDraft?.capacity ?? 30);
-  const [slotCapacityMap, setSlotCapacityMap] = useState(() => initialDraft?.slotCapacityMap || {});
+  const [currentCalendarDate, setCurrentCalendarDate] = useState(() => targetInitialDate.calDate);
+  const [selectedDayNumber, setSelectedDayNumber] = useState(() => targetInitialDate.dayNumber);
+  const [capacity, setCapacity] = useState(10);
+  const [slotCapacityMap, setSlotCapacityMap] = useState({});
 
   // Normalized Session Date in YYYY-MM-DD
   const selectedSessionDateYYYYMMDD = useMemo(() => {
@@ -532,6 +488,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       setActiveDropGroupId(null);
       userClearedGroupsRef.current = false;
       lastSyncedDateRef.current = null;
+      setSlotCapacityMap({});
     }
   };
 
@@ -558,12 +515,18 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       try {
         setIsSlotsLoading(true);
         const schoolId = currentUser?.school_id || null;
-        const rawSchool = currentUser?.school || currentUser?.school_name || activeSchoolName || '';
-        const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
+        let rawSchool = activeSchoolName || currentUser?.school || currentUser?.school_name || '';
+        if (typeof rawSchool === 'object') rawSchool = rawSchool?.name || rawSchool?.school_name || '';
+        if (String(rawSchool).toLowerCase() === 'school admin' || String(rawSchool).toLowerCase() === 'super admin') {
+          rawSchool = activeSchoolName || '';
+        }
+        const schoolName = String(rawSchool).trim();
 
         const params = new URLSearchParams();
         if (schoolId) params.set('school_id', schoolId);
-        if (schoolName) params.set('school_name', schoolName);
+        if (schoolName && schoolName.toLowerCase() !== 'school admin' && schoolName.toLowerCase() !== 'super admin') {
+          params.set('school_name', schoolName);
+        }
         if (selectedSessionDateYYYYMMDD) params.set('date', selectedSessionDateYYYYMMDD);
 
         const res = await fetch(`${API}/api/session-slots?${params.toString()}`);
@@ -577,17 +540,25 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           setIsCustomForDate(Boolean(data.is_custom_date));
           if (Array.isArray(data.custom_dates)) setCustomDatesList(data.custom_dates);
 
-          // Update slotCapacityMap with capacities from DB slots
-          setSlotCapacityMap(prev => {
-            const next = { ...prev };
-            norm.forEach(s => {
-              const maxS = parseInt(s.maxStudents, 10);
-              if (!isNaN(maxS) && maxS > 0 && next[s.id] === undefined) {
-                next[s.id] = maxS;
-              }
-            });
-            return next;
+          // Update slotCapacityMap with capacities directly from DB slots for this date
+          const freshCapMap = {};
+          norm.forEach(s => {
+            const maxS = parseInt(s.maxStudents, 10);
+            if (!isNaN(maxS) && maxS > 0) {
+              freshCapMap[s.id] = maxS;
+            }
           });
+          setSlotCapacityMap(freshCapMap);
+
+          // Update active slot capacity to match the newly loaded date's configuration
+          const targetSlotId = selectedSlotId || norm[0]?.id;
+          const matchedSlot = norm.find(s => s.id === targetSlotId) || norm[0];
+          if (matchedSlot) {
+            const cap = parseInt(matchedSlot.maxStudents, 10);
+            if (!isNaN(cap) && cap > 0) {
+              setCapacity(cap);
+            }
+          }
         }
       } catch (err) {
         console.warn('Failed loading slots for date:', err);
@@ -601,21 +572,25 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     return () => {
       isCancelled = true;
     };
-  }, [selectedSessionDateYYYYMMDD, currentUser]);
+  }, [selectedSessionDateYYYYMMDD, currentUser, activeSchoolName]);
 
   const getSlotCapacity = (slot) => {
-    if (!slot) return capacity || 4;
-    if (slotCapacityMap[slot.id] !== undefined && slotCapacityMap[slot.id] !== '') {
+    if (!slot) return capacity || 5;
+    if (slotCapacityMap[slot.id] !== undefined) {
       return slotCapacityMap[slot.id];
     }
     const defaultMax = parseInt(slot.maxStudents, 10);
-    return (!isNaN(defaultMax) && defaultMax > 0) ? defaultMax : 4;
+    return (!isNaN(defaultMax) && defaultMax > 0) ? defaultMax : 5;
   };
 
   const slotSaveTimerRef = useRef(null);
 
   const handleUpdateSlotCapacity = (slotId, newVal) => {
-    const parsedNum = newVal === '' ? '' : Math.max(1, parseInt(newVal, 10));
+    let parsedNum = newVal;
+    if (newVal !== '') {
+      const n = parseInt(newVal, 10);
+      parsedNum = isNaN(n) ? '' : Math.max(1, Math.min(500, n));
+    }
     setSlotCapacityMap(prev => ({
       ...prev,
       [slotId]: parsedNum
@@ -640,8 +615,12 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       slotSaveTimerRef.current = setTimeout(() => {
         try {
           const schoolId = currentUser?.school_id || null;
-          const rawSchool = currentUser?.school || currentUser?.school_name || activeSchoolName || '';
-          const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
+          let rawSchool = activeSchoolName || currentUser?.school || currentUser?.school_name || '';
+          if (typeof rawSchool === 'object') rawSchool = rawSchool?.name || rawSchool?.school_name || '';
+          if (String(rawSchool).toLowerCase() === 'school admin' || String(rawSchool).toLowerCase() === 'super admin') {
+            rawSchool = activeSchoolName || '';
+          }
+          const schoolName = String(rawSchool).trim();
 
           fetch(`${API}/api/session-slots`, {
             method: 'POST',
@@ -662,7 +641,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     if (!slot) return;
     setSelectedSlotId(slot.id);
     const cap = getSlotCapacity(slot);
-    setCapacity(cap);
+    if (cap !== '' && !isNaN(parseInt(cap, 10))) {
+      setCapacity(parseInt(cap, 10));
+    }
   };
 
   // Toggle Slot Active / Inactive directly from the schedule wizard (Custom to this date)
@@ -695,8 +676,12 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     // Persist to central PostgreSQL database specifically for THIS DATE
     try {
       const schoolId = currentUser?.school_id || null;
-      const rawSchool = currentUser?.school || currentUser?.school_name || activeSchoolName || '';
-      const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
+      let rawSchool = activeSchoolName || currentUser?.school || currentUser?.school_name || '';
+      if (typeof rawSchool === 'object') rawSchool = rawSchool?.name || rawSchool?.school_name || '';
+      if (String(rawSchool).toLowerCase() === 'school admin' || String(rawSchool).toLowerCase() === 'super admin') {
+        rawSchool = activeSchoolName || '';
+      }
+      const schoolName = String(rawSchool).trim();
 
       fetch(`${API}/api/session-slots`, {
         method: 'POST',
@@ -786,8 +771,12 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     // Persist custom date slots to central PostgreSQL database
     try {
       const schoolId = currentUser?.school_id || null;
-      const rawSchool = currentUser?.school || currentUser?.school_name || activeSchoolName || '';
-      const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
+      let rawSchool = activeSchoolName || currentUser?.school || currentUser?.school_name || '';
+      if (typeof rawSchool === 'object') rawSchool = rawSchool?.name || rawSchool?.school_name || '';
+      if (String(rawSchool).toLowerCase() === 'school admin' || String(rawSchool).toLowerCase() === 'super admin') {
+        rawSchool = activeSchoolName || '';
+      }
+      const schoolName = String(rawSchool).trim();
 
       fetch(`${API}/api/session-slots`, {
         method: 'POST',
@@ -824,12 +813,18 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const executeResetToDefault = async () => {
     try {
       const schoolId = currentUser?.school_id || null;
-      const rawSchool = currentUser?.school || currentUser?.school_name || activeSchoolName || '';
-      const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
+      let rawSchool = activeSchoolName || currentUser?.school || currentUser?.school_name || '';
+      if (typeof rawSchool === 'object') rawSchool = rawSchool?.name || rawSchool?.school_name || '';
+      if (String(rawSchool).toLowerCase() === 'school admin' || String(rawSchool).toLowerCase() === 'super admin') {
+        rawSchool = activeSchoolName || '';
+      }
+      const schoolName = String(rawSchool).trim();
 
       const queryParams = new URLSearchParams();
       if (schoolId) queryParams.set('school_id', schoolId);
-      if (schoolName) queryParams.set('school_name', schoolName);
+      if (schoolName && schoolName.toLowerCase() !== 'school admin' && schoolName.toLowerCase() !== 'super admin') {
+        queryParams.set('school_name', schoolName);
+      }
       queryParams.set('date', selectedSessionDateYYYYMMDD);
 
       await fetch(`${API}/api/session-slots?${queryParams.toString()}`, {
@@ -844,9 +839,33 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       const res = await fetch(`${API}/api/session-slots?${getParams.toString()}`);
       const data = await res.json();
       if (data && data.status === 'success' && Array.isArray(data.slots) && data.slots.length > 0) {
-        setSlots(normalizeConfiguredSlots(data.slots));
+        const norm = normalizeConfiguredSlots(data.slots);
+        setSlots(norm);
+        const resetCapMap = {};
+        norm.forEach(s => {
+          const maxS = parseInt(s.maxStudents, 10);
+          if (!isNaN(maxS) && maxS > 0) {
+            resetCapMap[s.id] = maxS;
+          }
+        });
+        setSlotCapacityMap(resetCapMap);
+        if (selectedSlotId && resetCapMap[selectedSlotId] !== undefined) {
+          setCapacity(resetCapMap[selectedSlotId]);
+        }
       } else {
-        setSlots(loadConfiguredSlots());
+        const norm = loadConfiguredSlots();
+        setSlots(norm);
+        const resetCapMap = {};
+        norm.forEach(s => {
+          const maxS = parseInt(s.maxStudents, 10);
+          if (!isNaN(maxS) && maxS > 0) {
+            resetCapMap[s.id] = maxS;
+          }
+        });
+        setSlotCapacityMap(resetCapMap);
+        if (selectedSlotId && resetCapMap[selectedSlotId] !== undefined) {
+          setCapacity(resetCapMap[selectedSlotId]);
+        }
       }
       setIsCustomForDate(false);
       setCustomDatesList(prev => prev.filter(d => d !== selectedSessionDateYYYYMMDD));
@@ -870,7 +889,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         }
       }
     }
-  }, [selectedSlotId]);
+  }, [selectedSlotId, slotCapacityMap, slots]);
 
   const handleUpdateCapacity = (newVal) => {
     setCapacity(newVal);
@@ -904,6 +923,10 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const [selectedSlotStep2, setSelectedSlotStep2] = useState(() => initialDraft?.selectedSlotStep2 || 1);
   const [studentSearchStep2, setStudentSearchStep2] = useState('');
   const [showMoreFiltersMobile, setShowMoreFiltersMobile] = useState(false);
+  const [isRefreshingStudents, setIsRefreshingStudents] = useState(false);
+  const [refreshSuccessMessage, setRefreshSuccessMessage] = useState('');
+  const refreshTimerRef = useRef(null);
+  const activeStudentsCountRef = useRef(0);
 
   // ─── Step 2 State: Per-Slot Student Selection Mapping ───
   // Map of slotId -> array of studentIds selected for that specific slot
@@ -950,15 +973,18 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   // ─── Draft Auto-Saving Helpers ───
   const isDiscardingRef = useRef(false);
   const userClearedGroupsRef = useRef(false);
+  const isDraftSavedRef = useRef(false);
+  const originalSavedDraftRef = useRef(null);
+  const draftLoadedForDateRef = useRef(null);
+  const savedScrollPosRef = useRef(null);
 
   const hasProgressToSave = useMemo(() => {
     if (editSession || isDiscardingRef.current || userClearedGroupsRef.current) return false;
     const hasSlots = Object.keys(slotStudentMap).some(k => Array.isArray(slotStudentMap[k]) && slotStudentMap[k].length > 0);
     const hasGroups = Array.isArray(trainingGroups) && trainingGroups.length > 0;
     const isPastStep1 = currentStep > 1;
-    const hasCustomSpot = Boolean(spotName && spotName.trim() !== '');
-    return hasSlots || hasGroups || isPastStep1 || hasCustomSpot;
-  }, [editSession, slotStudentMap, trainingGroups, currentStep, spotName]);
+    return hasSlots || hasGroups || isPastStep1;
+  }, [editSession, slotStudentMap, trainingGroups, currentStep]);
 
   const backendDebounceTimerRef = useRef(null);
 
@@ -1020,6 +1046,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         if (data && data.status === 'success' && data.draft && typeof data.draft === 'object') {
           const draft = data.draft;
           if (!isDiscardingRef.current && !userClearedGroupsRef.current) {
+            draftLoadedForDateRef.current = selectedSessionDateYYYYMMDD;
+            lastSyncedDateRef.current = formattedSessionDate;
+
             if (draft.currentStep && draft.currentStep > 1) setCurrentStep(draft.currentStep);
             if (draft.capacity !== undefined) setCapacity(draft.capacity);
             if (draft.slotCapacityMap) setSlotCapacityMap(draft.slotCapacityMap);
@@ -1043,9 +1072,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             if (draft.step3SwimmingFilter) setStep3SwimmingFilter(draft.step3SwimmingFilter);
             if (draft.step3CoachGenderFilter) setStep3CoachGenderFilter(draft.step3CoachGenderFilter);
 
-            try {
-              localStorage.setItem(draftKey, JSON.stringify(draft));
-            } catch (e) {}
+            originalSavedDraftRef.current = JSON.stringify(draft);
+            isDraftSavedRef.current = true;
+            setHasSavedDraft(true);
           }
         }
       } catch (err) {
@@ -1062,9 +1091,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     const hasSlots = Object.keys(slotStudentMap).some(k => Array.isArray(slotStudentMap[k]) && slotStudentMap[k].length > 0);
     const hasGroups = Array.isArray(trainingGroups) && trainingGroups.length > 0;
     const isPastStep1 = currentStep > 1;
-    const hasCustomSpot = Boolean(spotName && spotName.trim() !== '');
 
-    if (!hasSlots && !hasGroups && !isPastStep1 && !hasCustomSpot) {
+    if (!hasSlots && !hasGroups && !isPastStep1) {
       return;
     }
 
@@ -1098,8 +1126,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     };
 
     try {
-      localStorage.setItem(draftKey, JSON.stringify(payload));
-      saveDraftToBackend(payload, false);
+      saveDraftToBackend(payload, true);
+      originalSavedDraftRef.current = JSON.stringify(payload);
+      isDraftSavedRef.current = true;
     } catch (e) {
       console.warn('Failed saving session draft', e);
     }
@@ -1133,25 +1162,19 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     saveDraftToBackend,
   ]);
 
-  // Auto-save draft whenever user updates the wizard
+  // Prompt user on tab close/reload if they have unsaved session setup progress
   useEffect(() => {
-    if (!editSession && hasProgressToSave) {
-      saveCurrentDraftToStorage();
-    }
-  }, [editSession, hasProgressToSave, saveCurrentDraftToStorage]);
-
-  // Ensure draft is saved when closing tab or navigating away
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      if (!editSession && hasProgressToSave && !isDiscardingRef.current && !userClearedGroupsRef.current) {
-        saveCurrentDraftToStorage();
+    const handleBeforeUnload = (e) => {
+      if (!editSession && hasProgressToSave && !isDraftSavedRef.current && !isDiscardingRef.current && !userClearedGroupsRef.current) {
+        e.preventDefault();
+        e.returnValue = '';
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [editSession, hasProgressToSave, saveCurrentDraftToStorage]);
+  }, [editSession, hasProgressToSave]);
 
   const [draftSavedToast, setDraftSavedToast] = useState(false);
 
@@ -1160,46 +1183,14 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       e.preventDefault();
       e.stopPropagation();
     }
-    const payload = {
-      version: 1,
-      savedAt: new Date().toISOString(),
-      currentStep,
-      calendarDateStr: currentCalendarDate ? currentCalendarDate.toISOString() : new Date().toISOString(),
-      selectedDayNumber,
-      capacity,
-      slotCapacityMap,
-      selectedSlotId,
-      spotName,
-      slotStudentMap,
-      trainingGroups,
-      activeDropGroupId,
-      step3SlotFilter,
-      selectedSlotStep2,
-      levelFilter,
-      selectionFilter,
-      courseDayFilter,
-      genderFilterStep2,
-      swimmingFilterStep2,
-      step3DayFilter,
-      step3StatusFilter,
-      step3LevelFilter,
-      step3GenderFilter,
-      step3SwimmingFilter,
-      step3CoachGenderFilter,
-      step3CheckedStudentIdsBySlot,
-    };
-
-    try {
-      localStorage.setItem(draftKey, JSON.stringify(payload));
-      saveDraftToBackend(payload, true);
-      setDraftSavedToast(true);
-      setTimeout(() => setDraftSavedToast(false), 2200);
-    } catch (err) {
-      console.warn('Failed saving session draft', err);
-    }
+    saveCurrentDraftToStorage();
+    setDraftSavedToast(true);
+    setHasSavedDraft(true);
+    setTimeout(() => setDraftSavedToast(false), 2200);
   };
 
   const [clearDraftToast, setClearDraftToast] = useState(false);
+  const [hasSavedDraft, setHasSavedDraft] = useState(false);
 
   const handleClearDraft = (e) => {
     if (e) {
@@ -1224,18 +1215,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
   const executeClearDraft = () => {
     isDiscardingRef.current = true;
-    userClearedGroupsRef.current = true;
-    try {
-      localStorage.removeItem(draftKey);
-      Object.keys(localStorage).forEach(key => {
-        if (key.startsWith('surfing_session_draft') && key.includes(selectedSessionDateYYYYMMDD)) {
-          localStorage.removeItem(key);
-        }
-      });
-      sessionStorage.setItem('surfing_session_draft_discarded', 'true');
-    } catch (err) {
-      console.warn('Failed clearing draft:', err);
-    }
+    userClearedGroupsRef.current = false;
+    originalSavedDraftRef.current = null;
+    isDraftSavedRef.current = true;
 
     // Clear draft from Database
     try {
@@ -1253,16 +1235,29 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       }).catch(err => console.warn('Failed deleting draft from DB:', err));
     } catch (err) {}
 
-    // Reset in-memory wizard states
-    setTrainingGroups([]);
-    setSlotStudentMap({});
-    setSelectedSlotId(slots[0]?.id || null);
+    // If date has existing DB groups, restore them from DB!
+    if (existingDbGroups && existingDbGroups.length > 0) {
+      setTrainingGroups(existingDbGroups);
+      const newMap = {};
+      existingDbGroups.forEach(grp => {
+        if (grp.slotId && Array.isArray(grp.studentIds)) {
+          newMap[grp.slotId] = [...grp.studentIds];
+        }
+      });
+      setSlotStudentMap(newMap);
+      setSelectedSlotId(existingDbGroups[0].slotId || slots[0]?.id || null);
+    } else {
+      setTrainingGroups([]);
+      setSlotStudentMap({});
+      setSelectedSlotId(slots[0]?.id || null);
+    }
     setStep3CheckedStudentIdsBySlot({});
     setSpotName('');
     setCurrentStep(1);
     setActiveDropGroupId(null);
 
     setClearDraftToast(true);
+    setHasSavedDraft(false);
     setTimeout(() => {
       setClearDraftToast(false);
       isDiscardingRef.current = false;
@@ -1279,12 +1274,24 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const hasProgressRef = useRef(hasProgressToSave);
   const onCloseRef = useRef(onClose);
   const mountedAtRef = useRef(Date.now());
+  const isInitialLoadDoneRef = useRef(false);
 
   // Guarantee confirmation modal is strictly false on mount and initialize cooldown
   useEffect(() => {
     mountedAtRef.current = Date.now();
     setShowCloseConfirmModal(false);
+    const timer = setTimeout(() => {
+      isInitialLoadDoneRef.current = true;
+    }, 1200);
+    return () => clearTimeout(timer);
   }, []);
+
+  // When user modifies training groups, students, slot or spot, reset draft saved status
+  useEffect(() => {
+    if (isInitialLoadDoneRef.current) {
+      isDraftSavedRef.current = false;
+    }
+  }, [trainingGroups, slotStudentMap, spotName, capacity, selectedSlotId, selectedSessionDateYYYYMMDD]);
 
   useEffect(() => {
     hasProgressRef.current = hasProgressToSave;
@@ -1296,12 +1303,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
   // Request close: If unsaved progress exists without draft saved, ask user whether to save draft or not
   const handleRequestClose = () => {
-    let isDraftAlreadySaved = false;
-    try {
-      isDraftAlreadySaved = Boolean(localStorage.getItem(draftKey));
-    } catch (e) {}
+    const hasUnsavedProgress = !editSession && hasProgressToSave && !isDraftSavedRef.current;
 
-    if (!editSession && hasProgressToSave && !isDraftAlreadySaved) {
+    if (hasUnsavedProgress) {
       setShowCloseConfirmModal(true);
     } else {
       if (isModal && modalHistoryPushedRef.current) {
@@ -1317,6 +1321,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   // User chose: Save draft & close
   const confirmSaveDraftAndClose = () => {
     saveCurrentDraftToStorage();
+    isDraftSavedRef.current = true;
     setShowCloseConfirmModal(false);
     if (isModal && modalHistoryPushedRef.current) {
       modalHistoryPushedRef.current = false;
@@ -1327,24 +1332,14 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     else navigate('/sessions');
   };
 
-  // Store the original saved draft snapshot as it existed when the wizard mounted
-  const originalSavedDraftRef = useRef(null);
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(draftKey);
-      if (raw) {
-        originalSavedDraftRef.current = raw;
-      }
-    } catch (e) {}
-  }, [draftKey]);
-
   // User chose: Keep old draft as is (revert to original saved draft snapshot) & close
   const confirmKeepOldDraftAndClose = () => {
-    try {
-      if (originalSavedDraftRef.current) {
-        localStorage.setItem(draftKey, originalSavedDraftRef.current);
-      }
-    } catch (e) {}
+    if (originalSavedDraftRef.current) {
+      try {
+        const orig = JSON.parse(originalSavedDraftRef.current);
+        saveDraftToBackend(orig, true);
+      } catch (e) {}
+    }
     setShowCloseConfirmModal(false);
     if (isModal && modalHistoryPushedRef.current) {
       modalHistoryPushedRef.current = false;
@@ -1359,14 +1354,24 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const confirmDiscardAndClose = () => {
     isDiscardingRef.current = true;
     userClearedGroupsRef.current = true;
-    try {
-      Object.keys(localStorage).forEach(key => {
-        if (key.startsWith('surfing_session_draft')) {
-          localStorage.removeItem(key);
-        }
-      });
-      sessionStorage.setItem('surfing_session_draft_discarded', 'true');
-    } catch (e) {}
+    if (originalSavedDraftRef.current) {
+      // Revert backend to original saved draft snapshot
+      try {
+        const orig = JSON.parse(originalSavedDraftRef.current);
+        saveDraftToBackend(orig, true);
+      } catch (e) {}
+    } else {
+      // User never had a draft, ensure backend draft is deleted
+      try {
+        const schoolId = currentUser?.school_id || null;
+        const rawSchool = currentUser?.school || currentUser?.school_name || activeSchoolName || '';
+        const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
+        const delParams = new URLSearchParams({ date: selectedSessionDateYYYYMMDD });
+        if (schoolId) delParams.set('school_id', schoolId);
+        if (schoolName) delParams.set('school_name', schoolName);
+        fetch(`${API}/api/session-drafts?${delParams.toString()}`, { method: 'DELETE' }).catch(() => {});
+      } catch (e) {}
+    }
 
     // Reset in-memory wizard states immediately
     setTrainingGroups([]);
@@ -1428,12 +1433,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         return;
       }
 
-      let isDraftAlreadySaved = false;
-      try {
-        isDraftAlreadySaved = Boolean(localStorage.getItem(draftKey));
-      } catch (e) {}
+      const hasUnsavedProgress = !editSession && hasProgressRef.current && !isDraftSavedRef.current;
 
-      if (!editSession && hasProgressRef.current && !isDraftAlreadySaved) {
+      if (hasUnsavedProgress) {
         // Has progress to save -> prompt user
         setShowCloseConfirmModal(true);
       } else {
@@ -1498,25 +1500,43 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   // Match existing DB sessions on selected session date
   const existingDbDateSessions = useMemo(() => {
     if (!existingDbSessions || existingDbSessions.length === 0) return [];
-    const currentYear = currentCalendarDate.getFullYear();
-    const currentMonth = currentCalendarDate.getMonth();
-    const selectedDateObj = new Date(currentYear, currentMonth, selectedDayNumber);
-    const selectedISO = selectedDateObj.toISOString().split('T')[0];
+    const targetYYYYMMDD = selectedSessionDateYYYYMMDD;
+    const targetFormatted = (formattedSessionDate || '').toLowerCase().trim();
 
     return existingDbSessions.filter(sess => {
-      const sessDateStr = (sess.date || '').toString();
-      if (sessDateStr.toLowerCase().includes(formattedSessionDate.toLowerCase()) || formattedSessionDate.toLowerCase().includes(sessDateStr.toLowerCase())) {
+      const sessDateStr = (sess.date || '').toString().trim();
+      if (!sessDateStr) return false;
+      const sessLow = sessDateStr.toLowerCase();
+
+      // 1. Exact string match or substring match with formatted date (e.g. "Tuesday, Oct 20, 2026" or "Oct 20, 2026")
+      if (targetFormatted && (sessLow.includes(targetFormatted) || targetFormatted.includes(sessLow))) {
         return true;
       }
+
+      // 2. Exact match with YYYY-MM-DD
+      if (sessDateStr.startsWith(targetYYYYMMDD) || sessDateStr === targetYYYYMMDD) {
+        return true;
+      }
+
+      // 3. Parse date string safely (extract year, month, day without UTC timezone shifts)
       try {
         const dObj = new Date(sessDateStr);
         if (!isNaN(dObj.getTime())) {
-          return dObj.toISOString().split('T')[0] === selectedISO;
+          const y = dObj.getFullYear();
+          const m = String(dObj.getMonth() + 1).padStart(2, '0');
+          const d = String(dObj.getDate()).padStart(2, '0');
+          if (`${y}-${m}-${d}` === targetYYYYMMDD) return true;
+
+          const uy = dObj.getUTCFullYear();
+          const um = String(dObj.getUTCMonth() + 1).padStart(2, '0');
+          const ud = String(dObj.getUTCDate()).padStart(2, '0');
+          if (`${uy}-${um}-${ud}` === targetYYYYMMDD) return true;
         }
       } catch (e) {}
+
       return false;
     });
-  }, [existingDbSessions, formattedSessionDate, currentCalendarDate, selectedDayNumber]);
+  }, [existingDbSessions, formattedSessionDate, selectedSessionDateYYYYMMDD]);
 
   // Map student name / guest name / student id -> existing session scheduled details (group name, time, instructor)
   const existingDbScheduledInfoMapOnDate = useMemo(() => {
@@ -1537,17 +1557,21 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         session: sess
       };
 
-      if (sess.guest_name && sess.guest_name.trim()) {
+      const isGuestSession = Boolean(sess.guest_name && sess.guest_name.trim());
+      if (isGuestSession) {
+        // Guest session: only the guest is scheduled, not the parent student
         map.set(sess.guest_name.toLowerCase().trim(), info);
-      }
-      if (sess.student_name && sess.student_name.trim()) {
-        map.set(sess.student_name.toLowerCase().trim(), info);
-      }
-      if (sess.student && sess.student.trim()) {
-        map.set(sess.student.toLowerCase().trim(), info);
-      }
-      if (sess.student_id != null) {
-        map.set(String(sess.student_id), info);
+      } else {
+        // Regular (non-guest) session: student themselves is scheduled
+        if (sess.student_name && sess.student_name.trim()) {
+          map.set(sess.student_name.toLowerCase().trim(), info);
+        }
+        if (sess.student && sess.student.trim()) {
+          map.set(sess.student.toLowerCase().trim(), info);
+        }
+        if (sess.student_id != null) {
+          map.set(String(sess.student_id), info);
+        }
       }
 
       if (Array.isArray(sess.sessions)) {
@@ -1560,10 +1584,14 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             instructorId: sub.instructor_id || instructorId,
             session: sub
           };
-          if (sub.guest_name && sub.guest_name.trim()) map.set(sub.guest_name.toLowerCase().trim(), subInfo);
-          if (sub.student_name && sub.student_name.trim()) map.set(sub.student_name.toLowerCase().trim(), subInfo);
-          if (sub.student && sub.student.trim()) map.set(sub.student.toLowerCase().trim(), subInfo);
-          if (sub.student_id != null) map.set(String(sub.student_id), subInfo);
+          const isSubGuest = Boolean(sub.guest_name && sub.guest_name.trim());
+          if (isSubGuest) {
+            map.set(sub.guest_name.toLowerCase().trim(), subInfo);
+          } else {
+            if (sub.student_name && sub.student_name.trim()) map.set(sub.student_name.toLowerCase().trim(), subInfo);
+            if (sub.student && sub.student.trim()) map.set(sub.student.toLowerCase().trim(), subInfo);
+            if (sub.student_id != null) map.set(String(sub.student_id), subInfo);
+          }
         });
       }
     });
@@ -1574,14 +1602,23 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const existingScheduledStudentNamesOnDate = useMemo(() => {
     const setNames = new Set();
     existingDbDateSessions.forEach(sess => {
-      if (sess.student) setNames.add(sess.student.toLowerCase().trim());
-      if (sess.student_name) setNames.add(sess.student_name.toLowerCase().trim());
-      if (sess.guest_name) setNames.add(sess.guest_name.toLowerCase().trim());
+      const isGuestSession = Boolean(sess.guest_name && sess.guest_name.trim());
+      if (isGuestSession) {
+        // Guest session: only the guest name is scheduled
+        setNames.add(sess.guest_name.toLowerCase().trim());
+      } else {
+        if (sess.student) setNames.add(sess.student.toLowerCase().trim());
+        if (sess.student_name) setNames.add(sess.student_name.toLowerCase().trim());
+      }
       if (Array.isArray(sess.sessions)) {
         sess.sessions.forEach(sub => {
-          if (sub.student) setNames.add(sub.student.toLowerCase().trim());
-          if (sub.student_name) setNames.add(sub.student_name.toLowerCase().trim());
-          if (sub.guest_name) setNames.add(sub.guest_name.toLowerCase().trim());
+          const isSubGuest = Boolean(sub.guest_name && sub.guest_name.trim());
+          if (isSubGuest) {
+            setNames.add(sub.guest_name.toLowerCase().trim());
+          } else {
+            if (sub.student) setNames.add(sub.student.toLowerCase().trim());
+            if (sub.student_name) setNames.add(sub.student_name.toLowerCase().trim());
+          }
         });
       }
     });
@@ -1592,13 +1629,16 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     if (!student) return false;
     const nameLow = (student.name || '').toLowerCase().trim();
     const idStr = String(student.id);
-    return existingScheduledStudentNamesOnDate.has(nameLow) || existingDbScheduledInfoMapOnDate.has(nameLow) || existingDbScheduledInfoMapOnDate.has(idStr);
+    return existingScheduledStudentNamesOnDate.has(nameLow) || 
+      existingDbScheduledInfoMapOnDate.has(nameLow) || 
+      (!student.isGuest && existingDbScheduledInfoMapOnDate.has(idStr));
   };
 
-  // Fetch real students & instructors from active school
-  useEffect(() => {
+  // Helper to extract school details
+  const getActiveSchoolInfo = useCallback(() => {
     const activeSchoolStr = sessionStorage.getItem('activeSchool');
     let schoolName = '';
+    let spotLoc = '';
     if (activeSchoolStr) {
       try {
         const parsed = JSON.parse(activeSchoolStr);
@@ -1607,19 +1647,232 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         } else if (typeof parsed === 'string') {
           schoolName = parsed;
         }
-        const loc = parsed?.city || parsed?.location || schoolName;
-        if (loc) setSpotName(`${loc} Beach`);
+        spotLoc = parsed?.city || parsed?.location || schoolName;
       } catch (e) {
         schoolName = activeSchoolStr;
+        spotLoc = activeSchoolStr;
       }
     }
     if (!schoolName && currentUser?.school) {
       schoolName = typeof currentUser.school === 'string' ? currentUser.school : currentUser.school?.name;
+      spotLoc = spotLoc || schoolName;
     }
     if (isCoachFreelance) {
       schoolName = 'Individual / Freelance Coach';
+      spotLoc = spotLoc || schoolName;
     }
     const schoolParam = schoolName ? `?school=${encodeURIComponent(schoolName)}` : '';
+    return { schoolName, schoolParam, spotLoc };
+  }, [currentUser, isCoachFreelance]);
+
+  // Helper to parse student data into normalized UI model
+  const normalizeStudentsData = useCallback((data, schoolName) => {
+    if (!Array.isArray(data)) return [];
+    const filteredStudents = data.filter(s => {
+      const sSchool = (s.school || s.school_name || '').toLowerCase().trim();
+      if (isCoachFreelance) {
+        return sSchool === 'individual / freelance coach' || (!sSchool && String(s.created_by_user_id) === String(currentUser?.instructor_id || currentUser?.id));
+      }
+      // Safety: if we know the active school, only show students from that school
+      if (schoolName) {
+        const targetSchool = schoolName.toLowerCase().trim();
+        return sSchool === targetSchool;
+      }
+      return true;
+    });
+
+    const mapped = [];
+    filteredStudents.forEach((s, idx) => {
+      const dayInfo = getStudentCourseDayInfo(s, idx);
+      // 1. Primary Student
+      mapped.push({
+        id: s.id,
+        name: s.name,
+        gender: s.gender || (s.division && s.division.toLowerCase().includes('women') ? 'Female' : 'Male'),
+        level: s.level || 'Beginner',
+        day: idx % 2 === 0 ? 'day1' : 'day2',
+        whichDay: s.which_day || s.whichDay || dayInfo.whichDay,
+        totalDays: s.total_days || s.totalDays || dayInfo.totalDays,
+        courseDuration: s.course_duration || dayInfo.courseDuration,
+        waitlistGroup: s.course_duration || `${dayInfo.totalDays} Days Course`,
+        avatar: (s.image && !s.image.includes('unsplash.com') && !s.image.includes('1500648767791')) ? s.image : '',
+        swimming_ability: s.swimming_ability || 'Swimmer',
+        whatsapp_number: s.whatsapp_number || '',
+        email: s.email || '',
+        session_time: s.session_time || s.sessionTime || '',
+        start_date: s.start_date || '',
+        startDate: s.start_date || '',
+        end_date: s.end_date || '',
+        endDate: s.end_date || '',
+        instructor_id: s.instructor_id || null,
+        instructor: s.instructor || '',
+        isReal: true,
+        isGuest: false,
+        age: s.age,
+        dob: s.dob,
+        parentStudentId: null,
+        parentStudentName: null
+      });
+
+      // 2. Accompanying Guests registered with this student
+      let guestList = [];
+      if (Array.isArray(s.guests_details)) {
+        guestList = s.guests_details;
+      } else if (typeof s.guests_details === 'string') {
+        try {
+          guestList = JSON.parse(s.guests_details || '[]');
+        } catch (e) {
+          guestList = [];
+        }
+      }
+      if (Array.isArray(guestList) && guestList.length > 0) {
+        guestList.forEach((g, gIdx) => {
+          const guestName = g.name && g.name.trim() ? g.name.trim() : `Guest #${gIdx + 1}`;
+          mapped.push({
+            id: `guest-${s.id}-${gIdx}`,
+            name: guestName,
+            gender: g.gender || s.gender || 'Male',
+            level: g.level || s.level || 'Beginner',
+            day: idx % 2 === 0 ? 'day1' : 'day2',
+            whichDay: s.which_day || s.whichDay || dayInfo.whichDay,
+            totalDays: s.total_days || s.totalDays || dayInfo.totalDays,
+            courseDuration: s.course_duration || dayInfo.courseDuration,
+            waitlistGroup: s.course_duration || `${dayInfo.totalDays} Days Course`,
+            avatar: '',
+            swimming_ability: g.swimming_ability || s.swimming_ability || 'Swimmer',
+            whatsapp_number: g.whatsapp_number || g.phone || s.whatsapp_number || '',
+            email: g.email || s.email || '',
+            session_time: g.session_time || s.session_time || s.sessionTime || '',
+            start_date: s.start_date || '',
+            startDate: s.start_date || '',
+            end_date: s.end_date || '',
+            endDate: s.end_date || '',
+            instructor_id: s.instructor_id || null,
+            instructor: s.instructor || '',
+            isReal: true,
+            isGuest: true,
+            age: g.age,
+            dob: g.dob,
+            guestIndex: gIdx + 1,
+            parentStudentId: s.id,
+            parentStudentName: s.name
+          });
+        });
+      }
+    });
+
+    return mapped;
+  }, [currentUser, isCoachFreelance]);
+
+  // Handler to manually refresh student roster and sessions from database
+  const handleRefreshStudents = useCallback(async () => {
+    if (isRefreshingStudents) return;
+    setIsRefreshingStudents(true);
+    setRefreshSuccessMessage('');
+
+    try {
+      const { schoolName, schoolParam } = getActiveSchoolInfo();
+      const sep = schoolParam ? '&' : '?';
+      const cacheBust = `_t=${Date.now()}`;
+
+      // Re-fetch sessions & students simultaneously with cache buster so browser never serves stale cache
+      const [sessionsRes, studentsRes] = await Promise.all([
+        fetch(`${API}/api/sessions${schoolParam}${sep}${cacheBust}`).catch(() => null),
+        fetch(`${API}/api/students${schoolParam}${sep}${cacheBust}`).catch(() => null)
+      ]);
+
+      let currentDbSessions = existingDbSessions;
+      if (sessionsRes && sessionsRes.ok) {
+        const sData = await sessionsRes.json();
+        if (Array.isArray(sData)) {
+          setExistingDbSessions(sData);
+          currentDbSessions = sData;
+        }
+      }
+
+      if (studentsRes && studentsRes.ok) {
+        const data = await studentsRes.json();
+        const mapped = normalizeStudentsData(data, schoolName);
+        setDbStudents(mapped);
+
+        // Helper to check collision with existing sessions on current date
+        const isScheduledOnDate = (st) => {
+          if (!st || !Array.isArray(currentDbSessions)) return false;
+          const sName = (st.name || '').toLowerCase().trim();
+          const sId = String(st.id);
+          const isGuest = Boolean(st.isGuest);
+          return currentDbSessions.some(sess => {
+            const sessDate = (sess.date || '').toString();
+            if (!sessDate.toLowerCase().includes(formattedSessionDate.toLowerCase()) && !formattedSessionDate.toLowerCase().includes(sessDate.toLowerCase())) return false;
+            const isGuestSess = Boolean(sess.guest_name && sess.guest_name.trim());
+            if (isGuest) {
+              if (isGuestSess && sess.guest_name.toLowerCase().trim() === sName) return true;
+              if (Array.isArray(sess.sessions)) {
+                return sess.sessions.some(sub => sub.guest_name && sub.guest_name.toLowerCase().trim() === sName);
+              }
+              return false;
+            } else {
+              if (isGuestSess) return false;
+              if (sess.student && sess.student.toLowerCase().trim() === sName) return true;
+              if (sess.student_name && sess.student_name.toLowerCase().trim() === sName) return true;
+              if (sess.student_id != null && String(sess.student_id) === sId) return true;
+              if (Array.isArray(sess.sessions)) {
+                return sess.sessions.some(sub => 
+                  !sub.guest_name && (
+                    (sub.student && sub.student.toLowerCase().trim() === sName) ||
+                    (sub.student_name && sub.student_name.toLowerCase().trim() === sName) ||
+                    (sub.student_id != null && String(sub.student_id) === sId)
+                  )
+                );
+              }
+              return false;
+            }
+          });
+        };
+
+        // Filter strictly active students for this session date
+        const activeList = mapped.filter(s => {
+          const status = getStudentStatusOnDate(s, selectedSessionDateYYYYMMDD);
+          const isSched = isScheduledOnDate(s);
+          return status.isActive || isSched;
+        });
+
+        const activeCount = activeList.length;
+        const prevActiveCount = activeStudentsCountRef.current;
+        const diff = activeCount - prevActiveCount;
+
+        let msg = 'Roster is up to date';
+        if (diff > 0) {
+          msg = ` ${diff} new student${diff > 1 ? 's' : ''} added`;
+        } else if (diff < 0) {
+          msg = ' Roster updated';
+        } else {
+          msg = ' Roster is up to date';
+        }
+        setRefreshSuccessMessage(msg);
+        if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = setTimeout(() => {
+          setRefreshSuccessMessage('');
+        }, 3500);
+      }
+    } catch (err) {
+      console.error('Failed to refresh students:', err);
+    } finally {
+      setIsRefreshingStudents(false);
+    }
+  }, [isRefreshingStudents, getActiveSchoolInfo, normalizeStudentsData, existingDbSessions, formattedSessionDate, selectedSessionDateYYYYMMDD]);
+
+  // Clean up timer on unmount
+  useEffect(() => {
+    return () => {
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+    };
+  }, []);
+
+  // Fetch real students & instructors from active school
+  useEffect(() => {
+    const { schoolName, schoolParam, spotLoc } = getActiveSchoolInfo();
+    if (spotLoc) setSpotName(`${spotLoc} Beach`);
 
     // Fetch existing sessions for checking date collisions
     fetch(`${API}/api/sessions${schoolParam}`)
@@ -1633,95 +1886,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       .then(r => r.json())
       .then(data => {
         if (Array.isArray(data)) {
-          const filteredStudents = data.filter(s => {
-            const sSchool = (s.school || s.school_name || '').toLowerCase().trim();
-            if (isCoachFreelance) {
-              return sSchool === 'individual / freelance coach' || (!sSchool && String(s.created_by_user_id) === String(currentUser?.instructor_id || currentUser?.id));
-            }
-            // Safety: if we know the active school, only show students from that school
-            if (schoolName) {
-              const targetSchool = schoolName.toLowerCase().trim();
-              return sSchool === targetSchool;
-            }
-            return true;
-          });
-          const mapped = [];
-          filteredStudents.forEach((s, idx) => {
-            const dayInfo = getStudentCourseDayInfo(s, idx);
-            // 1. Primary Student
-            mapped.push({
-              id: s.id,
-              name: s.name,
-              gender: s.gender || (s.division && s.division.toLowerCase().includes('women') ? 'Female' : 'Male'),
-              level: s.level || 'Beginner',
-              day: idx % 2 === 0 ? 'day1' : 'day2',
-              whichDay: s.which_day || s.whichDay || dayInfo.whichDay,
-              totalDays: s.total_days || s.totalDays || dayInfo.totalDays,
-              courseDuration: s.course_duration || dayInfo.courseDuration,
-              waitlistGroup: s.course_duration || `${dayInfo.totalDays} Days Course`,
-              avatar: (s.image && !s.image.includes('unsplash.com') && !s.image.includes('1500648767791')) ? s.image : '',
-              swimming_ability: s.swimming_ability || 'Swimmer',
-              whatsapp_number: s.whatsapp_number || '',
-              email: s.email || '',
-              start_date: s.start_date || '',
-              startDate: s.start_date || '',
-              end_date: s.end_date || '',
-              endDate: s.end_date || '',
-              instructor_id: s.instructor_id || null,
-              instructor: s.instructor || '',
-              isReal: true,
-              isGuest: false,
-              age: s.age,
-              dob: s.dob,
-              parentStudentId: null,
-              parentStudentName: null
-            });
-
-            // 2. Accompanying Guests registered with this student
-            let guestList = [];
-            if (Array.isArray(s.guests_details)) {
-              guestList = s.guests_details;
-            } else if (typeof s.guests_details === 'string') {
-              try {
-                guestList = JSON.parse(s.guests_details || '[]');
-              } catch (e) {
-                guestList = [];
-              }
-            }
-            if (Array.isArray(guestList) && guestList.length > 0) {
-              guestList.forEach((g, gIdx) => {
-                const guestName = g.name && g.name.trim() ? g.name.trim() : `Guest #${gIdx + 1}`;
-                mapped.push({
-                  id: `guest-${s.id}-${gIdx}`,
-                  name: guestName,
-                  gender: g.gender || s.gender || 'Male',
-                  level: g.level || s.level || 'Beginner',
-                  day: idx % 2 === 0 ? 'day1' : 'day2',
-                  whichDay: s.which_day || s.whichDay || dayInfo.whichDay,
-                  totalDays: s.total_days || s.totalDays || dayInfo.totalDays,
-                  courseDuration: s.course_duration || dayInfo.courseDuration,
-                  waitlistGroup: s.course_duration || `${dayInfo.totalDays} Days Course`,
-                  avatar: '',
-                  swimming_ability: g.swimming_ability || s.swimming_ability || 'Swimmer',
-                  whatsapp_number: g.whatsapp_number || g.phone || s.whatsapp_number || '',
-                  email: g.email || s.email || '',
-                  start_date: s.start_date || '',
-                  startDate: s.start_date || '',
-                  end_date: s.end_date || '',
-                  endDate: s.end_date || '',
-                  instructor_id: s.instructor_id || null,
-                  instructor: s.instructor || '',
-                  isReal: true,
-                  isGuest: true,
-                  age: g.age,
-                  dob: g.dob,
-                  guestIndex: gIdx + 1,
-                  parentStudentId: s.id,
-                  parentStudentName: s.name
-                });
-              });
-            }
-          });
+          const mapped = normalizeStudentsData(data, schoolName);
           setDbStudents(mapped);
         }
       })
@@ -1851,8 +2016,48 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       };
     });
 
-    return enrichedStudents.filter(s => s.isActiveOnDate);
-  }, [dbStudents, isStudentScheduledInDbOnDate, editSession, selectedSessionDateYYYYMMDD]);
+    const activeList = enrichedStudents.filter(s => s.isActiveOnDate);
+
+    // Guarantee that any student/guest in existing DB sessions on this date is in allPoolStudents
+    if (existingDbDateSessions && existingDbDateSessions.length > 0) {
+      existingDbDateSessions.forEach(sess => {
+        const isGuest = Boolean(sess.guest_name && sess.guest_name.trim());
+        const sName = isGuest ? sess.guest_name.trim() : (sess.student_name || sess.student || '').trim();
+        const sId = sess.student_id;
+        if (!sName) return;
+        const sNameLow = sName.toLowerCase();
+        const exists = activeList.some(s => (Boolean(s.isGuest) === isGuest) && (
+          (sId != null && String(s.id) === String(sId)) ||
+          (s.name || '').toLowerCase().trim() === sNameLow
+        ));
+        if (!exists) {
+          activeList.push({
+            id: isGuest ? `sess-guest-${sId || '0'}-${sName.replace(/\s+/g, '-').toLowerCase()}` : (sId || `sess-st-${sName.replace(/\s+/g, '-').toLowerCase()}`),
+            name: sName,
+            gender: sess.gender || 'Male',
+            level: sess.type || sess.level || 'Beginner',
+            day: 'day1',
+            whichDay: 1,
+            totalDays: 3,
+            courseDuration: '3 Days Course',
+            waitlistGroup: '3 Days Course',
+            avatar: '',
+            isReal: true,
+            isGuest: isGuest,
+            isActiveOnDate: true,
+            parentStudentId: isGuest ? sId : null,
+            parentStudentName: isGuest ? (sess.student_name || sess.student || null) : null
+          });
+        }
+      });
+    }
+
+    return activeList;
+  }, [dbStudents, isStudentScheduledInDbOnDate, editSession, selectedSessionDateYYYYMMDD, existingDbDateSessions]);
+
+  useEffect(() => {
+    activeStudentsCountRef.current = allPoolStudents.length;
+  }, [allPoolStudents.length]);
 
   // Real Instructors (NO fake data)
   const allInstructors = dbInstructors;
@@ -2085,7 +2290,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
   // ── Existing DB Groups for Selected Date ──
   const existingDbGroups = useMemo(() => {
-    if (!existingDbDateSessions || existingDbDateSessions.length === 0 || allPoolStudents.length === 0) return [];
+    if (!existingDbDateSessions || existingDbDateSessions.length === 0) return [];
     
     const groupsMap = new Map();
     
@@ -2098,7 +2303,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         return sTime === sessTime || sessTime.startsWith(sTime) || sTime.startsWith(sessTime.split(' - ')[0].trim());
       }) || slots[0];
       
-      const slotId = matchedSlot?.id || 'slot-1';
+      const slotId = matchedSlot ? matchedSlot.id : (slots[0]?.id || 1);
       const key = `${slotId}__${groupName}`;
       
       if (!groupsMap.has(key)) {
@@ -2106,7 +2311,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           id: `db-group-${slotId}-${groupName.replace(/\s+/g, '-').toLowerCase()}`,
           name: groupName,
           day: 'Day 1',
-          level: sess.type || 'Intermediate',
+          level: sess.type || sess.level || 'Intermediate',
           slotId: slotId,
           studentIds: [],
           assignedInstructorId: sess.instructor_id || null,
@@ -2161,25 +2366,38 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       
       // Match student from pool
       let matchedStudent = null;
-      if (sess.guest_name && sess.guest_name.trim()) {
-        const gNameLow = sess.guest_name.trim().toLowerCase();
-        matchedStudent = allPoolStudents.find(s => s.isGuest && (s.name.toLowerCase().trim() === gNameLow || gNameLow.includes(s.name.toLowerCase().trim())));
+      const gNameRaw = (sess.guest_name || '').trim();
+      const sNameRaw = (sess.student_name || sess.student || '').trim();
+      const gNameLow = gNameRaw.toLowerCase();
+      const sNameLow = sNameRaw.toLowerCase();
+
+      if (gNameLow) {
+        matchedStudent = allPoolStudents.find(s => s.isGuest && (
+          (s.name || '').toLowerCase().trim() === gNameLow ||
+          (s.name || '').toLowerCase().trim().includes(gNameLow) ||
+          gNameLow.includes((s.name || '').toLowerCase().trim())
+        ));
       }
-      if (!matchedStudent && (sess.student_name || sess.student)) {
-        const sNameLow = (sess.student_name || sess.student).trim().toLowerCase();
-        matchedStudent = allPoolStudents.find(s => !s.isGuest && (s.name.toLowerCase().trim() === sNameLow || sNameLow.includes(s.name.toLowerCase().trim())));
+      if (!matchedStudent && !gNameLow && sNameLow) {
+        matchedStudent = allPoolStudents.find(s => !s.isGuest && (
+          (s.name || '').toLowerCase().trim() === sNameLow ||
+          (s.name || '').toLowerCase().trim().includes(sNameLow) ||
+          sNameLow.includes((s.name || '').toLowerCase().trim())
+        ));
       }
-      if (!matchedStudent && sess.student_id != null) {
+      if (!matchedStudent && !gNameLow && sess.student_id != null) {
         matchedStudent = allPoolStudents.find(s => !s.isGuest && String(s.id) === String(sess.student_id));
       }
       
-      if (matchedStudent && !grpObj.studentIds.includes(matchedStudent.id)) {
-        grpObj.studentIds.push(matchedStudent.id);
+      const targetStudentId = matchedStudent ? matchedStudent.id : (gNameLow ? `sess-guest-${sess.student_id || '0'}-${gNameLow.replace(/\s+/g, '-')}` : sess.student_id);
+
+      if (targetStudentId && !grpObj.studentIds.includes(targetStudentId)) {
+        grpObj.studentIds.push(targetStudentId);
       }
     });
     
     return sortGroupsInOrder(Array.from(groupsMap.values()));
-  }, [existingDbDateSessions, slots, allPoolStudents]);
+  }, [existingDbDateSessions, slots, allPoolStudents, dbInstructors]);
 
   // Check if session date already has published sessions in DB
   const isSessionAlreadyPublishedOnDate = useMemo(() => {
@@ -2195,24 +2413,31 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
   useEffect(() => {
     if (editSession) return;
-    if (userClearedGroupsRef.current) return;
-    if (sessionStorage.getItem('surfing_session_draft_discarded') === 'true') return;
-    if (existingDbGroups.length === 0) return;
-    if (lastSyncedDateRef.current === formattedSessionDate) return;
+    if (!existingDbGroups || existingDbGroups.length === 0) return;
+
+    // Critical: If a draft was loaded or saved for this date, NEVER overwrite wizard state with existingDbGroups!
+    if (draftLoadedForDateRef.current === selectedSessionDateYYYYMMDD || hasSavedDraft || isDraftSavedRef.current) {
+      return;
+    }
+
+    const isNewDate = lastSyncedDateRef.current !== formattedSessionDate;
+    const hasExistingWizardGroups = Array.isArray(trainingGroups) && trainingGroups.length > 0;
+    const hasSlotAssignments = Object.values(slotStudentMap).some(list => Array.isArray(list) && list.length > 0);
+
+    // If already populated on this date with groups and slot data, preserve in-session edits
+    if (!isNewDate && (hasExistingWizardGroups || hasSlotAssignments)) {
+      return;
+    }
 
     // Populate / merge into trainingGroups
     setTrainingGroups(prev => {
-      let merged;
-      if (prev.length === 0) {
-        merged = existingDbGroups;
-      } else {
-        const existingKeys = new Set(prev.map(g => `${g.slotId}__${(g.name || '').toLowerCase()}`));
-        const toAdd = existingDbGroups.filter(g => !existingKeys.has(`${g.slotId}__${(g.name || '').toLowerCase()}`));
-        merged = toAdd.length > 0 ? [...prev, ...toAdd] : prev;
+      if (prev.length === 0 || isNewDate) {
+        return existingDbGroups;
       }
-      return sortGroupsInOrder(merged);
+      const existingKeys = new Set(prev.map(g => `${g.slotId}__${(g.name || '').toLowerCase()}`));
+      const toAdd = existingDbGroups.filter(g => !existingKeys.has(`${g.slotId}__${(g.name || '').toLowerCase()}`));
+      return sortGroupsInOrder(toAdd.length > 0 ? [...prev, ...toAdd] : prev);
     });
-
 
     // Populate slotStudentMap and ensure slot capacities reflect existing published sessions
     const slotPublishedCounts = {};
@@ -2223,9 +2448,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     });
 
     setSlotStudentMap(prevMap => {
-      const newMap = { ...prevMap };
+      const newMap = isNewDate ? {} : { ...prevMap };
       existingDbGroups.forEach(grp => {
-        if (grp.slotId && grp.studentIds.length > 0) {
+        if (grp.slotId && Array.isArray(grp.studentIds) && grp.studentIds.length > 0) {
           const currentInSlot = newMap[grp.slotId] || [];
           newMap[grp.slotId] = Array.from(new Set([...currentInSlot, ...grp.studentIds]));
         }
@@ -2255,12 +2480,14 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     }));
 
     if (existingDbGroups.length > 0 && existingDbGroups[0].slotId) {
-      setSelectedSlotId(existingDbGroups[0].slotId);
+      if (!selectedSlotId || isNewDate) {
+        setSelectedSlotId(existingDbGroups[0].slotId);
+      }
       setStep3SlotFilter(existingDbGroups[0].slotId);
     }
 
     lastSyncedDateRef.current = formattedSessionDate;
-  }, [existingDbGroups, formattedSessionDate, editSession]);
+  }, [existingDbGroups, formattedSessionDate, editSession, trainingGroups.length, selectedSessionDateYYYYMMDD, hasSavedDraft]);
 
   // Helper to get any student's assigned group name (from wizard state or DB sessions)
   const getStudentAssignedGroup = (student) => {
@@ -2294,90 +2521,31 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   // Sync with Session Configuration changes (live in same tab or across tabs)
   useEffect(() => {
     const handleSlotsSync = (e) => {
-      if (e && e.detail && Array.isArray(e.detail)) {
+      if (e && e.detail && Array.isArray(e.detail) && e.detail.length > 0) {
         setSlots(normalizeConfiguredSlots(e.detail));
-      } else {
-        setSlots(loadConfiguredSlots());
       }
     };
 
-    // Immediate initial sync on mount
-    handleSlotsSync();
-
-    // Strip legacy frozen slots from any saved session drafts in storage
+    // Purge any stale legacy session drafts and cached session slots from localStorage & sessionStorage
     try {
+      const staleKeys = [];
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
-        if (k && k.startsWith('surfing_session_draft')) {
-          const rawDraft = localStorage.getItem(k);
-          if (rawDraft) {
-            try {
-              const parsed = JSON.parse(rawDraft);
-              if (parsed && typeof parsed === 'object' && parsed.slots) {
-                delete parsed.slots;
-                localStorage.setItem(k, JSON.stringify(parsed));
-              }
-            } catch (err) {}
-          }
+        if (k && (k.startsWith('surfing_session_draft') || k === 'session_slots')) {
+          staleKeys.push(k);
         }
       }
+      staleKeys.forEach(k => localStorage.removeItem(k));
+      sessionStorage.removeItem('surfing_session_draft_discarded');
     } catch (e) {}
 
-    window.addEventListener('storage', handleSlotsSync);
     window.addEventListener('session_slots_updated', handleSlotsSync);
-    window.addEventListener('focus', handleSlotsSync);
     return () => {
-      window.removeEventListener('storage', handleSlotsSync);
       window.removeEventListener('session_slots_updated', handleSlotsSync);
-      window.removeEventListener('focus', handleSlotsSync);
     };
   }, []);
 
-  // Live sync with central PostgreSQL Database whenever the selected date or school changes
-  useEffect(() => {
-    let isCancelled = false;
-    const fetchSlotsForDate = async () => {
-      try {
-        setIsSlotsLoading(true);
-        const rawUser = sessionStorage.getItem('user') || localStorage.getItem('user');
-        const user = rawUser ? JSON.parse(rawUser) : null;
-        const schoolId = user?.school_id || null;
-        const rawSchool = user?.school || user?.school_name || activeSchoolName || '';
-        const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
-
-        const queryParams = new URLSearchParams();
-        if (schoolId) queryParams.set('school_id', schoolId);
-        if (schoolName) queryParams.set('school_name', schoolName);
-        if (selectedSessionDateYYYYMMDD) queryParams.set('date', selectedSessionDateYYYYMMDD);
-
-        const res = await fetch(`${API}/api/session-slots?${queryParams.toString()}`);
-        const data = await res.json();
-        if (isCancelled) return;
-
-        if (data && data.status === 'success' && Array.isArray(data.slots) && data.slots.length > 0) {
-          const normalized = normalizeConfiguredSlots(data.slots);
-          setSlots(normalized);
-          setIsCustomForDate(Boolean(data.is_custom_date));
-          if (!data.is_custom_date) {
-            localStorage.setItem('session_slots', JSON.stringify(data.slots));
-          }
-        } else {
-          setIsCustomForDate(false);
-        }
-
-        if (data && Array.isArray(data.custom_dates)) {
-          setCustomDatesList(data.custom_dates);
-        }
-      } catch (err) {
-        console.warn('Failed fetching slots from DB in NewSession:', err);
-      } finally {
-        if (!isCancelled) setIsSlotsLoading(false);
-      }
-    };
-
-    fetchSlotsForDate();
-    return () => { isCancelled = true; };
-  }, [selectedSessionDateYYYYMMDD, activeSchoolName]);
+  // Live sync with storage events when slots change
 
   // Selected Slot details (null if user has not picked a slot yet)
   const selectedSlot = useMemo(() => {
@@ -2437,11 +2605,22 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const getStudentSlotAssignment = (studentId) => {
     for (let idx = 0; idx < slots.length; idx++) {
       const s = slots[idx];
-      const assignedIds = slotStudentMap[s.id] || [];
-      if (assignedIds.includes(studentId)) {
+      const assignedIds = slotStudentMap[s.id] || slotStudentMap[String(s.id)] || [];
+      if (assignedIds.some(id => String(id) === String(studentId))) {
         const theme = getSlotThemeForSlot(s.id);
-        const activeIdx = activeSlotsForDay.findIndex(x => x.id === s.id);
+        const activeIdx = activeSlotsForDay.findIndex(x => String(x.id) === String(s.id));
         return { slot: s, slotIdx: activeIdx !== -1 ? activeIdx : idx, theme };
+      }
+    }
+    // Fallback: check trainingGroups
+    for (const grp of trainingGroups) {
+      if ((grp.studentIds || []).some(id => String(id) === String(studentId))) {
+        const matchedSlot = slots.find(s => String(s.id) === String(grp.slotId)) || slots[0];
+        if (matchedSlot) {
+          const theme = getSlotThemeForSlot(matchedSlot.id);
+          const activeIdx = activeSlotsForDay.findIndex(x => String(x.id) === String(matchedSlot.id));
+          return { slot: matchedSlot, slotIdx: activeIdx !== -1 ? activeIdx : 0, theme };
+        }
       }
     }
     return null;
@@ -2453,8 +2632,13 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     Object.values(slotStudentMap).forEach(list => {
       if (Array.isArray(list)) list.forEach(id => ids.add(id));
     });
+    trainingGroups.forEach(grp => {
+      if (Array.isArray(grp.studentIds)) {
+        grp.studentIds.forEach(id => ids.add(id));
+      }
+    });
     return Array.from(ids);
-  }, [slotStudentMap]);
+  }, [slotStudentMap, trainingGroups]);
 
   // Backward compatibility alias for selectedStudentIds
   const selectedStudentIds = allSelectedStudentIds;
@@ -2463,6 +2647,12 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const toggleSelectStudent = (studentId) => {
     const activeSlotId = selectedSlotId || activeSlotsForDay[0]?.id || slots[0]?.id;
     if (!activeSlotId) return;
+
+    // Capture scroll position before state update so screen does NOT scroll/jump
+    const scrollContainer = document.querySelector('.ns-modal-body-scroll');
+    const containerTop = scrollContainer ? scrollContainer.scrollTop : null;
+    const windowY = window.scrollY;
+    savedScrollPosRef.current = { containerTop, windowY };
 
     const activeSlot = slots.find(s => s.id === activeSlotId) || selectedSlot;
     const slotCap = getSlotCapacity(activeSlot);
@@ -2529,7 +2719,33 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         return newMap;
       });
     }
+
+    // Additional rAF fallback to ensure viewport remains locked at user's scroll position
+    requestAnimationFrame(() => {
+      const c = document.querySelector('.ns-modal-body-scroll');
+      if (c && containerTop != null && c.scrollTop !== containerTop) {
+        c.scrollTop = containerTop;
+      }
+      if (window.scrollY !== windowY) {
+        window.scrollTo({ top: windowY, behavior: 'instant' });
+      }
+    });
   };
+
+  // Synchronously lock scroll position right after DOM mutation to prevent any screen jump
+  useLayoutEffect(() => {
+    if (savedScrollPosRef.current) {
+      const { containerTop, windowY } = savedScrollPosRef.current;
+      const scrollContainer = document.querySelector('.ns-modal-body-scroll');
+      if (scrollContainer && containerTop != null) {
+        scrollContainer.scrollTop = containerTop;
+      }
+      if (windowY != null && window.scrollY !== windowY) {
+        window.scrollTo(0, windowY);
+      }
+      savedScrollPosRef.current = null;
+    }
+  }, [slotStudentMap]);
 
 
 
@@ -2590,6 +2806,18 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
     const normalized = normalizeConfiguredSlots(updatedSlots);
     setSlots(normalized);
+    try {
+      window.dispatchEvent(new CustomEvent('session_slots_updated', { detail: normalized }));
+    } catch (e) {}
+
+    // Also update any existing training groups assigned to this slot so their time is immediately fresh
+    setTrainingGroups(prev => prev.map(g => {
+      if (String(g.slotId) === String(modalData.id)) {
+        return { ...g, slotId: modalData.id };
+      }
+      return g;
+    }));
+
     setIsCustomForDate(true);
     setCustomDatesList(prev => Array.from(new Set([...prev, selectedSessionDateYYYYMMDD])));
     setEditingSlotModal(null);
@@ -2597,8 +2825,12 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     // Persist to central PostgreSQL database specifically for THIS DATE
     try {
       const schoolId = currentUser?.school_id || null;
-      const rawSchool = currentUser?.school || currentUser?.school_name || activeSchoolName || '';
-      const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
+      let rawSchool = activeSchoolName || currentUser?.school || currentUser?.school_name || '';
+      if (typeof rawSchool === 'object') rawSchool = rawSchool?.name || rawSchool?.school_name || '';
+      if (String(rawSchool).toLowerCase() === 'school admin' || String(rawSchool).toLowerCase() === 'super admin') {
+        rawSchool = activeSchoolName || '';
+      }
+      const schoolName = String(rawSchool).trim();
 
       fetch(`${API}/api/session-slots`, {
         method: 'POST',
@@ -2650,6 +2882,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       setStep3CheckedStudentIdsBySlot({});
       setActiveDropGroupId(null);
       lastSyncedDateRef.current = null;
+      setSlotCapacityMap({});
     }
   };
   const handleNextMonth = () => {
@@ -2660,6 +2893,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       setStep3CheckedStudentIdsBySlot({});
       setActiveDropGroupId(null);
       lastSyncedDateRef.current = null;
+      setSlotCapacityMap({});
     }
   };
 
@@ -2691,18 +2925,26 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   // Students precisely matching active Step 2 filters (Day, Level, Status, Gender, Swimming, Search)
   const filterMatchingStudents = useMemo(() => {
     const activeSlotIdStep2 = selectedSlotId || activeSlotsForDay[0]?.id || slots[0]?.id;
-    const currentSlotStudentIds = new Set(slotStudentMap[activeSlotIdStep2] || []);
-    const allSelectedSet = new Set(allSelectedStudentIds);
+    const currentSlotStudentIds = new Set(
+      (slotStudentMap[activeSlotIdStep2] || slotStudentMap[String(activeSlotIdStep2)] || []).map(String)
+    );
+    trainingGroups.forEach(g => {
+      if (String(g.slotId) === String(activeSlotIdStep2)) {
+        (g.studentIds || []).forEach(id => currentSlotStudentIds.add(String(id)));
+      }
+    });
+    const allSelectedSet = new Set(allSelectedStudentIds.map(String));
 
     return allPoolStudents.filter(s => {
+      const sIdStr = String(s.id);
       // 1. Day Filter (courseDayFilter)
       if (courseDayFilter !== 'all' && String(s.whichDay) !== String(courseDayFilter)) return false;
       // 2. Level Filter
       if (levelFilter !== 'all' && s.level.toLowerCase() !== levelFilter.toLowerCase()) return false;
       // 3. Status Filter (Selected vs Not Selected)
-      if (selectionFilter === 'selected' && !allSelectedSet.has(s.id)) return false;
-      if (selectionFilter === 'not_selected' && allSelectedSet.has(s.id)) return false;
-      if (selectionFilter === 'this_slot' && !currentSlotStudentIds.has(s.id)) return false;
+      if (selectionFilter === 'selected' && !allSelectedSet.has(sIdStr)) return false;
+      if (selectionFilter === 'not_selected' && allSelectedSet.has(sIdStr)) return false;
+      if (selectionFilter === 'this_slot' && !currentSlotStudentIds.has(sIdStr)) return false;
       // 4. Gender Filter
       if (genderFilterStep2 !== 'all' && (s.gender || 'male').toLowerCase() !== genderFilterStep2.toLowerCase()) return false;
       // 5. Swimming Ability Filter
@@ -2720,34 +2962,52 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       }
       return true;
     });
-  }, [allPoolStudents, courseDayFilter, levelFilter, selectionFilter, genderFilterStep2, swimmingFilterStep2, studentSearchStep2, allSelectedStudentIds, slotStudentMap, selectedSlotId, activeSlotsForDay, slots]);
+  }, [allPoolStudents, courseDayFilter, levelFilter, selectionFilter, genderFilterStep2, swimmingFilterStep2, studentSearchStep2, allSelectedStudentIds, slotStudentMap, trainingGroups, selectedSlotId, activeSlotsForDay, slots]);
 
   // Step 2 Filtered & Sorted students from database:
   // Active slot's assigned students on TOP (0), Unassigned in MIDDLE (1), Other slots' students at BOTTOM (2)
   const filteredStudents = useMemo(() => {
     const activeSlotIdStep2 = selectedSlotId || activeSlotsForDay[0]?.id || slots[0]?.id;
-    const currentSlotStudentIds = new Set(slotStudentMap[activeSlotIdStep2] || []);
-    const allSelectedSet = new Set(allSelectedStudentIds);
+    const currentSlotStudentIds = new Set(
+      (slotStudentMap[activeSlotIdStep2] || slotStudentMap[String(activeSlotIdStep2)] || []).map(String)
+    );
+    trainingGroups.forEach(g => {
+      if (String(g.slotId) === String(activeSlotIdStep2)) {
+        (g.studentIds || []).forEach(id => currentSlotStudentIds.add(String(id)));
+      }
+    });
+    const allSelectedSet = new Set(allSelectedStudentIds.map(String));
 
-    const getStudentPriority = (id) => {
-      if (currentSlotStudentIds.has(id)) return 0; // Top: In this active slot
-      if (!allSelectedSet.has(id)) return 1;       // Middle: Unassigned / available
-      return 2;                                    // Bottom: Assigned in another slot
-    };
+    const getStudentPriority = (student) => {
+      const idStr = String(student.id);
+      const isScheduledInDb = isStudentScheduledInDbOnDate(student);
+      const isInCurrentSlot = currentSlotStudentIds.has(idStr);
 
-    const getFamilyPriority = (student) => {
-      const familyId = student.parentStudentId || student.id;
-      const related = allPoolStudents.filter(s => (s.parentStudentId || s.id) === familyId);
-      if (related.length === 0) return getStudentPriority(student.id);
-      return Math.min(...related.map(s => getStudentPriority(s.id)));
+      if (isInCurrentSlot) {
+        // Priority 0: Newly/freshly selected students in this slot (FIRST / ABOVE scheduled)
+        if (!isScheduledInDb) return 0;
+        // Priority 1: Already scheduled students in this slot (from DB)
+        return 1;
+      }
+
+      if (!allSelectedSet.has(idStr)) {
+        // Priority 2: Available / unassigned students (Not Selected)
+        if (!isScheduledInDb) return 2;
+        // Priority 3: Other DB scheduled students
+        return 3;
+      }
+
+      // Priority 4: Assigned in another slot
+      return 4;
     };
 
     return allPoolStudents
       .filter(s => levelFilter === 'all' || s.level.toLowerCase() === levelFilter.toLowerCase())
       .filter(s => {
-        if (selectionFilter === 'selected') return allSelectedSet.has(s.id);
-        if (selectionFilter === 'not_selected') return !allSelectedSet.has(s.id);
-        if (selectionFilter === 'this_slot') return currentSlotStudentIds.has(s.id);
+        const sIdStr = String(s.id);
+        if (selectionFilter === 'selected') return allSelectedSet.has(sIdStr);
+        if (selectionFilter === 'not_selected') return !allSelectedSet.has(sIdStr);
+        if (selectionFilter === 'this_slot') return currentSlotStudentIds.has(sIdStr);
         return true;
       })
       .filter(s => genderFilterStep2 === 'all' || (s.gender || 'male').toLowerCase() === genderFilterStep2.toLowerCase())
@@ -2761,16 +3021,16 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       .filter(s => !studentSearchStep2 || s.name.toLowerCase().includes(studentSearchStep2.toLowerCase()) || (s.parentStudentName && s.parentStudentName.toLowerCase().includes(studentSearchStep2.toLowerCase())))
       .slice()
       .sort((a, b) => {
-        // Keep parent student and their guests grouped together
+        // 1. Strict priority sort: active slot students on TOP (0), available in MIDDLE (1), DB scheduled (2), other slots at BOTTOM (3)
+        const prioA = getStudentPriority(a);
+        const prioB = getStudentPriority(b);
+        if (prioA !== prioB) return prioA - prioB;
+
+        // When having the SAME priority: keep parent student and their guests grouped together
         const familyIdA = a.parentStudentId || a.id;
         const familyIdB = b.parentStudentId || b.id;
 
         if (String(familyIdA) !== String(familyIdB)) {
-          // 1. Priority sort: active slot students on TOP, unassigned in MIDDLE, other slots at BOTTOM
-          const prioA = getFamilyPriority(a);
-          const prioB = getFamilyPriority(b);
-          if (prioA !== prioB) return prioA - prioB;
-
           // 2. If day filter is active
           if (courseDayFilter !== 'all') {
             const aMatch = String(a.whichDay) === String(courseDayFilter);
@@ -2795,7 +3055,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         const subB = b.isGuest ? (b.guestIndex || 1) : 0;
         return subA - subB;
       });
-  }, [allPoolStudents, levelFilter, selectionFilter, courseDayFilter, genderFilterStep2, swimmingFilterStep2, studentSearchStep2, allSelectedStudentIds, slotStudentMap, selectedSlotId, activeSlotsForDay, slots]);
+  }, [allPoolStudents, levelFilter, selectionFilter, courseDayFilter, genderFilterStep2, swimmingFilterStep2, studentSearchStep2, allSelectedStudentIds, slotStudentMap, selectedSlotId, activeSlotsForDay, slots, existingScheduledStudentNamesOnDate, existingDbScheduledInfoMapOnDate]);
 
   // Transition from Step 2 to Step 3: Multi-slot aware group initialization
   const proceedToStep3 = () => {
@@ -2850,9 +3110,16 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       // In edit mode: allPoolStudents is already strictly the group's students
       return allPoolStudents;
     }
-    const targetIds = allSelectedStudentIds.length > 0 ? allSelectedStudentIds : selectedStudentIds;
-    return allPoolStudents.filter(s => targetIds.includes(s.id));
-  }, [allPoolStudents, allSelectedStudentIds, selectedStudentIds, editSession]);
+    const allGroupStudentIds = new Set();
+    trainingGroups.forEach(g => {
+      (g.studentIds || []).forEach(id => allGroupStudentIds.add(String(id)));
+    });
+    const targetIdSet = new Set([
+      ...allSelectedStudentIds.map(String),
+      ...allGroupStudentIds
+    ]);
+    return allPoolStudents.filter(s => targetIdSet.has(String(s.id)));
+  }, [allPoolStudents, allSelectedStudentIds, trainingGroups, editSession]);
 
   // Step 3: Available Days for Imported Students
   const step3AvailableDays = useMemo(() => {
@@ -2870,8 +3137,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   // Students in active slot (for option counts)
   const slotImportedStudents = useMemo(() => {
     if (editSession || step3SlotFilter === 'ALL') return importedStudents;
-    const slotAssignedIds = slotStudentMap[step3SlotFilter] || [];
-    return importedStudents.filter(s => slotAssignedIds.includes(s.id));
+    const slotAssignedIds = slotStudentMap[step3SlotFilter] || slotStudentMap[String(step3SlotFilter)] || [];
+    return importedStudents.filter(s => slotAssignedIds.some(id => String(id) === String(s.id)));
   }, [importedStudents, step3SlotFilter, slotStudentMap, editSession]);
 
   const hasActiveStep3Filters = step3DayFilter !== 'all' || step3StatusFilter !== 'unassigned' || step3LevelFilter !== 'all' || step3GenderFilter !== 'all' || step3SwimmingFilter !== 'all' || Boolean(studentSearch);
@@ -2890,8 +3157,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       .filter(s => {
         // Slot filtering in Step 3 (bypassed in edit mode so group students never disappear)
         if (!editSession && step3SlotFilter !== 'ALL') {
-          const slotAssignedIds = slotStudentMap[step3SlotFilter] || [];
-          if (!slotAssignedIds.includes(s.id)) return false;
+          const slotAssignedIds = slotStudentMap[step3SlotFilter] || slotStudentMap[String(step3SlotFilter)] || [];
+          const isInGroupForSlot = trainingGroups.some(g => String(g.slotId) === String(step3SlotFilter) && (g.studentIds || []).some(id => String(id) === String(s.id)));
+          if (!slotAssignedIds.some(id => String(id) === String(s.id)) && !isInGroupForSlot) return false;
         }
 
         // Day filtering
@@ -2900,7 +3168,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         }
 
         // Status filtering (All Active / Unassigned / Assigned)
-        const isAssigned = trainingGroups.some(g => g.studentIds.includes(s.id));
+        const isAssigned = trainingGroups.some(g => (g.studentIds || []).some(id => String(id) === String(s.id)));
         if (step3StatusFilter === 'unassigned' && isAssigned) return false;
         if (step3StatusFilter === 'assigned' && !isAssigned) return false;
 
@@ -2928,8 +3196,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       .slice()
       .sort((a, b) => {
         // Unassigned on top, assigned to groups at bottom
-        const aAssigned = trainingGroups.some(g => g.studentIds.includes(a.id));
-        const bAssigned = trainingGroups.some(g => g.studentIds.includes(b.id));
+        const aAssigned = trainingGroups.some(g => (g.studentIds || []).some(id => String(id) === String(a.id)));
+        const bAssigned = trainingGroups.some(g => (g.studentIds || []).some(id => String(id) === String(b.id)));
         if (!aAssigned && bAssigned) return -1;
         if (aAssigned && !bAssigned) return 1;
 
@@ -3022,9 +3290,15 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     if (editSession || step3SlotFilter === 'ALL') {
       return new Set(importedStudents.map(s => s.id));
     }
-    const slotAssignedIds = slotStudentMap[step3SlotFilter] || [];
-    return new Set(slotAssignedIds);
-  }, [importedStudents, step3SlotFilter, slotStudentMap, editSession]);
+    const slotAssignedIds = slotStudentMap[step3SlotFilter] || slotStudentMap[String(step3SlotFilter)] || [];
+    const grpIds = [];
+    trainingGroups.forEach(g => {
+      if (String(g.slotId) === String(step3SlotFilter)) {
+        (g.studentIds || []).forEach(id => grpIds.push(id));
+      }
+    });
+    return new Set([...slotAssignedIds, ...grpIds]);
+  }, [importedStudents, step3SlotFilter, slotStudentMap, trainingGroups, editSession]);
 
   // Checked student IDs strictly scoped to the active slot and unassigned when filter is unassigned
   const step3CheckedStudentIds = useMemo(() => {
@@ -3268,11 +3542,13 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     }
     setActiveDropGroupId(null);
     try {
-      Object.keys(localStorage).forEach(key => {
-        if (key.startsWith('surfing_session_draft')) {
-          localStorage.removeItem(key);
-        }
-      });
+      const schoolId = currentUser?.school_id || null;
+      const rawSchool = currentUser?.school || currentUser?.school_name || activeSchoolName || '';
+      const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
+      const delParams = new URLSearchParams({ date: selectedSessionDateYYYYMMDD });
+      if (schoolId) delParams.set('school_id', schoolId);
+      if (schoolName) delParams.set('school_name', schoolName);
+      fetch(`${API}/api/session-drafts?${delParams.toString()}`, { method: 'DELETE' }).catch(() => {});
     } catch (e) {}
   };
 
@@ -3691,27 +3967,67 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           group_name: grp.name || '',
         };
 
-        // ── EDIT / EXISTING DB GROUP MODE: Update existing sessions via PUT ──
-        const existingSessionIds = editSession
+        // ── CHECK EXISTING DB SESSIONS FOR THIS GROUP ──
+        const knownExistingSessionIds = editSession
           ? (Array.isArray(editSession.sessions) && editSession.sessions.length > 0 ? editSession.sessions.map(s => s.id) : (editSession.id ? [editSession.id] : []))
           : (grp.existingSessionIds && grp.existingSessionIds.length > 0 ? grp.existingSessionIds : []);
 
-        if (existingSessionIds.length > 0) {
-          const grpSlot = slots.find(s => s.id === grp.slotId) || selectedSlot;
-          const slotTimeStr = grpSlot ? (grpSlot.time || grpSlot.startTime) : (editSession?.time || '08:30 AM');
-          const slotDuration = grpSlot?.duration ? parseInt(grpSlot.duration, 10) : 90;
-          const coachIds = (grp.assignedInstructorIds && grp.assignedInstructorIds.length > 0)
-            ? grp.assignedInstructorIds
-            : (grp.assignedInstructorId ? [grp.assignedInstructorId] : []);
-          const numericCoachIds = coachIds
-            .map(cid => typeof cid === 'number' ? cid : parseInt(String(cid).replace(/\D/g, ''), 10))
-            .filter(id => !isNaN(id) && id > 0);
-          const assignedCoachObjs = allInstructors.filter(i => coachIds.map(String).includes(String(i.id)));
-          const assignedCoachObj = allInstructors.find(i => String(i.id) === String(grp.assignedInstructorId || coachIds[0]));
-          const coachName = assignedCoachObj?.name || editSession?.instructor || 'Instructor';
-          const assignedInstNames = assignedCoachObjs.length > 0 ? assignedCoachObjs.map(i => i.name).join(', ') : coachName;
-          const primaryInstructorId = numericCoachIds[0] || coachIds[0] || null;
+        const targetGrpName = (grp.name || '').trim().toLowerCase();
+        const groupDbSessions = (existingDbDateSessions || []).filter(sess => {
+          if (knownExistingSessionIds.includes(sess.id)) return true;
+          if (editSession && (editSession.id === sess.id || (Array.isArray(editSession.sessions) && editSession.sessions.some(s => s.id === sess.id)))) return true;
+          const sGrp = (sess.group_name || sess.groupName || '').trim().toLowerCase();
+          return Boolean(sGrp && targetGrpName && sGrp === targetGrpName);
+        });
 
+        // If this group already has sessions in DB, handle differential update/create/delete
+        if (groupDbSessions.length > 0 || knownExistingSessionIds.length > 0) {
+          const remainingDbSessions = [...groupDbSessions];
+          // Also include any known session IDs that weren't in groupDbSessions
+          knownExistingSessionIds.forEach(kId => {
+            if (!remainingDbSessions.some(s => s.id === kId)) {
+              remainingDbSessions.push({ id: kId });
+            }
+          });
+
+          const toUpdateSessions = [];
+          const toCreateStudents = [];
+
+          for (const stItem of studentsData) {
+            const matchedIdx = remainingDbSessions.findIndex(sess => {
+              // 1. Guest match
+              if (stItem.is_guest || stItem.guest_name) {
+                const gName = (stItem.guest_name || stItem.student_name || '').toLowerCase().trim();
+                const sessGName = (sess.guest_name || '').toLowerCase().trim();
+                if (sessGName && (sessGName === gName || sessGName.includes(gName) || gName.includes(sessGName))) {
+                  return true;
+                }
+              }
+              // 2. Regular student match by student_id
+              if (!stItem.is_guest && sess.student_id != null && String(sess.student_id) === String(stItem.student_id)) {
+                return true;
+              }
+              // 3. Regular student match by name
+              if (!stItem.is_guest && (sess.student_name || sess.student)) {
+                const sessName = (sess.student_name || sess.student || '').toLowerCase().trim();
+                const stName = (stItem.student_name || '').toLowerCase().trim();
+                if (sessName && stName && (sessName === stName || sessName.includes(stName) || stName.includes(sessName))) {
+                  return true;
+                }
+              }
+              return false;
+            });
+
+            if (matchedIdx !== -1) {
+              const matched = remainingDbSessions[matchedIdx];
+              toUpdateSessions.push({ sessionId: matched.id, stItem });
+              remainingDbSessions.splice(matchedIdx, 1);
+            } else {
+              toCreateStudents.push(stItem);
+            }
+          }
+
+          // A) UPDATE EXISTING STUDENTS IN THIS GROUP
           const updatePayload = {
             date: formattedSessionDate,
             time: slotTimeStr,
@@ -3722,22 +4038,70 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             notes: `${grp.name} (${slotTimeStr}) - Coaches: ${assignedInstNames || 'Staff'} - ${numericStudentIds.length} students`,
             location: spotName || editSession?.location || 'Main Beach',
             group_name: grp.name || editSession?.groupName || '',
+            type: grp.level || 'Intermediate',
           };
 
-          await Promise.all(
-            existingSessionIds.map(sId =>
-              fetch(`${API}/api/sessions/${sId}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(updatePayload),
-              }).catch(err => console.error('Failed updating session', sId, err))
-            )
-          );
-          publishedCount++;
+          if (toUpdateSessions.length > 0) {
+            await Promise.all(
+              toUpdateSessions.map(({ sessionId }) =>
+                fetch(`${API}/api/sessions/${sessionId}`, {
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(updatePayload),
+                }).catch(err => console.error('Failed updating session', sessionId, err))
+              )
+            );
+          }
+
+          // B) CREATE SESSIONS FOR NEWLY ADDED STUDENTS IN THIS GROUP
+          if (toCreateStudents.length > 0) {
+            const newNumericIds = toCreateStudents.map(s => s.student_id).filter(id => !isNaN(id) && id > 0);
+            const createPayload = {
+              date: formattedSessionDate,
+              time: slotTimeStr,
+              duration_mins: slotDuration,
+              student_ids: newNumericIds,
+              students_data: toCreateStudents,
+              instructor_id: primaryInstructorId,
+              instructor_ids: numericCoachIds,
+              instructor: assignedInstNames || coachName,
+              location: spotName || 'Main Beach',
+              condition: 'Moderate',
+              type: grp.level || 'Intermediate',
+              status: 'Upcoming',
+              notes: `${grp.name} (${slotTimeStr}) - Coaches: ${assignedInstNames || 'Staff'} - ${numericStudentIds.length} students`,
+              group_name: grp.name || '',
+            };
+
+            const createRes = await fetch(`${API}/api/sessions/bulk`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(createPayload)
+            });
+            if (!createRes.ok) {
+              const errData = await createRes.json().catch(() => ({}));
+              console.error("Bulk save error for newly added students:", errData);
+            }
+          }
+
+          // C) DELETE SESSIONS FOR STUDENTS REMOVED FROM THIS GROUP
+          if (remainingDbSessions.length > 0) {
+            await Promise.all(
+              remainingDbSessions.map(sess =>
+                fetch(`${API}/api/sessions/${sess.id}`, {
+                  method: 'DELETE',
+                }).catch(err => console.error('Failed deleting removed student session', sess.id, err))
+              )
+            );
+          }
+
+          if (toUpdateSessions.length > 0 || toCreateStudents.length > 0) {
+            publishedCount++;
+          }
           continue;
         }
 
-        // ── CREATE MODE: Bulk create new sessions ──
+        // ── CREATE MODE: Brand new group without existing sessions ──
         const res = await fetch(`${API}/api/sessions/bulk`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -3755,7 +4119,6 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       if (publishedCount > 0) {
         if (!editSession) {
           try {
-            localStorage.removeItem(draftKey);
             const schoolId = currentUser?.school_id || null;
             const rawSchool = currentUser?.school || currentUser?.school_name || activeSchoolName || '';
             const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
@@ -3781,6 +4144,15 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             .then(r => r.json())
             .then(data => {
               if (Array.isArray(data)) setExistingDbSessions(data);
+            })
+            .catch(() => {});
+          fetch(`${API}/api/students${sParam}`)
+            .then(r => r.json())
+            .then(data => {
+              if (Array.isArray(data)) {
+                const mapped = normalizeStudentsData(data, sName);
+                setDbStudents(mapped);
+              }
             })
             .catch(() => {});
         } catch(e) {}
@@ -3916,30 +4288,32 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
               type="button"
               className="ns-clear-draft-btn"
               onClick={handleClearDraft}
-              title="Clear all saved draft data and reset selections"
+              disabled={!hasSavedDraft && !clearDraftToast}
+              title={hasSavedDraft ? 'Clear all saved draft data and reset selections' : 'No saved draft to clear'}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '5px',
-                background: clearDraftToast ? '#DC2626' : '#FEF2F2',
-                color: clearDraftToast ? '#FFFFFF' : '#DC2626',
-                border: clearDraftToast ? '1px solid #DC2626' : '1px solid #FECACA',
+                background: clearDraftToast ? '#DC2626' : !hasSavedDraft ? '#F8FAFC' : '#FEF2F2',
+                color: clearDraftToast ? '#FFFFFF' : !hasSavedDraft ? '#94A3B8' : '#DC2626',
+                border: clearDraftToast ? '1px solid #DC2626' : !hasSavedDraft ? '1px solid #E2E8F0' : '1px solid #FECACA',
                 borderRadius: '8px',
                 padding: '6px 12px',
                 fontSize: '12px',
                 fontWeight: 700,
-                cursor: 'pointer',
+                cursor: !hasSavedDraft ? 'not-allowed' : 'pointer',
+                opacity: !hasSavedDraft ? 0.6 : 1,
                 transition: 'all 0.15s ease',
                 whiteSpace: 'nowrap'
               }}
               onMouseEnter={(e) => {
-                if (!clearDraftToast) {
+                if (!clearDraftToast && hasSavedDraft) {
                   e.currentTarget.style.background = '#FEE2E2';
                   e.currentTarget.style.borderColor = '#FCA5A5';
                 }
               }}
               onMouseLeave={(e) => {
-                if (!clearDraftToast) {
+                if (!clearDraftToast && hasSavedDraft) {
                   e.currentTarget.style.background = '#FEF2F2';
                   e.currentTarget.style.borderColor = '#FECACA';
                 }
@@ -4064,25 +4438,25 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
             <div
               style={{
-                width: '56px',
-                height: '56px',
+                width: '60px',
+                height: '60px',
                 borderRadius: '50%',
-                background: '#F0FDFA',
-                border: '1.5px solid #CCFBF1',
+                background: '#FEF3C7',
+                border: '2px solid #FDE68A',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                fontSize: '26px',
+                fontSize: '28px',
                 marginBottom: '16px'
               }}
             >
               💾
             </div>
-            <h3 style={{ margin: '0 0 8px 0', fontSize: '18px', fontWeight: 800, color: '#0F172A', fontFamily: "'Outfit', sans-serif" }}>
-              Save session as draft?
+            <h3 style={{ margin: '0 0 8px 0', fontSize: '19px', fontWeight: 800, color: '#0F172A', fontFamily: "'Outfit', sans-serif" }}>
+              Save Session Draft?
             </h3>
-            <p style={{ margin: '0 0 24px 0', fontSize: '13.5px', color: '#64748B', lineHeight: 1.5 }}>
-              Do you want to save your progress so you can resume later, or discard your changes?
+            <p style={{ margin: '0 0 20px 0', fontSize: '13.5px', color: '#64748B', lineHeight: 1.5, padding: '0 8px' }}>
+              You have unsaved changes in this session setup. Do you want to save as a draft before closing, or discard changes?
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', width: '100%' }}>
               <button
@@ -4090,7 +4464,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                 onClick={confirmSaveDraftAndClose}
                 style={{
                   width: '100%',
-                  background: '#0D9488',
+                  background: 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)',
                   color: '#FFFFFF',
                   border: 'none',
                   padding: '12px 18px',
@@ -4099,34 +4473,16 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                   fontSize: '14px',
                   cursor: 'pointer',
                   boxShadow: '0 4px 12px rgba(13, 148, 136, 0.3)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
                   transition: 'all 0.15s ease'
                 }}
               >
-                💾 Save Current Draft &amp; Close
+                <span>💾</span>
+                <span>Save Draft &amp; Close</span>
               </button>
-
-              {Boolean(originalSavedDraftRef.current) && (
-                <button
-                  type="button"
-                  onClick={confirmKeepOldDraftAndClose}
-                  style={{
-                    width: '100%',
-                    background: '#F1F5F9',
-                    color: '#0F172A',
-                    border: '1.5px solid #CBD5E1',
-                    padding: '11px 18px',
-                    borderRadius: '10px',
-                    fontWeight: 700,
-                    fontSize: '13.5px',
-                    cursor: 'pointer',
-                    transition: 'all 0.15s ease'
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.background = '#E2E8F0'; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = '#F1F5F9'; }}
-                >
-                  ↩️ Keep Old Draft (Exit Without New Changes)
-                </button>
-              )}
 
               <button
                 type="button"
@@ -4135,16 +4491,22 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                   width: '100%',
                   background: '#FEF2F2',
                   color: '#DC2626',
-                  border: '1px solid #FECACA',
+                  border: '1.5px solid #FECACA',
                   padding: '11px 18px',
                   borderRadius: '10px',
-                  fontWeight: 600,
+                  fontWeight: 700,
                   fontSize: '13.5px',
                   cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
                   transition: 'all 0.15s ease'
                 }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#FEE2E2'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = '#FEF2F2'; }}
               >
-                🗑️ Delete Draft Completely (Clear All)
+                <span>Exit</span>
               </button>
             </div>
           </div>
@@ -4152,7 +4514,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       )}
 
       {/* Main Form Scrollable Container */}
-      <div className={isModal ? "ns-modal-body-scroll" : ""} style={isModal ? { padding: '16px 24px', overflowY: 'auto', overflowX: 'hidden', flex: 1, maxHeight: 'calc(92vh - 72px)', display: 'flex', flexDirection: 'column' } : { display: 'flex', flexDirection: 'column', flex: 1 }}>
+      <div className={isModal ? "ns-modal-body-scroll" : ""} style={isModal ? { padding: '16px 24px', overflowY: 'auto', overflowX: 'hidden', flex: 1, maxHeight: 'calc(92vh - 72px)', display: 'flex', flexDirection: 'column', overflowAnchor: 'none' } : { display: 'flex', flexDirection: 'column', flex: 1, overflowAnchor: 'none' }}>
 
         {/* ═════════════════════════════════════════════════════════════════ */}
         {/* STEP 1: SESSION SETUP                                           */}
@@ -4403,75 +4765,49 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                               style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}
                             >
                               <h4 className="ns-slot-time">{slot.time}</h4>
-                              <span
-                                style={{
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  width: '22px',
-                                  height: '22px',
-                                  borderRadius: '6px',
-                                  background: '#F1F5F9',
-                                  color: '#0284C7',
-                                  fontSize: '11px'
-                                }}
-                                title="Edit Time"
-                              >
-                                ✏️
-                              </span>
                             </div>
 
                             {/* Interactive Active / Inactive Toggle Switch */}
-                            <button
-                              type="button"
-                              className={`ns-slot-pill clickable-toggle ${slot.active === false ? 'inactive' : 'active-day'}`}
-                              onClick={(e) => handleToggleSlotActive(slot.id, e)}
-                              title={slot.active === false ? "Click to Activate this slot for today" : "Click to mark Inactive for today"}
-                              style={{
-                                cursor: 'pointer',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '6px',
-                                border: slot.active === false ? '1.5px solid #FECACA' : '1.5px solid #86EFAC',
-                                background: slot.active === false ? '#FEE2E2' : '#DCFCE7',
-                                color: slot.active === false ? '#B91C1C' : '#15803D',
-                                padding: '4px 10px',
-                                borderRadius: '8px',
-                                fontSize: '11px',
-                                fontWeight: 700,
-                                boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
-                                transition: 'all 0.15s ease'
-                              }}
-                              onMouseEnter={(e) => {
-                                e.currentTarget.style.background = slot.active === false ? '#FECDD3' : '#BBF7D0';
-                              }}
-                              onMouseLeave={(e) => {
-                                e.currentTarget.style.background = slot.active === false ? '#FEE2E2' : '#DCFCE7';
-                              }}
-                            >
-                              {slot.active === false ? (
-                                <>
-                                  <span style={{ fontSize: '10px' }}>✕</span>
-                                  <span>Inactive</span>
-                                  <span style={{ fontSize: '9px', fontWeight: 600, opacity: 0.85, textDecoration: 'underline', marginLeft: '2px' }}>
-                                    (Click to Activate)
-                                  </span>
-                                </>
-                              ) : (
-                                <>
-                                  <span>✓ Active ({selectedDayOfWeek})</span>
-                                  <span style={{ fontSize: '9px', fontWeight: 600, opacity: 0.85, textDecoration: 'underline', marginLeft: '2px' }}>
-                                    (Click to Deactivate)
-                                  </span>
-                                </>
-                              )}
-                            </button>
+                            {/* Active / Inactive Dropdown */}
+<select
+  className="ns-slot-pill clickable-toggle"
+  value={slot.active === false ? 'inactive' : 'active'}
+  onChange={(e) => {
+    const isActive = e.target.value === 'active';
 
-                            {slot.active !== false && !isDayMatch && (
-                              <span className="ns-slot-pill off-day">Off today ({selectedDayOfWeek})</span>
-                            )}
+    if (
+      (slot.active === false && isActive) ||
+      (slot.active !== false && !isActive)
+    ) {
+      handleToggleSlotActive(slot.id);
+    }
+  }}
+  style={{
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    border: slot.active === false
+      ? '1.5px solid #FECACA'
+      : '1.5px solid #86EFAC',
+    background: slot.active === false ? '#FEE2E2' : '#DCFCE7',
+    color: slot.active === false ? '#B91C1C' : '#15803D',
+    padding: '6px 10px',
+    borderRadius: '8px',
+    fontSize: '12px',
+    fontWeight: 700
+  }}
+>
+  <option value="active">Active ({selectedDayOfWeek})</option>
+  <option value="inactive">Inactive</option>
+</select>
+
+{slot.active !== false && !isDayMatch && (
+  <span className="ns-slot-pill off-day">
+    Off today ({selectedDayOfWeek})
+  </span>
+)}  
                           </div>
-                          <p className="ns-slot-sub">{slot.title}</p>
                         </div>
 
                         {/* Slot Card Right Actions: Capacity Control + Direct Delete Button */}
@@ -4490,7 +4826,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                             <div className="ns-slot-cap-text">
                               <span className="ns-slot-cap-label">Capacity</span>
                               <span className="ns-slot-cap-count">
-                                <strong>{slotCap || 0}</strong> Students
+                                <strong>{slotCap === '' ? '—' : slotCap}</strong> Students
                               </span>
                             </div>
                             <div className="ns-slot-cap-stepper">
@@ -4500,31 +4836,41 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   handleSelectSlot(slot);
-                                  const cur = parseInt(slotCap, 10) || 1;
-                                  handleUpdateSlotCapacity(slot.id, Math.max(1, cur - 1));
+                                  const cur = parseInt(slotCap, 10);
+                                  const safeCur = isNaN(cur) ? (parseInt(slot.maxStudents, 10) || 5) : cur;
+                                  handleUpdateSlotCapacity(slot.id, Math.max(1, safeCur - 1));
                                 }}
                                 title="Decrease capacity"
                               >
                                 -
                               </button>
                               <input
-                                type="number"
-                                min="1"
-                                max="500"
+                                type="text"
+                                inputMode="numeric"
+                                pattern="[0-9]*"
                                 value={slotCap}
                                 onChange={(e) => {
-                                  const val = e.target.value;
+                                  const raw = e.target.value.replace(/[^0-9]/g, '');
                                   handleSelectSlot(slot);
-                                  if (val === '') {
+                                  if (raw === '') {
                                     handleUpdateSlotCapacity(slot.id, '');
                                   } else {
-                                    const num = parseInt(val, 10);
-                                    handleUpdateSlotCapacity(slot.id, isNaN(num) ? '' : Math.max(1, num));
+                                    const num = parseInt(raw, 10);
+                                    handleUpdateSlotCapacity(slot.id, isNaN(num) ? '' : Math.min(500, num));
                                   }
                                 }}
+                                onFocus={(e) => {
+                                  e.target.select();
+                                }}
                                 onBlur={() => {
-                                  if (!slotCap || parseInt(slotCap, 10) < 1) {
-                                    handleUpdateSlotCapacity(slot.id, parseInt(slot.maxStudents, 10) || 4);
+                                  const cur = slotCapacityMap[slot.id];
+                                  if (cur === '' || cur === undefined || isNaN(parseInt(cur, 10)) || parseInt(cur, 10) < 1) {
+                                    handleUpdateSlotCapacity(slot.id, parseInt(slot.maxStudents, 10) || 5);
+                                  }
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.currentTarget.blur();
                                   }
                                 }}
                                 className="ns-slot-stepper-input"
@@ -4540,8 +4886,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   handleSelectSlot(slot);
-                                  const cur = parseInt(slotCap, 10) || 0;
-                                  handleUpdateSlotCapacity(slot.id, cur + 1);
+                                  const cur = parseInt(slotCap, 10);
+                                  const safeCur = isNaN(cur) ? 0 : cur;
+                                  handleUpdateSlotCapacity(slot.id, safeCur + 1);
                                 }}
                                 title="Increase capacity"
                               >
@@ -4633,36 +4980,35 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             <div className="ns-sticky-bar">
               <div className="ns-sb-left" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                 <span className="ns-sb-capacity" style={{ fontSize: '13px', fontWeight: 600, color: '#E2E8F0' }}>
-                  📅 {formattedSessionDate} &bull; ⏰ {selectedSlot ? (selectedSlot.startTime || selectedSlot.time) : 'Select Time Slot'} &bull; 🎯 Capacity: {capacity} Students
+                  {formattedSessionDate} &bull; {selectedSlot ? (selectedSlot.startTime || selectedSlot.time) : 'Select Time Slot'} &bull; Capacity: {capacity} Students
                 </span>
               </div>
 
-              <div className="ns-sb-right" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div className="ns-sb-right" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <button
                   type="button"
                   className="ns-sb-draft-btn"
                   onClick={handleManualSaveDraft}
                   title="Save current progress as draft"
                   style={{
-                    background: draftSavedToast ? '#059669' : 'rgba(255, 255, 255, 0.12)',
+                    background: draftSavedToast ? '#059669' : 'rgba(255, 255, 255, 0.08)',
                     color: '#FFFFFF',
-                    border: draftSavedToast ? '1px solid #10B981' : '1px solid rgba(255, 255, 255, 0.25)',
-                    borderRadius: '10px',
-                    padding: '12px 20px',
-                    fontSize: '14px',
-                    fontWeight: 700,
+                    border: draftSavedToast ? '1px solid #10B981' : '1px solid rgba(255, 255, 255, 0.18)',
+                    borderRadius: '8px',
+                    padding: '8px 14px',
+                    fontSize: '13px',
+                    fontWeight: 600,
                     cursor: 'pointer',
                     display: 'inline-flex',
                     alignItems: 'center',
-                    gap: '6px',
+                    gap: '5px',
                     transition: 'all 0.2s ease',
                     whiteSpace: 'nowrap'
                   }}
-                  onMouseEnter={(e) => { if (!draftSavedToast) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)'; }}
-                  onMouseLeave={(e) => { if (!draftSavedToast) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)'; }}
+                  onMouseEnter={(e) => { if (!draftSavedToast) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)'; }}
+                  onMouseLeave={(e) => { if (!draftSavedToast) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)'; }}
                 >
-                  <span>{draftSavedToast ? '✓' : '💾'}</span>
-                  <span>{draftSavedToast ? 'Draft Saved!' : 'Save Draft'}</span>
+                  <span>{draftSavedToast ? '✓ Draft Saved' : 'Save Draft'}</span>
                 </button>
                 <button
                   type="button"
@@ -4718,9 +5064,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                 </span>
                 <div className="ns-slot-pills-wrap">
                   {activeSlotsForDay.map((s, idx) => {
-                    const isSelected = selectedSlotId === s.id;
+                    const isSelected = String(selectedSlotId) === String(s.id);
                     const theme = getSlotThemeForSlot(s.id);
-                    const count = (slotStudentMap[s.id] || []).length;
+                    const count = (slotStudentMap[s.id] || slotStudentMap[String(s.id)] || []).length;
 
                     return (
                       <button
@@ -4829,7 +5175,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                         onClick={() => setSelectionFilter('selected')}
                         style={selectionFilter === 'selected' ? { backgroundColor: '#0284C7', borderColor: '#0284C7', color: '#FFFFFF' } : {}}
                       >
-                        ✓ Selected ({totalSelectedCount})
+                         Selected ({totalSelectedCount})
                       </button>
                       {slots.length > 1 && totalSelectedCount > currentSlotCount && currentSlotCount > 0 && (
                         <button
@@ -4848,7 +5194,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                         onClick={() => setSelectionFilter('not_selected')}
                         style={selectionFilter === 'not_selected' ? { backgroundColor: '#64748B', borderColor: '#64748B', color: '#FFFFFF' } : {}}
                       >
-                        ○ Not Selected ({notSelectedCount})
+                         Not Selected ({notSelectedCount})
                       </button>
                     </div>
                   </div>
@@ -4998,9 +5344,67 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                       }}>
                         🎯 Slot Capacity: {currentSlotList.length}/{slotCap} {isSlotFull ? '(FULL)' : ''}
                       </span>
+                      {refreshSuccessMessage && (
+                        <span style={{
+                          fontSize: '11.5px',
+                          fontWeight: 700,
+                          padding: '3px 10px',
+                          borderRadius: '12px',
+                          background: '#ECFDF5',
+                          color: '#059669',
+                          border: '1px solid #A7F3D0',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}>
+                          ✓ {refreshSuccessMessage}
+                        </span>
+                      )}
                     </div>
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      {/* Refresh Students Button */}
+                      <button
+                        type="button"
+                        id="ns-refresh-students-btn"
+                        className="ns-refresh-btn"
+                        onClick={handleRefreshStudents}
+                        disabled={isRefreshingStudents}
+                        title="Click to refresh student roster from database to load newly added students"
+                        style={{
+                          background: '#FFFFFF',
+                          color: '#0284C7',
+                          border: '1.5px solid #0284C7',
+                          borderRadius: '8px',
+                          padding: '7px 14px',
+                          fontSize: '12.5px',
+                          fontWeight: 700,
+                          cursor: isRefreshingStudents ? 'not-allowed' : 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          boxShadow: '0 1px 3px rgba(2, 132, 199, 0.15)',
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <svg
+                          className={isRefreshingStudents ? 'ns-spinning' : ''}
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <polyline points="23 4 23 10 17 10"></polyline>
+                          <polyline points="1 20 1 14 7 14"></polyline>
+                          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                        </svg>
+                        <span>{isRefreshingStudents ? 'Refreshing...' : 'Refresh'}</span>
+                      </button>
+
                       {/* Select by Filter Button */}
                       <button
                         type="button"
@@ -5012,7 +5416,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                               title: 'No Matching Students',
                               message: 'No students match the current active filter criteria.',
                               type: 'info',
-                              icon: 'ℹ️'
+              
                             });
                             return;
                           }
@@ -5159,6 +5563,32 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                   <div style={{ fontSize: '13px', color: '#64748B' }}>
                     No students currently have an active course window on {formattedSessionDate}.
                   </div>
+                  <div style={{ marginTop: '14px' }}>
+                    <button
+                      type="button"
+                      onClick={handleRefreshStudents}
+                      disabled={isRefreshingStudents}
+                      className="ns-refresh-btn"
+                      style={{ background: '#0284C7', color: '#FFFFFF', borderColor: '#0284C7' }}
+                    >
+                      <svg
+                        className={isRefreshingStudents ? 'ns-spinning' : ''}
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <polyline points="23 4 23 10 17 10"></polyline>
+                        <polyline points="1 20 1 14 7 14"></polyline>
+                        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                      </svg>
+                      <span>{isRefreshingStudents ? 'Refreshing...' : '🔄 Refresh Student Roster'}</span>
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="ns-student-grid">
@@ -5169,13 +5599,17 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                     const activeSlotId = selectedSlotId || activeSlotsForDay[0]?.id || slots[0]?.id;
                     const isCurrentSlotStudent = assignment && String(assignment.slot.id) === String(activeSlotId);
                     const isOtherSlotStudent = assignment && String(assignment.slot.id) !== String(activeSlotId);
-                    const isChecked = isCurrentSlotStudent;
                     const isScheduledInDb = isStudentScheduledInDbOnDate(student);
+                    // Only freshly selected students (not auto-hydrated from DB) get the dark badge
+                    const isNewlySelected = isCurrentSlotStudent && !isScheduledInDb;
+                    const isChecked = isCurrentSlotStudent;
                     const assignedGroup = getStudentAssignedGroup(student);
 
                     const cardStyle = () => {
-                      const borderSide = isCurrentSlotStudent
+                      const borderSide = isNewlySelected
                         ? (student.isGuest ? '1.5px solid #0284C7' : '1.5px solid #0F172A')
+                        : isCurrentSlotStudent && isScheduledInDb
+                        ? '1.5px solid #FDE68A'
                         : isOtherSlotStudent
                         ? '1.5px dashed #CBD5E1'
                         : student.isGuest
@@ -5183,18 +5617,22 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                         : '1.5px solid #E2E8F0';
 
                       const leftBorder = student.isGuest
-                        ? (isCurrentSlotStudent ? '4px solid #0284C7' : '4px solid #38BDF8')
+                        ? (isNewlySelected ? '4px solid #0284C7' : '4px solid #38BDF8')
+                        : isCurrentSlotStudent && isScheduledInDb
+                        ? '4px solid #F59E0B'
                         : borderSide;
 
                       return {
                         background: student.isGuest
                           ? (isCurrentSlotStudent ? '#F0F9FF' : isOtherSlotStudent ? '#F8FAFC' : '#F8FAFC')
-                          : (isCurrentSlotStudent ? '#FFFFFF' : isOtherSlotStudent ? '#F8FAFC' : '#FFFFFF'),
+                          : isCurrentSlotStudent && isScheduledInDb
+                          ? '#FFFBEB'
+                          : (isNewlySelected ? '#FFFFFF' : isOtherSlotStudent ? '#F8FAFC' : '#FFFFFF'),
                         borderTop: borderSide,
                         borderRight: borderSide,
                         borderBottom: borderSide,
                         borderLeft: leftBorder,
-                        boxShadow: isCurrentSlotStudent ? '0 1px 4px rgba(15, 23, 42, 0.08)' : '0 1px 2px rgba(0, 0, 0, 0.02)',
+                        boxShadow: isNewlySelected ? '0 1px 4px rgba(15, 23, 42, 0.08)' : '0 1px 2px rgba(0, 0, 0, 0.02)',
                         opacity: isOtherSlotStudent ? 0.72 : 1,
                         transition: 'all 0.15s ease',
                         cursor: 'pointer'
@@ -5234,8 +5672,10 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                               width: '20px',
                               height: '20px',
                               borderRadius: '50%',
-                              border: isCurrentSlotStudent
+                              border: isNewlySelected
                                 ? (student.isGuest ? '2px solid #0284C7' : '2px solid #0F172A')
+                                : (isCurrentSlotStudent && isScheduledInDb)
+                                ? '2px solid #D97706'
                                 : isOtherSlotStudent
                                 ? '2px solid #94A3B8'
                                 : isScheduledInDb
@@ -5243,8 +5683,10 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                 : student.isGuest
                                 ? '2px solid #7DD3FC'
                                 : '2px solid #CBD5E1',
-                              background: isCurrentSlotStudent
+                              background: isNewlySelected
                                 ? (student.isGuest ? '#0284C7' : '#0F172A')
+                                : (isCurrentSlotStudent && isScheduledInDb)
+                                ? '#D97706'
                                 : isOtherSlotStudent
                                 ? '#E2E8F0'
                                 : isScheduledInDb
@@ -5257,12 +5699,12 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                               transition: 'all 0.15s ease'
                             }}
                           >
-                            {isCurrentSlotStudent && (
+                            {(isNewlySelected || (isCurrentSlotStudent && isScheduledInDb)) && (
                               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
                                 <polyline points="20 6 9 17 4 12" />
                               </svg>
                             )}
-                            {isOtherSlotStudent && (
+                            {isOtherSlotStudent && !isScheduledInDb && (
                               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#64748B" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                                 <polyline points="20 6 9 17 4 12" />
                               </svg>
@@ -5336,7 +5778,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                         <div className="ns-student-row-right">
                           {/* Column 1: Slot Status & Group Badge (on mobile: HIDE if Not Selected & no group to keep it compact) */}
                           <div className={`ns-student-col-slot ${(!isCurrentSlotStudent && !isOtherSlotStudent && !isScheduledInDb && !assignedGroup) ? 'ns-hide-mobile' : ''}`}>
-                            {isCurrentSlotStudent && assignment ? (
+                            {isNewlySelected && assignment ? (
                               <div style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
                                 <span className="ns-slot-badge-assigned" style={{
                                   background: '#0F172A',
@@ -5368,6 +5810,42 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                     whiteSpace: 'nowrap',
                                     boxShadow: '0 1px 2px rgba(67, 56, 202, 0.08)'
                                   }} title={`Group: ${assignedGroup.name}`}>
+                                    👥 {assignedGroup.name}
+                                  </span>
+                                )}
+                              </div>
+                            ) : isCurrentSlotStudent && isScheduledInDb ? (
+                              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
+                                <span className="ns-slot-badge-scheduled" style={{
+                                  background: '#FEF3C7',
+                                  color: '#B45309',
+                                  border: '1px solid #FDE68A',
+                                  padding: '3px 8px',
+                                  borderRadius: '12px',
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px',
+                                  whiteSpace: 'nowrap'
+                                }}>
+                                  ✓ Sched
+                                </span>
+                                {assignedGroup && (
+                                  <span className="ns-student-group-tag" style={{
+                                    background: '#EEF2FF',
+                                    color: '#4338CA',
+                                    border: '1px solid #C7D2FE',
+                                    padding: '2.5px 8px',
+                                    borderRadius: '12px',
+                                    fontSize: '11px',
+                                    fontWeight: 700,
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    whiteSpace: 'nowrap',
+                                    boxShadow: '0 1px 2px rgba(67, 56, 202, 0.08)'
+                                  }} title={`Group: ${assignedGroup.name}${assignedGroup.time ? ` (${assignedGroup.time})` : ''}`}>
                                     👥 {assignedGroup.name}
                                   </span>
                                 )}
@@ -5476,7 +5954,32 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                             )}
                           </div>
 
-                          {/* Column 2: Day Badge */}
+                          {/* Column 2: Expected Slot (Desktop) */}
+                          {student.session_time ? (
+                            <div className="ns-student-col-expected ns-hide-mobile" style={{ display: 'inline-flex', alignItems: 'center' }}>
+                              <span
+                                style={{
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  background: '#F0FDFA',
+                                  color: '#0F766E',
+                                  border: '1px solid #99F6E4',
+                                  padding: '2.5px 7px',
+                                  borderRadius: '6px',
+                                  whiteSpace: 'nowrap',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px'
+                                }}
+                                title={`Expected Session Slot: ${student.session_time}`}
+                              >
+                                <span style={{ fontSize: '9.5px', color: '#64748B', fontWeight: 600 }}>Exp:</span>
+                                <span>{student.session_time}</span>
+                              </span>
+                            </div>
+                          ) : null}
+
+                          {/* Column 3: Day Badge */}
                           <div className="ns-student-col-day">
                             {student.dateStatus === 'completed' ? (
                               <span
@@ -5492,7 +5995,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                 }}
                                 title="Course completed before this date"
                               >
-                                🏁 Completed
+                                Completed
                               </span>
                             ) : student.dateStatus === 'upcoming' ? (
                               <span
@@ -5508,7 +6011,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                 }}
                                 title={`Course starts on ${student.startDate || student.start_date}`}
                               >
-                                ⏳ Upcoming
+                                Upcoming
                               </span>
                             ) : (
                               <span
@@ -5527,7 +6030,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                   gap: '3px'
                                 }}
                               >
-                                <span className="ns-hide-mobile">📅 </span>Day {student.whichDay}/{student.totalDays}
+                                Day {student.whichDay}/{student.totalDays}
                               </span>
                             )}
                           </div>
@@ -5587,73 +6090,59 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                   const notSelectedCount = Math.max(0, totalPoolCount - totalSelectedCount);
 
                   return (
-                    <div className="ns-sb-left" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, whiteSpace: 'nowrap' }}>
+                    <div className="ns-sb-left" style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0, whiteSpace: 'nowrap' }}>
                       {anySlotOver && (
                         <span style={{
-                          background: '#EF4444',
-                          color: '#FFFFFF',
-                          fontSize: '10px',
+                          background: 'rgba(239, 68, 68, 0.18)',
+                          color: '#F87171',
+                          border: '1px solid rgba(239, 68, 68, 0.45)',
+                          fontSize: '11px',
                           fontWeight: 800,
                           padding: '3px 8px',
-                          borderRadius: '4px',
-                          letterSpacing: '0.5px'
+                          borderRadius: '6px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '5px'
                         }}>
+                          <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#EF4444' }}></span>
                           CAPACITY EXCEEDED
                         </span>
                       )}
 
-                      <span style={{
-                        fontSize: '12px',
-                        fontWeight: 600,
-                        color: '#E2E8F0',
-                        background: 'rgba(255, 255, 255, 0.08)',
-                        padding: '3px 9px',
-                        borderRadius: '6px',
-                        border: '1px solid rgba(255, 255, 255, 0.12)',
+                      <div style={{
                         display: 'inline-flex',
                         alignItems: 'center',
-                        gap: '5px'
-                      }}>
-                        <span style={{ color: '#94A3B8' }}>Total:</span>
-                        <strong style={{ color: '#FFFFFF', fontWeight: 800 }}>{totalPoolCount}</strong>
-                      </span>
-
-                      <span style={{
-                        fontSize: '12px',
-                        fontWeight: 600,
-                        color: '#38BDF8',
-                        background: 'rgba(56, 189, 248, 0.14)',
-                        padding: '3px 9px',
-                        borderRadius: '6px',
-                        border: '1px solid rgba(56, 189, 248, 0.28)',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '5px'
-                      }}>
-                        <span>Selected:</span>
-                        <strong style={{ fontWeight: 800 }}>{totalSelectedCount}</strong>
-                      </span>
-
-                      <span style={{
-                        fontSize: '12px',
-                        fontWeight: 600,
-                        color: '#CBD5E1',
                         background: 'rgba(255, 255, 255, 0.05)',
-                        padding: '3px 9px',
-                        borderRadius: '6px',
-                        border: '1px solid rgba(255, 255, 255, 0.08)',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '5px'
+                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        borderRadius: '8px',
+                        padding: '2px 4px'
                       }}>
-                        <span style={{ color: '#94A3B8' }}>Not Selected:</span>
-                        <strong style={{ color: '#F8FAFC', fontWeight: 800 }}>{notSelectedCount}</strong>
-                      </span>
+                        <span style={{ fontSize: '11.5px', color: '#94A3B8', padding: '2px 7px' }}>
+                          Total: <strong style={{ color: '#FFFFFF', fontWeight: 700 }}>{totalPoolCount}</strong>
+                        </span>
+                        <span style={{ width: '1px', height: '12px', background: 'rgba(255, 255, 255, 0.15)' }}></span>
+                        <span style={{ fontSize: '11.5px', color: '#38BDF8', padding: '2px 7px', background: 'rgba(56, 189, 248, 0.12)', borderRadius: '4px' }}>
+                          Selected: <strong style={{ fontWeight: 800 }}>{totalSelectedCount}</strong>
+                        </span>
+                        <span style={{ width: '1px', height: '12px', background: 'rgba(255, 255, 255, 0.15)' }}></span>
+                        <span style={{ fontSize: '11.5px', color: '#94A3B8', padding: '2px 7px' }}>
+                          Remaining: <strong style={{ color: '#F1F5F9', fontWeight: 700 }}>{notSelectedCount}</strong>
+                        </span>
+                      </div>
                     </div>
                   );
                 })()}
 
-                <div className="ns-sb-center ns-hide-mobile" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                <div className="ns-sb-center ns-hide-mobile" style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  flex: '1 1 auto',
+                  minWidth: 0,
+                  overflowX: 'auto',
+                  scrollbarWidth: 'none',
+                  padding: '0 4px'
+                }}>
                   {slots.filter(s => (slotStudentMap[s.id] || []).length > 0).map((s) => {
                     const count = (slotStudentMap[s.id] || []).length;
                     const sCap = getSlotCapacity(s);
@@ -5665,54 +6154,54 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                       <span
                         key={s.id}
                         style={{
-                          fontSize: '12.5px',
-                          fontWeight: 700,
-                          background: isSlotOver ? 'rgba(239, 68, 68, 0.25)' : (isActive ? 'rgba(255, 255, 255, 0.18)' : 'rgba(255, 255, 255, 0.1)'),
-                          color: isSlotOver ? '#FECACA' : '#FFFFFF',
-                          border: isSlotOver ? '1px solid #EF4444' : (isActive ? '1px solid rgba(255, 255, 255, 0.35)' : '1px solid rgba(255, 255, 255, 0.18)'),
-                          padding: '5px 12px',
-                          borderRadius: '12px',
+                          fontSize: '11.5px',
+                          fontWeight: 600,
+                          background: isSlotOver ? 'rgba(239, 68, 68, 0.2)' : (isActive ? 'rgba(13, 148, 136, 0.2)' : 'rgba(255, 255, 255, 0.06)'),
+                          color: isSlotOver ? '#FCA5A5' : (isActive ? '#5EEAD4' : '#E2E8F0'),
+                          border: isSlotOver ? '1px solid rgba(239, 68, 68, 0.5)' : (isActive ? '1px solid rgba(13, 148, 136, 0.5)' : '1px solid rgba(255, 255, 255, 0.12)'),
+                          padding: '4px 9px',
+                          borderRadius: '8px',
                           display: 'inline-flex',
                           alignItems: 'center',
-                          gap: '6px',
-                          whiteSpace: 'nowrap'
+                          gap: '5px',
+                          whiteSpace: 'nowrap',
+                          flexShrink: 0
                         }}
                       >
-                        <span style={{ whiteSpace: 'nowrap' }}>⏰ {s.startTime || s.time}:</span>
-                        <strong style={{ color: isSlotOver ? '#FCA5A5' : '#00D2B4', whiteSpace: 'nowrap' }}>{count}/{sCap} {count === 1 ? 'Student' : 'Students'}</strong>
-                        {isSlotOver && <span style={{ fontSize: '10px', background: '#EF4444', color: '#FFF', padding: '1px 5px', borderRadius: '4px', whiteSpace: 'nowrap' }}>EXCEEDED</span>}
-                        {isSlotFull && !isSlotOver && <span style={{ fontSize: '10px', background: 'rgba(16, 185, 129, 0.3)', color: '#6EE7B7', padding: '1px 5px', borderRadius: '4px', whiteSpace: 'nowrap' }}>FULL</span>}
+                        <span style={{ color: '#94A3B8' }}>{s.startTime || s.time}:</span>
+                        <strong style={{ color: isSlotOver ? '#EF4444' : '#10B981', fontWeight: 800 }}>{count}/{sCap}</strong>
+                        {isSlotOver && <span style={{ fontSize: '9px', background: '#EF4444', color: '#FFF', padding: '1px 4px', borderRadius: '3px', fontWeight: 800 }}>OVER</span>}
+                        {isSlotFull && !isSlotOver && <span style={{ fontSize: '9px', background: 'rgba(16, 185, 129, 0.3)', color: '#6EE7B7', padding: '1px 4px', borderRadius: '3px', fontWeight: 700 }}>FULL</span>}
                       </span>
                     );
                   })}
                 </div>
 
-                <div className="ns-sb-right" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+                <div className="ns-sb-right" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, marginLeft: 'auto' }}>
                   <button
                     type="button"
                     className="ns-sb-back-btn"
                     onClick={() => setCurrentStep(1)}
                     title="Back to Session Setup"
                     style={{
-                      background: 'rgba(255, 255, 255, 0.12)',
-                      color: '#FFFFFF',
-                      border: '1px solid rgba(255, 255, 255, 0.25)',
+                      background: 'rgba(255, 255, 255, 0.08)',
+                      color: '#E2E8F0',
+                      border: '1px solid rgba(255, 255, 255, 0.18)',
                       borderRadius: '8px',
-                      padding: '8px 12px',
-                      fontSize: '13px',
+                      padding: '7px 12px',
+                      fontSize: '12.5px',
                       fontWeight: 600,
                       cursor: 'pointer',
                       display: 'inline-flex',
                       alignItems: 'center',
-                      gap: '5px',
+                      gap: '4px',
                       transition: 'all 0.15s ease',
                       whiteSpace: 'nowrap'
                     }}
-                    onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)'}
-                    onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)'}
+                    onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)'}
                   >
-                    <span className="ns-hide-mobile">← Back to Setup</span>
-                    <span className="ns-show-mobile">← Back</span>
+                    <span>← Back</span>
                   </button>
                   <button
                     type="button"
@@ -5720,25 +6209,24 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                     onClick={handleManualSaveDraft}
                     title="Save current progress as draft"
                     style={{
-                      background: draftSavedToast ? '#059669' : 'rgba(255, 255, 255, 0.12)',
+                      background: draftSavedToast ? '#059669' : 'rgba(255, 255, 255, 0.08)',
                       color: '#FFFFFF',
-                      border: draftSavedToast ? '1px solid #10B981' : '1px solid rgba(255, 255, 255, 0.25)',
+                      border: draftSavedToast ? '1px solid #10B981' : '1px solid rgba(255, 255, 255, 0.18)',
                       borderRadius: '8px',
-                      padding: '8px 14px',
-                      fontSize: '13px',
+                      padding: '7px 13px',
+                      fontSize: '12.5px',
                       fontWeight: 600,
                       cursor: 'pointer',
                       display: 'inline-flex',
                       alignItems: 'center',
-                      gap: '6px',
+                      gap: '4px',
                       transition: 'all 0.2s ease',
                       whiteSpace: 'nowrap'
                     }}
-                    onMouseEnter={(e) => { if (!draftSavedToast) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)'; }}
-                    onMouseLeave={(e) => { if (!draftSavedToast) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)'; }}
+                    onMouseEnter={(e) => { if (!draftSavedToast) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)'; }}
+                    onMouseLeave={(e) => { if (!draftSavedToast) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)'; }}
                   >
-                    <span>{draftSavedToast ? '✓' : '💾'}</span>
-                    <span>{draftSavedToast ? 'Draft Saved!' : 'Save Draft'}</span>
+                    <span>{draftSavedToast ? '✓ Draft Saved' : 'Save Draft'}</span>
                   </button>
                   <button
                     className="ns-primary-btn"
@@ -5747,20 +6235,20 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                       background: '#00D2B4',
                       color: '#0F172A',
                       border: 'none',
-                      padding: '9px 18px',
-                      fontSize: '13px',
+                      padding: '7px 16px',
+                      fontSize: '12.5px',
                       fontWeight: 800,
                       borderRadius: '8px',
                       cursor: 'pointer',
-                      boxShadow: '0 4px 14px rgba(0, 210, 180, 0.4)',
+                      boxShadow: '0 2px 10px rgba(0, 210, 180, 0.35)',
                       transition: 'all 0.15s ease',
                       whiteSpace: 'nowrap',
                       display: 'inline-flex',
                       alignItems: 'center',
-                      gap: '6px'
+                      gap: '4px'
                     }}
                   >
-                    <span className="ns-hide-mobile">Import Selected in &amp; Next »</span>
+                    <span className="ns-hide-mobile">Import &amp; Next »</span>
                     <span className="ns-show-mobile">Next →</span>
                   </button>
                 </div>
@@ -5836,9 +6324,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                 <div className="ns-slot-pills-wrap">
                   {/* Individual Active Slots */}
                   {activeSlotsForDay.map((s, idx) => {
-                    const isSelected = step3SlotFilter === s.id;
+                    const isSelected = String(step3SlotFilter) === String(s.id);
                     const theme = getSlotThemeForSlot(s.id);
-                    const count = (slotStudentMap[s.id] || []).length;
+                    const count = (slotStudentMap[s.id] || slotStudentMap[String(s.id)] || []).length;
 
                     return (
                       <button
@@ -6015,11 +6503,11 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                       }}
                     >
                       <option value="unassigned">
-                        Unassigned ({slotImportedStudents.filter(s => !trainingGroups.some(g => g.studentIds.includes(s.id))).length})
+                        Unassigned ({slotImportedStudents.filter(s => !trainingGroups.some(g => (g.studentIds || []).some(id => String(id) === String(s.id)))).length})
                       </option>
                       <option value="all">All ({slotImportedStudents.length})</option>
                       <option value="assigned">
-                        Assigned ({slotImportedStudents.filter(s => trainingGroups.some(g => g.studentIds.includes(s.id))).length})
+                        Assigned ({slotImportedStudents.filter(s => trainingGroups.some(g => (g.studentIds || []).some(id => String(id) === String(s.id)))).length})
                       </option>
                     </select>
                   </div>
@@ -6148,10 +6636,10 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                   {filteredColumn1Students.length === 0 ? (
                     <div style={{ padding: '28px 12px', textAlign: 'center', color: '#94A3B8', fontSize: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
                       <span style={{ fontSize: '24px' }}>
-                        {step3StatusFilter === 'unassigned' && slotImportedStudents.length > 0 && slotImportedStudents.every(s => trainingGroups.some(g => g.studentIds.includes(s.id))) ? '🎉' : '🔍'}
+                        {step3StatusFilter === 'unassigned' && slotImportedStudents.length > 0 && slotImportedStudents.every(s => trainingGroups.some(g => (g.studentIds || []).some(id => String(id) === String(s.id)))) ? '🎉' : '🔍'}
                       </span>
                       <span style={{ fontWeight: 600, color: '#475569' }}>
-                        {step3StatusFilter === 'unassigned' && slotImportedStudents.length > 0 && slotImportedStudents.every(s => trainingGroups.some(g => g.studentIds.includes(s.id)))
+                        {step3StatusFilter === 'unassigned' && slotImportedStudents.length > 0 && slotImportedStudents.every(s => trainingGroups.some(g => (g.studentIds || []).some(id => String(id) === String(s.id))))
                           ? 'All students in this slot are assigned to training groups!'
                           : 'No students found matching current filters.'}
                       </span>
@@ -7689,8 +8177,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                     onMouseEnter={(e) => { if (!draftSavedToast) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)'; }}
                     onMouseLeave={(e) => { if (!draftSavedToast) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)'; }}
                   >
-                    <span>{draftSavedToast ? '✓' : '💾'}</span>
-                    <span>{draftSavedToast ? 'Draft Saved!' : 'Save Draft'}</span>
+                    <span>{draftSavedToast ? '✓ Draft Saved' : 'Save Draft'}</span>
                   </button>
                   <button
                     className="ns-primary-btn finalize-btn"
@@ -7715,7 +8202,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                   >
                     {isPublishing
                       ? (isSessionAlreadyPublishedOnDate ? 'Updating Session...' : 'Publishing Sessions...')
-                      : (isSessionAlreadyPublishedOnDate ? '✓ Update Published Session' : '🚀 Finalize & Publish')}
+                      : (isSessionAlreadyPublishedOnDate ? '✓ Update Published Session' : 'Finalize & Publish')}
                   </button>
                 </div>
               </div>
@@ -8195,6 +8682,11 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           display: flex;
           flex-direction: column;
           -webkit-overflow-scrolling: touch;
+          overflow-anchor: none;
+        }
+
+        .ns-student-grid {
+          overflow-anchor: none;
         }
 
         /* ─── Top Header & Stepper ─── */
@@ -9155,6 +9647,46 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           background: #F1F5F9;
         }
 
+        .ns-refresh-btn {
+          background: #FFFFFF;
+          color: #0284C7;
+          border: 1px solid #BAE6FD;
+          border-radius: 8px;
+          padding: 7px 14px;
+          font-size: 12.5px;
+          font-weight: 700;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+          box-shadow: 0 1px 3px rgba(2, 132, 199, 0.08);
+          letter-spacing: 0.2px;
+        }
+        .ns-refresh-btn:hover:not(:disabled) {
+          background: #F0F9FF;
+          border-color: #0284C7;
+          color: #0369A1;
+          transform: translateY(-1px);
+          box-shadow: 0 3px 8px rgba(2, 132, 199, 0.18);
+        }
+        .ns-refresh-btn:active:not(:disabled) {
+          transform: translateY(0);
+        }
+        .ns-refresh-btn:disabled {
+          opacity: 0.7;
+          cursor: not-allowed;
+        }
+        @keyframes ns-spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+        .ns-spinning {
+          animation: ns-spin 0.8s linear infinite;
+          display: inline-block;
+          transform-origin: center;
+        }
+
         .ns-select-all-btn {
           background: linear-gradient(135deg, #0284C7 0%, #0369A1 100%);
           color: #FFFFFF;
@@ -9310,18 +9842,18 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           pointer-events: auto;
           position: relative;
           width: 100%;
-          max-width: 1160px;
+          max-width: 1260px;
           box-sizing: border-box;
           background-color: #0A0F1D;
           color: #FFFFFF;
-          padding: 11px 20px;
+          padding: 8px 16px;
           display: flex;
           align-items: center;
           justify-content: space-between;
-          gap: 12px;
+          gap: 10px;
           z-index: 50;
           box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.08);
-          border-radius: 14px;
+          border-radius: 12px;
           margin: 0 auto;
         }
 
@@ -9329,12 +9861,12 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           pointer-events: auto;
           position: relative;
           width: 100%;
-          max-width: 1160px;
+          max-width: 1260px;
           box-sizing: border-box;
-          border-radius: 14px;
+          border-radius: 12px;
           margin: 0 auto;
-          padding: 11px 18px;
-          gap: 12px;
+          padding: 8px 16px;
+          gap: 10px;
           background-color: #0A0F1D;
           z-index: 50;
           box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.08);

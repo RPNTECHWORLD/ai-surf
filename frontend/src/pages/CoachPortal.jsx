@@ -14,10 +14,7 @@ export default function CoachPortal() {
 
   useEffect(() => {
     if (!id && !token) {
-      // If neither, redirect to instructors list
-      sessionStorage.setItem('token', 'coach_guest_session');
-      sessionStorage.setItem('user', JSON.stringify({ role: 'coach', name: 'Coach' }));
-      navigate('/instructors', { replace: true });
+      navigate('/auth', { replace: true });
       return;
     }
 
@@ -40,6 +37,9 @@ export default function CoachPortal() {
         };
         sessionStorage.setItem('user', JSON.stringify(coachUser));
         sessionStorage.setItem('token', `coach_invite_${data.id}`);
+        if (data.school) {
+          sessionStorage.setItem('activeSchool', data.school);
+        }
         navigate(`/instructors/${data.id}`, { replace: true });
       })
       .catch(err => {

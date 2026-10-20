@@ -723,3 +723,111 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
     - **Students Roster Default View (`StudentsManagement.jsx`)**: Updated default roster view to `TOTAL` and `All` dates so all 130 school students are immediately visible upon opening; clicking `TOTAL` or badge cards automatically clears date restrictions. Fixed `Clear Filters` button to reset `dateRange`.
     - **Analytics Active Student Calculation**: Root-caused why Analytics showed 0 active students locally: local `students` table previously had empty `start_date` strings. Fully synced live student `start_date` and `course_duration` into local PostgreSQL.
     - **100% Production Code Parity**: Preserved `active_only = True` in `backend/main.py` (`analytics_badges` & `analytics_students`) and `Today` date filter in `Analytics.jsx`. Verified local Analytics matches Live AWS EC2 1:1, accurately displaying **45 active athletes** (23 active students + 22 guests) today with zero production deployment conflicts.
+
+---
+
+### Changes on 20-10-2026
+
+1. **Session Publishing & Re-publishing Student Assignment Fix (`NewSession.jsx`, `backend/main.py`)**:
+   - **Problem**: When a group was already published and newly added students were added to that same group and published again, the new students were not getting properly created in `SurfSession` or assigned to the coach in the `Student` database table (`student.instructor_id` & `student.session_time`).
+   - **Differential Publishing Workflow**: Updated `publishSingleGroup` and batch publish logic in `NewSession.jsx` to dynamically track existing session student IDs and execute differential batch requests via `POST /api/sessions/bulk` for any newly added students.
+   - **Backend Auto-Assignment Sync**: Enhanced `POST /api/sessions/bulk` and `PUT /api/sessions/{session_id}` in `backend/main.py` so that student records (`Student.instructor_id`, `Student.instructor_name`, and `Student.session_time`) are automatically synced and persisted to the assigned coach upon session creation or update.
+
+2. **Coach Portal Invitation Link & Direct Profile Redirection (`backend/main.py`, `CoachPortal.jsx`)**:
+   - **Problem**: Coach invite links sent via email were stripping local ports and defaulting to the production domain (`athnexlive.com`), causing link failures during local development. Additionally, the coach portal was not automatically redirecting invited coaches to their designated profile.
+   - **Base URL Preservation**: Refactored `get_app_base_url` in `backend/main.py` to preserve incoming `Origin` / `Referer` headers for `localhost` and `127.0.0.1` environments.
+   - **Direct Coach Profile Access**: Appended `?id={instructor.id}` to coach invite links (`http://localhost:5173/coach-portal?id=...`).
+   - **Session & Routing Handshake**: Updated `CoachPortal.jsx` to parse the instructor ID, store the active school in `sessionStorage.activeSchool`, initialize the coach user session, and automatically redirect directly to `/instructors/:id`.
+
+3. **Session Slot Auto-Reverting Bug Fix (`NewSession.jsx`, `SessionConfigure.jsx`, PostgreSQL `school_slot_configs`)**:
+   - **Problem**: When session slots were configured to `06:30 AM - 08:30 AM` (120 mins) or customized, the UI was reverting back to the default `07:00 AM - 08:30 AM` (90 mins) slot upon re-assignment or page reload.
+   - **Slot Configuration Parity**: Updated default slot constants (`DEFAULT_CONFIGURED_SLOTS` in `NewSession.jsx` and `defaultSlots` in `SessionConfigure.jsx`) to `06:30 AM - 08:30 AM` (120 min), `09:30 AM - 11:30 AM` (120 min), and `02:00 PM - 04:00 PM` (120 min).
+   - **PostgreSQL Database Sync**: Updated `school_slot_configs` in the local PostgreSQL database (`surfing_db`) and synced existing sessions for `2026-10-19` and `2026-10-20` to reflect 120-minute durations and correct start/end times.
+   - **State Persistence & Storage Events**: Removed redundant slot-fetching `useEffect` in `NewSession.jsx` that was overwriting in-memory user slot selections. Direct persistence to `localStorage` and `session_slots_updated` custom event dispatching guarantees instantaneous sync across tabs without slot reverts.
+
+4. **Students Section Default Date Filter to "Today" (`StudentsManagement.jsx`)**:
+   - **Problem**: In the Students section (`/students`), the filter bar was defaulting to "All" with all 294 historical/future students listed on page load, whereas Sessions and Instructors defaulted to "Today".
+   - **Default Date State**: Updated default state in `StudentsManagement.jsx` so `dateFilter` and `dateRange` default to `todayIso` with `preset: 'today'`.
+   - **Active Stat Card Sync**: Synced `activeStatFilter` to default to `'ACTIVE'`, displaying only the active students (e.g. 47 active students) for the current day by default.
+   - **Bi-directional Filter Toggle**: Updated `DateRangeFilterBar` `onChange` handler so toggling presets smoothly synchronizes between `ACTIVE` and `TOTAL` stat cards, while retaining instant one-click access to view all students.
+
+5. **Manual Draft Save Enforcement & Exit Confirmation Modal (`NewSession.jsx`)**:
+   - **Enforced Explicit Draft Saving**: Removed automatic background draft save on state change so drafts are ONLY persisted to storage/backend when the user explicitly clicks the `💾 Save Draft` button (or confirms "Save Draft & Close").
+   - **Exit Confirmation on Unsaved Progress**: When closing via the top-right `(X)` close button, clicking the background overlay, or using the browser Back button without having saved the current draft, the modal now intercepts and displays an alert:
+     - `💾 Save Draft & Close`: Saves current session progress as draft and exits cleanly.
+     - `🚪 Close Without Saving`: Safely discards unsaved changes for this session without altering existing drafts.
+     - `✕ Keep Editing`: Dismisses dialog so the user can continue setting up their session without losing progress.
+
+6. **Total Elimination of `localStorage` for Drafts & Slots (100% Backend API & PostgreSQL Driven)**:
+   - **Zero LocalStorage for Sessions**: Completely eliminated `localStorage` reads, writes, and caching for session drafts (`surfing_session_draft_*`) and session slots (`session_slots`) across `NewSession.jsx`, `SessionConfigure.jsx`, `Sessions.jsx`, and `StudentsManagement.jsx`.
+   - **Backend API & Database Single Source of Truth**: All session drafts are saved, fetched, and deleted exclusively via PostgreSQL endpoints (`/api/session-drafts`). All session slots are loaded and persisted exclusively via PostgreSQL endpoints (`/api/session-slots`).
+   - **Automatic Client Storage Purge**: Added an automated sweep on mount that instantly purges any legacy `surfing_session_draft*` and `session_slots` keys from the browser's `localStorage` to permanently prevent stale client cache conflicts.
+
+7. **Capacity & Slot Normalization (Database & Code Parity)**:
+   - **Root-Cause Resolution for 80 Capacity**: Identified and corrected hardcoded `maxStudents: 80` in `DEFAULT_CONFIGURED_SLOTS` and `defaultSlots`, which had persisted into `school_slot_configs.slots_json` in PostgreSQL.
+   - **PostgreSQL Database Cleanup**: Updated `school_slot_configs`, `session_drafts`, and `sessions` tables in `surfing_db`: normalized Slot 1 capacity to 10 (default 5) and time to `06:30 AM - 08:30 AM` (120 mins).
+   - **Historical Session Record Correction**: Synced all 17 sessions for `2026-10-20` (Groups A, B, C, D) in the `sessions` table to `06:30 AM - 08:30 AM` with `duration_mins = 120`.
+
+8. **Roster Refresh Badge Copy & English UI Modernization**:
+   - **Student Roster Refresh Badge**: Updated Step 2 refresh notification to only display new student deltas (`✓ X new student(s) added` or `✓ Roster is up to date`), removing the redundant total count display `(47 active available)`.
+   - **Strict English UI**: Maintained 100% professional English UI text across all modals, dialogs, button labels, and alert notifications.
+
+9. **Slot Capacity Stepper & Direct Typing Input Fix (`NewSession.jsx`)**:
+   - **Problem**: Users were unable to cancel, backspace, or clear the capacity number (e.g. `5`) inside the stepper input box because `getSlotCapacity` was treating empty strings as invalid and instantly snapping the input back to the slot's default capacity.
+   - **Dynamic Input & State Decoupling**: Updated `getSlotCapacity` to preserve empty string values (`''`) while the user is actively typing, allowing full backspacing and clearing.
+   - **Auto-Select on Focus**: Added `onFocus={(e) => e.target.select()}` so clicking into the input automatically highlights the entire number for instant replacement.
+   - **Safe Blur Fallback**: Added `onBlur` validation to safely restore the slot default (`slot.maxStudents || 5`) only if the input is left completely blank when clicking outside.
+
+10. **Exit Confirmation Modal Streamlining (`NewSession.jsx`)**:
+    - Removed the redundant `✕ Keep Editing` button from the exit confirmation modal.
+    - The dialog now presents two distinct, unambiguous action choices:
+      - `💾 Save Draft & Close`
+      - `🚪 Close Without Saving`
+    - Preserved top-right `(X)` close icon to dismiss the modal without altering state.
+
+11. **Published Session Auto-Hydration & Full Step 2 / Step 3 Sync Fix (`NewSession.jsx`)**:
+    - **Problem**: When navigating to a session date with already published sessions in PostgreSQL (e.g. `Tuesday, Oct 20, 2026`), Step 2 and Step 3 displayed `0 Students`, `0 Groups`, and `0 Students Imported` even though the green `✓ Published` badge was visible.
+    - **Root Cause**:
+      - Stale discard flags in `sessionStorage` (`surfing_session_draft_discarded`) and `userClearedGroupsRef` were prematurely aborting the database sync effect.
+      - Date comparisons in `existingDbDateSessions` suffered from timezone shifts when converting local midnight dates to ISO strings (`2026-10-19` vs `2026-10-20`).
+      - `existingDbGroups` was returning `[]` if `allPoolStudents` had not yet finished fetching.
+      - `importedStudents` in Step 3 only referenced `allSelectedStudentIds` and excluded groups hydrated from the database.
+    - **Fixes Applied**:
+      - **Timezone-Safe Date Parsing**: Enhanced `existingDbDateSessions` to safely check formatted strings, local YYYY-MM-DD strings, and UTC fallback dates without local timezone offset errors.
+      - **Robust Group & Student Hydration**: Updated `existingDbGroups` to hydrate groups directly from sessions and map students by name, guest name, and ID with non-lossy fallbacks.
+      - **Automatic State Sync**: The sync `useEffect` now automatically populates `trainingGroups`, `slotStudentMap`, and slot capacities whenever published groups exist in the database and wizard state is empty.
+      - **Comprehensive Step 2 & Step 3 Stats**: Updated `allSelectedStudentIds`, `importedStudents`, `filteredColumn1Students`, and `activeSlotStudentIdSet` to seamlessly include all students from both `slotStudentMap` and `trainingGroups`.
+      - **Slot Badge & Status Real-Time Counts**: Step 2 time slot pills and status filter counts (`Selected (17)`) and Step 3 summary stats (`17 Students Imported`, `4 Groups`) now accurately display all published students immediately upon date selection.
+
+12. **Sticky Action Bar Layout & UI Modernization (`NewSession.jsx`)**:
+    - **Anti-Clipping & Responsive Viewport Fit**: Refactored the sticky bottom action bar in `NewSession.jsx` to prevent right-hand navigation buttons (`Save Draft`, `Import & Next »`) from overflowing or getting clipped at standard desktop laptop display resolutions.
+    - **Clean Modern Aesthetic & Emoji Removal**: Replaced legacy emoji icons (`⏰`, `💾`, `🚀`, `📅`) across draft counters, step indicator pills, and action buttons with modern SVG vectors and high-contrast chip tags.
+    - **Expected Slot Mapping on Student Cards**: Added compact `Exp: [Slot Time]` badges directly inside student draggable cards in Step 2, clearly indicating each student's preferred surf session window.
+
+13. **Dedicated Expected Time Column & Student Table Polish (`StudentsManagement.jsx`)**:
+    - **Separate Expected Time Column**: Extracted the slot / expected session time out of the cramped `DATE` column in the student roster table and created a clean, dedicated `EXPECTED TIME` column with custom teal badges.
+    - **Emoji Cleanup across Student Roster**: Removed emoji prefixes (`🗓️`, `⏰`, `🏄`, etc.) throughout table headers and rows, establishing a sleek, enterprise-grade data layout.
+
+14. **Pending Student Registration Approval & Active Roster Sync Fix (`StudentsManagement.jsx` & `backend/main.py`)**:
+    - **Problem**: When a school admin approved an online student registration from the "Pending Requests" modal, the student remained hidden from the main active roster table under the default `ACTIVE` tab and `Today (20-10-2026)` filter.
+    - **Root Cause**:
+      - Auto-created or pre-existing student records lacked valid `start_date` and `end_date` values (`start_date = NULL`).
+      - In `StudentsManagement.jsx`, `isStudentActive()` and `matchesDateFilter` require a valid start date. Students with `start_date = NULL` evaluated to `isActive: false`, permanently excluding them from the `ACTIVE` tab and date range filters.
+      - `handleApproveStudentRequest` previously skipped saving student form fields if a student record already existed by email, calling only the basic approval endpoint without passing `start_date`, `school`, `course_duration`, or `session_time`.
+    - **Fixes Applied**:
+      - **Comprehensive Approval Payload (`StudentsManagement.jsx`)**: Updated `handleApproveStudentRequest` to dispatch a `PUT /api/students/:id` request containing complete registration metadata (`start_date` defaulting to today `YYYY-MM-DD`, `name`, `school`, `course_duration`, `session_time`, `level`, and `swimming_ability`).
+      - **Backend Approval Guarantees (`backend/main.py`)**: Enhanced `approve_student` and `approve_student_by_email` endpoints to ensure `start_date` and `end_date` are always computed and saved, preventing empty dates from persisting in the database.
+      - **Athlete Student Auto-Creation Fallback**: Updated `GET /api/students/{student_id}` so fallback athlete student records automatically populate default `start_date = today` and `school = user.school_name`.
+      - **PostgreSQL Database Normalization**: Synchronized student record ID 215 (`Eric Sheldon RS`) with active dates (`2026-10-20` to `2026-10-22`), course duration (`3 Days Course`), and session slot (`06:30 AM - 08:30 AM`), making the student immediately visible in the active student roster.
+
+15. **Expected Time Integration in "Add Multiple Students" & "Import CSV" (`StudentsManagement.jsx`)**:
+    - **Multiple Students Grid Entry (`addMode === 'multiple'`)**:
+      - Added dedicated `Expected Time *` column to the bulk entry table grid with a styled dropdown pre-populated from active school slots (e.g. `06:30 AM - 08:30 AM`, `09:30 AM - 11:30 AM`, `02:00 PM - 04:00 PM`).
+      - Updated `bulkRows` state initialization, `handleAddRow`, and `handleDeleteRow` to properly preserve the selected slot for each student.
+      - Updated `handleBulkSubmit` to submit each student's designated `session_time` to `/api/students/bulk` instead of leaving it blank.
+      - Adjusted accompanying guest sub-row `colSpan` from 10 to 11 for consistent grid alignment.
+    - **CSV Import Engine & Template (`addMode === 'csv'`)**:
+      - Enhanced `handleCSVUpload` with header pattern matching for `Expected Time`, `Session Time`, `Time`, and `Slot`, automatically assigning parsed slots or falling back to the school's primary slot.
+      - Updated `downloadCSVSample` to include `Expected Time` in CSV headers and sample data rows.
+      - Updated the CSV preview mini-table and CSV format specification guidelines to display and accept `Expected Time`.
+

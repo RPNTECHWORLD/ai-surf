@@ -83,12 +83,9 @@ export const getNextAvailableSlotTime = (currentSlots) => {
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const defaultSlots = [
-  { id: 1, time: "08:30 AM", duration: "90", maxStudents: 4, days: ["Mon", "Tue", "Wed", "Thu", "Fri"], active: true },
-  { id: 2, time: "10:30 AM", duration: "90", maxStudents: 4, days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"], active: true },
-  { id: 3, time: "11:30 AM", duration: "60", maxStudents: 6, days: ["Mon", "Tue", "Wed"], active: true },
-  { id: 4, time: "01:00 PM", duration: "120", maxStudents: 4, days: ["Tue", "Thu", "Sat", "Sun"], active: true },
-  { id: 5, time: "03:30 PM", duration: "90", maxStudents: 4, days: ["Fri", "Sat", "Sun"], active: false },
-  { id: 6, time: "04:00 PM", duration: "90", maxStudents: 4, days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], active: true },
+  { id: 1, time: "06:30 AM", duration: "120", maxStudents: 5, days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], active: true },
+  { id: 2, time: "09:30 AM", duration: "120", maxStudents: 5, days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], active: true },
+  { id: 3, time: "02:00 PM", duration: "120", maxStudents: 5, days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], active: true },
 ];
 
 const API = import.meta.env.VITE_API_URL || '';
@@ -98,12 +95,7 @@ const SessionConfigure = () => {
   const [searchParams] = useSearchParams();
   const fromSource = searchParams.get('from');
 
-  const [slots, setSlots] = useState(() => {
-    try {
-      const saved = localStorage.getItem('session_slots');
-      return saved ? JSON.parse(saved) : defaultSlots;
-    } catch (e) { return defaultSlots; }
-  });
+  const [slots, setSlots] = useState(defaultSlots);
   const [settings, setSettings] = useState({ defaultDuration: "90", maxStudents: "4", breakBetween: "30", cancellationWindow: "24" });
   const [saving, setSaving] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
@@ -147,7 +139,6 @@ const SessionConfigure = () => {
         .then(data => {
           if (data && data.status === 'success' && Array.isArray(data.slots) && data.slots.length > 0) {
             setSlots(data.slots);
-            localStorage.setItem('session_slots', JSON.stringify(data.slots));
             if (data.settings && typeof data.settings === 'object' && Object.keys(data.settings).length > 0) {
               setSettings(prev => ({ ...prev, ...data.settings }));
             }
@@ -166,26 +157,7 @@ const SessionConfigure = () => {
 
   const syncToStorageAndDrafts = (updatedSlots, newSettings = null) => {
     try {
-      localStorage.setItem('session_slots', JSON.stringify(updatedSlots));
-      window.dispatchEvent(new Event('storage'));
       window.dispatchEvent(new CustomEvent('session_slots_updated', { detail: updatedSlots }));
-
-      // Clean stale frozen slots from any active session drafts in storage so they instantly reflect the new slots
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i);
-        if (k && k.startsWith('surfing_session_draft')) {
-          const rawDraft = localStorage.getItem(k);
-          if (rawDraft) {
-            try {
-              const parsed = JSON.parse(rawDraft);
-              if (parsed && typeof parsed === 'object' && parsed.slots) {
-                delete parsed.slots;
-                localStorage.setItem(k, JSON.stringify(parsed));
-              }
-            } catch (err) {}
-          }
-        }
-      }
 
       // Persist Master Default template to central PostgreSQL Database (date = null)
       const rawUser = sessionStorage.getItem('user') || localStorage.getItem('user');

@@ -557,17 +557,19 @@ const Sessions = () => {
     return () => clearTimeout(timer);
   }, [toast]);
 
-  // Real-time synchronization with Session Configuration changes (localStorage / custom events / focus)
+  // Real-time synchronization with Session Configuration changes via API / custom events
+  const [configuredSlotsFromApi, setConfiguredSlotsFromApi] = useState([]);
   const [slotsConfigVersion, setSlotsConfigVersion] = useState(0);
   useEffect(() => {
-    const handleSync = () => setSlotsConfigVersion(v => v + 1);
-    window.addEventListener('storage', handleSync);
+    const handleSync = (e) => {
+      if (e?.detail && Array.isArray(e.detail)) {
+        setConfiguredSlotsFromApi(e.detail);
+      }
+      setSlotsConfigVersion(v => v + 1);
+    };
     window.addEventListener('session_slots_updated', handleSync);
-    window.addEventListener('focus', handleSync);
     return () => {
-      window.removeEventListener('storage', handleSync);
       window.removeEventListener('session_slots_updated', handleSync);
-      window.removeEventListener('focus', handleSync);
     };
   }, []);
 
@@ -590,11 +592,8 @@ const Sessions = () => {
         .then(data => {
           if (isCancelled) return;
           if (data && data.status === 'success' && Array.isArray(data.slots) && data.slots.length > 0) {
-            const rawStored = localStorage.getItem('session_slots');
-            if (rawStored !== JSON.stringify(data.slots)) {
-              localStorage.setItem('session_slots', JSON.stringify(data.slots));
-              setSlotsConfigVersion(v => v + 1);
-            }
+            setConfiguredSlotsFromApi(data.slots);
+            setSlotsConfigVersion(v => v + 1);
           }
         })
         .catch(() => {});
@@ -2144,31 +2143,25 @@ const Sessions = () => {
       }
     });
 
-    // 4. Collect configured slots from localStorage that are explicitly active for this day of week
+    // 4. Collect configured slots from API state that are explicitly active for this day of week
     const configuredActiveTimes = new Set();
-    try {
-      const raw = localStorage.getItem('session_slots');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          parsed.forEach(s => {
-            // Must be active (not disabled)
-            if (s.active === false) return;
+    if (Array.isArray(configuredSlotsFromApi)) {
+      configuredSlotsFromApi.forEach(s => {
+        // Must be active (not disabled)
+        if (s.active === false) return;
 
-            // If day of week is known, must be active on this day of week
-            if (dayOfWeek && Array.isArray(s.days) && s.days.length > 0) {
-              if (!s.days.includes(dayOfWeek)) return;
-            }
-
-            const t = s.time || s.startTime;
-            if (t) {
-              const cleanT = t.includes(' - ') ? t.split(' - ')[0].trim() : t;
-              configuredActiveTimes.add(cleanT);
-            }
-          });
+        // If day of week is known, must be active on this day of week
+        if (dayOfWeek && Array.isArray(s.days) && s.days.length > 0) {
+          if (!s.days.includes(dayOfWeek)) return;
         }
-      }
-    } catch (e) {}
+
+        const t = s.time || s.startTime;
+        if (t) {
+          const cleanT = t.includes(' - ') ? t.split(' - ')[0].trim() : t;
+          configuredActiveTimes.add(cleanT);
+        }
+      });
+    }
 
     // 5. Build final set of available active slots for that day:
     const combinedSet = new Set();

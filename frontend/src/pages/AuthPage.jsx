@@ -103,6 +103,8 @@ const AuthPage = () => {
   const [signupPassword, setSignupPassword] = useState('');
   const [signupConfirmPassword, setSignupConfirmPassword] = useState('');
   const [isManualDuration, setIsManualDuration] = useState(false);
+  const [schoolSlots, setSchoolSlots] = useState([]);
+  const [loadingSlots, setLoadingSlots] = useState(false);
 
   // 30-Day Account Deletion Retention & Restoration
   const [showRestoreModal, setShowRestoreModal] = useState(false);
@@ -230,12 +232,15 @@ const AuthPage = () => {
           const lockedCourse = data.course_duration || (rawCourse ? rawCourse.trim().replace(/\/+$/, '') : '');
           const rawParamStart = searchParams.get('start_date') || '';
           const lockedStartDate = data.start_date || (rawParamStart ? rawParamStart.trim().replace(/\/+$/, '') : '');
+          const rawParamSession = searchParams.get('session_time') || '';
+          const lockedSessionTime = data.session_time || (rawParamSession ? rawParamSession.trim().replace(/\/+$/, '') : '');
           const lockedGuests = data.locked_guests !== undefined ? data.locked_guests : Math.max(0, (data.max_count || 1) - 1);
           setFormData(prev => ({
             ...prev,
             school: lockedSchool,
             course_duration: lockedCourse || prev.course_duration,
             start_date: lockedStartDate || prev.start_date,
+            session_time: lockedSessionTime || prev.session_time || '',
             guests_count: lockedGuests,
             guests_details: Array.from({ length: lockedGuests }).map((_, i) => (prev.guests_details || [])[i] || { name: '', whatsapp_number: '', email: '' }),
             password: '',
@@ -257,6 +262,91 @@ const AuthPage = () => {
       })
       .finally(() => setSchoolInviteLoading(false));
   }, [inviteCode, urlSchool]);
+
+  const formatSlotDisplayTime = (slot) => {
+    if (!slot) return '';
+    const timeStr = slot.time || slot.startTime || '';
+    if (!timeStr) return '';
+    if (timeStr.includes(' - ')) return timeStr;
+
+    const m = String(timeStr).trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+    if (!m) return timeStr;
+    let [_, hStr, mStr, meridiem] = m;
+    let hours = parseInt(hStr, 10);
+    let minutes = parseInt(mStr, 10);
+    if (meridiem) {
+      const med = meridiem.toUpperCase();
+      if (med === 'PM' && hours < 12) hours += 12;
+      if (med === 'AM' && hours === 12) hours = 0;
+    }
+    const dur = parseInt(slot.duration || 120, 10);
+    const totalMinutes = hours * 60 + minutes + dur;
+    const endH24 = Math.floor((totalMinutes / 60) % 24);
+    const endM = totalMinutes % 60;
+    const endMeridiem = endH24 >= 12 ? 'PM' : 'AM';
+    const endH12 = endH24 % 12 === 0 ? 12 : endH24 % 12;
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${timeStr} - ${pad(endH12)}:${pad(endM)} ${endMeridiem}`;
+  };
+
+  // Fetch school schedule session slots for selected date
+  useEffect(() => {
+    const targetSchool = (schoolInviteData?.school) || formData.school;
+    const effectiveStartDate = (schoolInviteData?.start_date || searchParams.get('start_date')) || formData.start_date;
+    if (!targetSchool || targetSchool.toLowerCase() === 'school admin' || targetSchool.toLowerCase() === 'super admin') {
+      return;
+    }
+
+    let isCancelled = false;
+    setLoadingSlots(true);
+    const queryParams = new URLSearchParams();
+    queryParams.set('school_name', targetSchool);
+    if (effectiveStartDate) queryParams.set('date', effectiveStartDate);
+
+    fetch(`${API}/api/session-slots?${queryParams.toString()}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => {
+        if (isCancelled) return;
+        const fallbackSlots = [
+          { time: '06:30 AM', duration: '120' },
+          { time: '09:30 AM', duration: '120' },
+          { time: '02:00 PM', duration: '120' }
+        ];
+        let available = fallbackSlots;
+        if (data && data.status === 'success' && Array.isArray(data.slots) && data.slots.length > 0) {
+          const active = data.slots.filter(s => s.active !== false);
+          if (active.length > 0) available = active;
+        }
+        setSchoolSlots(available);
+        if (!schoolInviteData?.session_time && !searchParams.get('session_time')) {
+          setFormData(prev => {
+            if (prev.session_time) {
+              const matches = available.some(s => formatSlotDisplayTime(s) === prev.session_time || s.time === prev.session_time);
+              if (matches) return prev;
+            }
+            return { ...prev, session_time: formatSlotDisplayTime(available[0]) };
+          });
+        }
+      })
+      .catch(() => {
+        if (!isCancelled) {
+          const fallback = [
+            { time: '06:30 AM', duration: '120' },
+            { time: '09:30 AM', duration: '120' },
+            { time: '02:00 PM', duration: '120' }
+          ];
+          setSchoolSlots(fallback);
+          if (!schoolInviteData?.session_time && !searchParams.get('session_time')) {
+            setFormData(prev => prev.session_time ? prev : { ...prev, session_time: formatSlotDisplayTime(fallback[0]) });
+          }
+        }
+      })
+      .finally(() => {
+        if (!isCancelled) setLoadingSlots(false);
+      });
+
+    return () => { isCancelled = true; };
+  }, [schoolInviteData?.school, formData.school, schoolInviteData?.start_date, searchParams, formData.start_date]);
 
   // Always fetch all registered surf schools for dropdown options on load
   useEffect(() => {
@@ -683,6 +773,10 @@ const AuthPage = () => {
     const effectiveStartDate = (schoolInviteData?.start_date || searchParams.get('start_date')) || formData.start_date;
     if (role === 'athlete' && !effectiveStartDate) {
       setErrorMsg('Please select your course start date.'); return;
+    }
+    const effectiveSessionTime = (schoolInviteData?.session_time || searchParams.get('session_time')) || formData.session_time;
+    if (role === 'athlete' && !effectiveSessionTime) {
+      setErrorMsg('Please select your expected session time slot.'); return;
     }
     if (role === 'coach') {
       if (!isCoachSchoolAffiliated && !formData.location?.trim()) {
@@ -1917,7 +2011,7 @@ const AuthPage = () => {
 
                           <div className="auth-field">
                             <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '22px', margin: '0 0 6px 0' }}>
-                              <span>🗓️ Start Date <span style={{ color: '#EF4444' }}>*</span></span>
+                              <span>Start Date <span style={{ color: '#EF4444' }}>*</span></span>
                               {(schoolInviteData?.start_date || searchParams.get('start_date')) ? (
                                 <span style={{
                                   fontSize: '10px',
@@ -1929,7 +2023,7 @@ const AuthPage = () => {
                                   borderRadius: '4px',
                                   whiteSpace: 'nowrap'
                                 }}>
-                                  🔒 Locked
+                                  Locked
                                 </span>
                               ) : (
                                 <span style={{
@@ -1958,6 +2052,92 @@ const AuthPage = () => {
                                 } : {})
                               }} 
                             />
+                          </div>
+
+                          <div className="auth-field" style={{ marginTop: '12px' }}>
+                            <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '22px', margin: '0 0 6px 0' }}>
+                              <span>Expected Session Slot <span style={{ color: '#EF4444' }}>*</span></span>
+                              {(schoolInviteData?.session_time || searchParams.get('session_time')) ? (
+                                <span style={{
+                                  fontSize: '10px',
+                                  color: '#10B981',
+                                  fontWeight: 800,
+                                  background: 'rgba(16, 185, 129, 0.15)',
+                                  border: '1px solid rgba(16, 185, 129, 0.35)',
+                                  padding: '1px 6px',
+                                  borderRadius: '4px',
+                                  whiteSpace: 'nowrap'
+                                }}>
+                                  Fixed by School
+                                </span>
+                              ) : (
+                                <span style={{
+                                  fontSize: '10px',
+                                  color: formData.session_time ? '#10B981' : '#F59E0B',
+                                  fontWeight: 700,
+                                  background: formData.session_time ? 'rgba(16, 185, 129, 0.1)' : 'rgba(245, 158, 11, 0.1)',
+                                  border: formData.session_time ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(245, 158, 11, 0.3)',
+                                  padding: '1px 6px',
+                                  borderRadius: '4px',
+                                  whiteSpace: 'nowrap'
+                                }}>
+                                  {loadingSlots ? 'Loading slots...' : (formData.session_time ? 'Selected' : 'Required *')}
+                                </span>
+                              )}
+                            </label>
+
+                            {(schoolInviteData?.session_time || searchParams.get('session_time')) ? (
+                              <div style={{
+                                padding: '10px 14px',
+                                borderRadius: '10px',
+                                border: '1.5px solid #10B981',
+                                background: 'rgba(16, 185, 129, 0.08)',
+                                color: '#34D399',
+                                fontWeight: 700,
+                                fontSize: '13.5px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between'
+                              }}>
+                                <span>{schoolInviteData?.session_time || searchParams.get('session_time')}</span>
+                                <span style={{ fontSize: '11px', color: '#10B981', fontWeight: 700 }}>Assigned</span>
+                              </div>
+                            ) : (
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                                {(schoolSlots.length > 0 ? schoolSlots : [
+                                  { time: '06:30 AM', duration: '120' },
+                                  { time: '09:30 AM', duration: '120' },
+                                  { time: '02:00 PM', duration: '120' }
+                                ]).map((slot, sIdx) => {
+                                  const displaySlot = formatSlotDisplayTime(slot);
+                                  const isSelected = formData.session_time === displaySlot || formData.session_time === slot.time;
+                                  return (
+                                    <button
+                                      key={slot.id || sIdx}
+                                      type="button"
+                                      onClick={() => setFormData(prev => ({ ...prev, session_time: displaySlot }))}
+                                      style={{
+                                        padding: '7px 14px',
+                                        borderRadius: '8px',
+                                        border: isSelected ? '1.5px solid #0D9488' : '1px solid rgba(255, 255, 255, 0.15)',
+                                        background: isSelected ? 'rgba(13, 148, 136, 0.25)' : 'rgba(255, 255, 255, 0.05)',
+                                        color: isSelected ? '#5EEAD4' : '#E2E8F0',
+                                        fontWeight: isSelected ? 800 : 600,
+                                        fontSize: '12px',
+                                        cursor: 'pointer',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '6px',
+                                        transition: 'all 0.15s ease'
+                                      }}
+                                    >
+                                      <span>{displaySlot}</span>
+                                      {isSelected && <span style={{ color: '#5EEAD4', fontWeight: 900 }}>✓</span>}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </div>
                         </div>
 

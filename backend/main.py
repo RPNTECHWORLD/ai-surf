@@ -463,6 +463,7 @@ class SchoolInviteLink(Base):
     used_count = Column(Integer, default=0)
     course_duration = Column(String, default="3 Days Course")
     start_date = Column(String, nullable=True)
+    session_time = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     is_active = Column(Boolean, default=True)
 
@@ -1034,19 +1035,18 @@ SES_REGION = os.getenv("AWS_REGION", "us-east-1")
 def get_app_base_url(request: Request = None) -> str:
     """
     Returns the frontend URL for email links and invitations.
-    Prefers live production Vercel app URL (https://aisurf-one.vercel.app or https://www.athnexlive.com)
-    or the request's origin header if coming from the live web app.
+    Uses the request's origin / referer header dynamically, or configured env variable.
     """
     if request:
         try:
             origin = request.headers.get("origin")
-            if origin and "localhost" not in origin and "127.0.0.1" not in origin:
+            if origin:
                 return origin.rstrip("/")
             referer = request.headers.get("referer")
             if referer:
                 from urllib.parse import urlparse
                 p = urlparse(referer)
-                if p.scheme and p.netloc and "localhost" not in p.netloc and "127.0.0.1" not in p.netloc:
+                if p.scheme and p.netloc:
                     return f"{p.scheme}://{p.netloc}".rstrip("/")
         except Exception:
             pass
@@ -1055,7 +1055,7 @@ def get_app_base_url(request: Request = None) -> str:
     if env_url:
         return env_url.rstrip("/")
 
-    return "https://www.athnexlive.com"
+    return "http://localhost:5173"
 
 
 def send_smtp_email(to_email: str, subject: str, html_body: str, from_name: Optional[str] = None) -> bool:
@@ -1612,6 +1612,7 @@ class SchoolInviteCreate(BaseModel):
     max_count: int = 1
     course_duration: Optional[str] = "3 Days Course"
     start_date: Optional[str] = None
+    session_time: Optional[str] = None
     nickname: Optional[str] = ""
 
 
@@ -2388,6 +2389,8 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
             data.course_duration = school_invite_record.course_duration
         if getattr(school_invite_record, 'start_date', None):
             data.start_date = school_invite_record.start_date
+        if getattr(school_invite_record, 'session_time', None):
+            data.session_time = school_invite_record.session_time
         initial_approval = "approved"
     else:
         slots_needed = 1 + (data.guests_count or 0)
@@ -2432,6 +2435,8 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
                 existing_student.level = data.level
             if data.swimming_ability:
                 existing_student.swimming_ability = data.swimming_ability
+            if data.session_time:
+                existing_student.session_time = data.session_time
             existing_student.whatsapp_number = phone_clean
             # Keep invite_token permanent so portal link in email remains permanently valid
             existing_student.last_active = "Today"
@@ -2563,7 +2568,11 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
                 portal_link = f"{app_base_url}/student-portal"
                 portal_btn_label = "🏄 Open Your Student Portal →"
         elif role == "coach":
-            portal_link = f"{app_base_url}/coach-portal"
+            linked_coach = db.query(Instructor).filter(Instructor.user_id == user.id).first()
+            if linked_coach:
+                portal_link = f"{app_base_url}/coach-portal?id={linked_coach.id}"
+            else:
+                portal_link = f"{app_base_url}/coach-portal"
             portal_btn_label = "🏄 Open Your Coach Portal →"
         elif role == "admin":
             portal_link = f"{app_base_url}/dashboard"
@@ -3936,7 +3945,7 @@ def create_instructor(data: InstructorCreate, request: Request, db: OrmSession =
     if email_clean:
         try:
             app_base_url = get_app_base_url(request)
-            coach_portal_link = f"{app_base_url}/coach-portal"
+            coach_portal_link = f"{app_base_url}/coach-portal?id={instructor.id}"
             pass_info = f"<li><strong>Password:</strong> {data.password.strip()}</li>" if (data.password and len(data.password.strip()) >= 6) else ""
             coach_html = f"""
             <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 24px; background: #0F172A; color: #F8FAFC; border-radius: 16px; max-width: 540px; margin: auto;">
@@ -4366,14 +4375,20 @@ def get_student(student_id: int, db: OrmSession = Depends(get_db)):
         u = db.query(User).filter(User.id == student_id).first()
         if u and u.role == "athlete":
             st_name = getattr(u, "name", None) or (u.email.split("@")[0].replace(".", " ").title() if u.email else "Registered Surfer")
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            end_str = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d")
             s = Student(
                 user_id=u.id,
                 name=st_name,
                 email=u.email or "",
                 level="Beginner",
-                school="",
-                approval_status="approved",
-                swimming_ability="Swimmer"
+                school=getattr(u, "school_name", "") or "",
+                approval_status=getattr(u, "approval_status", "approved") or "approved",
+                swimming_ability="Swimmer",
+                start_date=today_str,
+                end_date=end_str,
+                course_duration="3 Days Course",
+                session_time="06:30 AM - 08:30 AM"
             )
             db.add(s)
             try:
@@ -5141,6 +5156,7 @@ def create_school_invite(data: SchoolInviteCreate, db: OrmSession = Depends(get_
     capacity = max(1, int(data.max_count or 1))
     course_dur = (data.course_duration or "3 Days Course").strip()
     s_date = data.start_date.strip() if data.start_date and data.start_date.strip() else None
+    s_time = data.session_time.strip() if data.session_time and data.session_time.strip() else None
     nickname = (data.nickname or "").strip()
     code = f"inv_{_secrets.token_urlsafe(12)}"
 
@@ -5151,6 +5167,7 @@ def create_school_invite(data: SchoolInviteCreate, db: OrmSession = Depends(get_
         max_count=capacity,
         course_duration=course_dur,
         start_date=s_date,
+        session_time=s_time,
         used_count=0,
         is_active=True
     )
@@ -5167,6 +5184,7 @@ def create_school_invite(data: SchoolInviteCreate, db: OrmSession = Depends(get_
         "used_count": invite.used_count,
         "course_duration": invite.course_duration or "3 Days Course",
         "start_date": invite.start_date or None,
+        "session_time": invite.session_time or None,
         "remaining": invite.max_count - invite.used_count,
         "is_active": invite.is_active,
         "created_at": invite.created_at.isoformat() if invite.created_at else ""
@@ -5211,6 +5229,7 @@ def list_school_invites(school: Optional[str] = None, db: OrmSession = Depends(g
             "used_count": inv.used_count,
             "course_duration": getattr(inv, 'course_duration', None) or "3 Days Course",
             "start_date": getattr(inv, 'start_date', None) or None,
+            "session_time": getattr(inv, 'session_time', None) or None,
             "remaining": rem,
             "is_active": is_active,
             "created_at": inv.created_at.isoformat() if inv.created_at else ""
@@ -5251,6 +5270,7 @@ def get_school_invite(code: str, db: OrmSession = Depends(get_db)):
         "used_count": invite.used_count,
         "course_duration": getattr(invite, 'course_duration', None) or "3 Days Course",
         "start_date": getattr(invite, 'start_date', None) or None,
+        "session_time": getattr(invite, 'session_time', None) or None,
         "remaining": invite.max_count,
         "is_active": True,
         "detail": "Invite link is valid"
@@ -5264,18 +5284,50 @@ def approve_student(student_id: int, db: OrmSession = Depends(get_db)):
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
     student.approval_status = "approved"
+    if not student.start_date:
+        student.start_date = datetime.now().strftime("%Y-%m-%d")
+    if not student.end_date and student.start_date:
+        total_days = 3
+        for token in (student.course_duration or "3 Days Course").split():
+            if token.isdigit():
+                total_days = int(token)
+                break
+        try:
+            st_dt = datetime.strptime(student.start_date[:10], "%Y-%m-%d")
+            student.end_date = (st_dt + timedelta(days=total_days - 1)).strftime("%Y-%m-%d")
+        except Exception:
+            student.end_date = student.start_date
     if student.user_rel:
         student.user_rel.approval_status = "approved"
+        if student.school and not getattr(student.user_rel, "school_name", None):
+            student.user_rel.school_name = student.school
+        if student.name and not getattr(student.user_rel, "name", None):
+            student.user_rel.name = student.name
     if student.email:
         u = db.query(User).filter(func.lower(User.email) == student.email.lower()).first()
         if u:
             u.approval_status = "approved"
+            if student.school and not getattr(u, "school_name", None):
+                u.school_name = student.school
+            if student.name and not getattr(u, "name", None):
+                u.name = student.name
     db.commit()
-    return {"status": "success", "message": f"Student {student.name} approved"}
+    db.refresh(student)
+    return {"status": "success", "message": f"Student {student.name} approved", "student": student_to_dict(student)}
 
 
 class ApproveEmailData(BaseModel):
     email: str
+    name: Optional[str] = None
+    school: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    course_duration: Optional[str] = None
+    session_time: Optional[str] = None
+    level: Optional[str] = None
+    swimming_ability: Optional[str] = None
+    whatsapp_number: Optional[str] = None
+    staying_at_school: Optional[str] = None
 
 
 @app.post("/api/students/approve-by-email")
@@ -5288,24 +5340,81 @@ def approve_student_by_email(data: ApproveEmailData, db: OrmSession = Depends(ge
     students = db.query(Student).filter(func.lower(Student.email) == email_clean).all()
     for s in students:
         s.approval_status = "approved"
+        if not s.start_date:
+            s.start_date = data.start_date or datetime.now().strftime("%Y-%m-%d")
+        elif data.start_date:
+            s.start_date = data.start_date
+
+        cd = data.course_duration or s.course_duration or "3 Days Course"
+        s.course_duration = cd
+        total_days = 3
+        for token in cd.split():
+            if token.isdigit():
+                total_days = int(token)
+                break
+        if not s.end_date or data.end_date or data.course_duration:
+            try:
+                base_st = s.start_date[:10] if s.start_date else datetime.now().strftime("%Y-%m-%d")
+                st_dt = datetime.strptime(base_st, "%Y-%m-%d")
+                s.end_date = (st_dt + timedelta(days=total_days - 1)).strftime("%Y-%m-%d")
+            except Exception:
+                s.end_date = s.start_date
+
+        if data.school and (not s.school or s.school.strip() == ""):
+            s.school = data.school.strip()
+        if data.name and (not s.name or s.name.lower() == email_clean.split("@")[0].lower() or s.name.strip() in ["Registered Surfer", "Student"]):
+            s.name = data.name.strip()
+        if data.session_time and not s.session_time:
+            s.session_time = data.session_time
+        if data.swimming_ability:
+            s.swimming_ability = data.swimming_ability
+        if data.level:
+            s.level = data.level
+        if data.whatsapp_number and not s.whatsapp_number:
+            s.whatsapp_number = data.whatsapp_number
+        if data.staying_at_school:
+            s.staying_at_school = data.staying_at_school
         st_count += 1
     
     users = db.query(User).filter(func.lower(User.email) == email_clean).all()
     for u in users:
         u.approval_status = "approved"
+        if data.name and (not getattr(u, "name", None) or u.name == ""):
+            u.name = data.name.strip()
+        if data.school and (not getattr(u, "school_name", None) or u.school_name == ""):
+            u.school_name = data.school.strip()
         # If user is athlete and has no student record, auto-create student record
         if u.role == "athlete" and not u.student and st_count == 0:
+            target_st_name = data.name or getattr(u, "name", None) or u.email.split("@")[0].capitalize()
+            target_st_school = data.school or getattr(u, "school_name", "") or ""
+            start_d = data.start_date or datetime.now().strftime("%Y-%m-%d")
+            cd = data.course_duration or "3 Days Course"
+            total_days = 3
+            for token in cd.split():
+                if token.isdigit():
+                    total_days = int(token)
+                    break
+            end_d = data.end_date
+            if not end_d:
+                try:
+                    st_dt = datetime.strptime(start_d[:10], "%Y-%m-%d")
+                    end_d = (st_dt + timedelta(days=total_days - 1)).strftime("%Y-%m-%d")
+                except Exception:
+                    end_d = start_d
             new_st = Student(
                 user_id=u.id,
-                name=u.email.split("@")[0].capitalize(),
+                name=target_st_name,
                 email=u.email,
-                level="Beginner",
+                level=data.level or "Beginner",
                 approval_status="approved",
-                school="",
-                start_date=datetime.now().strftime("%Y-%m-%d"),
-                course_duration="3 Days Course",
-                session_time=None,
-                staying_at_school="Yes"
+                school=target_st_school,
+                start_date=start_d,
+                end_date=end_d,
+                course_duration=cd,
+                session_time=data.session_time or "06:30 AM - 08:30 AM",
+                staying_at_school=data.staying_at_school or "Yes",
+                swimming_ability=data.swimming_ability or "Swimmer",
+                whatsapp_number=data.whatsapp_number or getattr(u, "phone", "") or ""
             )
             db.add(new_st)
             st_count += 1
@@ -5474,7 +5583,7 @@ def create_sessions_bulk(data: SessionBulkCreate, db: OrmSession = Depends(get_d
             resolved_name = s_name or (st.name if st else "Student")
             student_names.append(resolved_name)
             if st:
-                if not st.instructor_id:
+                if data.instructor_id:
                     st.instructor_id = data.instructor_id
                 if data.time:
                     st.session_time = data.time
@@ -5561,6 +5670,9 @@ def update_session(session_id: int, data: SessionUpdate, db: OrmSession = Depend
             s.instructor_id = data.instructor_ids[0]
     if data.instructor_id is not None:
         s.instructor_id = data.instructor_id
+        student = db.query(Student).filter(Student.id == s.student_id).first()
+        if student:
+            student.instructor_id = data.instructor_id
     if data.location is not None:
         s.location = data.location
     if data.condition is not None:
@@ -5714,6 +5826,9 @@ def get_session_slots(
             cfg = query_date.filter(SchoolSlotConfig.school_id == school_id).first()
         if not cfg and clean_name and clean_name.lower() not in ["all", "super admin", "school admin"]:
             cfg = query_date.filter(func.lower(SchoolSlotConfig.school_name) == clean_name.lower()).first()
+        if not cfg:
+            # Fallback to any date-specific config created for this date
+            cfg = query_date.order_by(SchoolSlotConfig.id.desc()).first()
         if cfg:
             is_custom_date = True
 
@@ -5780,8 +5895,8 @@ def save_session_slots(
         cfg = query.filter(SchoolSlotConfig.school_id == data.school_id).first()
     if not cfg and clean_name and clean_name.lower() not in ["all", "super admin", "school admin"]:
         cfg = query.filter(func.lower(SchoolSlotConfig.school_name) == clean_name.lower()).first()
-    if not cfg and not target_date:
-        # Only fallback to any record if saving global default
+    if not cfg:
+        # Fallback to any existing record for this date or global default to update in place
         cfg = query.order_by(SchoolSlotConfig.id.desc()).first()
 
     slots_str = json.dumps(data.slots)
