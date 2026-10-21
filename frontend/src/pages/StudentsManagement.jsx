@@ -117,8 +117,8 @@ const StudentsManagement = () => {
             setConfiguredSlots(data.slots);
           }
         })
-        .catch(() => {});
-    } catch (e) {}
+        .catch(() => { });
+    } catch (e) { }
 
     const handleSlotsSync = (e) => {
       if (e?.detail && Array.isArray(e.detail) && e.detail.length > 0) {
@@ -260,7 +260,7 @@ const StudentsManagement = () => {
       try {
         const parsed = JSON.parse(val);
         if (Array.isArray(parsed)) return parsed;
-      } catch (e) {}
+      } catch (e) { }
     }
     return [];
   };
@@ -276,13 +276,13 @@ const StudentsManagement = () => {
 
       const savedUser = JSON.parse(sessionStorage.getItem('user') || '{}');
       if ((emailLower && (savedUser.email || '').toLowerCase().trim() === emailLower) ||
-          (nameLower && (savedUser.name || '').toLowerCase().trim() === nameLower)) {
+        (nameLower && (savedUser.name || '').toLowerCase().trim() === nameLower)) {
         const userGuests = parseGuestsArray(savedUser.guests_details);
         if (userGuests.length > 0) return userGuests;
       }
 
       const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-      const req = reqs.find(r => 
+      const req = reqs.find(r =>
         (emailLower && (r.student_email || r.email || '').toLowerCase().trim() === emailLower) ||
         (nameLower && (r.student_name || r.name || '').toLowerCase().trim() === nameLower)
       );
@@ -292,7 +292,7 @@ const StudentsManagement = () => {
       }
 
       const mockStudents = JSON.parse(localStorage.getItem('mock_students_data') || '[]');
-      const mock = mockStudents.find(m => 
+      const mock = mockStudents.find(m =>
         (emailLower && (m.email || '').toLowerCase().trim() === emailLower) ||
         (nameLower && (m.name || '').toLowerCase().trim() === nameLower)
       );
@@ -302,7 +302,7 @@ const StudentsManagement = () => {
       }
 
       const savedAccs = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
-      const acc = savedAccs.find(a => 
+      const acc = savedAccs.find(a =>
         (emailLower && (a.email || '').toLowerCase().trim() === emailLower) ||
         (nameLower && (a.name || '').toLowerCase().trim() === nameLower)
       );
@@ -310,7 +310,7 @@ const StudentsManagement = () => {
         const accGuests = parseGuestsArray(acc.guests_details);
         if (accGuests.length > 0) return accGuests;
       }
-    } catch (e) {}
+    } catch (e) { }
 
     return [];
   };
@@ -458,7 +458,7 @@ const StudentsManagement = () => {
           return typeof parsed.school_name === 'string' ? parsed.school_name : (parsed.school_name?.name || null);
         }
       }
-    } catch (e) {}
+    } catch (e) { }
     return null;
   })();
 
@@ -469,7 +469,7 @@ const StudentsManagement = () => {
 
   const loggedInCoach = useMemo(() => {
     if (!instructors || instructors.length === 0) return null;
-    return instructors.find(i => 
+    return instructors.find(i =>
       (currentCoachId && (String(i.id) === String(currentCoachId) || parseInt(i.id) === parseInt(currentCoachId))) ||
       (currentCoachName && i.name && i.name.toLowerCase().trim() === currentCoachName.toLowerCase().trim())
     );
@@ -507,6 +507,45 @@ const StudentsManagement = () => {
   const [expandedGuestStudentId, setExpandedGuestStudentId] = useState(null);
   const [editingStudentDates, setEditingStudentDates] = useState(null);
   const [savingDates, setSavingDates] = useState(false);
+  const [editingStudentTime, setEditingStudentTime] = useState(null);
+  const [savingTime, setSavingTime] = useState(false);
+
+  const handleSaveStudentTime = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (!editingStudentTime || !editingStudentTime.id) return;
+    setSavingTime(true);
+    try {
+      const token = sessionStorage.getItem('token');
+      const res = await fetch(`${API}/api/students/${editingStudentTime.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify({
+          session_time: editingStudentTime.session_time || ''
+        })
+      });
+      if (res.ok) {
+        setStudents(prev => prev.map(s =>
+          s.id === editingStudentTime.id
+            ? { ...s, session_time: editingStudentTime.session_time || '' }
+            : s
+        ));
+        setEditingStudentTime(null);
+        if (typeof showToast === 'function') {
+          showToast('Expected time updated successfully');
+        }
+      } else {
+        alert('Failed to update student expected time. Please try again.');
+      }
+    } catch (err) {
+      console.error('Failed to update student expected time:', err);
+      alert('Error updating expected time. Please check network connection.');
+    } finally {
+      setSavingTime(false);
+    }
+  };
 
   const toggleGuestDropdown = (studentId) => {
     setExpandedGuestStudentId(prev => (prev === studentId ? null : studentId));
@@ -531,14 +570,14 @@ const StudentsManagement = () => {
         })
       });
       if (res.ok) {
-        setStudents(prev => prev.map(s => 
-          s.id === editingStudentDates.id 
-            ? { 
-                ...s, 
-                start_date: editingStudentDates.start_date, 
-                end_date: editingStudentDates.end_date,
-                course_duration: editingStudentDates.course_duration || s.course_duration
-              }
+        setStudents(prev => prev.map(s =>
+          s.id === editingStudentDates.id
+            ? {
+              ...s,
+              start_date: editingStudentDates.start_date,
+              end_date: editingStudentDates.end_date,
+              course_duration: editingStudentDates.course_duration || s.course_duration
+            }
             : s
         ));
         setEditingStudentDates(null);
@@ -564,7 +603,7 @@ const StudentsManagement = () => {
     fetch(url)
       .then(r => r.json())
       .then(data => setStudents(Array.isArray(data) ? data : []))
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => setLoading(false));
   };
 
@@ -578,7 +617,7 @@ const StudentsManagement = () => {
     fetch(instUrl)
       .then(r => r.json())
       .then(data => setInstructors(data))
-      .catch(() => {});
+      .catch(() => { });
 
     const sessUrl = (effectiveSchool && !isSuperAdmin)
       ? `${API}/api/sessions?school=${encodeURIComponent(effectiveSchool)}`
@@ -586,14 +625,14 @@ const StudentsManagement = () => {
     fetch(sessUrl)
       .then(r => r.json())
       .then(data => { if (Array.isArray(data)) setAllSessions(data); })
-      .catch(() => {});
+      .catch(() => { });
 
     const onStorageChange = () => {
       fetchStudents();
       fetch(sessUrl)
         .then(r => r.json())
         .then(data => { if (Array.isArray(data)) setAllSessions(data); })
-        .catch(() => {});
+        .catch(() => { });
       setReqRefreshKey(k => k + 1);
     };
     window.addEventListener('storage', onStorageChange);
@@ -657,7 +696,7 @@ const StudentsManagement = () => {
         }
 
         const sInstLower = (sess.instructor || sess.instructor_name || '').toLowerCase().trim();
-        const instMatch = 
+        const instMatch =
           (cNameLower && sInstLower && (sInstLower === cNameLower || sInstLower.includes(cNameLower) || cNameLower.includes(sInstLower))) ||
           (currentCoachId && (sess.instructor_id === currentCoachId || String(sess.instructor_id) === String(currentCoachId) || parseInt(sess.instructor_id) === parseInt(currentCoachId)));
 
@@ -958,7 +997,7 @@ const StudentsManagement = () => {
       (s.session_time && s.session_time.startsWith(sessionTimeFilter)) ||
       (s.session_time && sessionTimeFilter.startsWith(s.session_time));
     const matchStay = stayFilter === 'All' || (stayFilter === 'Lodge' ? s.staying_at_school === 'Yes' : s.staying_at_school === 'No');
-    
+
     // If a specific date or date range is selected:
     let matchDate = true;
     if (dateRange && (dateRange.startDate || dateRange.endDate)) {
@@ -969,10 +1008,10 @@ const StudentsManagement = () => {
         const sEnd = (s.end_date || sStart || '').slice(0, 10);
         if (sStart && sEnd) {
           matchDate = (!dateRange.startDate || sEnd >= dateRange.startDate) &&
-                      (!dateRange.endDate || sStart <= dateRange.endDate);
+            (!dateRange.endDate || sStart <= dateRange.endDate);
         } else if (sStart) {
           matchDate = (!dateRange.startDate || sStart >= dateRange.startDate) &&
-                      (!dateRange.endDate || sStart <= dateRange.endDate);
+            (!dateRange.endDate || sStart <= dateRange.endDate);
         } else {
           matchDate = true;
         }
@@ -1015,26 +1054,26 @@ const StudentsManagement = () => {
   }, [approvedStudents, targetEvaluationDate]);
 
   const stats = [
-    { 
-      value: totalPeopleCount, 
-      label: 'TOTAL', 
-      shortLabel: 'TOTAL', 
-      color: '#050B1A', 
+    {
+      value: totalPeopleCount,
+      label: 'TOTAL',
+      shortLabel: 'TOTAL',
+      color: '#050B1A',
       active: activeStatFilter === 'TOTAL'
     },
-    { 
-      value: activeStudentsCount, 
-      label: 'ACTIVE', 
-      shortLabel: 'ACTIVE', 
-      color: '#0D9488', 
-      active: activeStatFilter === 'ACTIVE' 
+    {
+      value: activeStudentsCount,
+      label: 'ACTIVE',
+      shortLabel: 'ACTIVE',
+      color: '#0D9488',
+      active: activeStatFilter === 'ACTIVE'
     },
-    { 
-      value: upcomingStudentsCount, 
-      label: 'UPCOMING', 
-      shortLabel: 'UPCOMING', 
-      color: '#0284C7', 
-      active: activeStatFilter === 'UPCOMING' 
+    {
+      value: upcomingStudentsCount,
+      label: 'UPCOMING',
+      shortLabel: 'UPCOMING',
+      color: '#0284C7',
+      active: activeStatFilter === 'UPCOMING'
     },
     { value: approvedStudents.filter(s => s.level === 'Beginner').length, label: 'BEGINNER', shortLabel: 'BEGINNER', color: '#F59E0B', active: activeStatFilter === 'BEGINNER' },
     { value: approvedStudents.filter(s => s.level === 'Intermediate').length, label: 'INTERMEDIATE', shortLabel: 'INTERMED', color: '#0D9488', active: activeStatFilter === 'INTERMEDIATE' },
@@ -1104,7 +1143,7 @@ const StudentsManagement = () => {
               const invData = await invRes.json();
               if (invData.token) inviteToken = invData.token;
             }
-          } catch (err) {}
+          } catch (err) { }
         }
 
         const studentInviteLink = `${baseUrl}/student-portal?token=${inviteToken}`;
@@ -1148,7 +1187,7 @@ const StudentsManagement = () => {
   // Add Student modal tabs: 'single' | 'multiple' | 'csv' | 'summary'
   const [addMode, setAddMode] = useState('single');
   const [addedStudentSummary, setAddedStudentSummary] = useState(null);
-  
+
   // Bulk grid rows state (Starts clean for manual data entry)
   const [bulkRows, setBulkRows] = useState([
     { name: '', email: '', phone: '', dob: '', age: '', level: 'Beginner', swimming_ability: 'Swimmer', days: 3, course_duration: '3 Days Course', start_date: '', end_date: '', session_time: '06:30 AM - 08:30 AM', instructor_id: '', guests: [] }
@@ -1200,12 +1239,12 @@ const StudentsManagement = () => {
   }, [summaryCompletedSessions]);
 
   const handleAddRow = () => {
-    const defaultTime = (modalSchoolSlots && modalSchoolSlots.length > 0) ? formatSlotDisplayTime(modalSchoolSlots[0]) : '06:30 AM - 08:30 AM';
+    const defaultTime = (modalSchoolSlots && modalSchoolSlots.length > 0) ? formatSlotDisplayTime(modalSchoolSlots[0]) : '06:30 AM';
     setBulkRows(prev => [...prev, { name: '', email: '', phone: '', dob: '', age: '', level: 'Beginner', swimming_ability: 'Swimmer', days: 3, course_duration: '3 Days Course', start_date: '', end_date: '', session_time: defaultTime, instructor_id: '', guests: [] }]);
   };
 
   const handleDeleteRow = (index) => {
-    const defaultTime = (modalSchoolSlots && modalSchoolSlots.length > 0) ? formatSlotDisplayTime(modalSchoolSlots[0]) : '06:30 AM - 08:30 AM';
+    const defaultTime = (modalSchoolSlots && modalSchoolSlots.length > 0) ? formatSlotDisplayTime(modalSchoolSlots[0]) : '06:30 AM';
     if (bulkRows.length <= 1) {
       setBulkRows([{ name: '', email: '', phone: '', dob: '', age: '', level: 'Beginner', swimming_ability: 'Swimmer', days: 3, course_duration: '3 Days Course', start_date: '', end_date: '', session_time: defaultTime, instructor_id: '', guests: [] }]);
       return;
@@ -1348,7 +1387,7 @@ const StudentsManagement = () => {
           instructor_id: isCoach ? currentCoachId : null,
           created_by_user_id: currentCoachId || currentUser?.id || undefined,
           course_duration: duration,
-          session_time: r.session_time || ((modalSchoolSlots && modalSchoolSlots.length > 0) ? formatSlotDisplayTime(modalSchoolSlots[0]) : '06:30 AM - 08:30 AM'),
+          session_time: r.session_time || ((modalSchoolSlots && modalSchoolSlots.length > 0) ? formatSlotDisplayTime(modalSchoolSlots[0]) : '06:30 AM'),
           staying_at_school: 'Yes',
           school: (isCoach && isCoachFreelance)
             ? 'Individual / Freelance Coach'
@@ -1403,9 +1442,9 @@ const StudentsManagement = () => {
       const text = e.target.result;
       const lines = text.split(/\r\n|\n/).filter(line => line.trim().length > 0);
       if (lines.length <= 1) return;
-      
+
       const headerCols = lines[0].split(',').map(c => c.trim().toLowerCase().replace(/^"|"$/g, ''));
-      
+
       const findIdx = (keywords, fallback) => {
         const idx = headerCols.findIndex(h => keywords.some(k => h.includes(k)));
         return idx !== -1 ? idx : fallback;
@@ -1431,7 +1470,7 @@ const StudentsManagement = () => {
         const cols = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
         const name = (cols[nameIdx] || '').trim();
         const email = (cols[emailIdx] || '').trim().toLowerCase();
-        
+
         if (name && email) {
           if (seenEmails.has(email)) continue; // ignore duplicate in same CSV
           seenEmails.add(email);
@@ -1593,11 +1632,11 @@ const StudentsManagement = () => {
         const u = JSON.parse(savedUser);
         if (u.school) schoolName = u.school;
         else if (u.name && (u.role === 'school' || u.role === 'admin')) schoolName = u.name;
-      } catch (e) {}
+      } catch (e) { }
     }
 
     const link = `${window.location.origin}/auth?mode=signup${schoolName ? `&school=${encodeURIComponent(schoolName)}` : ''}`;
-    
+
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(link);
     } else {
@@ -1647,11 +1686,11 @@ const StudentsManagement = () => {
   // Lock background body scroll whenever any modal popup is open
   useEffect(() => {
     const isAnyModalOpen = Boolean(
-      showSchoolInviteModal || 
-      showModal || 
-      showPendingModal || 
-      attendanceModal || 
-      inviteModalData || 
+      showSchoolInviteModal ||
+      showModal ||
+      showPendingModal ||
+      attendanceModal ||
+      inviteModalData ||
       confirmDialog?.isOpen
     );
 
@@ -1671,11 +1710,11 @@ const StudentsManagement = () => {
       };
     }
   }, [
-    showSchoolInviteModal, 
-    showModal, 
-    showPendingModal, 
-    attendanceModal, 
-    inviteModalData, 
+    showSchoolInviteModal,
+    showModal,
+    showPendingModal,
+    attendanceModal,
+    inviteModalData,
     confirmDialog?.isOpen
   ]);
 
@@ -1687,7 +1726,7 @@ const StudentsManagement = () => {
         closeConfirm();
         try {
           if (studentId) {
-            await fetch(`${API}/api/students/${studentId}`, { method: 'DELETE' }).catch(() => {});
+            await fetch(`${API}/api/students/${studentId}`, { method: 'DELETE' }).catch(() => { });
           }
           setStudents(prev => prev.filter(s => s.id !== studentId && (s.email || '').toLowerCase().trim() !== (studentEmail || '').toLowerCase().trim()));
           showToast(`Student "${studentName}" removed.`);
@@ -1825,7 +1864,7 @@ const StudentsManagement = () => {
             );
           }
         }
-      } catch (e) {}
+      } catch (e) { }
 
       return pending;
     } catch (e) {
@@ -1859,7 +1898,7 @@ const StudentsManagement = () => {
   const handleApproveStudentRequest = async (reqId, studentEmail) => {
     try {
       const emailLower = (studentEmail || '').toLowerCase().trim();
-      const targetReq = allPendingRequests.find(r => 
+      const targetReq = allPendingRequests.find(r =>
         (r.student_id && String(r.student_id) === String(reqId)) ||
         (r.id && String(r.id) === String(reqId)) ||
         (r.student_email && r.student_email.toLowerCase().trim() === emailLower) ||
@@ -1876,7 +1915,7 @@ const StudentsManagement = () => {
       const resolvedPhone = targetReq?.whatsapp_number || targetReq?.phone || '';
 
       // Check if student already exists in backend
-      const existingStudent = students.find(s => 
+      const existingStudent = students.find(s =>
         (s.id && String(s.id) === String(reqId)) ||
         (s.email && s.email.toLowerCase().trim() === emailLower)
       );
@@ -1899,7 +1938,7 @@ const StudentsManagement = () => {
               approval_status: 'approved'
             })
           });
-        } catch (e) {}
+        } catch (e) { }
       } else if (targetReq) {
         try {
           const createRes = await fetch(`${API}/api/students`, {
@@ -1924,7 +1963,7 @@ const StudentsManagement = () => {
               reqId = createdData.id;
             }
           }
-        } catch (e) {}
+        } catch (e) { }
       }
 
       const approvePayload = {
@@ -1941,14 +1980,14 @@ const StudentsManagement = () => {
       };
 
       if (typeof reqId === 'number' || (!isNaN(reqId) && !String(reqId).startsWith('req_'))) {
-        await fetch(`${API}/api/students/${reqId}/approve`, { method: 'POST' }).catch(() => {});
+        await fetch(`${API}/api/students/${reqId}/approve`, { method: 'POST' }).catch(() => { });
       }
       if (emailLower) {
         await fetch(`${API}/api/students/approve-by-email`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(approvePayload)
-        }).catch(() => {});
+        }).catch(() => { });
       }
 
       fetchStudents();
@@ -1980,18 +2019,18 @@ const StudentsManagement = () => {
       // Also mark savedAccounts + mock_students_data as approved
       try {
         const savedAccounts = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
-        const updatedAccounts = savedAccounts.map(a => 
+        const updatedAccounts = savedAccounts.map(a =>
           a.email && a.email.toLowerCase().trim() === emailLower ? { ...a, approval_status: 'approved' } : a
         );
         localStorage.setItem('savedAccounts', JSON.stringify(updatedAccounts));
-      } catch (e) {}
+      } catch (e) { }
       try {
         const mockStudents = JSON.parse(localStorage.getItem('mock_students_data') || '[]');
-        const updatedMock = mockStudents.map(a => 
+        const updatedMock = mockStudents.map(a =>
           a.email && a.email.toLowerCase().trim() === emailLower ? { ...a, approval_status: 'approved' } : a
         );
         localStorage.setItem('mock_students_data', JSON.stringify(updatedMock));
-      } catch (e) {}
+      } catch (e) { }
 
       // If current logged-in user in sessionStorage is this athlete, update their session too
       try {
@@ -2000,7 +2039,7 @@ const StudentsManagement = () => {
           sessionUser.approval_status = 'approved';
           sessionStorage.setItem('user', JSON.stringify(sessionUser));
         }
-      } catch (e) {}
+      } catch (e) { }
 
       fetchStudents();
       setReqRefreshKey(k => k + 1);
@@ -2018,7 +2057,7 @@ const StudentsManagement = () => {
         closeConfirm();
         const emailLower = (studentEmail || '').toLowerCase().trim();
         setStudents(prev => prev.filter(s => s.id !== reqId && (s.email && s.email.toLowerCase().trim() !== emailLower)));
-        
+
         const allReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
         let found2 = false;
         const updatedReqs2 = allReqs.map(r => {
@@ -2035,19 +2074,19 @@ const StudentsManagement = () => {
 
         try {
           const savedAccounts = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
-          const updatedAccounts = savedAccounts.map(a => 
+          const updatedAccounts = savedAccounts.map(a =>
             a.email && a.email.toLowerCase().trim() === emailLower ? { ...a, approval_status: 'rejected' } : a
           );
           localStorage.setItem('savedAccounts', JSON.stringify(updatedAccounts));
-        } catch (e) {}
+        } catch (e) { }
 
         try {
           const mockStudents = JSON.parse(localStorage.getItem('mock_students_data') || '[]');
-          const updatedMock = mockStudents.map(a => 
+          const updatedMock = mockStudents.map(a =>
             a.email && a.email.toLowerCase().trim() === emailLower ? { ...a, approval_status: 'rejected' } : a
           );
           localStorage.setItem('mock_students_data', JSON.stringify(updatedMock));
-        } catch (e) {}
+        } catch (e) { }
 
         setReqRefreshKey(k => k + 1);
         showToast(`❌ Declined request for ${studentEmail || 'student'}.`);
@@ -2075,28 +2114,15 @@ const StudentsManagement = () => {
 
   const formatSlotDisplayTime = (slot) => {
     if (!slot) return '';
-    const timeStr = slot.time || slot.startTime || '';
-    if (!timeStr) return '';
-    if (timeStr.includes(' - ')) return timeStr;
-
-    const m = String(timeStr).trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
-    if (!m) return timeStr;
-    let [_, hStr, mStr, meridiem] = m;
-    let hours = parseInt(hStr, 10);
-    let minutes = parseInt(mStr, 10);
-    if (meridiem) {
-      const med = meridiem.toUpperCase();
-      if (med === 'PM' && hours < 12) hours += 12;
-      if (med === 'AM' && hours === 12) hours = 0;
-    }
-    const dur = parseInt(slot.duration || 120, 10);
-    const totalMinutes = hours * 60 + minutes + dur;
-    const endH24 = Math.floor((totalMinutes / 60) % 24);
-    const endM = totalMinutes % 60;
-    const endMeridiem = endH24 >= 12 ? 'PM' : 'AM';
-    const endH12 = endH24 % 12 === 0 ? 12 : endH24 % 12;
+    const raw = typeof slot === 'string' ? slot : (slot.time || slot.startTime || '');
+    if (!raw) return '';
+    // Extract only start time (e.g. "06:00 AM - 08:00 AM" -> "06:00 AM")
+    const startPart = String(raw).split(/\s*[-–—to]+\s*/i)[0].trim();
+    const m = startPart.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+    if (!m) return startPart;
+    const [_, hStr, mStr, meridiem] = m;
     const pad = (n) => String(n).padStart(2, '0');
-    return `${timeStr} - ${pad(endH12)}:${pad(endM)} ${endMeridiem}`;
+    return `${pad(hStr)}:${mStr} ${(meridiem || 'AM').toUpperCase()}`;
   };
 
   // Load configured slots for school and invite start date
@@ -2318,7 +2344,7 @@ const StudentsManagement = () => {
           </div>
           <div className="sm-actions">
             {canManagePendingRequests && (
-              <button 
+              <button
                 className="sm-btn-secondary"
                 onClick={() => {
                   setReqRefreshKey(k => k + 1);
@@ -2720,7 +2746,7 @@ const StudentsManagement = () => {
                                               padding: '1px 6px',
                                               borderRadius: '5px'
                                             }}
-                                            title={`Under 16 (${pAge} yrs)`}
+                                              title={`Under 16 (${pAge} yrs)`}
                                             >
                                               🧒 Kids
                                             </span>
@@ -3091,86 +3117,63 @@ const StudentsManagement = () => {
                 <span>👉 Swipe horizontally on the table to view students & actions</span>
               </div>
               <table className="sm-table">
-              <thead>
-                <tr>
-                  <th>{isSchoolCoach ? 'Student' : 'Student & WhatsApp'}</th>
-                  <th>Course Progress</th>
-                  <th>Date</th>
-                  <th>Expected Time</th>
-                  <th>Invite</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((s, i) => (
-                  <tr
-                    key={s.id}
-                    style={{ borderBottom: i === filtered.length - 1 ? 'none' : '1px solid #E2E8F0', cursor: 'pointer' }}
-                    onClick={() => navigate(`/students/${s.id}`)}
-                  >
-                    <td>
-                      <div className="sm-student-info">
-                        {s.image && !s.image.includes('unsplash.com') && !s.image.includes('1500648767791') ? (
-                          <img
-                            src={s.image}
-                            alt={s.name}
-                            className="sm-student-avatar"
-                            onError={e => {
-                              e.currentTarget.style.display = 'none';
-                              const fallback = e.currentTarget.parentElement.querySelector('.sm-avatar-fallback');
-                              if (fallback) fallback.style.display = 'flex';
+                <thead>
+                  <tr>
+                    <th>{isSchoolCoach ? 'Student' : 'Student & WhatsApp'}</th>
+                    <th>Course Progress</th>
+                    <th>Date</th>
+                    <th>Expected Time</th>
+                    <th>Invite</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((s, i) => (
+                    <tr
+                      key={s.id}
+                      style={{ borderBottom: i === filtered.length - 1 ? 'none' : '1px solid #E2E8F0', cursor: 'pointer' }}
+                      onClick={() => navigate(`/students/${s.id}`)}
+                    >
+                      <td>
+                        <div className="sm-student-info">
+                          {s.image && !s.image.includes('unsplash.com') && !s.image.includes('1500648767791') ? (
+                            <img
+                              src={s.image}
+                              alt={s.name}
+                              className="sm-student-avatar"
+                              onError={e => {
+                                e.currentTarget.style.display = 'none';
+                                const fallback = e.currentTarget.parentElement.querySelector('.sm-avatar-fallback');
+                                if (fallback) fallback.style.display = 'flex';
+                              }}
+                            />
+                          ) : null}
+                          <div
+                            className="sm-avatar-fallback"
+                            style={{
+                              display: (s.image && !s.image.includes('unsplash.com') && !s.image.includes('1500648767791')) ? 'none' : 'flex',
+                              width: '38px',
+                              height: '38px',
+                              borderRadius: '50%',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
+                              color: '#FFFFFF',
+                              fontWeight: '800',
+                              fontSize: '15px',
+                              fontFamily: 'Outfit, sans-serif',
+                              flexShrink: 0
                             }}
-                          />
-                        ) : null}
-                        <div
-                          className="sm-avatar-fallback"
-                          style={{
-                            display: (s.image && !s.image.includes('unsplash.com') && !s.image.includes('1500648767791')) ? 'none' : 'flex',
-                            width: '38px',
-                            height: '38px',
-                            borderRadius: '50%',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
-                            color: '#FFFFFF',
-                            fontWeight: '800',
-                            fontSize: '15px',
-                            fontFamily: 'Outfit, sans-serif',
-                            flexShrink: 0
-                          }}
-                        >
-                          {s.name ? s.name.charAt(0).toUpperCase() : 'S'}
-                        </div>
-                        <div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                            <div className="sm-student-name">{s.name}</div>
-                            {(() => {
-                              const genderVal = s.gender || (s.division && /women|girl/i.test(s.division) ? 'Female' : 'Male');
-                              if (!genderVal) return null;
-                              const isFemale = genderVal.toLowerCase() === 'female';
-                              return (
-                                <span
-                                  style={{
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '3px',
-                                    fontSize: '10.5px',
-                                    fontWeight: 700,
-                                    color: isFemale ? '#DB2777' : '#0284C7',
-                                    background: isFemale ? '#FDF2F8' : '#F0F9FF',
-                                    border: `1px solid ${isFemale ? '#FBCFE8' : '#BAE6FD'}`,
-                                    padding: '1px 6px',
-                                    borderRadius: '5px'
-                                  }}
-                                  title={`Gender: ${genderVal}`}
-                                >
-                                  {isFemale ? '♀ Female' : '♂ Male'}
-                                </span>
-                              );
-                            })()}
-                            {(() => {
-                              const ageVal = (s.age !== undefined && s.age !== null && s.age !== '') ? Number(s.age) : (s.dob ? Number(calculateAge(s.dob)) : null);
-                              if (ageVal !== null && !isNaN(ageVal) && ageVal > 0 && ageVal < 16) {
+                          >
+                            {s.name ? s.name.charAt(0).toUpperCase() : 'S'}
+                          </div>
+                          <div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                              <div className="sm-student-name">{s.name}</div>
+                              {(() => {
+                                const genderVal = s.gender || (s.division && /women|girl/i.test(s.division) ? 'Female' : 'Male');
+                                if (!genderVal) return null;
+                                const isFemale = genderVal.toLowerCase() === 'female';
                                 return (
                                   <span
                                     style={{
@@ -3178,381 +3181,439 @@ const StudentsManagement = () => {
                                       alignItems: 'center',
                                       gap: '3px',
                                       fontSize: '10.5px',
-                                      fontWeight: 800,
-                                      color: '#7C3AED',
-                                      background: '#F5F3FF',
-                                      border: '1px solid #DDD6FE',
+                                      fontWeight: 700,
+                                      color: isFemale ? '#DB2777' : '#0284C7',
+                                      background: isFemale ? '#FDF2F8' : '#F0F9FF',
+                                      border: `1px solid ${isFemale ? '#FBCFE8' : '#BAE6FD'}`,
                                       padding: '1px 6px',
                                       borderRadius: '5px'
                                     }}
-                                    title={`Under 16 (${ageVal} yrs)`}
+                                    title={`Gender: ${genderVal}`}
                                   >
-                                    🧒 Kids
+                                    {isFemale ? '♀ Female' : '♂ Male'}
                                   </span>
                                 );
-                              }
-                              return null;
-                            })()}
-                            {s.swimming_ability?.toLowerCase() === 'non-swimmer' ? (
-                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '10.5px', fontWeight: 700, color: '#D97706', background: '#FEF3C7', border: '1px solid #FDE68A', padding: '1px 6px', borderRadius: '5px' }}>
-                                🤿 Non-Swimmer
-                              </span>
-                            ) : (
-                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '10.5px', fontWeight: 700, color: '#0D9488', background: '#ECFDF5', border: '1px solid #A7F3D0', padding: '1px 6px', borderRadius: '5px' }}>
-                                🏊 Swimmer
-                              </span>
-                            )}
-                          </div>
-                          {!isSchoolCoach && (
-                            <div className="sm-student-email" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px', marginTop: '3px' }}>
-                              {s.whatsapp_number ? (
-                                <a
-                                  href={`https://wa.me/${String(s.whatsapp_number).replace(/\D/g, '')}`}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  onClick={e => e.stopPropagation()}
-                                  style={{ color: '#0D9488', textDecoration: 'none', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '11.5px' }}
-                                  title="Chat on WhatsApp"
-                                >
-                                  📱 {String(s.whatsapp_number).startsWith('+') ? s.whatsapp_number : (String(s.whatsapp_number).length === 10 ? `+91 ${s.whatsapp_number}` : s.whatsapp_number)}
-                                </a>
-                              ) : null}
-                              {s.whatsapp_number && s.email && <span style={{ color: '#CBD5E1', margin: '0 2px' }}>•</span>}
-                              {s.email && (
-                                <a
-                                  href={`mailto:${s.email}`}
-                                  onClick={e => e.stopPropagation()}
-                                  style={{ color: '#64748B', textDecoration: 'none', fontSize: '11px' }}
-                                >
-                                  {s.email}
-                                </a>
+                              })()}
+                              {(() => {
+                                const ageVal = (s.age !== undefined && s.age !== null && s.age !== '') ? Number(s.age) : (s.dob ? Number(calculateAge(s.dob)) : null);
+                                if (ageVal !== null && !isNaN(ageVal) && ageVal > 0 && ageVal < 16) {
+                                  return (
+                                    <span
+                                      style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '3px',
+                                        fontSize: '10.5px',
+                                        fontWeight: 800,
+                                        color: '#7C3AED',
+                                        background: '#F5F3FF',
+                                        border: '1px solid #DDD6FE',
+                                        padding: '1px 6px',
+                                        borderRadius: '5px'
+                                      }}
+                                      title={`Under 16 (${ageVal} yrs)`}
+                                    >
+                                      🧒 Kids
+                                    </span>
+                                  );
+                                }
+                                return null;
+                              })()}
+                              {s.swimming_ability?.toLowerCase() === 'non-swimmer' ? (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '10.5px', fontWeight: 700, color: '#D97706', background: '#FEF3C7', border: '1px solid #FDE68A', padding: '1px 6px', borderRadius: '5px' }}>
+                                  🤿 Non-Swimmer
+                                </span>
+                              ) : (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '10.5px', fontWeight: 700, color: '#0D9488', background: '#ECFDF5', border: '1px solid #A7F3D0', padding: '1px 6px', borderRadius: '5px' }}>
+                                  🏊 Swimmer
+                                </span>
                               )}
                             </div>
-                          )}
-                          {(() => {
-                            const guestList = getStudentGuestsDetails(s);
-                            // Inga guest illathavangalukku ethuvume kaatta koodathu
-                            if (!guestList || guestList.length === 0) {
-                              return null;
-                            }
-
-                            const isExpanded = expandedGuestStudentId === s.id;
-
-                            return (
-                              <div style={{ marginTop: '5px' }}>
-                                {/* Dropdown Toggle Button */}
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    toggleGuestDropdown(s.id);
-                                  }}
-                                  title={isExpanded ? "Click to hide guest details" : "Click to view guest details"}
-                                  style={{
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '6px',
-                                    fontSize: '11px',
-                                    fontWeight: '700',
-                                    color: isExpanded ? '#0369A1' : '#0284C7',
-                                    background: isExpanded ? '#E0F2FE' : '#F0F9FF',
-                                    border: `1px solid ${isExpanded ? '#38BDF8' : '#BAE6FD'}`,
-                                    padding: '2.5px 8px',
-                                    borderRadius: '6px',
-                                    cursor: 'pointer',
-                                    outline: 'none',
-                                    transition: 'all 0.15s ease',
-                                    boxShadow: isExpanded ? '0 1px 4px rgba(2, 132, 199, 0.15)' : 'none'
-                                  }}
-                                >
-                                  <span>👥</span>
-                                  <span>{guestList.length} {guestList.length === 1 ? 'Guest' : 'Guests'}</span>
-                                  <span style={{
-                                    fontSize: '9px',
-                                    transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
-                                    transition: 'transform 0.2s ease',
-                                    display: 'inline-block',
-                                    color: isExpanded ? '#0369A1' : '#0284C7'
-                                  }}>
-                                    ▼
-                                  </span>
-                                </button>
-
-                                {/* Perfectly Aligned Straight-Line Grid (Shown on Dropdown) */}
-                                {isExpanded && (
-                                  <div
+                            {!isSchoolCoach && (
+                              <div className="sm-student-email" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px', marginTop: '3px' }}>
+                                {s.whatsapp_number ? (
+                                  <a
+                                    href={`https://wa.me/${String(s.whatsapp_number).replace(/\D/g, '')}`}
+                                    target="_blank"
+                                    rel="noreferrer"
                                     onClick={e => e.stopPropagation()}
-                                    style={{
-                                      marginTop: '6px',
-                                      padding: '8px 12px',
-                                      background: '#F8FAFC',
-                                      border: '1px solid #E2E8F0',
-                                      borderLeft: '3.5px solid #0284C7',
-                                      borderRadius: '6px',
-                                      display: 'inline-grid',
-                                      gridTemplateColumns: isSchoolCoach
-                                        ? 'max-content max-content max-content'
-                                        : 'max-content max-content max-content max-content max-content',
-                                      columnGap: '14px',
-                                      rowGap: '6px',
-                                      alignItems: 'center',
-                                      maxWidth: '100%',
-                                      overflowX: 'auto'
-                                    }}
+                                    style={{ color: '#0D9488', textDecoration: 'none', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '11.5px' }}
+                                    title="Chat on WhatsApp"
                                   >
-                                    {guestList.map((g, gIdx) => {
-                                      const gName = g.name || `Guest #${gIdx + 1}`;
-                                      const gPhone = g.whatsapp_number || g.phone;
-                                      const gAge = g.age || calculateAge(g.dob);
-
-                                      return (
-                                        <div key={gIdx} style={{ display: 'contents' }}>
-                                          {/* Col 1: Fixed Badge */}
-                                          <span style={{
-                                            fontWeight: 700,
-                                            color: '#0284C7',
-                                            background: '#F0F9FF',
-                                            border: '1px solid #BAE6FD',
-                                            padding: '1px 6px',
-                                            borderRadius: '4px',
-                                            fontSize: '10.5px',
-                                            whiteSpace: 'nowrap'
-                                          }}>
-                                            👥 Guest {gIdx + 1}:
-                                          </span>
-
-                                          {/* Col 2: Name */}
-                                          <span style={{
-                                            fontWeight: 700,
-                                            color: '#0F172A',
-                                            fontSize: '11.5px',
-                                            whiteSpace: 'nowrap'
-                                          }}>
-                                            {gName}
-                                          </span>
-
-                                          {/* Col 3: Gender & Age & Level */}
-                                          <div style={{
-                                            display: 'inline-flex',
-                                            alignItems: 'center',
-                                            gap: '5px',
-                                            fontSize: '11px',
-                                            color: '#64748B',
-                                            whiteSpace: 'nowrap'
-                                          }}>
-                                            {g.gender && <span>{g.gender}</span>}
-                                            {gAge ? <span>• {gAge} yrs</span> : null}
-                                            {(() => {
-                                              const numGAge = gAge ? Number(gAge) : null;
-                                              if (numGAge !== null && !isNaN(numGAge) && numGAge > 0 && numGAge < 16) {
-                                                return (
-                                                  <span style={{
-                                                    fontSize: '9.5px',
-                                                    fontWeight: 800,
-                                                    background: '#F5F3FF',
-                                                    color: '#7C3AED',
-                                                    border: '1px solid #DDD6FE',
-                                                    padding: '1px 5px',
-                                                    borderRadius: '3px'
-                                                  }}>
-                                                    🧒 Kids
-                                                  </span>
-                                                );
-                                              }
-                                              return null;
-                                            })()}
-                                            {g.level && (
-                                              <span style={{
-                                                fontSize: '9.5px',
-                                                fontWeight: 700,
-                                                background: '#ECFDF5',
-                                                color: '#065F46',
-                                                border: '1px solid #A7F3D0',
-                                                padding: '1px 5px',
-                                                borderRadius: '3px'
-                                              }}>
-                                                {g.level}
-                                              </span>
-                                            )}
-                                          </div>
-
-                                          {/* Col 4: WhatsApp / Phone */}
-                                          {!isSchoolCoach && (
-                                            <div style={{ fontSize: '11px', whiteSpace: 'nowrap' }}>
-                                              {gPhone ? (
-                                                <a
-                                                  href={`https://wa.me/${String(gPhone).replace(/\D/g, '')}`}
-                                                  target="_blank"
-                                                  rel="noreferrer"
-                                                  onClick={e => e.stopPropagation()}
-                                                  style={{
-                                                    color: '#0D9488',
-                                                    textDecoration: 'none',
-                                                    fontWeight: 600,
-                                                    display: 'inline-flex',
-                                                    alignItems: 'center',
-                                                    gap: '3px'
-                                                  }}
-                                                >
-                                                  📱 +91 {gPhone}
-                                                </a>
-                                              ) : (
-                                                <span style={{ color: '#94A3B8' }}>-</span>
-                                              )}
-                                            </div>
-                                          )}
-
-                                          {/* Col 5: Email */}
-                                          {!isSchoolCoach && (
-                                            <div style={{ fontSize: '11px', whiteSpace: 'nowrap' }}>
-                                              {g.email ? (
-                                                <a
-                                                  href={`mailto:${g.email}`}
-                                                  onClick={e => e.stopPropagation()}
-                                                  style={{ color: '#64748B', textDecoration: 'none' }}
-                                                >
-                                                  ✉️ {g.email}
-                                                </a>
-                                              ) : null}
-                                            </div>
-                                          )}
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
+                                    📱 {String(s.whatsapp_number).startsWith('+') ? s.whatsapp_number : (String(s.whatsapp_number).length === 10 ? `+91 ${s.whatsapp_number}` : s.whatsapp_number)}
+                                  </a>
+                                ) : null}
+                                {s.whatsapp_number && s.email && <span style={{ color: '#CBD5E1', margin: '0 2px' }}>•</span>}
+                                {s.email && (
+                                  <a
+                                    href={`mailto:${s.email}`}
+                                    onClick={e => e.stopPropagation()}
+                                    style={{ color: '#64748B', textDecoration: 'none', fontSize: '11px' }}
+                                  >
+                                    {s.email}
+                                  </a>
                                 )}
                               </div>
-                            );
-                          })()}
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      {(() => {
-                        const { which_day, total_days, status, completed } = calculateCurrentCourseDay(s, targetEvaluationDate);
-                        return (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                            {completed ? (
-                              <>
-                                <span style={{ fontSize: '13px', fontWeight: 700, color: '#64748B', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                                  Day {total_days} of {total_days}
-                                  <span style={{ fontSize: '10px', background: '#F1F5F9', color: '#64748B', border: '1px solid #CBD5E1', padding: '1px 5px', borderRadius: '4px', fontWeight: 700 }}>
-                                    Completed
-                                  </span>
-                                </span>
-                                <span style={{ fontSize: '11px', color: '#94A3B8' }}>
-                                  {s.course_duration || `${total_days} Days Course`} (Finished)
-                                </span>
-                              </>
-                            ) : status === 'upcoming' ? (
-                              <>
-                                <span style={{ fontSize: '13px', fontWeight: 700, color: '#D97706', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                                  Day 1 of {total_days}
-                                  <span style={{ fontSize: '10px', background: '#FEF3C7', color: '#D97706', border: '1px solid #FDE68A', padding: '1px 5px', borderRadius: '4px', fontWeight: 700 }}>
-                                    Upcoming
-                                  </span>
-                                </span>
-                                <span style={{ fontSize: '11px', color: '#B45309' }}>
-                                  Starts {s.start_date}
-                                </span>
-                              </>
-                            ) : (
-                              <>
-                                <span style={{ fontSize: '13px', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                                  Day {which_day} of {total_days}
-                                  <span style={{ fontSize: '10px', background: '#ECFDF5', color: '#059669', border: '1px solid #A7F3D0', padding: '1px 5px', borderRadius: '4px', fontWeight: 700 }}>
-                                    Active
-                                  </span>
-                                </span>
-                                <span style={{ fontSize: '11px', color: '#64748B' }}>
-                                  {s.course_duration || `${total_days} Days Course`}
-                                </span>
-                              </>
                             )}
+                            {(() => {
+                              const guestList = getStudentGuestsDetails(s);
+                              // Inga guest illathavangalukku ethuvume kaatta koodathu
+                              if (!guestList || guestList.length === 0) {
+                                return null;
+                              }
+
+                              const isExpanded = expandedGuestStudentId === s.id;
+
+                              return (
+                                <div style={{ marginTop: '5px' }}>
+                                  {/* Dropdown Toggle Button */}
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      toggleGuestDropdown(s.id);
+                                    }}
+                                    title={isExpanded ? "Click to hide guest details" : "Click to view guest details"}
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '6px',
+                                      fontSize: '11px',
+                                      fontWeight: '700',
+                                      color: isExpanded ? '#0369A1' : '#0284C7',
+                                      background: isExpanded ? '#E0F2FE' : '#F0F9FF',
+                                      border: `1px solid ${isExpanded ? '#38BDF8' : '#BAE6FD'}`,
+                                      padding: '2.5px 8px',
+                                      borderRadius: '6px',
+                                      cursor: 'pointer',
+                                      outline: 'none',
+                                      transition: 'all 0.15s ease',
+                                      boxShadow: isExpanded ? '0 1px 4px rgba(2, 132, 199, 0.15)' : 'none'
+                                    }}
+                                  >
+                                    <span>👥</span>
+                                    <span>{guestList.length} {guestList.length === 1 ? 'Guest' : 'Guests'}</span>
+                                    <span style={{
+                                      fontSize: '9px',
+                                      transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                                      transition: 'transform 0.2s ease',
+                                      display: 'inline-block',
+                                      color: isExpanded ? '#0369A1' : '#0284C7'
+                                    }}>
+                                      ▼
+                                    </span>
+                                  </button>
+
+                                  {/* Perfectly Aligned Straight-Line Grid (Shown on Dropdown) */}
+                                  {isExpanded && (
+                                    <div
+                                      onClick={e => e.stopPropagation()}
+                                      style={{
+                                        marginTop: '6px',
+                                        padding: '8px 12px',
+                                        background: '#F8FAFC',
+                                        border: '1px solid #E2E8F0',
+                                        borderLeft: '3.5px solid #0284C7',
+                                        borderRadius: '6px',
+                                        display: 'inline-grid',
+                                        gridTemplateColumns: isSchoolCoach
+                                          ? 'max-content max-content max-content'
+                                          : 'max-content max-content max-content max-content max-content',
+                                        columnGap: '14px',
+                                        rowGap: '6px',
+                                        alignItems: 'center',
+                                        maxWidth: '100%',
+                                        overflowX: 'auto'
+                                      }}
+                                    >
+                                      {guestList.map((g, gIdx) => {
+                                        const gName = g.name || `Guest #${gIdx + 1}`;
+                                        const gPhone = g.whatsapp_number || g.phone;
+                                        const gAge = g.age || calculateAge(g.dob);
+
+                                        return (
+                                          <div key={gIdx} style={{ display: 'contents' }}>
+                                            {/* Col 1: Fixed Badge */}
+                                            <span style={{
+                                              fontWeight: 700,
+                                              color: '#0284C7',
+                                              background: '#F0F9FF',
+                                              border: '1px solid #BAE6FD',
+                                              padding: '1px 6px',
+                                              borderRadius: '4px',
+                                              fontSize: '10.5px',
+                                              whiteSpace: 'nowrap'
+                                            }}>
+                                              👥 Guest {gIdx + 1}:
+                                            </span>
+
+                                            {/* Col 2: Name */}
+                                            <span style={{
+                                              fontWeight: 700,
+                                              color: '#0F172A',
+                                              fontSize: '11.5px',
+                                              whiteSpace: 'nowrap'
+                                            }}>
+                                              {gName}
+                                            </span>
+
+                                            {/* Col 3: Gender & Age & Level */}
+                                            <div style={{
+                                              display: 'inline-flex',
+                                              alignItems: 'center',
+                                              gap: '5px',
+                                              fontSize: '11px',
+                                              color: '#64748B',
+                                              whiteSpace: 'nowrap'
+                                            }}>
+                                              {g.gender && <span>{g.gender}</span>}
+                                              {gAge ? <span>• {gAge} yrs</span> : null}
+                                              {(() => {
+                                                const numGAge = gAge ? Number(gAge) : null;
+                                                if (numGAge !== null && !isNaN(numGAge) && numGAge > 0 && numGAge < 16) {
+                                                  return (
+                                                    <span style={{
+                                                      fontSize: '9.5px',
+                                                      fontWeight: 800,
+                                                      background: '#F5F3FF',
+                                                      color: '#7C3AED',
+                                                      border: '1px solid #DDD6FE',
+                                                      padding: '1px 5px',
+                                                      borderRadius: '3px'
+                                                    }}>
+                                                      🧒 Kids
+                                                    </span>
+                                                  );
+                                                }
+                                                return null;
+                                              })()}
+                                              {g.level && (
+                                                <span style={{
+                                                  fontSize: '9.5px',
+                                                  fontWeight: 700,
+                                                  background: '#ECFDF5',
+                                                  color: '#065F46',
+                                                  border: '1px solid #A7F3D0',
+                                                  padding: '1px 5px',
+                                                  borderRadius: '3px'
+                                                }}>
+                                                  {g.level}
+                                                </span>
+                                              )}
+                                            </div>
+
+                                            {/* Col 4: WhatsApp / Phone */}
+                                            {!isSchoolCoach && (
+                                              <div style={{ fontSize: '11px', whiteSpace: 'nowrap' }}>
+                                                {gPhone ? (
+                                                  <a
+                                                    href={`https://wa.me/${String(gPhone).replace(/\D/g, '')}`}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    onClick={e => e.stopPropagation()}
+                                                    style={{
+                                                      color: '#0D9488',
+                                                      textDecoration: 'none',
+                                                      fontWeight: 600,
+                                                      display: 'inline-flex',
+                                                      alignItems: 'center',
+                                                      gap: '3px'
+                                                    }}
+                                                  >
+                                                    📱 +91 {gPhone}
+                                                  </a>
+                                                ) : (
+                                                  <span style={{ color: '#94A3B8' }}>-</span>
+                                                )}
+                                              </div>
+                                            )}
+
+                                            {/* Col 5: Email */}
+                                            {!isSchoolCoach && (
+                                              <div style={{ fontSize: '11px', whiteSpace: 'nowrap' }}>
+                                                {g.email ? (
+                                                  <a
+                                                    href={`mailto:${g.email}`}
+                                                    onClick={e => e.stopPropagation()}
+                                                    style={{ color: '#64748B', textDecoration: 'none' }}
+                                                  >
+                                                    ✉️ {g.email}
+                                                  </a>
+                                                ) : null}
+                                              </div>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </div>
-                        );
-                      })()}
-                    </td>
-                    <td
-                      style={{ cursor: isAdminOrSchoolAdmin ? 'pointer' : 'default' }}
-                      onClick={(e) => {
-                        if (isAdminOrSchoolAdmin) {
-                          e.stopPropagation();
-                          const currentEnd = getStudentEndDate(s);
-                          setEditingStudentDates({
-                            id: s.id,
-                            name: s.name,
-                            course_duration: s.course_duration || '',
-                            start_date: s.start_date || '',
-                            end_date: s.end_date || currentEnd || ''
-                          });
-                        }
-                      }}
-                      title={isAdminOrSchoolAdmin ? "Click to edit Start & End dates (School Admin)" : undefined}
-                    >
-                      {(() => {
-                        const calculatedEndDate = getStudentEndDate(s);
-                        return (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              <span style={{ fontSize: '12px', fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap' }}>
-                                {s.start_date || '—'}
-                              </span>
-                              {isAdminOrSchoolAdmin && (
-                                <span
-                                  style={{
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    fontSize: '10px',
-                                    padding: '1px 6px',
-                                    borderRadius: '4px',
-                                    background: '#F1F5F9',
-                                    color: '#475569',
-                                    border: '1px solid #CBD5E1',
-                                    fontWeight: 700,
-                                    lineHeight: 1.2,
-                                    cursor: 'pointer'
-                                  }}
-                                  title="Edit Dates"
-                                >
-                                  Edit
-                                </span>
+                        </div>
+                      </td>
+                      <td>
+                        {(() => {
+                          const { which_day, total_days, status, completed } = calculateCurrentCourseDay(s, targetEvaluationDate);
+                          return (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                              {completed ? (
+                                <>
+                                  <span style={{ fontSize: '13px', fontWeight: 700, color: '#64748B', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                    Day {total_days} of {total_days}
+                                    <span style={{ fontSize: '10px', background: '#F1F5F9', color: '#64748B', border: '1px solid #CBD5E1', padding: '1px 5px', borderRadius: '4px', fontWeight: 700 }}>
+                                      Completed
+                                    </span>
+                                  </span>
+                                  <span style={{ fontSize: '11px', color: '#94A3B8' }}>
+                                    {s.course_duration || `${total_days} Days Course`} (Finished)
+                                  </span>
+                                </>
+                              ) : status === 'upcoming' ? (
+                                <>
+                                  <span style={{ fontSize: '13px', fontWeight: 700, color: '#D97706', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                    Day 1 of {total_days}
+                                    <span style={{ fontSize: '10px', background: '#FEF3C7', color: '#D97706', border: '1px solid #FDE68A', padding: '1px 5px', borderRadius: '4px', fontWeight: 700 }}>
+                                      Upcoming
+                                    </span>
+                                  </span>
+                                  <span style={{ fontSize: '11px', color: '#B45309' }}>
+                                    Starts {s.start_date}
+                                  </span>
+                                </>
+                              ) : (
+                                <>
+                                  <span style={{ fontSize: '13px', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                    Day {which_day} of {total_days}
+                                    <span style={{ fontSize: '10px', background: '#ECFDF5', color: '#059669', border: '1px solid #A7F3D0', padding: '1px 5px', borderRadius: '4px', fontWeight: 700 }}>
+                                      Active
+                                    </span>
+                                  </span>
+                                  <span style={{ fontSize: '11px', color: '#64748B' }}>
+                                    {s.course_duration || `${total_days} Days Course`}
+                                  </span>
+                                </>
                               )}
                             </div>
-                            {calculatedEndDate ? (
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                <span style={{ fontSize: '11px', fontWeight: 600, color: '#64748B', whiteSpace: 'nowrap' }}>
-                                  to {calculatedEndDate}
+                          );
+                        })()}
+                      </td>
+                      <td
+                        style={{ cursor: isAdminOrSchoolAdmin ? 'pointer' : 'default' }}
+                        onClick={(e) => {
+                          if (isAdminOrSchoolAdmin) {
+                            e.stopPropagation();
+                            const currentEnd = getStudentEndDate(s);
+                            setEditingStudentDates({
+                              id: s.id,
+                              name: s.name,
+                              course_duration: s.course_duration || '',
+                              start_date: s.start_date || '',
+                              end_date: s.end_date || currentEnd || ''
+                            });
+                          }
+                        }}
+                        title={isAdminOrSchoolAdmin ? "Click to edit Start & End dates (School Admin)" : undefined}
+                      >
+                        {(() => {
+                          const calculatedEndDate = getStudentEndDate(s);
+                          return (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span style={{ fontSize: '12px', fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap' }}>
+                                  {s.start_date || '—'}
                                 </span>
+                                {isAdminOrSchoolAdmin && (
+                                  <span
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      fontSize: '10px',
+                                      padding: '1px 6px',
+                                      borderRadius: '4px',
+                                      background: '#F1F5F9',
+                                      color: '#475569',
+                                      border: '1px solid #CBD5E1',
+                                      fontWeight: 700,
+                                      lineHeight: 1.2,
+                                      cursor: 'pointer'
+                                    }}
+                                    title="Edit Dates"
+                                  >
+                                    Edit
+                                  </span>
+                                )}
                               </div>
-                            ) : null}
-                          </div>
-                        );
-                      })()}
-                    </td>
-                    <td>
-                      {s.session_time ? (
-                        <span style={{
-                          fontSize: '11.5px',
-                          fontWeight: 700,
-                          background: '#F0FDFA',
-                          color: '#0F766E',
-                          border: '1px solid #99F6E4',
-                          borderRadius: '6px',
-                          padding: '3px 8px',
-                          whiteSpace: 'nowrap',
-                          display: 'inline-flex',
-                          alignItems: 'center'
-                        }}>
-                          {s.session_time}
-                        </span>
-                      ) : (
-                        <span style={{ fontSize: '11.5px', color: '#94A3B8', fontWeight: 500 }}>
-                          —
-                        </span>
-                      )}
-                    </td>
-                    <td>
+                              {calculatedEndDate ? (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                  <span style={{ fontSize: '11px', fontWeight: 600, color: '#64748B', whiteSpace: 'nowrap' }}>
+                                    to {calculatedEndDate}
+                                  </span>
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })()}
+                      </td>
+                      <td
+                        style={{ cursor: isAdminOrSchoolAdmin ? 'pointer' : 'default' }}
+                        onClick={(e) => {
+                          if (isAdminOrSchoolAdmin) {
+                            e.stopPropagation();
+                            setEditingStudentTime({
+                              id: s.id,
+                              name: s.name,
+                              session_time: formatSlotDisplayTime(s.session_time) || s.session_time || ''
+                            });
+                          }
+                        }}
+                        title={isAdminOrSchoolAdmin ? "Click to edit Expected Time (School Admin)" : undefined}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          {s.session_time ? (
+                            <span style={{
+                              fontSize: '11.5px',
+                              fontWeight: 700,
+                              background: '#F0FDFA',
+                              color: '#0F766E',
+                              border: '1px solid #99F6E4',
+                              borderRadius: '6px',
+                              padding: '3px 8px',
+                              whiteSpace: 'nowrap',
+                              display: 'inline-flex',
+                              alignItems: 'center'
+                            }}>
+                              {formatSlotDisplayTime(s.session_time)}
+                            </span>
+                          ) : (
+                            <span style={{ fontSize: '11.5px', color: '#94A3B8', fontWeight: 500 }}>
+                              —
+                            </span>
+                          )}
+                          {isAdminOrSchoolAdmin && (
+                            <span
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                fontSize: '10px',
+                                padding: '1px 6px',
+                                borderRadius: '4px',
+                                background: '#F1F5F9',
+                                color: '#475569',
+                                border: '1px solid #CBD5E1',
+                                fontWeight: 700,
+                                lineHeight: 1.2,
+                                cursor: 'pointer'
+                              }}
+                              title="Edit Expected Time"
+                            >
+                              Edit
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td>
                         {!s.has_password && (
                           <button
                             className="sm-invite-btn"
@@ -3579,12 +3640,12 @@ const StudentsManagement = () => {
                                   const invData = await invRes.json();
                                   const baseUrl = window.location.origin;
                                   const inviteUrl = `${baseUrl}/student-portal?token=${invData.token}`;
-                                  
+
                                   // Auto-copy to clipboard
                                   if (navigator.clipboard) {
                                     await navigator.clipboard.writeText(inviteUrl);
                                   }
-                                  
+
                                   // Show copied state on button
                                   setCopiedInviteId(s.id);
                                   setTimeout(() => setCopiedInviteId(null), 3000);
@@ -3605,12 +3666,12 @@ const StudentsManagement = () => {
                           >
                             {copiedInviteId === s.id ? (
                               <>
-                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
                                 <span>Copied!</span>
                               </>
                             ) : (
                               <>
-                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></svg>
                                 <span>Invite</span>
                               </>
                             )}
@@ -3629,32 +3690,32 @@ const StudentsManagement = () => {
                             padding: '3px 9px',
                             borderRadius: '6px'
                           }}>
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
                             Joined
                           </span>
                         )}
-                    </td>
-                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-                        {canDeleteStudent && (
-                          <button
-                            className="sm-action-btn"
-                            title="Delete / Remove Student"
-                            style={{ color: '#EF4444', borderColor: 'rgba(239, 68, 68, 0.25)', background: 'rgba(239, 68, 68, 0.06)' }}
-                            onClick={e => { e.stopPropagation(); handleDeleteStudent(s.id, s.name, s.email); }}
-                          >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                      </td>
+                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                          {canDeleteStudent && (
+                            <button
+                              className="sm-action-btn"
+                              title="Delete / Remove Student"
+                              style={{ color: '#EF4444', borderColor: 'rgba(239, 68, 68, 0.25)', background: 'rgba(239, 68, 68, 0.06)' }}
+                              onClick={e => { e.stopPropagation(); handleDeleteStudent(s.id, s.name, s.email); }}
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                            </button>
+                          )}
+                          <button className="sm-action-btn" title="View Profile" onClick={e => { e.stopPropagation(); navigate(`/students/${s.id}`); }}>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                           </button>
-                        )}
-                        <button className="sm-action-btn" title="View Profile" onClick={e => { e.stopPropagation(); navigate(`/students/${s.id}`); }}>
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </>
           )}
         </div>
@@ -3673,8 +3734,8 @@ const StudentsManagement = () => {
                   Student: <strong style={{ color: '#0F172A' }}>{editingStudentDates.name}</strong>
                 </p>
               </div>
-              <button 
-                type="button" 
+              <button
+                type="button"
                 onClick={() => setEditingStudentDates(null)}
                 style={{ background: 'none', border: 'none', fontSize: '20px', color: '#94A3B8', cursor: 'pointer', padding: '4px' }}
               >
@@ -3765,6 +3826,153 @@ const StudentsManagement = () => {
         </div>
       )}
 
+      {/* ── Edit Student Expected Time Modal (School Admin Only) ── */}
+      {editingStudentTime && isAdminOrSchoolAdmin && (
+        <div className="sm-modal-overlay" onClick={() => setEditingStudentTime(null)}>
+          <div className="sm-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '440px', padding: '24px', borderRadius: '18px', background: '#FFFFFF', boxShadow: '0 20px 40px rgba(0,0,0,0.15)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: '#0F172A', fontFamily: 'Outfit, sans-serif', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span>⏰ Edit Expected Time</span>
+                </h3>
+                <p style={{ margin: '4px 0 0 0', fontSize: '12.5px', color: '#64748B' }}>
+                  Student: <strong style={{ color: '#0F172A' }}>{editingStudentTime.name}</strong>
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingStudentTime(null)}
+                style={{ background: 'none', border: 'none', fontSize: '20px', color: '#94A3B8', cursor: 'pointer', padding: '4px' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '10px', padding: '10px 14px', marginBottom: '16px', fontSize: '12px', color: '#475569', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '16px' }}>🛡️</span>
+              <span><strong>School Admin Access:</strong> Modify the expected session time slot for this student.</span>
+            </div>
+
+            <form onSubmit={handleSaveStudentTime} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#334155', marginBottom: '8px' }}>
+                  Select Time Slot
+                </label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '4px' }}>
+                  {(
+                    (configuredSlots && configuredSlots.length > 0 ? configuredSlots : (modalSchoolSlots && modalSchoolSlots.length > 0 ? modalSchoolSlots : DEFAULT_SLOTS))
+                      .filter(s => s.active !== false)
+                  ).map((slot, sIdx) => {
+                    const displaySlot = formatSlotDisplayTime(slot);
+                    const isSelected = editingStudentTime.session_time === displaySlot;
+                    return (
+                      <button
+                        key={slot.id || sIdx}
+                        type="button"
+                        onClick={() => setEditingStudentTime(prev => ({ ...prev, session_time: displaySlot }))}
+                        style={{
+                          padding: '7px 12px',
+                          borderRadius: '8px',
+                          fontSize: '12.5px',
+                          fontWeight: '600',
+                          background: isSelected ? '#F0FDFA' : '#FFFFFF',
+                          color: isSelected ? '#0F766E' : '#334155',
+                          border: '1.5px solid',
+                          borderColor: isSelected ? '#0D9488' : '#CBD5E1',
+                          cursor: 'pointer',
+                          transition: 'background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          boxSizing: 'border-box'
+                        }}
+                      >
+                        <span>{displaySlot}</span>
+                        <span style={{
+                          display: 'inline-block',
+                          width: '12px',
+                          textAlign: 'center',
+                          color: '#0D9488',
+                          fontWeight: 800,
+                          visibility: isSelected ? 'visible' : 'hidden'
+                        }}>
+                          ✓
+                        </span>
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={() => setEditingStudentTime(prev => ({ ...prev, session_time: '' }))}
+                    style={{
+                      padding: '7px 12px',
+                      borderRadius: '8px',
+                      fontSize: '12.5px',
+                      fontWeight: '600',
+                      background: !editingStudentTime.session_time ? '#F0FDFA' : '#FFFFFF',
+                      color: !editingStudentTime.session_time ? '#0F766E' : '#64748B',
+                      border: '1.5px solid',
+                      borderColor: !editingStudentTime.session_time ? '#0D9488' : '#CBD5E1',
+                      cursor: 'pointer',
+                      transition: 'background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      boxSizing: 'border-box'
+                    }}
+                  >
+                    <span>— Clear Time</span>
+                    <span style={{
+                      display: 'inline-block',
+                      width: '12px',
+                      textAlign: 'center',
+                      color: '#0D9488',
+                      fontWeight: 800,
+                      visibility: !editingStudentTime.session_time ? 'visible' : 'hidden'
+                    }}>
+                      ✓
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>
+                  Custom Time / Range
+                </label>
+                <input
+                  type="text"
+                  value={editingStudentTime.session_time || ''}
+                  onChange={(e) => setEditingStudentTime(prev => ({ ...prev, session_time: e.target.value }))}
+                  placeholder="e.g. 06:00 AM - 08:00 AM"
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1.5px solid #CBD5E1', fontSize: '13.5px', boxSizing: 'border-box' }}
+                />
+                <span style={{ display: 'block', marginTop: '4px', fontSize: '11px', color: '#94A3B8' }}>
+                  Pick from standard slots above or enter any custom time slot.
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '6px' }}>
+                <button
+                  type="button"
+                  onClick={() => setEditingStudentTime(null)}
+                  style={{ padding: '9px 16px', borderRadius: '8px', border: '1px solid #CBD5E1', background: '#F8FAFC', color: '#475569', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingTime}
+                  style={{ padding: '9px 18px', borderRadius: '8px', border: 'none', background: '#0D9488', color: '#FFFFFF', fontSize: '13px', fontWeight: 800, cursor: savingTime ? 'not-allowed' : 'pointer', opacity: savingTime ? 0.7 : 1 }}
+                >
+                  {savingTime ? 'Saving...' : '💾 Save Expected Time'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* ── Add Students Modal & Review Summary ── */}
       {showModal && canAddStudent && (
         <div className="sm-modal-overlay" onClick={closeModal}>
@@ -3781,7 +3989,7 @@ const StudentsManagement = () => {
                 </p>
               </div>
               <button className="sm-modal-close" onClick={closeModal}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
               </button>
             </div>
 
@@ -3831,18 +4039,18 @@ const StudentsManagement = () => {
                   <div className="sm-grid-2">
                     <div className="sm-field">
                       <label>Full Name *</label>
-                      <input type="text" placeholder="e.g. Chloe Kim" value={form.name} onChange={e => setForm({...form, name: e.target.value})} required />
+                      <input type="text" placeholder="e.g. Chloe Kim" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required />
                     </div>
                     <div className="sm-field">
                       <label>Email Address *</label>
-                      <input type="email" placeholder="chloe.kim@wavecoach.com" value={form.email} onChange={e => setForm({...form, email: e.target.value})} required />
+                      <input type="email" placeholder="chloe.kim@wavecoach.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} required />
                     </div>
                   </div>
 
                   <div className="sm-grid-2">
                     <div className="sm-field">
                       <label>Phone Number</label>
-                      <input type="text" placeholder="(555) 321-7654" value={form.whatsapp_number} onChange={e => setForm({...form, whatsapp_number: e.target.value})} />
+                      <input type="text" placeholder="(555) 321-7654" value={form.whatsapp_number} onChange={e => setForm({ ...form, whatsapp_number: e.target.value })} />
                     </div>
                     <div className="sm-field">
                       <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -3873,7 +4081,7 @@ const StudentsManagement = () => {
                   <div className="sm-grid-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '12px' }}>
                     <div className="sm-field">
                       <label>Surf Level *</label>
-                      <select value={form.level} onChange={e => setForm({...form, level: e.target.value})}>
+                      <select value={form.level} onChange={e => setForm({ ...form, level: e.target.value })}>
                         <option value="Beginner"> Beginner</option>
                         <option value="Advance Beginner">Advance Beginner </option>
                         <option value="Intermediate">Intermediate</option>
@@ -3883,14 +4091,14 @@ const StudentsManagement = () => {
                     </div>
                     <div className="sm-field">
                       <label>Gender *</label>
-                      <select value={form.gender || 'Male'} onChange={e => setForm({...form, gender: e.target.value})}>
+                      <select value={form.gender || 'Male'} onChange={e => setForm({ ...form, gender: e.target.value })}>
                         <option value="Male">♂ Male</option>
                         <option value="Female">♀ Female</option>
                       </select>
                     </div>
                     <div className="sm-field">
                       <label>Swimming Ability *</label>
-                      <select value={form.swimming_ability || 'Swimmer'} onChange={e => setForm({...form, swimming_ability: e.target.value})}>
+                      <select value={form.swimming_ability || 'Swimmer'} onChange={e => setForm({ ...form, swimming_ability: e.target.value })}>
                         <option value="Swimmer">🏊 Swimmer</option>
                         <option value="Non-Swimmer">🤿 Non-Swimmer</option>
                       </select>
@@ -4008,23 +4216,57 @@ const StudentsManagement = () => {
                             style={{
                               padding: '7px 14px',
                               borderRadius: '8px',
-                              border: isSelected ? '1.5px solid #0D9488' : '1px solid #CBD5E1',
+                              border: '1.5px solid',
+                              borderColor: isSelected ? '#0D9488' : '#CBD5E1',
                               background: isSelected ? '#F0FDFA' : '#FFFFFF',
                               color: isSelected ? '#0F766E' : '#334155',
                               fontSize: '12.5px',
-                              fontWeight: isSelected ? '800' : '600',
+                              fontWeight: '600',
                               cursor: 'pointer',
-                              display: 'flex',
+                              display: 'inline-flex',
                               alignItems: 'center',
                               gap: '6px',
-                              transition: 'all 0.15s ease'
+                              boxSizing: 'border-box',
+                              transition: 'background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease'
                             }}
                           >
                             <span>{displaySlot}</span>
-                            {isSelected && <span style={{ color: '#0D9488', fontWeight: 900 }}>✓</span>}
+                            <span style={{
+                              display: 'inline-block',
+                              width: '12px',
+                              textAlign: 'center',
+                              color: '#0D9488',
+                              fontWeight: 800,
+                              visibility: isSelected ? 'visible' : 'hidden'
+                            }}>
+                              ✓
+                            </span>
                           </button>
                         );
                       })}
+                    </div>
+
+                    <div style={{ marginTop: '8px' }}>
+                      <input
+                        type="text"
+                        value={form.session_time || ''}
+                        onChange={(e) => setForm(prev => ({ ...prev, session_time: e.target.value }))}
+                        placeholder="Or enter custom slot manually (e.g. 06:00 AM)"
+                        style={{
+                          width: '100%',
+                          padding: '8px 12px',
+                          borderRadius: '8px',
+                          border: '1.5px solid',
+                          borderColor: form.session_time ? '#0D9488' : '#CBD5E1',
+                          background: form.session_time ? '#F0FDFA' : '#FFFFFF',
+                          fontSize: '12.5px',
+                          fontWeight: '600',
+                          color: '#0F172A',
+                          boxSizing: 'border-box',
+                          outline: 'none',
+                          transition: 'all 0.15s ease'
+                        }}
+                      />
                     </div>
                   </div>
 
@@ -4328,7 +4570,7 @@ const StudentsManagement = () => {
                             </td>
                             <td>
                               <select
-                                value={row.session_time || ((modalSchoolSlots && modalSchoolSlots.length > 0) ? formatSlotDisplayTime(modalSchoolSlots[0]) : '06:30 AM - 08:30 AM')}
+                                value={row.session_time || ((modalSchoolSlots && modalSchoolSlots.length > 0) ? formatSlotDisplayTime(modalSchoolSlots[0]) : '06:30 AM')}
                                 onChange={e => handleBulkChange(rIdx, 'session_time', e.target.value)}
                                 style={{
                                   minWidth: '175px',
@@ -5088,7 +5330,7 @@ const StudentsManagement = () => {
                   <div className="sm-summary-card" style={{ gridColumn: '1 / -1' }}>
                     <div className="sm-summary-avatar-row">
                       <div className="sm-summary-avatar">
-                        {(addedStudentSummary.name || 'S').split(' ').map(n=>n[0]).join('').toUpperCase()}
+                        {(addedStudentSummary.name || 'S').split(' ').map(n => n[0]).join('').toUpperCase()}
                       </div>
                       <div>
                         <div className="sm-summary-name">{addedStudentSummary.name}</div>
@@ -5187,7 +5429,7 @@ const StudentsManagement = () => {
             <div className="sm-modal-header">
               <h3 className="sm-modal-title">📋 Mark Attendance</h3>
               <button className="sm-modal-close" onClick={() => setAttendanceModal(null)}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
               </button>
             </div>
 
@@ -5422,20 +5664,20 @@ const StudentsManagement = () => {
 
       {/* School Registration Invite Modal */}
       {showSchoolInviteModal && canCreateInviteLink && (
-        <div 
-          className="sm-modal-overlay" 
+        <div
+          className="sm-modal-overlay"
           onClick={() => { setShowSchoolInviteModal(false); setCreatedSchoolInvite(null); }}
           style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(5px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: '16px' }}
         >
           <div
             className="sm-modal"
-            style={{ 
-              maxWidth: '580px', 
-              width: '100%', 
-              background: '#FFFFFF', 
-              borderRadius: '20px', 
-              padding: '28px', 
-              border: '1px solid #E2E8F0', 
+            style={{
+              maxWidth: '580px',
+              width: '100%',
+              background: '#FFFFFF',
+              borderRadius: '20px',
+              padding: '28px',
+              border: '1px solid #E2E8F0',
               boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
               maxHeight: '90vh',
               overflowY: 'auto'
@@ -5782,27 +6024,43 @@ const StudentsManagement = () => {
 
                   {/* 1-Click Slot Pills from school/date config */}
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
-                    <button
-                      type="button"
-                      onClick={() => setInviteSessionTime('')}
-                      style={{
-                        padding: '7px 12px',
-                        borderRadius: '8px',
-                        border: !inviteSessionTime ? '1.5px solid #0D9488' : '1px solid #CBD5E1',
-                        background: !inviteSessionTime ? '#F0FDFA' : '#FFFFFF',
-                        color: !inviteSessionTime ? '#0F766E' : '#475569',
-                        fontSize: '12.5px',
-                        fontWeight: !inviteSessionTime ? '800' : '600',
-                        cursor: 'pointer',
-                        transition: 'all 0.15s ease',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px'
-                      }}
-                    >
-                      <span>Student Choice (Flexible)</span>
-                      {!inviteSessionTime && <span style={{ color: '#0D9488', fontWeight: 800 }}>✓</span>}
-                    </button>
+                    {(() => {
+                      const isFlexible = !inviteSessionTime;
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => setInviteSessionTime('')}
+                          style={{
+                            padding: '7px 12px',
+                            borderRadius: '8px',
+                            border: '1.5px solid',
+                            borderColor: isFlexible ? '#0D9488' : '#CBD5E1',
+                            background: isFlexible ? '#F0FDFA' : '#FFFFFF',
+                            color: isFlexible ? '#0F766E' : '#475569',
+                            fontSize: '12.5px',
+                            fontWeight: '600',
+                            cursor: 'pointer',
+                            transition: 'background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            boxSizing: 'border-box'
+                          }}
+                        >
+                          <span>Student Choice (Flexible)</span>
+                          <span style={{
+                            display: 'inline-block',
+                            width: '12px',
+                            textAlign: 'center',
+                            color: '#0D9488',
+                            fontWeight: 800,
+                            visibility: isFlexible ? 'visible' : 'hidden'
+                          }}>
+                            ✓
+                          </span>
+                        </button>
+                      );
+                    })()}
 
                     {(inviteSchoolSlots && inviteSchoolSlots.length > 0 ? inviteSchoolSlots : DEFAULT_SLOTS).map((slot, sIdx) => {
                       const displaySlot = formatSlotDisplayTime(slot);
@@ -5815,31 +6073,91 @@ const StudentsManagement = () => {
                           style={{
                             padding: '7px 12px',
                             borderRadius: '8px',
-                            border: isSelected ? '1.5px solid #0D9488' : '1px solid #CBD5E1',
+                            border: '1.5px solid',
+                            borderColor: isSelected ? '#0D9488' : '#CBD5E1',
                             background: isSelected ? '#F0FDFA' : '#FFFFFF',
                             color: isSelected ? '#0F766E' : '#1E293B',
                             fontSize: '12.5px',
-                            fontWeight: isSelected ? '800' : '600',
+                            fontWeight: '600',
                             cursor: 'pointer',
-                            transition: 'all 0.15s ease',
-                            display: 'flex',
+                            transition: 'background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease',
+                            display: 'inline-flex',
                             alignItems: 'center',
-                            gap: '6px'
+                            gap: '6px',
+                            boxSizing: 'border-box'
                           }}
                         >
                           <span>{displaySlot}</span>
-                          {isSelected && <span style={{ color: '#0D9488', fontWeight: 800 }}>✓</span>}
+                          <span style={{
+                            display: 'inline-block',
+                            width: '12px',
+                            textAlign: 'center',
+                            color: '#0D9488',
+                            fontWeight: 800,
+                            visibility: isSelected ? 'visible' : 'hidden'
+                          }}>
+                            ✓
+                          </span>
                         </button>
                       );
                     })}
                   </div>
 
-                  <p style={{ margin: '4px 0 0 0', fontSize: '11.5px', color: '#64748B', lineHeight: '1.4' }}>
+                  {/* Manual Custom Time Slot Input */}
+                  <div style={{ marginTop: '10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{ position: 'relative', flex: 1 }}>
+                        <input
+                          type="text"
+                          value={inviteSessionTime || ''}
+                          onChange={(e) => setInviteSessionTime(e.target.value)}
+                          placeholder="Or type custom slot (e.g. 06:00 AM)"
+                          style={{
+                            width: '100%',
+                            padding: '8px 12px',
+                            borderRadius: '8px',
+                            border: '1.5px solid',
+                            borderColor: inviteSessionTime ? '#0D9488' : '#CBD5E1',
+                            background: inviteSessionTime ? '#F0FDFA' : '#FFFFFF',
+                            fontSize: '12.5px',
+                            fontWeight: '600',
+                            color: '#0F172A',
+                            boxSizing: 'border-box',
+                            outline: 'none',
+                            transition: 'all 0.15s ease'
+                          }}
+                        />
+                      </div>
+                      {inviteSessionTime && (
+                        <button
+                          type="button"
+                          onClick={() => setInviteSessionTime('')}
+                          style={{
+                            background: '#F1F5F9',
+                            border: '1.5px solid #CBD5E1',
+                            color: '#475569',
+                            borderRadius: '8px',
+                            padding: '8px 12px',
+                            fontSize: '12px',
+                            fontWeight: '700',
+                            cursor: 'pointer',
+                            whiteSpace: 'nowrap',
+                            transition: 'all 0.15s ease'
+                          }}
+                          title="Reset to Student Choice (Flexible)"
+                        >
+                          ✕ Clear
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  <p style={{ margin: '6px 0 0 0', fontSize: '11.5px', color: '#64748B', lineHeight: '1.4' }}>
                     {inviteSlotsLoading
                       ? 'Loading school slots for selected date...'
                       : inviteSessionTime
-                        ? 'This slot will be pre-assigned and locked in the invite link.'
-                        : 'Student can select their preferred slot from the school schedule during onboarding.'}
+                        ? '🔒 This slot will be pre-assigned and locked in the invite link.'
+                        : '💡 Student can select their preferred slot from the school schedule during onboarding.'}
                   </p>
                 </div>
 
@@ -6013,606 +6331,559 @@ const StudentsManagement = () => {
               };
 
               return (
-              <div>
-                {/* Search Bar for Recipient Nickname or Code */}
-                <div style={{ position: 'relative', marginBottom: '12px' }}>
-                  <input
-                    type="text"
-                    placeholder="🔍 Search history by recipient nickname, code, or course..."
-                    value={inviteSearchQuery}
-                    onChange={e => setInviteSearchQuery(e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '9px 36px 9px 14px',
-                      borderRadius: '10px',
-                      border: inviteSearchQuery.trim() ? '1.5px solid #0D9488' : '1.5px solid #CBD5E1',
-                      background: inviteSearchQuery.trim() ? '#F0FDFA' : '#F8FAFC',
-                      fontSize: '12.5px',
-                      fontWeight: '700',
-                      color: '#0F172A',
-                      outline: 'none',
-                      boxSizing: 'border-box'
-                    }}
-                  />
-                  {inviteSearchQuery && (
-                    <button
-                      type="button"
-                      onClick={() => setInviteSearchQuery('')}
+                <div>
+                  {/* Search Bar for Recipient Nickname or Code */}
+                  <div style={{ position: 'relative', marginBottom: '12px' }}>
+                    <input
+                      type="text"
+                      placeholder="🔍 Search history by recipient nickname, code, or course..."
+                      value={inviteSearchQuery}
+                      onChange={e => setInviteSearchQuery(e.target.value)}
                       style={{
-                        position: 'absolute',
-                        right: '10px',
-                        top: '50%',
-                        transform: 'translateY(-50%)',
-                        background: '#E2E8F0',
-                        border: 'none',
-                        color: '#475569',
-                        borderRadius: '50%',
-                        width: '20px',
-                        height: '20px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '11px',
-                        fontWeight: 800,
-                        cursor: 'pointer'
-                      }}
-                      title="Clear search"
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-
-                {/* History Header & Filter Pills */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
-                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <button
-                      type="button"
-                      onClick={() => setShowActiveInvitesOnly(false)}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '5px',
-                        background: !showActiveInvitesOnly ? '#0D9488' : '#F1F5F9',
-                        color: !showActiveInvitesOnly ? '#FFFFFF' : '#64748B',
-                        border: !showActiveInvitesOnly ? '1.5px solid #0D9488' : '1.5px solid #E2E8F0',
-                        borderRadius: '20px',
-                        padding: '4px 12px',
-                        fontSize: '11.5px',
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                        transition: 'all 0.2s'
-                      }}
-                    >
-                      All Links
-                      <span style={{
-                        background: !showActiveInvitesOnly ? 'rgba(255,255,255,0.25)' : '#E2E8F0',
-                        color: !showActiveInvitesOnly ? '#FFFFFF' : '#475569',
+                        width: '100%',
+                        padding: '9px 36px 9px 14px',
                         borderRadius: '10px',
-                        padding: '0 6px',
-                        fontSize: '11px',
-                        fontWeight: 800
-                      }}>
-                        {schoolInvitesList.length}
-                      </span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setShowActiveInvitesOnly(true)}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '5px',
-                        background: showActiveInvitesOnly ? '#10B981' : '#F1F5F9',
-                        color: showActiveInvitesOnly ? '#FFFFFF' : '#64748B',
-                        border: showActiveInvitesOnly ? '1.5px solid #10B981' : '1.5px solid #E2E8F0',
-                        borderRadius: '20px',
-                        padding: '4px 12px',
-                        fontSize: '11.5px',
-                        fontWeight: 700,
-                        cursor: 'pointer',
-                        transition: 'all 0.2s'
+                        border: inviteSearchQuery.trim() ? '1.5px solid #0D9488' : '1.5px solid #CBD5E1',
+                        background: inviteSearchQuery.trim() ? '#F0FDFA' : '#F8FAFC',
+                        fontSize: '12.5px',
+                        fontWeight: '700',
+                        color: '#0F172A',
+                        outline: 'none',
+                        boxSizing: 'border-box'
                       }}
-                    >
-                      ⚡ Active Only
-                      <span style={{
-                        background: showActiveInvitesOnly ? 'rgba(255,255,255,0.25)' : '#DCFCE7',
-                        color: showActiveInvitesOnly ? '#FFFFFF' : '#16A34A',
-                        borderRadius: '10px',
-                        padding: '0 6px',
-                        fontSize: '11px',
-                        fontWeight: 800
-                      }}>
-                        {schoolInvitesList.filter(inv => {
-                          const rem = inv.remaining !== undefined ? inv.remaining : Math.max(0, inv.max_count - (inv.used_count || 0));
-                          return rem > 0 && inv.is_active;
-                        }).length}
-                      </span>
-                    </button>
-
-                    {/* History Quick Date Filters: Yesterday - Today + Calendar */}
-                    {(() => {
-                      const getIsoDate = (offset = 0) => {
-                        const d = new Date();
-                        if (offset !== 0) d.setDate(d.getDate() + offset);
-                        const y = d.getFullYear();
-                        const m = String(d.getMonth() + 1).padStart(2, '0');
-                        const day = String(d.getDate()).padStart(2, '0');
-                        return `${y}-${m}-${day}`;
-                      };
-                      const yestIso = getIsoDate(-1);
-                      const todayIso = getIsoDate(0);
-
-                      return (
-                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#F1F5F9', padding: '2px 4px', borderRadius: '20px', border: '1px solid #E2E8F0' }}>
-                          <button
-                            type="button"
-                            onClick={() => setInviteHistoryDateFilter(prev => prev === yestIso ? '' : yestIso)}
-                            style={{
-                              padding: '3px 8px',
-                              borderRadius: '14px',
-                              border: 'none',
-                              background: inviteHistoryDateFilter === yestIso ? '#0D9488' : 'transparent',
-                              color: inviteHistoryDateFilter === yestIso ? '#FFFFFF' : '#475569',
-                              fontWeight: 700,
-                              fontSize: '11px',
-                              cursor: 'pointer',
-                              boxShadow: inviteHistoryDateFilter === yestIso ? '0 1px 4px rgba(13,148,136,0.3)' : 'none',
-                              transition: 'all 0.15s ease'
-                            }}
-                          >
-                            Yesterday
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setInviteHistoryDateFilter(prev => prev === todayIso ? '' : todayIso)}
-                            style={{
-                              padding: '3px 8px',
-                              borderRadius: '14px',
-                              border: 'none',
-                              background: inviteHistoryDateFilter === todayIso ? '#0D9488' : 'transparent',
-                              color: inviteHistoryDateFilter === todayIso ? '#FFFFFF' : '#475569',
-                              fontWeight: 700,
-                              fontSize: '11px',
-                              cursor: 'pointer',
-                              boxShadow: inviteHistoryDateFilter === todayIso ? '0 1px 4px rgba(13,148,136,0.3)' : 'none',
-                              transition: 'all 0.15s ease'
-                            }}
-                          >
-                            Today
-                          </button>
-                          <div style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            background: inviteHistoryDateFilter ? '#F0FDFA' : '#FFFFFF',
-                            border: inviteHistoryDateFilter ? '1px solid #0D9488' : '1px solid #CBD5E1',
-                            borderRadius: '14px',
-                            padding: '2px 8px'
-                          }}>
-                            <span style={{ fontSize: '11px' }}>📅</span>
-                            <input
-                              type="date"
-                              value={inviteHistoryDateFilter}
-                              onChange={e => setInviteHistoryDateFilter(e.target.value)}
-                              style={{
-                                border: 'none',
-                                background: 'transparent',
-                                fontSize: '11px',
-                                fontWeight: 700,
-                                color: inviteHistoryDateFilter ? '#0D9488' : '#475569',
-                                outline: 'none',
-                                cursor: 'pointer',
-                                padding: 0
-                              }}
-                              title="Filter by creation date"
-                            />
-                            {inviteHistoryDateFilter && (
-                              <button
-                                type="button"
-                                onClick={() => setInviteHistoryDateFilter('')}
-                                style={{
-                                  background: 'none',
-                                  border: 'none',
-                                  color: '#0D9488',
-                                  cursor: 'pointer',
-                                  fontSize: '11px',
-                                  fontWeight: 800,
-                                  padding: 0
-                                }}
-                                title="Clear date"
-                              >
-                                ✕
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
-
-                  <span style={{ fontSize: '11.5px', color: '#64748B' }}>
-                    Click <strong>Copy Link</strong> to share
-                  </span>
-                </div>
-
-                {/* Date Filter Result Banner */}
-                {inviteHistoryDateFilter && (() => {
-                  const countOnSelectedDate = schoolInvitesList.filter(inv => getInviteCreatedDateISO(inv.created_at) === inviteHistoryDateFilter).length;
-                  const activeOnSelectedDate = schoolInvitesList.filter(inv => {
-                    const matchesDate = getInviteCreatedDateISO(inv.created_at) === inviteHistoryDateFilter;
-                    const rem = inv.remaining !== undefined ? inv.remaining : Math.max(0, inv.max_count - (inv.used_count || 0));
-                    return matchesDate && rem > 0 && inv.is_active;
-                  }).length;
-
-                  return (
-                    <div style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '8px 14px',
-                      background: '#F0FDFA',
-                      border: '1.5px solid #99F6E4',
-                      borderRadius: '12px',
-                      marginBottom: '14px',
-                      fontSize: '12px',
-                      boxShadow: '0 2px 6px rgba(13,148,136,0.08)'
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#0F766E', fontWeight: 700 }}>
-                        <span style={{ fontSize: '14px' }}>📅</span>
-                        <span>
-                          <strong>{countOnSelectedDate}</strong> link{countOnSelectedDate === 1 ? '' : 's'} created on{' '}
-                          <u style={{ textDecorationColor: '#0D9488' }}>
-                            {new Date(inviteHistoryDateFilter + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                          </u>
-                          {countOnSelectedDate > 0 && (
-                            <span style={{ marginLeft: '6px', color: '#15803D', fontWeight: 800 }}>
-                              ({activeOnSelectedDate} Active)
-                            </span>
-                          )}
-                        </span>
-                      </div>
+                    />
+                    {inviteSearchQuery && (
                       <button
                         type="button"
-                        onClick={() => setInviteHistoryDateFilter('')}
+                        onClick={() => setInviteSearchQuery('')}
                         style={{
-                          background: '#CCFBF1',
-                          border: '1px solid #5EEAD4',
-                          color: '#0F766E',
-                          borderRadius: '6px',
-                          padding: '3px 10px',
+                          position: 'absolute',
+                          right: '10px',
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          background: '#E2E8F0',
+                          border: 'none',
+                          color: '#475569',
+                          borderRadius: '50%',
+                          width: '20px',
+                          height: '20px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
                           fontSize: '11px',
                           fontWeight: 800,
+                          cursor: 'pointer'
+                        }}
+                        title="Clear search"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+
+                  {/* History Header & Filter Pills */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        onClick={() => setShowActiveInvitesOnly(false)}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '5px',
+                          background: !showActiveInvitesOnly ? '#0D9488' : '#F1F5F9',
+                          color: !showActiveInvitesOnly ? '#FFFFFF' : '#64748B',
+                          border: !showActiveInvitesOnly ? '1.5px solid #0D9488' : '1.5px solid #E2E8F0',
+                          borderRadius: '20px',
+                          padding: '4px 12px',
+                          fontSize: '11.5px',
+                          fontWeight: 700,
                           cursor: 'pointer',
-                          transition: 'all 0.15s ease'
+                          transition: 'all 0.2s'
                         }}
                       >
-                        Show All Dates ✕
+                        All Links
+                        <span style={{
+                          background: !showActiveInvitesOnly ? 'rgba(255,255,255,0.25)' : '#E2E8F0',
+                          color: !showActiveInvitesOnly ? '#FFFFFF' : '#475569',
+                          borderRadius: '10px',
+                          padding: '0 6px',
+                          fontSize: '11px',
+                          fontWeight: 800
+                        }}>
+                          {schoolInvitesList.length}
+                        </span>
                       </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setShowActiveInvitesOnly(true)}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '5px',
+                          background: showActiveInvitesOnly ? '#10B981' : '#F1F5F9',
+                          color: showActiveInvitesOnly ? '#FFFFFF' : '#64748B',
+                          border: showActiveInvitesOnly ? '1.5px solid #10B981' : '1.5px solid #E2E8F0',
+                          borderRadius: '20px',
+                          padding: '4px 12px',
+                          fontSize: '11.5px',
+                          fontWeight: 700,
+                          cursor: 'pointer',
+                          transition: 'all 0.2s'
+                        }}
+                      >
+                        ⚡ Active Only
+                        <span style={{
+                          background: showActiveInvitesOnly ? 'rgba(255,255,255,0.25)' : '#DCFCE7',
+                          color: showActiveInvitesOnly ? '#FFFFFF' : '#16A34A',
+                          borderRadius: '10px',
+                          padding: '0 6px',
+                          fontSize: '11px',
+                          fontWeight: 800
+                        }}>
+                          {schoolInvitesList.filter(inv => {
+                            const rem = inv.remaining !== undefined ? inv.remaining : Math.max(0, inv.max_count - (inv.used_count || 0));
+                            return rem > 0 && inv.is_active;
+                          }).length}
+                        </span>
+                      </button>
+
+                      {/* History Quick Date Filters: Yesterday - Today + Calendar */}
+                      {(() => {
+                        const getIsoDate = (offset = 0) => {
+                          const d = new Date();
+                          if (offset !== 0) d.setDate(d.getDate() + offset);
+                          const y = d.getFullYear();
+                          const m = String(d.getMonth() + 1).padStart(2, '0');
+                          const day = String(d.getDate()).padStart(2, '0');
+                          return `${y}-${m}-${day}`;
+                        };
+                        const yestIso = getIsoDate(-1);
+                        const todayIso = getIsoDate(0);
+
+                        return (
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: '#F1F5F9', padding: '2px 4px', borderRadius: '20px', border: '1px solid #E2E8F0' }}>
+                            <button
+                              type="button"
+                              onClick={() => setInviteHistoryDateFilter(prev => prev === yestIso ? '' : yestIso)}
+                              style={{
+                                padding: '3px 8px',
+                                borderRadius: '14px',
+                                border: 'none',
+                                background: inviteHistoryDateFilter === yestIso ? '#0D9488' : 'transparent',
+                                color: inviteHistoryDateFilter === yestIso ? '#FFFFFF' : '#475569',
+                                fontWeight: 700,
+                                fontSize: '11px',
+                                cursor: 'pointer',
+                                boxShadow: inviteHistoryDateFilter === yestIso ? '0 1px 4px rgba(13,148,136,0.3)' : 'none',
+                                transition: 'all 0.15s ease'
+                              }}
+                            >
+                              Yesterday
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setInviteHistoryDateFilter(prev => prev === todayIso ? '' : todayIso)}
+                              style={{
+                                padding: '3px 8px',
+                                borderRadius: '14px',
+                                border: 'none',
+                                background: inviteHistoryDateFilter === todayIso ? '#0D9488' : 'transparent',
+                                color: inviteHistoryDateFilter === todayIso ? '#FFFFFF' : '#475569',
+                                fontWeight: 700,
+                                fontSize: '11px',
+                                cursor: 'pointer',
+                                boxShadow: inviteHistoryDateFilter === todayIso ? '0 1px 4px rgba(13,148,136,0.3)' : 'none',
+                                transition: 'all 0.15s ease'
+                              }}
+                            >
+                              Today
+                            </button>
+                            <div style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              background: inviteHistoryDateFilter ? '#F0FDFA' : '#FFFFFF',
+                              border: inviteHistoryDateFilter ? '1px solid #0D9488' : '1px solid #CBD5E1',
+                              borderRadius: '14px',
+                              padding: '2px 8px'
+                            }}>
+                              <span style={{ fontSize: '11px' }}>📅</span>
+                              <input
+                                type="date"
+                                value={inviteHistoryDateFilter}
+                                onChange={e => setInviteHistoryDateFilter(e.target.value)}
+                                style={{
+                                  border: 'none',
+                                  background: 'transparent',
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  color: inviteHistoryDateFilter ? '#0D9488' : '#475569',
+                                  outline: 'none',
+                                  cursor: 'pointer',
+                                  padding: 0
+                                }}
+                                title="Filter by creation date"
+                              />
+                              {inviteHistoryDateFilter && (
+                                <button
+                                  type="button"
+                                  onClick={() => setInviteHistoryDateFilter('')}
+                                  style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    color: '#0D9488',
+                                    cursor: 'pointer',
+                                    fontSize: '11px',
+                                    fontWeight: 800,
+                                    padding: 0
+                                  }}
+                                  title="Clear date"
+                                >
+                                  ✕
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
-                  );
-                })()}
 
-                {/* List of Previous Invites */}
-                {(() => {
-                  const activeInvites = schoolInvitesList.filter(inv => {
-                    const rem = inv.remaining !== undefined ? inv.remaining : Math.max(0, inv.max_count - (inv.used_count || 0));
-                    return rem > 0 && inv.is_active;
-                  });
+                    <span style={{ fontSize: '11.5px', color: '#64748B' }}>
+                      Click <strong>Copy Link</strong> to share
+                    </span>
+                  </div>
 
-                  let filteredByDate = schoolInvitesList;
-                  if (inviteHistoryDateFilter) {
-                    filteredByDate = schoolInvitesList.filter(inv => getInviteCreatedDateISO(inv.created_at) === inviteHistoryDateFilter);
-                  }
+                  {/* Date Filter Result Banner */}
+                  {inviteHistoryDateFilter && (() => {
+                    const countOnSelectedDate = schoolInvitesList.filter(inv => getInviteCreatedDateISO(inv.created_at) === inviteHistoryDateFilter).length;
+                    const activeOnSelectedDate = schoolInvitesList.filter(inv => {
+                      const matchesDate = getInviteCreatedDateISO(inv.created_at) === inviteHistoryDateFilter;
+                      const rem = inv.remaining !== undefined ? inv.remaining : Math.max(0, inv.max_count - (inv.used_count || 0));
+                      return matchesDate && rem > 0 && inv.is_active;
+                    }).length;
 
-                  let displayedInvites = showActiveInvitesOnly
-                    ? filteredByDate.filter(inv => {
+                    return (
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '8px 14px',
+                        background: '#F0FDFA',
+                        border: '1.5px solid #99F6E4',
+                        borderRadius: '12px',
+                        marginBottom: '14px',
+                        fontSize: '12px',
+                        boxShadow: '0 2px 6px rgba(13,148,136,0.08)'
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#0F766E', fontWeight: 700 }}>
+                          <span style={{ fontSize: '14px' }}>📅</span>
+                          <span>
+                            <strong>{countOnSelectedDate}</strong> link{countOnSelectedDate === 1 ? '' : 's'} created on{' '}
+                            <u style={{ textDecorationColor: '#0D9488' }}>
+                              {new Date(inviteHistoryDateFilter + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                            </u>
+                            {countOnSelectedDate > 0 && (
+                              <span style={{ marginLeft: '6px', color: '#15803D', fontWeight: 800 }}>
+                                ({activeOnSelectedDate} Active)
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setInviteHistoryDateFilter('')}
+                          style={{
+                            background: '#CCFBF1',
+                            border: '1px solid #5EEAD4',
+                            color: '#0F766E',
+                            borderRadius: '6px',
+                            padding: '3px 10px',
+                            fontSize: '11px',
+                            fontWeight: 800,
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          Show All Dates ✕
+                        </button>
+                      </div>
+                    );
+                  })()}
+
+                  {/* List of Previous Invites */}
+                  {(() => {
+                    const activeInvites = schoolInvitesList.filter(inv => {
+                      const rem = inv.remaining !== undefined ? inv.remaining : Math.max(0, inv.max_count - (inv.used_count || 0));
+                      return rem > 0 && inv.is_active;
+                    });
+
+                    let filteredByDate = schoolInvitesList;
+                    if (inviteHistoryDateFilter) {
+                      filteredByDate = schoolInvitesList.filter(inv => getInviteCreatedDateISO(inv.created_at) === inviteHistoryDateFilter);
+                    }
+
+                    let displayedInvites = showActiveInvitesOnly
+                      ? filteredByDate.filter(inv => {
                         const rem = inv.remaining !== undefined ? inv.remaining : Math.max(0, inv.max_count - (inv.used_count || 0));
                         return rem > 0 && inv.is_active;
                       })
-                    : filteredByDate;
+                      : filteredByDate;
 
-                  if (inviteSearchQuery.trim()) {
-                    const q = inviteSearchQuery.trim().toLowerCase();
-                    displayedInvites = displayedInvites.filter(inv =>
-                      (inv.nickname && String(inv.nickname).toLowerCase().includes(q)) ||
-                      (inv.code && String(inv.code).toLowerCase().includes(q)) ||
-                      (inv.course_duration && String(inv.course_duration).toLowerCase().includes(q))
-                    );
-                  }
+                    if (inviteSearchQuery.trim()) {
+                      const q = inviteSearchQuery.trim().toLowerCase();
+                      displayedInvites = displayedInvites.filter(inv =>
+                        (inv.nickname && String(inv.nickname).toLowerCase().includes(q)) ||
+                        (inv.code && String(inv.code).toLowerCase().includes(q)) ||
+                        (inv.course_duration && String(inv.course_duration).toLowerCase().includes(q))
+                      );
+                    }
 
-                  if (displayedInvites.length === 0) {
-                    return (
-                      <div style={{
-                        textAlign: 'center',
-                        padding: '36px 16px',
-                        background: '#F8FAFC',
-                        border: '1.5px dashed #CBD5E1',
-                        borderRadius: '14px',
-                        color: '#64748B'
-                      }}>
-                        <div style={{ fontSize: '32px', marginBottom: '8px' }}>
-                          {inviteSearchQuery.trim() ? '🔍' : (inviteHistoryDateFilter ? '📅' : '🔗')}
-                        </div>
-                        <div style={{ fontWeight: 800, fontSize: '14px', color: '#0F172A', marginBottom: '4px' }}>
-                          {inviteSearchQuery.trim()
-                            ? `0 Links Found Matching "${inviteSearchQuery}"`
-                            : (inviteHistoryDateFilter
+                    if (displayedInvites.length === 0) {
+                      return (
+                        <div style={{
+                          textAlign: 'center',
+                          padding: '36px 16px',
+                          background: '#F8FAFC',
+                          border: '1.5px dashed #CBD5E1',
+                          borderRadius: '14px',
+                          color: '#64748B'
+                        }}>
+                          <div style={{ fontSize: '32px', marginBottom: '8px' }}>
+                            {inviteSearchQuery.trim() ? '🔍' : (inviteHistoryDateFilter ? '📅' : '🔗')}
+                          </div>
+                          <div style={{ fontWeight: 800, fontSize: '14px', color: '#0F172A', marginBottom: '4px' }}>
+                            {inviteSearchQuery.trim()
+                              ? `0 Links Found Matching "${inviteSearchQuery}"`
+                              : (inviteHistoryDateFilter
                                 ? `0 Links Created on ${new Date(inviteHistoryDateFilter + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
                                 : (showActiveInvitesOnly ? 'No Active Invite Links' : 'No Invite Links Created Yet'))}
-                        </div>
-                        <div style={{ fontSize: '12.5px', color: '#64748B', maxWidth: '320px', margin: '0 auto 14px' }}>
-                          {inviteSearchQuery.trim()
-                            ? 'No invite link matching this recipient nickname, code, or duration was found. Try searching another term or clear search.'
-                            : (inviteHistoryDateFilter
+                          </div>
+                          <div style={{ fontSize: '12.5px', color: '#64748B', maxWidth: '320px', margin: '0 auto 14px' }}>
+                            {inviteSearchQuery.trim()
+                              ? 'No invite link matching this recipient nickname, code, or duration was found. Try searching another term or clear search.'
+                              : (inviteHistoryDateFilter
                                 ? 'No registration invite links were created on this date. Select another date or clear the filter.'
                                 : (showActiveInvitesOnly
-                                    ? 'All previous invite links are currently full or expired.'
-                                    : 'Generate a new batch registration link from the Generate Link tab.'))}
+                                  ? 'All previous invite links are currently full or expired.'
+                                  : 'Generate a new batch registration link from the Generate Link tab.'))}
+                          </div>
+                          {inviteSearchQuery.trim() ? (
+                            <button
+                              type="button"
+                              onClick={() => setInviteSearchQuery('')}
+                              style={{
+                                background: '#0D9488',
+                                color: '#FFFFFF',
+                                border: 'none',
+                                borderRadius: '8px',
+                                padding: '8px 16px',
+                                fontSize: '12.5px',
+                                fontWeight: 700,
+                                cursor: 'pointer'
+                              }}
+                            >
+                              ✕ Clear Search
+                            </button>
+                          ) : inviteHistoryDateFilter ? (
+                            <button
+                              type="button"
+                              onClick={() => setInviteHistoryDateFilter('')}
+                              style={{
+                                background: '#0D9488',
+                                color: '#FFFFFF',
+                                border: 'none',
+                                borderRadius: '8px',
+                                padding: '8px 16px',
+                                fontSize: '12.5px',
+                                fontWeight: 700,
+                                cursor: 'pointer'
+                              }}
+                            >
+                              ✕ Clear Date Filter
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setInviteModalTab('generate')}
+                              style={{
+                                background: '#0D9488',
+                                color: '#FFFFFF',
+                                border: 'none',
+                                borderRadius: '8px',
+                                padding: '8px 16px',
+                                fontSize: '12.5px',
+                                fontWeight: 700,
+                                cursor: 'pointer'
+                              }}
+                            >
+                              ⚡ Go to Generate Link Tab
+                            </button>
+                          )}
                         </div>
-                        {inviteSearchQuery.trim() ? (
-                          <button
-                            type="button"
-                            onClick={() => setInviteSearchQuery('')}
-                            style={{
-                              background: '#0D9488',
-                              color: '#FFFFFF',
-                              border: 'none',
-                              borderRadius: '8px',
-                              padding: '8px 16px',
-                              fontSize: '12.5px',
-                              fontWeight: 700,
-                              cursor: 'pointer'
-                            }}
-                          >
-                            ✕ Clear Search
-                          </button>
-                        ) : inviteHistoryDateFilter ? (
-                          <button
-                            type="button"
-                            onClick={() => setInviteHistoryDateFilter('')}
-                            style={{
-                              background: '#0D9488',
-                              color: '#FFFFFF',
-                              border: 'none',
-                              borderRadius: '8px',
-                              padding: '8px 16px',
-                              fontSize: '12.5px',
-                              fontWeight: 700,
-                              cursor: 'pointer'
-                            }}
-                          >
-                            ✕ Clear Date Filter
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => setInviteModalTab('generate')}
-                            style={{
-                              background: '#0D9488',
-                              color: '#FFFFFF',
-                              border: 'none',
-                              borderRadius: '8px',
-                              padding: '8px 16px',
-                              fontSize: '12.5px',
-                              fontWeight: 700,
-                              cursor: 'pointer'
-                            }}
-                          >
-                            ⚡ Go to Generate Link Tab
-                          </button>
-                        )}
-                      </div>
-                    );
-                  }
+                      );
+                    }
 
-                  return (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '380px', overflowY: 'auto', paddingRight: '4px' }}>
-                      {displayedInvites.map((inv, idx) => {
-                        const rem = inv.remaining !== undefined ? inv.remaining : Math.max(0, inv.max_count - (inv.used_count || 0));
-                        const isFull = rem <= 0 || !inv.is_active;
-                        const isCopied = copiedSchoolInviteCode === inv.code;
-                        const isEditingThis = editingInviteCode === inv.code;
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '380px', overflowY: 'auto', paddingRight: '4px' }}>
+                        {displayedInvites.map((inv, idx) => {
+                          const rem = inv.remaining !== undefined ? inv.remaining : Math.max(0, inv.max_count - (inv.used_count || 0));
+                          const isFull = rem <= 0 || !inv.is_active;
+                          const isCopied = copiedSchoolInviteCode === inv.code;
+                          const isEditingThis = editingInviteCode === inv.code;
 
-                        return (
-                          <div
-                            key={inv.id || inv.code || idx}
-                            style={{
-                              background: isFull ? '#F8FAFC' : '#FFFFFF',
-                              border: isFull ? '1.5px solid #E2E8F0' : '1.5px solid #BBF7D0',
-                              borderRadius: '12px',
-                              padding: '12px 14px',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              gap: '12px',
-                              boxShadow: isFull ? 'none' : '0 2px 6px rgba(16, 185, 129, 0.08)'
-                            }}
-                          >
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              {/* Row 1: Nickname (or Add Nickname button) + Code */}
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '6px' }}>
-                                {isEditingThis ? (
-                                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                                    <input
-                                      type="text"
-                                      autoFocus
-                                      placeholder="Recipient / Nickname..."
-                                      value={editingNicknameVal}
-                                      onChange={e => setEditingNicknameVal(e.target.value)}
-                                      onKeyDown={e => {
-                                        if (e.key === 'Enter') handleUpdateInviteNickname(inv.code, editingNicknameVal);
-                                        if (e.key === 'Escape') setEditingInviteCode(null);
-                                      }}
-                                      style={{
-                                        padding: '4px 8px',
-                                        borderRadius: '6px',
-                                        border: '1.5px solid #0D9488',
-                                        fontSize: '12px',
-                                        fontWeight: 700,
-                                        color: '#0F172A',
-                                        background: '#FFFFFF',
-                                        outline: 'none',
-                                        maxWidth: '180px'
-                                      }}
-                                    />
-                                    <button
-                                      type="button"
-                                      onClick={() => handleUpdateInviteNickname(inv.code, editingNicknameVal)}
-                                      disabled={savingNicknameCode === inv.code}
-                                      style={{
-                                        background: '#0D9488',
-                                        color: '#FFF',
-                                        border: 'none',
-                                        borderRadius: '6px',
-                                        padding: '4px 8px',
-                                        fontSize: '11px',
-                                        fontWeight: 800,
-                                        cursor: 'pointer'
-                                      }}
-                                    >
-                                      {savingNicknameCode === inv.code ? '...' : '✓ Save'}
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => setEditingInviteCode(null)}
-                                      style={{
-                                        background: '#F1F5F9',
-                                        color: '#64748B',
-                                        border: '1px solid #CBD5E1',
-                                        borderRadius: '6px',
-                                        padding: '4px 6px',
-                                        fontSize: '11px',
-                                        fontWeight: 700,
-                                        cursor: 'pointer'
-                                      }}
-                                    >
-                                      ✕
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <>
-                                    {inv.nickname ? (
-                                      <span style={{
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: '5px',
-                                        background: isFull ? '#F1F5F9' : 'linear-gradient(135deg, #F0FDFA 0%, #E0F2FE 100%)',
-                                        border: isFull ? '1px solid #CBD5E1' : '1.5px solid #99F6E4',
-                                        color: isFull ? '#475569' : '#0F766E',
-                                        padding: '2px 8px',
-                                        borderRadius: '6px',
-                                        fontSize: '12px',
-                                        fontWeight: 800
-                                      }}>
-                                        <span>👤</span>
-                                        <span>{inv.nickname}</span>
+                          return (
+                            <div
+                              key={inv.id || inv.code || idx}
+                              style={{
+                                background: isFull ? '#F8FAFC' : '#FFFFFF',
+                                border: isFull ? '1.5px solid #E2E8F0' : '1.5px solid #BBF7D0',
+                                borderRadius: '12px',
+                                padding: '12px 14px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: '12px',
+                                boxShadow: isFull ? 'none' : '0 2px 6px rgba(16, 185, 129, 0.08)'
+                              }}
+                            >
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                {/* Row 1: Nickname (or Add Nickname button) + Code */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '6px' }}>
+                                  {isEditingThis ? (
+                                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                                      <input
+                                        type="text"
+                                        autoFocus
+                                        placeholder="Recipient / Nickname..."
+                                        value={editingNicknameVal}
+                                        onChange={e => setEditingNicknameVal(e.target.value)}
+                                        onKeyDown={e => {
+                                          if (e.key === 'Enter') handleUpdateInviteNickname(inv.code, editingNicknameVal);
+                                          if (e.key === 'Escape') setEditingInviteCode(null);
+                                        }}
+                                        style={{
+                                          padding: '4px 8px',
+                                          borderRadius: '6px',
+                                          border: '1.5px solid #0D9488',
+                                          fontSize: '12px',
+                                          fontWeight: 700,
+                                          color: '#0F172A',
+                                          background: '#FFFFFF',
+                                          outline: 'none',
+                                          maxWidth: '180px'
+                                        }}
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => handleUpdateInviteNickname(inv.code, editingNicknameVal)}
+                                        disabled={savingNicknameCode === inv.code}
+                                        style={{
+                                          background: '#0D9488',
+                                          color: '#FFF',
+                                          border: 'none',
+                                          borderRadius: '6px',
+                                          padding: '4px 8px',
+                                          fontSize: '11px',
+                                          fontWeight: 800,
+                                          cursor: 'pointer'
+                                        }}
+                                      >
+                                        {savingNicknameCode === inv.code ? '...' : '✓ Save'}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setEditingInviteCode(null)}
+                                        style={{
+                                          background: '#F1F5F9',
+                                          color: '#64748B',
+                                          border: '1px solid #CBD5E1',
+                                          borderRadius: '6px',
+                                          padding: '4px 6px',
+                                          fontSize: '11px',
+                                          fontWeight: 700,
+                                          cursor: 'pointer'
+                                        }}
+                                      >
+                                        ✕
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <>
+                                      {inv.nickname ? (
+                                        <span style={{
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '5px',
+                                          background: isFull ? '#F1F5F9' : 'linear-gradient(135deg, #F0FDFA 0%, #E0F2FE 100%)',
+                                          border: isFull ? '1px solid #CBD5E1' : '1.5px solid #99F6E4',
+                                          color: isFull ? '#475569' : '#0F766E',
+                                          padding: '2px 8px',
+                                          borderRadius: '6px',
+                                          fontSize: '12px',
+                                          fontWeight: 800
+                                        }}>
+                                          <span>👤</span>
+                                          <span>{inv.nickname}</span>
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setEditingInviteCode(inv.code);
+                                              setEditingNicknameVal(inv.nickname || '');
+                                            }}
+                                            title="Edit recipient nickname"
+                                            style={{
+                                              background: 'none',
+                                              border: 'none',
+                                              cursor: 'pointer',
+                                              padding: '0 2px',
+                                              fontSize: '11px',
+                                              color: '#0D9488',
+                                              opacity: 0.85
+                                            }}
+                                          >
+                                            ✏️
+                                          </button>
+                                        </span>
+                                      ) : (
                                         <button
                                           type="button"
                                           onClick={(e) => {
                                             e.stopPropagation();
                                             setEditingInviteCode(inv.code);
-                                            setEditingNicknameVal(inv.nickname || '');
+                                            setEditingNicknameVal('');
                                           }}
-                                          title="Edit recipient nickname"
                                           style={{
-                                            background: 'none',
-                                            border: 'none',
-                                            cursor: 'pointer',
-                                            padding: '0 2px',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '4px',
+                                            background: '#F8FAFC',
+                                            border: '1px dashed #CBD5E1',
+                                            color: '#64748B',
+                                            padding: '2px 8px',
+                                            borderRadius: '6px',
                                             fontSize: '11px',
-                                            color: '#0D9488',
-                                            opacity: 0.85
+                                            fontWeight: 700,
+                                            cursor: 'pointer'
                                           }}
+                                          title="Click to add a recipient nickname or note"
                                         >
-                                          ✏️
+                                          <span>+ Add Nickname</span>
                                         </button>
-                                      </span>
-                                    ) : (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          setEditingInviteCode(inv.code);
-                                          setEditingNicknameVal('');
-                                        }}
-                                        style={{
-                                          display: 'inline-flex',
-                                          alignItems: 'center',
-                                          gap: '4px',
-                                          background: '#F8FAFC',
-                                          border: '1px dashed #CBD5E1',
-                                          color: '#64748B',
-                                          padding: '2px 8px',
-                                          borderRadius: '6px',
-                                          fontSize: '11px',
-                                          fontWeight: 700,
-                                          cursor: 'pointer'
-                                        }}
-                                        title="Click to add a recipient nickname or note"
-                                      >
-                                        <span>+ Add Nickname</span>
-                                      </button>
-                                    )}
-                                  </>
-                                )}
-                              </div>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
 
-                              {/* Row 2: Capacity, Course Duration, Starts Date - in a single neat line */}
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '6px' }}>
-                                <span style={{
-                                  fontSize: '11px',
-                                  color: '#334155',
-                                  fontWeight: 700,
-                                  background: '#F8FAFC',
-                                  padding: '1.5px 7px',
-                                  borderRadius: '6px',
-                                  border: '1px solid #E2E8F0',
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: '3px'
-                                }}>
-                                  <span>👥 Capacity:</span>
-                                  <strong style={{ color: '#0F172A' }}>{inv.max_count}</strong>
-                                </span>
-
-                                <span style={{
-                                  fontSize: '11px',
-                                  color: '#0D9488',
-                                  fontWeight: 700,
-                                  background: '#F0FDFA',
-                                  padding: '1.5px 7px',
-                                  borderRadius: '6px',
-                                  border: '1px solid #CCFBF1',
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: '3px'
-                                }}>
-                                  🗓️ {inv.course_duration || '3 Days Course'}
-                                </span>
-
-                                {inv.start_date ? (
+                                {/* Row 2: Capacity, Course Duration, Starts Date - in a single neat line */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginBottom: '6px' }}>
                                   <span style={{
                                     fontSize: '11px',
-                                    color: '#15803D',
+                                    color: '#334155',
                                     fontWeight: 700,
-                                    background: '#DCFCE7',
-                                    padding: '1.5px 7px',
-                                    borderRadius: '6px',
-                                    border: '1px solid #BBF7D0',
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '3px'
-                                  }}>
-                                    🔒 Starts: {inv.start_date}
-                                  </span>
-                                ) : (
-                                  <span style={{
-                                    fontSize: '11px',
-                                    color: '#64748B',
-                                    fontWeight: 600,
-                                    background: '#F1F5F9',
+                                    background: '#F8FAFC',
                                     padding: '1.5px 7px',
                                     borderRadius: '6px',
                                     border: '1px solid #E2E8F0',
@@ -6620,90 +6891,137 @@ const StudentsManagement = () => {
                                     alignItems: 'center',
                                     gap: '3px'
                                   }}>
-                                    🔓 Flexible Start
+                                    <span>👥 Capacity:</span>
+                                    <strong style={{ color: '#0F172A' }}>{inv.max_count}</strong>
                                   </span>
-                                )}
 
-                                 {inv.session_time ? (
-                                   <span style={{
-                                     fontSize: '11px',
-                                     color: '#B45309',
-                                     fontWeight: 700,
-                                     background: '#FEF3C7',
-                                     padding: '1.5px 7px',
-                                     borderRadius: '6px',
-                                     border: '1px solid #FDE68A',
-                                     display: 'inline-flex',
-                                     alignItems: 'center',
-                                     gap: '3px'
-                                   }}>
-                                     ⏰ {inv.session_time}
-                                   </span>
-                                 ) : (
-                                   <span style={{
-                                     fontSize: '11px',
-                                     color: '#64748B',
-                                     fontWeight: 600,
-                                     background: '#F1F5F9',
-                                     padding: '1.5px 7px',
-                                     borderRadius: '6px',
-                                     border: '1px solid #E2E8F0',
-                                     display: 'inline-flex',
-                                     alignItems: 'center',
-                                     gap: '3px'
-                                   }}>
-                                     ⏰ Student Choice
-                                   </span>
-                                 )}
+                                  <span style={{
+                                    fontSize: '11px',
+                                    color: '#0D9488',
+                                    fontWeight: 700,
+                                    background: '#F0FDFA',
+                                    padding: '1.5px 7px',
+                                    borderRadius: '6px',
+                                    border: '1px solid #CCFBF1',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '3px'
+                                  }}>
+                                    🗓️ {inv.course_duration || '3 Days Course'}
+                                  </span>
+
+                                  {inv.start_date ? (
+                                    <span style={{
+                                      fontSize: '11px',
+                                      color: '#15803D',
+                                      fontWeight: 700,
+                                      background: '#DCFCE7',
+                                      padding: '1.5px 7px',
+                                      borderRadius: '6px',
+                                      border: '1px solid #BBF7D0',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '3px'
+                                    }}>
+                                      🔒 Starts: {inv.start_date}
+                                    </span>
+                                  ) : (
+                                    <span style={{
+                                      fontSize: '11px',
+                                      color: '#64748B',
+                                      fontWeight: 600,
+                                      background: '#F1F5F9',
+                                      padding: '1.5px 7px',
+                                      borderRadius: '6px',
+                                      border: '1px solid #E2E8F0',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '3px'
+                                    }}>
+                                      🔓 Flexible Start
+                                    </span>
+                                  )}
+
+                                  {inv.session_time ? (
+                                    <span style={{
+                                      fontSize: '11px',
+                                      color: '#B45309',
+                                      fontWeight: 700,
+                                      background: '#FEF3C7',
+                                      padding: '1.5px 7px',
+                                      borderRadius: '6px',
+                                      border: '1px solid #FDE68A',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '3px'
+                                    }}>
+                                      ⏰ {inv.session_time}
+                                    </span>
+                                  ) : (
+                                    <span style={{
+                                      fontSize: '11px',
+                                      color: '#64748B',
+                                      fontWeight: 600,
+                                      background: '#F1F5F9',
+                                      padding: '1.5px 7px',
+                                      borderRadius: '6px',
+                                      border: '1px solid #E2E8F0',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '3px'
+                                    }}>
+                                      ⏰ Student Choice
+                                    </span>
+                                  )}
+                                </div>
+
+                                {/* Row 3: Status & Created Date - in a single neat line */}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', fontSize: '11.5px' }}>
+                                  <span style={{
+                                    color: isFull ? '#EF4444' : '#15803D',
+                                    fontWeight: 800,
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px'
+                                  }}>
+                                    {isFull
+                                      ? `⛔ Used (${inv.used_count || inv.max_count}/${inv.max_count} slots registered)`
+                                      : `⚡ Active (1 Main + ${Math.max(0, inv.max_count - 1)} Guests)`}
+                                  </span>
+                                  {inv.created_at && (
+                                    <span style={{ color: '#64748B', fontWeight: 600 }}>
+                                      • Created {formatInviteCreatedDateTime(inv.created_at)}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
 
-                              {/* Row 3: Status & Created Date - in a single neat line */}
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', fontSize: '11.5px' }}>
-                                <span style={{
-                                  color: isFull ? '#EF4444' : '#15803D',
+                              <button
+                                type="button"
+                                onClick={() => copySchoolInviteLink(inv)}
+                                disabled={isFull}
+                                style={{
+                                  background: isFull ? '#E2E8F0' : (isCopied ? '#10B981' : '#F0FDFA'),
+                                  color: isFull ? '#94A3B8' : (isCopied ? '#FFFFFF' : '#0D9488'),
+                                  border: isFull ? 'none' : (isCopied ? '1px solid #10B981' : '1.5px solid #0D9488'),
+                                  borderRadius: '8px',
+                                  padding: '6px 14px',
+                                  fontSize: '12px',
                                   fontWeight: 800,
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: '4px'
-                                }}>
-                                  {isFull
-                                    ? `⛔ Used (${inv.used_count || inv.max_count}/${inv.max_count} slots registered)`
-                                    : `⚡ Active (1 Main + ${Math.max(0, inv.max_count - 1)} Guests)`}
-                                </span>
-                                {inv.created_at && (
-                                  <span style={{ color: '#64748B', fontWeight: 600 }}>
-                                    • Created {formatInviteCreatedDateTime(inv.created_at)}
-                                  </span>
-                                )}
-                              </div>
+                                  cursor: isFull ? 'not-allowed' : 'pointer',
+                                  whiteSpace: 'nowrap',
+                                  transition: 'all 0.15s ease'
+                                }}
+                              >
+                                {isCopied ? '✓ Copied' : isFull ? 'Expired' : 'Copy Link'}
+                              </button>
                             </div>
-
-                            <button
-                              type="button"
-                              onClick={() => copySchoolInviteLink(inv)}
-                              disabled={isFull}
-                              style={{
-                                background: isFull ? '#E2E8F0' : (isCopied ? '#10B981' : '#F0FDFA'),
-                                color: isFull ? '#94A3B8' : (isCopied ? '#FFFFFF' : '#0D9488'),
-                                border: isFull ? 'none' : (isCopied ? '1px solid #10B981' : '1.5px solid #0D9488'),
-                                borderRadius: '8px',
-                                padding: '6px 14px',
-                                fontSize: '12px',
-                                fontWeight: 800,
-                                cursor: isFull ? 'not-allowed' : 'pointer',
-                                whiteSpace: 'nowrap',
-                                transition: 'all 0.15s ease'
-                              }}
-                            >
-                              {isCopied ? '✓ Copied' : isFull ? 'Expired' : 'Copy Link'}
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  );
-                })()}
-              </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
               );
             })()}
           </div>
@@ -6713,7 +7031,7 @@ const StudentsManagement = () => {
 
       {/* Software-Native Confirmation Dialog (Replaces Browser window.confirm) */}
       {confirmDialog.isOpen && (
-        <div 
+        <div
           onClick={closeConfirm}
           style={{
             position: 'fixed',
@@ -6727,7 +7045,7 @@ const StudentsManagement = () => {
             padding: '16px'
           }}
         >
-          <div 
+          <div
             onClick={(e) => e.stopPropagation()}
             style={{
               backgroundColor: '#FFFFFF',
@@ -6752,16 +7070,16 @@ const StudentsManagement = () => {
               }}>
                 {confirmDialog.isDanger ? (
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M3 6h18"/>
-                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                    <line x1="10" y1="11" x2="10" y2="17"/>
-                    <line x1="14" y1="11" x2="14" y2="17"/>
+                    <path d="M3 6h18" />
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                    <line x1="10" y1="11" x2="10" y2="17" />
+                    <line x1="14" y1="11" x2="14" y2="17" />
                   </svg>
                 ) : (
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="12" r="10"/>
-                    <line x1="12" y1="8" x2="12" y2="12"/>
-                    <line x1="12" y1="16" x2="12.01" y2="16"/>
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
                   </svg>
                 )}
               </div>

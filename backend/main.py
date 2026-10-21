@@ -763,6 +763,10 @@ try:
             db_migrate.execute(text("ALTER TABLE school_invite_links ADD COLUMN IF NOT EXISTS nickname VARCHAR(150) DEFAULT ''"))
         except Exception:
             pass
+        try:
+            db_migrate.execute(text("ALTER TABLE school_invite_links ADD COLUMN IF NOT EXISTS session_time VARCHAR(100) DEFAULT NULL"))
+        except Exception:
+            pass
         db_migrate.execute(text("""
             CREATE TABLE IF NOT EXISTS instructor_leaves (
                 id SERIAL PRIMARY KEY,

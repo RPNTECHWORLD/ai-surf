@@ -831,3 +831,45 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
       - Updated `downloadCSVSample` to include `Expected Time` in CSV headers and sample data rows.
       - Updated the CSV preview mini-table and CSV format specification guidelines to display and accept `Expected Time`.
 
+---
+
+### Changes on 21-10-2026
+
+1. **Accompanying Guests Count & Multi-Guest Calculation Fix in Sessions (`Sessions.jsx`)**:
+   - **Problem**: In Session cards (`Sessions.jsx`), the "NUMBER OF STUDENTS" count was only counting host athletes and omitting accompanying guests, resulting in undercounted session headcounts.
+   - **Composite Identity Keys**: Introduced `getSessionStudentKey(session)` to differentiate accompanying guests (`guest_name:guest_index:parent_id`) from primary host students.
+   - **Comprehensive Headcount Calculation**: Updated `collectUniqueStudentKeys` and active session headcount cards so that all accompanying guests are accurately counted alongside primary athletes.
+   - **UI Alignment**: Fixed layout alignment and typography of student and guest counters across session headers and cards.
+
+2. **In-Table Expected Time Editing for School Admin (`StudentsManagement.jsx`)**:
+   - **Direct Table Interaction**: Made the `EXPECTED TIME` column cell interactive for School Admins (`isAdminOrSchoolAdmin`) with an `Edit` badge, pointer cursor, and tooltip.
+   - **Event Propagation Guard**: Prevented parent row profile navigation on cell click (`e.stopPropagation()`).
+   - **"⏰ Edit Expected Time" Modal**: Implemented an administrative modal dialog allowing School Admins to quickly pick configured school slots, clear time (`—`), or type a custom time string.
+   - **Backend Sync**: Dispatched `PUT /api/students/{id}` with `{ session_time }`, synchronously updating local state and triggering a success toast notification.
+
+3. **Step 2 Expected Time Filter & 1-Click Roster Scheduling (`NewSession.jsx`)**:
+   - **Dedicated Filter Row**: Added an "⏰ Expected Time:" filter row in Step 2 of `NewSession.jsx`.
+   - **Dynamic Pill Group**:
+     - `All ({count})`: Displays all available pool students.
+     - `🎯 Matches Current Slot ({slotTime}) ({count})`: Filters students matching the currently selected slot tab.
+     - Dynamic pills for each unique expected time among roster students with live counts (e.g. `06:00 AM (25)`, `09:30 AM (12)`).
+     - `No Expected Time ({count})`: Filters unassigned students without an expected time slot.
+   - **"Select by Filter" Integration**: Updated the "Select by Filter" button to respect the active expected time filter, allowing coaches to batch-select all students expecting a given slot into that slot in a single click.
+   - **Draft Persistence**: Stored and restored `expectedTimeFilter` in session draft payloads via `/api/session-drafts`.
+
+4. **Zero Layout Shift & Size-Stable Slot Pill Buttons (`StudentsManagement.jsx`)**:
+   - **Problem**: When selecting slot pill buttons in modals, buttons jumped in width and height, causing visual jitter and shifting the entire layout.
+   - **Root Cause**: Border width was changing between `1px` and `1.5px`, font weight was toggling from `600` to `800`, and a `✓` checkmark span was being dynamically inserted into the DOM only on selection.
+   - **Pixel-Locked Dimensions**: Enforced constant `border: 1.5px solid` and constant `fontWeight: 600` for both selected and unselected states across all slot buttons.
+   - **Fixed-Space Checkmark**: Replaced conditional DOM insertion with a reserved `width: 12px` container using `visibility: isSelected ? 'visible' : 'hidden'`, guaranteeing 100% stable pixel dimensions with zero layout shift on click.
+
+5. **Manual Custom Time Slot Input in Modals (`StudentsManagement.jsx`)**:
+   - **Direct Typing Support**: Added a manual text input box directly below slot pills in both School Batch Registration Invite modal and Add Student modal (`Or type custom slot (e.g. 06:00 AM)`).
+   - **Two-Way Sync**: Selecting a pill automatically fills the input; typing a custom time updates the state, highlights the input with teal accent borders, and automatically locks the custom slot in the invite link.
+   - **Quick Reset**: Added a `✕ Clear` / `Student Choice (Flexible)` button to easily reset to flexible mode.
+
+6. **Start-Time Only Display Normalization (`StudentsManagement.jsx`, `AuthPage.jsx`, `NewSession.jsx`)**:
+   - **Removed End-Time Clutter**: Refactored `formatSlotDisplayTime` across `StudentsManagement.jsx` and `AuthPage.jsx` to strip end-time ranges (`- 08:00 AM`) and display only clean start times (e.g. `06:00 AM`, `07:00 AM`, `09:30 AM`).
+   - **Unified Display Parity**: Updated the `EXPECTED TIME` table column, student card `Exp:` badges, and onboarding slot selectors to consistently display start time only.
+
+

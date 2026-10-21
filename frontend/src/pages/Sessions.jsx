@@ -776,7 +776,7 @@ const Sessions = () => {
           transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
           boxShadow: '0 1px 3px rgba(13, 148, 136, 0.08)',
           outline: 'none',
-          maxWidth: '170px',
+          maxWidth: '165px',
           boxSizing: 'border-box'
         }}
         onMouseEnter={(e) => {
@@ -813,7 +813,7 @@ const Sessions = () => {
           fontWeight: 700,
           fontSize: '12.5px',
           letterSpacing: '-0.2px',
-          maxWidth: '95px',
+          maxWidth: '82px',
           overflow: 'hidden',
           textOverflow: 'ellipsis',
           whiteSpace: 'nowrap'
@@ -2639,54 +2639,60 @@ const Sessions = () => {
   const completedCount = getGroupSessionCount(completedSessionsList);
   const completedDays = new Set(completedSessionsList.map(s => s.date).filter(Boolean)).size;
 
-  // Student Metrics in Sessions
-  const allUniqueStudentKeys = useMemo(() => {
+  // Student Metrics in Sessions (Counts both main students and accompanying guests)
+  const getSessionStudentKey = (s) => {
+    if (!s) return null;
+    const isGuest = Boolean(s.is_guest || (s.guest_name && s.guest_name.trim()));
+    if (isGuest) {
+      const gName = (s.guest_name || s.student || s.student_name || '').trim().toLowerCase();
+      const parentId = s.student_id ? String(s.student_id) : '';
+      return gName ? `guest_${parentId}_${gName}` : (parentId ? `guest_${parentId}` : null);
+    }
+    if (s.student_id) {
+      return `student_${s.student_id}`;
+    }
+    const sName = (s.student || s.student_name || '').trim().toLowerCase();
+    return sName ? `student_${sName}` : null;
+  };
+
+  const collectUniqueStudentKeys = (sessionList) => {
     const set = new Set();
-    roleScopedSessions.forEach(s => {
-      const key = s.student_id ? String(s.student_id) : (s.student || '').trim().toLowerCase();
-      if (key) set.add(key);
+    (sessionList || []).forEach(s => {
+      if (Array.isArray(s.sessions) && s.sessions.length > 0) {
+        s.sessions.forEach(sub => {
+          const k = getSessionStudentKey(sub);
+          if (k) set.add(k);
+        });
+      } else {
+        const k = getSessionStudentKey(s);
+        if (k) set.add(k);
+      }
     });
     return set;
+  };
+
+  const allUniqueStudentKeys = useMemo(() => {
+    return collectUniqueStudentKeys(roleScopedSessions);
   }, [roleScopedSessions]);
   const totalStudentsCount = allUniqueStudentKeys.size;
 
   const upcomingStudentKeys = useMemo(() => {
-    const set = new Set();
-    upcomingSessionsList.forEach(s => {
-      const key = s.student_id ? String(s.student_id) : (s.student || '').trim().toLowerCase();
-      if (key) set.add(key);
-    });
-    return set;
+    return collectUniqueStudentKeys(upcomingSessionsList);
   }, [upcomingSessionsList]);
   const upcomingStudentsCount = upcomingStudentKeys.size;
 
   const inProgressStudentKeys = useMemo(() => {
-    const set = new Set();
-    inProgressSessionsList.forEach(s => {
-      const key = s.student_id ? String(s.student_id) : (s.student || '').trim().toLowerCase();
-      if (key) set.add(key);
-    });
-    return set;
+    return collectUniqueStudentKeys(inProgressSessionsList);
   }, [inProgressSessionsList]);
   const inProgressStudentsCount = inProgressStudentKeys.size;
 
   const pendingReviewStudentKeys = useMemo(() => {
-    const set = new Set();
-    pendingReviewSessionsList.forEach(s => {
-      const key = s.student_id ? String(s.student_id) : (s.student || '').trim().toLowerCase();
-      if (key) set.add(key);
-    });
-    return set;
+    return collectUniqueStudentKeys(pendingReviewSessionsList);
   }, [pendingReviewSessionsList]);
   const pendingReviewStudentsCount = pendingReviewStudentKeys.size;
 
   const completedStudentKeys = useMemo(() => {
-    const set = new Set();
-    completedSessionsList.forEach(s => {
-      const key = s.student_id ? String(s.student_id) : (s.student || '').trim().toLowerCase();
-      if (key) set.add(key);
-    });
-    return set;
+    return collectUniqueStudentKeys(completedSessionsList);
   }, [completedSessionsList]);
   const completedStudentsCount = completedStudentKeys.size;
 
@@ -3165,11 +3171,11 @@ const Sessions = () => {
                       />
                     </th>
                   )}
-                  <th style={{ width: '18%', minWidth: '160px' }}>DATE & TIME</th>
-                  <th style={{ width: '26%', minWidth: '200px' }}>SESSION / STUDENT</th>
-                  <th style={{ width: '16%', minWidth: '140px' }}>INSTRUCTOR</th>
-                  <th style={{ width: '13%', minWidth: '110px' }}>STATUS</th>
-                  <th style={{ width: '27%', minWidth: '280px', textAlign: 'right' }}>ACTIONS</th>
+                  <th style={{ width: '20%', minWidth: '190px' }}>DATE & TIME</th>
+                  <th style={{ width: '20%', minWidth: '180px' }}>SESSION / STUDENT</th>
+                  <th style={{ width: '18%', minWidth: '175px' }}>INSTRUCTOR</th>
+                  <th style={{ width: '16%', minWidth: '155px' }}>STATUS</th>
+                  <th style={{ width: '26%', minWidth: '280px', textAlign: 'right', paddingRight: '20px' }}>ACTIONS</th>
                 </tr>
               </thead>
               <tbody>
@@ -3266,7 +3272,7 @@ const Sessions = () => {
                         <td>
                           {renderCoachBadge(groupObj.instructor, groupObj.sessions[0]?.instructor_id)}
                         </td>
-                        <td>
+                        <td style={{ whiteSpace: 'nowrap' }}>
                           <span
                             className="ses-status-pill"
                             style={{
@@ -3279,7 +3285,7 @@ const Sessions = () => {
                             {formatSessionStatus(groupObj)}
                           </span>
                         </td>
-                        <td style={{ textAlign: 'right' }}>
+                        <td style={{ textAlign: 'right', paddingRight: '20px' }}>
                           <div className="ses-actions-row" style={{ justifyContent: 'flex-end', gap: '6px', flexWrap: 'nowrap' }}>
                             {/* Analysis Button for Group (When Video is Attached) */}
                             {hasGroupMedia && (
@@ -3287,8 +3293,8 @@ const Sessions = () => {
                                 className="ses-btn-view-analysis ses-btn-analysis-active"
                                 title="View AI Video Analysis for this session group"
                                 style={{
-                                  padding: '6px 10px',
-                                  fontWeight: 700,
+                                  padding: '5px 9px',
+                                  fontWeight: 600,
                                   fontSize: '11.5px',
                                   display: 'inline-flex',
                                   alignItems: 'center',
@@ -3319,7 +3325,7 @@ const Sessions = () => {
                               className="ses-btn-view-analysis"
                               title="Open Full Details, Roster, Video & Photo Upload Hub"
                               style={{
-                                padding: '6px 10px',
+                                padding: '5px 9px',
                                 fontWeight: 600,
                                 fontSize: '11.5px',
                                 display: 'inline-flex',
@@ -3510,7 +3516,7 @@ const Sessions = () => {
                                 {formatSessionStatus(session)}
                               </span>
                             </td>
-                            <td style={{ textAlign: 'right' }}>
+                            <td style={{ textAlign: 'right', paddingRight: '20px' }}>
                               <div className="ses-actions-row" style={{ justifyContent: 'flex-end', gap: '6px' }}>
                                 {/* Individual Student Video Button */}
                                 {hasStudentVideo ? (
@@ -3746,7 +3752,7 @@ const Sessions = () => {
                           {formatSessionStatus(session)}
                         </span>
                       </td>
-                      <td style={{ textAlign: 'right' }}>
+                      <td style={{ textAlign: 'right', paddingRight: '20px' }}>
                         <div className="ses-actions-row" style={{ justifyContent: 'flex-end', gap: '6px' }}>
                           {hasMedia ? (
                             <button
@@ -7886,7 +7892,7 @@ const Sessions = () => {
           width: 100%; box-sizing: border-box; background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 16px; 
           box-shadow: 0 1px 3px rgba(0,0,0,0.03); overflow-x: auto;
         }
-        .ses-table { width: 100%; min-width: 1050px; border-collapse: collapse; text-align: left; table-layout: fixed; }
+        .ses-table { width: 100%; min-width: 1020px; border-collapse: collapse; text-align: left; table-layout: fixed; }
         .ses-table th {
           padding: 14px 16px; font-size: 11px; font-weight: 700;
           color: #64748B; text-transform: uppercase; background: #F8FAFC;

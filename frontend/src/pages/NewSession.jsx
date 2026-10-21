@@ -342,7 +342,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       if (currentUser?.school_name) {
         return typeof currentUser.school_name === 'string' ? currentUser.school_name : (currentUser.school_name?.name || null);
       }
-    } catch (e) {}
+    } catch (e) { }
     return null;
   }, [currentUser]);
 
@@ -632,7 +632,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
               slots: updatedSlots
             })
           }).catch(err => console.warn('Failed saving custom slot capacity to DB:', err));
-        } catch (err) {}
+        } catch (err) { }
       }, 500);
     }
   };
@@ -693,7 +693,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           slots: updated
         })
       }).catch(err => console.warn('Failed saving custom date slot toggle to DB:', err));
-    } catch (err) {}
+    } catch (err) { }
   };
 
   // Open modal to edit this slot's time, duration, and capacity
@@ -788,7 +788,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           slots: updated
         })
       }).catch(err => console.warn('Failed saving custom slots after delete:', err));
-    } catch (err) {}
+    } catch (err) { }
   };
 
   // Reset this specific date's schedule back to the Default Template
@@ -916,7 +916,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const [dbStudents, setDbStudents] = useState([]);
   const [levelFilter, setLevelFilter] = useState(() => initialDraft?.levelFilter || 'all');
   const [selectionFilter, setSelectionFilter] = useState(() => initialDraft?.selectionFilter || 'all');
+  const [selectedSessionSlotFilter, setSelectedSessionSlotFilter] = useState(() => initialDraft?.selectedSessionSlotFilter || 'all');
   const [courseDayFilter, setCourseDayFilter] = useState(() => initialDraft?.courseDayFilter || 'all');
+  const [expectedTimeFilter, setExpectedTimeFilter] = useState(() => initialDraft?.expectedTimeFilter || 'all');
   const [genderFilterStep2, setGenderFilterStep2] = useState(() => initialDraft?.genderFilterStep2 || 'all');
   const [swimmingFilterStep2, setSwimmingFilterStep2] = useState(() => initialDraft?.swimmingFilterStep2 || 'all');
   const [dayFilter, setDayFilter] = useState('all');
@@ -1052,17 +1054,42 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             if (draft.currentStep && draft.currentStep > 1) setCurrentStep(draft.currentStep);
             if (draft.capacity !== undefined) setCapacity(draft.capacity);
             if (draft.slotCapacityMap) setSlotCapacityMap(draft.slotCapacityMap);
-            if (draft.selectedSlotId) setSelectedSlotId(draft.selectedSlotId);
-            if (draft.spotName !== undefined) setSpotName(draft.spotName);
-            if (draft.slotStudentMap && Object.keys(draft.slotStudentMap).length > 0) setSlotStudentMap(draft.slotStudentMap);
-            if (Array.isArray(draft.trainingGroups) && draft.trainingGroups.length > 0) setTrainingGroups(draft.trainingGroups);
+            const mergedSlotMap = (draft.slotStudentMap && typeof draft.slotStudentMap === 'object') ? { ...draft.slotStudentMap } : {};
+            if (Array.isArray(draft.trainingGroups)) {
+              draft.trainingGroups.forEach(grp => {
+                if (!grp.isExistingDbGroup && grp.slotId && Array.isArray(grp.studentIds) && grp.studentIds.length > 0) {
+                  const sIdKey = String(grp.slotId);
+                  const currentInSlot = (mergedSlotMap[sIdKey] || mergedSlotMap[grp.slotId] || []).map(String);
+                  const combined = Array.from(new Set([...currentInSlot, ...grp.studentIds.map(String)]));
+                  mergedSlotMap[grp.slotId] = combined;
+                  mergedSlotMap[sIdKey] = combined;
+                }
+              });
+            }
+            // Sanitize mergedSlotMap: never keep DB-scheduled students in wizard slotStudentMap
+            Object.keys(mergedSlotMap).forEach(sId => {
+              if (Array.isArray(mergedSlotMap[sId])) {
+                mergedSlotMap[sId] = mergedSlotMap[sId].filter(id => {
+                  const st = allPoolStudents.find(s => String(s.id) === String(id));
+                  return !st || !isStudentScheduledInDbOnDate(st);
+                });
+              }
+            });
+            if (Object.keys(mergedSlotMap).length > 0) {
+              setSlotStudentMap(mergedSlotMap);
+            }
+            if (Array.isArray(draft.trainingGroups) && draft.trainingGroups.length > 0) {
+              setTrainingGroups(draft.trainingGroups);
+            }
             if (draft.activeDropGroupId !== undefined) setActiveDropGroupId(draft.activeDropGroupId);
             if (draft.selectedSlotStep2) setSelectedSlotStep2(draft.selectedSlotStep2);
             if (draft.step3SlotFilter) setStep3SlotFilter(draft.step3SlotFilter);
             if (draft.step3CheckedStudentIdsBySlot) setStep3CheckedStudentIdsBySlot(draft.step3CheckedStudentIdsBySlot);
             if (draft.levelFilter) setLevelFilter(draft.levelFilter);
             if (draft.selectionFilter) setSelectionFilter(draft.selectionFilter);
+            if (draft.selectedSessionSlotFilter) setSelectedSessionSlotFilter(draft.selectedSessionSlotFilter);
             if (draft.courseDayFilter) setCourseDayFilter(draft.courseDayFilter);
+            if (draft.expectedTimeFilter) setExpectedTimeFilter(draft.expectedTimeFilter);
             if (draft.genderFilterStep2) setGenderFilterStep2(draft.genderFilterStep2);
             if (draft.swimmingFilterStep2) setSwimmingFilterStep2(draft.swimmingFilterStep2);
             if (draft.step3DayFilter) setStep3DayFilter(draft.step3DayFilter);
@@ -1113,7 +1140,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       selectedSlotStep2,
       levelFilter,
       selectionFilter,
+      selectedSessionSlotFilter,
       courseDayFilter,
+      expectedTimeFilter,
       genderFilterStep2,
       swimmingFilterStep2,
       step3DayFilter,
@@ -1149,7 +1178,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     selectedSlotStep2,
     levelFilter,
     selectionFilter,
+    selectedSessionSlotFilter,
     courseDayFilter,
+    expectedTimeFilter,
     genderFilterStep2,
     swimmingFilterStep2,
     step3DayFilter,
@@ -1233,18 +1264,12 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       fetch(`${API}/api/session-drafts?${params.toString()}`, {
         method: 'DELETE'
       }).catch(err => console.warn('Failed deleting draft from DB:', err));
-    } catch (err) {}
+    } catch (err) { }
 
     // If date has existing DB groups, restore them from DB!
     if (existingDbGroups && existingDbGroups.length > 0) {
       setTrainingGroups(existingDbGroups);
-      const newMap = {};
-      existingDbGroups.forEach(grp => {
-        if (grp.slotId && Array.isArray(grp.studentIds)) {
-          newMap[grp.slotId] = [...grp.studentIds];
-        }
-      });
-      setSlotStudentMap(newMap);
+      setSlotStudentMap({});
       setSelectedSlotId(existingDbGroups[0].slotId || slots[0]?.id || null);
     } else {
       setTrainingGroups([]);
@@ -1338,7 +1363,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       try {
         const orig = JSON.parse(originalSavedDraftRef.current);
         saveDraftToBackend(orig, true);
-      } catch (e) {}
+      } catch (e) { }
     }
     setShowCloseConfirmModal(false);
     if (isModal && modalHistoryPushedRef.current) {
@@ -1359,7 +1384,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       try {
         const orig = JSON.parse(originalSavedDraftRef.current);
         saveDraftToBackend(orig, true);
-      } catch (e) {}
+      } catch (e) { }
     } else {
       // User never had a draft, ensure backend draft is deleted
       try {
@@ -1369,8 +1394,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         const delParams = new URLSearchParams({ date: selectedSessionDateYYYYMMDD });
         if (schoolId) delParams.set('school_id', schoolId);
         if (schoolName) delParams.set('school_name', schoolName);
-        fetch(`${API}/api/session-drafts?${delParams.toString()}`, { method: 'DELETE' }).catch(() => {});
-      } catch (e) {}
+        fetch(`${API}/api/session-drafts?${delParams.toString()}`, { method: 'DELETE' }).catch(() => { });
+      } catch (e) { }
     }
 
     // Reset in-memory wizard states immediately
@@ -1532,7 +1557,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           const ud = String(dObj.getUTCDate()).padStart(2, '0');
           if (`${uy}-${um}-${ud}` === targetYYYYMMDD) return true;
         }
-      } catch (e) {}
+      } catch (e) { }
 
       return false;
     });
@@ -1629,8 +1654,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     if (!student) return false;
     const nameLow = (student.name || '').toLowerCase().trim();
     const idStr = String(student.id);
-    return existingScheduledStudentNamesOnDate.has(nameLow) || 
-      existingDbScheduledInfoMapOnDate.has(nameLow) || 
+    return existingScheduledStudentNamesOnDate.has(nameLow) ||
+      existingDbScheduledInfoMapOnDate.has(nameLow) ||
       (!student.isGuest && existingDbScheduledInfoMapOnDate.has(idStr));
   };
 
@@ -1817,7 +1842,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
               if (sess.student_name && sess.student_name.toLowerCase().trim() === sName) return true;
               if (sess.student_id != null && String(sess.student_id) === sId) return true;
               if (Array.isArray(sess.sessions)) {
-                return sess.sessions.some(sub => 
+                return sess.sessions.some(sub =>
                   !sub.guest_name && (
                     (sub.student && sub.student.toLowerCase().trim() === sName) ||
                     (sub.student_name && sub.student_name.toLowerCase().trim() === sName) ||
@@ -1880,7 +1905,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       .then(data => {
         if (Array.isArray(data)) setExistingDbSessions(data);
       })
-      .catch(() => {});
+      .catch(() => { });
 
     fetch(`${API}/api/students${schoolParam}`)
       .then(r => r.json())
@@ -1890,7 +1915,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           setDbStudents(mapped);
         }
       })
-      .catch(() => {});
+      .catch(() => { });
 
     // Fetch leave requests for current school to cross-check coach availability
     fetch(`${API}/api/leave-requests${schoolParam}`)
@@ -1898,7 +1923,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       .then(data => {
         if (Array.isArray(data)) setDbLeaveRequests(data);
       })
-      .catch(() => {});
+      .catch(() => { });
 
     fetch(`${API}/api/instructors${schoolParam}`)
       .then(r => r.json())
@@ -1913,7 +1938,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                 try {
                   const p = JSON.parse(i.specializations);
                   if (Array.isArray(p) && p.length > 0) roleStr = p[0];
-                } catch(e) {}
+                } catch (e) { }
               }
             }
             return {
@@ -1952,7 +1977,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           setDbInstructors(mapped);
         }
       })
-      .catch(() => {});
+      .catch(() => { });
   }, [isCoachFreelance]);
 
   // Real Students Pool (Excludes students already scheduled on selected date)
@@ -2291,21 +2316,21 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   // ── Existing DB Groups for Selected Date ──
   const existingDbGroups = useMemo(() => {
     if (!existingDbDateSessions || existingDbDateSessions.length === 0) return [];
-    
+
     const groupsMap = new Map();
-    
+
     existingDbDateSessions.forEach(sess => {
       const groupName = sess.group_name || sess.groupName || 'Group A';
       const sessTime = (sess.time || '').trim().toLowerCase();
-      
+
       const matchedSlot = slots.find(s => {
         const sTime = (s.time || s.startTime || '').trim().toLowerCase();
         return sTime === sessTime || sessTime.startsWith(sTime) || sTime.startsWith(sessTime.split(' - ')[0].trim());
       }) || slots[0];
-      
+
       const slotId = matchedSlot ? matchedSlot.id : (slots[0]?.id || 1);
       const key = `${slotId}__${groupName}`;
-      
+
       if (!groupsMap.has(key)) {
         groupsMap.set(key, {
           id: `db-group-${slotId}-${groupName.replace(/\s+/g, '-').toLowerCase()}`,
@@ -2320,7 +2345,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           existingSessionIds: []
         });
       }
-      
+
       const grpObj = groupsMap.get(key);
       if (sess.id && !grpObj.existingSessionIds.includes(sess.id)) {
         grpObj.existingSessionIds.push(sess.id);
@@ -2363,7 +2388,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       if (!grpObj.assignedInstructorId && grpObj.assignedInstructorIds.length > 0) {
         grpObj.assignedInstructorId = grpObj.assignedInstructorIds[0];
       }
-      
+
       // Match student from pool
       let matchedStudent = null;
       const gNameRaw = (sess.guest_name || '').trim();
@@ -2388,14 +2413,14 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       if (!matchedStudent && !gNameLow && sess.student_id != null) {
         matchedStudent = allPoolStudents.find(s => !s.isGuest && String(s.id) === String(sess.student_id));
       }
-      
+
       const targetStudentId = matchedStudent ? matchedStudent.id : (gNameLow ? `sess-guest-${sess.student_id || '0'}-${gNameLow.replace(/\s+/g, '-')}` : sess.student_id);
 
       if (targetStudentId && !grpObj.studentIds.includes(targetStudentId)) {
         grpObj.studentIds.push(targetStudentId);
       }
     });
-    
+
     return sortGroupsInOrder(Array.from(groupsMap.values()));
   }, [existingDbDateSessions, slots, allPoolStudents, dbInstructors]);
 
@@ -2447,16 +2472,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       }
     });
 
-    setSlotStudentMap(prevMap => {
-      const newMap = isNewDate ? {} : { ...prevMap };
-      existingDbGroups.forEach(grp => {
-        if (grp.slotId && Array.isArray(grp.studentIds) && grp.studentIds.length > 0) {
-          const currentInSlot = newMap[grp.slotId] || [];
-          newMap[grp.slotId] = Array.from(new Set([...currentInSlot, ...grp.studentIds]));
-        }
-      });
-      return newMap;
-    });
+    if (isNewDate) {
+      setSlotStudentMap({});
+    }
 
     // Ensure slot capacities match or accommodate published sessions
     setSlotCapacityMap(prev => {
@@ -2537,7 +2555,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       }
       staleKeys.forEach(k => localStorage.removeItem(k));
       sessionStorage.removeItem('surfing_session_draft_discarded');
-    } catch (e) {}
+    } catch (e) { }
 
     window.addEventListener('session_slots_updated', handleSlotsSync);
     return () => {
@@ -2603,6 +2621,11 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
   // Helper: Find which slot a student is assigned to
   const getStudentSlotAssignment = (studentId) => {
+    const stObj = allPoolStudents.find(s => String(s.id) === String(studentId));
+    if (stObj && isStudentScheduledInDbOnDate(stObj)) {
+      return null;
+    }
+
     for (let idx = 0; idx < slots.length; idx++) {
       const s = slots[idx];
       const assignedIds = slotStudentMap[s.id] || slotStudentMap[String(s.id)] || [];
@@ -2612,8 +2635,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         return { slot: s, slotIdx: activeIdx !== -1 ? activeIdx : idx, theme };
       }
     }
-    // Fallback: check trainingGroups
+    // Fallback: check trainingGroups (ONLY wizard groups, NEVER existing published DB groups)
     for (const grp of trainingGroups) {
+      if (grp.isExistingDbGroup) continue;
       if ((grp.studentIds || []).some(id => String(id) === String(studentId))) {
         const matchedSlot = slots.find(s => String(s.id) === String(grp.slotId)) || slots[0];
         if (matchedSlot) {
@@ -2626,19 +2650,31 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     return null;
   };
 
-  // Union of all selected student IDs across all slots
+  // Union of all selected student IDs across all slots (STRICTLY wizard selections, NEVER DB scheduled)
   const allSelectedStudentIds = useMemo(() => {
     const ids = new Set();
     Object.values(slotStudentMap).forEach(list => {
-      if (Array.isArray(list)) list.forEach(id => ids.add(id));
+      if (Array.isArray(list)) {
+        list.forEach(id => {
+          const st = allPoolStudents.find(s => String(s.id) === String(id));
+          if (!st || !isStudentScheduledInDbOnDate(st)) {
+            ids.add(id);
+          }
+        });
+      }
     });
     trainingGroups.forEach(grp => {
-      if (Array.isArray(grp.studentIds)) {
-        grp.studentIds.forEach(id => ids.add(id));
+      if (!grp.isExistingDbGroup && Array.isArray(grp.studentIds)) {
+        grp.studentIds.forEach(id => {
+          const st = allPoolStudents.find(s => String(s.id) === String(id));
+          if (!st || !isStudentScheduledInDbOnDate(st)) {
+            ids.add(id);
+          }
+        });
       }
     });
     return Array.from(ids);
-  }, [slotStudentMap, trainingGroups]);
+  }, [slotStudentMap, trainingGroups, allPoolStudents, existingScheduledStudentNamesOnDate, existingDbScheduledInfoMapOnDate]);
 
   // Backward compatibility alias for selectedStudentIds
   const selectedStudentIds = allSelectedStudentIds;
@@ -2648,6 +2684,17 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     const activeSlotId = selectedSlotId || activeSlotsForDay[0]?.id || slots[0]?.id;
     if (!activeSlotId) return;
 
+    const clickedStudent = allPoolStudents.find(s => String(s.id) === String(studentId));
+    if (clickedStudent && isStudentScheduledInDbOnDate(clickedStudent)) {
+      setUiAlert({
+        title: 'Student Already Scheduled',
+        message: `${clickedStudent.name} is already scheduled in an existing session on ${formattedSessionDate}. Scheduled students cannot be selected in a new session.`,
+        type: 'info',
+        icon: 'ℹ️'
+      });
+      return;
+    }
+
     // Capture scroll position before state update so screen does NOT scroll/jump
     const scrollContainer = document.querySelector('.ns-modal-body-scroll');
     const containerTop = scrollContainer ? scrollContainer.scrollTop : null;
@@ -2656,9 +2703,14 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
     const activeSlot = slots.find(s => s.id === activeSlotId) || selectedSlot;
     const slotCap = getSlotCapacity(activeSlot);
-    const currentSlotList = slotStudentMap[activeSlotId] || [];
 
-    const clickedStudent = allPoolStudents.find(s => String(s.id) === String(studentId));
+    // Accurate set of all student IDs currently in this slot (from slotStudentMap OR trainingGroups, excluding DB groups)
+    const currentSlotStudentIds = new Set([
+      ...(slotStudentMap[activeSlotId] || slotStudentMap[String(activeSlotId)] || []).map(String),
+      ...trainingGroups
+        .filter(g => !g.isExistingDbGroup && String(g.slotId) === String(activeSlotId))
+        .flatMap(g => (g.studentIds || []).map(String))
+    ]);
 
     // If main student (not a guest), group with all their accompanying guests
     const isMainStudent = clickedStudent && !clickedStudent.isGuest;
@@ -2669,15 +2721,16 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     const familyIds = isMainStudent
       ? [studentId, ...associatedGuests.map(g => g.id)]
       : [studentId];
+    const familyIdStrs = familyIds.map(String);
 
     // Check if all family members are already in the current slot
-    const allInCurrentSlot = familyIds.every(id => currentSlotList.includes(id));
+    const allInCurrentSlot = familyIdStrs.every(idStr => currentSlotStudentIds.has(idStr));
 
     if (!allInCurrentSlot) {
       // Need to add whichever family members are not yet in this slot
-      const idsToAdd = familyIds.filter(id => !currentSlotList.includes(id));
+      const idsToAdd = familyIds.filter(id => !currentSlotStudentIds.has(String(id)));
       const spotsNeeded = idsToAdd.length;
-      const spotsRemaining = slotCap - currentSlotList.length;
+      const spotsRemaining = slotCap - currentSlotStudentIds.size;
 
       if (spotsNeeded > spotsRemaining) {
         const slotTimeName = activeSlot ? (activeSlot.startTime || activeSlot.time) : 'this time slot';
@@ -2699,25 +2752,45 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         // Remove family members from ALL slots first (so student belongs to only 1 slot at a time)
         Object.keys(newMap).forEach(sId => {
           if (Array.isArray(newMap[sId])) {
-            newMap[sId] = newMap[sId].filter(id => !familyIds.includes(id));
+            newMap[sId] = newMap[sId].filter(id => !familyIdStrs.includes(String(id)));
           }
         });
 
         // Add all family members to active slot
-        newMap[activeSlotId] = Array.from(new Set([...(newMap[activeSlotId] || []), ...familyIds]));
+        const existingInSlot = (newMap[activeSlotId] || newMap[String(activeSlotId)] || []);
+        const updated = Array.from(new Set([...existingInSlot, ...familyIds]));
+        newMap[activeSlotId] = updated;
+        newMap[String(activeSlotId)] = updated;
         return newMap;
       });
+
+      // Remove family from groups of OTHER slots if any
+      setTrainingGroups(prev => prev.map(grp => {
+        if (String(grp.slotId) !== String(activeSlotId)) {
+          return {
+            ...grp,
+            studentIds: (grp.studentIds || []).filter(id => !familyIdStrs.includes(String(id)))
+          };
+        }
+        return grp;
+      }));
     } else {
       // Deselect all family members from active slot
       setSlotStudentMap(prevMap => {
         const newMap = { ...prevMap };
         Object.keys(newMap).forEach(sId => {
           if (Array.isArray(newMap[sId])) {
-            newMap[sId] = newMap[sId].filter(id => !familyIds.includes(id));
+            newMap[sId] = newMap[sId].filter(id => !familyIdStrs.includes(String(id)));
           }
         });
         return newMap;
       });
+
+      // CRITICAL: Also remove all family members from trainingGroups so they do not stay selected via groups
+      setTrainingGroups(prev => prev.map(grp => ({
+        ...grp,
+        studentIds: (grp.studentIds || []).filter(id => !familyIdStrs.includes(String(id)))
+      })));
     }
 
     // Additional rAF fallback to ensure viewport remains locked at user's scroll position
@@ -2808,7 +2881,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     setSlots(normalized);
     try {
       window.dispatchEvent(new CustomEvent('session_slots_updated', { detail: normalized }));
-    } catch (e) {}
+    } catch (e) { }
 
     // Also update any existing training groups assigned to this slot so their time is immediately fresh
     setTrainingGroups(prev => prev.map(g => {
@@ -2842,7 +2915,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           slots: normalized
         })
       }).catch(err => console.warn('Failed saving custom date slot to DB:', err));
-    } catch (err) {}
+    } catch (err) { }
   };
 
   // Calendar Helpers
@@ -2922,7 +2995,72 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     return days;
   }, [allPoolStudents]);
 
-  // Students precisely matching active Step 2 filters (Day, Level, Status, Gender, Swimming, Search)
+  // Step 2 Active Session Slot & Display Time for matching
+  const currentActiveSlot = useMemo(() => {
+    const activeSlotId = selectedSlotId || activeSlotsForDay[0]?.id || slots[0]?.id;
+    return activeSlotsForDay.find(s => String(s.id) === String(activeSlotId)) || slots.find(s => String(s.id) === String(activeSlotId)) || null;
+  }, [selectedSlotId, activeSlotsForDay, slots]);
+
+  const currentActiveSlotDisplayTime = useMemo(() => {
+    if (!currentActiveSlot) return '';
+    return currentActiveSlot.startTime || currentActiveSlot.time || '';
+  }, [currentActiveSlot]);
+
+  // Normalizes times (removes extra spaces, leading zeros on single digit hours) for reliable matching
+  const isStudentMatchingTimeFilter = useCallback((student, filterVal, activeSlotTimeStr) => {
+    if (!filterVal || filterVal === 'all') return true;
+    const rawSt = (student.session_time || '').trim();
+
+    if (filterVal === 'none') {
+      return !rawSt;
+    }
+
+    const normSt = rawSt.toLowerCase().replace(/\s+/g, ' ').replace(/\b0([1-9]:)/g, '$1');
+
+    if (filterVal === 'current_slot') {
+      if (!rawSt || !activeSlotTimeStr) return false;
+      const normActive = activeSlotTimeStr.toLowerCase().replace(/\s+/g, ' ').replace(/\b0([1-9]:)/g, '$1');
+      return normSt.includes(normActive) || normActive.includes(normSt);
+    }
+
+    if (!rawSt) return false;
+    const normFilter = filterVal.toLowerCase().replace(/\s+/g, ' ').replace(/\b0([1-9]:)/g, '$1');
+    return normSt === normFilter || normSt.startsWith(normFilter) || normFilter.startsWith(normSt);
+  }, []);
+
+  // Distinct Expected Times found among available pool students
+  const { distinctExpectedTimes, noExpectedTimeCount } = useMemo(() => {
+    const counts = {};
+    let noneCount = 0;
+    allPoolStudents.forEach(s => {
+      const raw = (s.session_time || '').trim();
+      if (!raw) {
+        noneCount++;
+      } else {
+        const startPart = raw.split(/\s*[-–—to]+\s*/i)[0].trim();
+        const m = startPart.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+        const t = m ? `${String(m[1]).padStart(2, '0')}:${m[2]} ${(m[3] || 'AM').toUpperCase()}` : startPart;
+        counts[t] = (counts[t] || 0) + 1;
+      }
+    });
+
+    const distinct = Object.keys(counts).sort((a, b) => a.localeCompare(b)).map(time => ({
+      time,
+      count: counts[time]
+    }));
+
+    return { distinctExpectedTimes: distinct, noExpectedTimeCount: noneCount };
+  }, [allPoolStudents]);
+
+  // Count of students matching current selected session slot
+  const currentSlotMatchingCount = useMemo(() => {
+    if (!currentActiveSlotDisplayTime) return 0;
+    return allPoolStudents.filter(s =>
+      isStudentMatchingTimeFilter(s, 'current_slot', currentActiveSlotDisplayTime)
+    ).length;
+  }, [allPoolStudents, currentActiveSlotDisplayTime, isStudentMatchingTimeFilter]);
+
+  // Students precisely matching active Step 2 filters (Day, Level, Status, Gender, Swimming, Expected Time, Search)
   const filterMatchingStudents = useMemo(() => {
     const activeSlotIdStep2 = selectedSlotId || activeSlotsForDay[0]?.id || slots[0]?.id;
     const currentSlotStudentIds = new Set(
@@ -2942,7 +3080,20 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       // 2. Level Filter
       if (levelFilter !== 'all' && s.level.toLowerCase() !== levelFilter.toLowerCase()) return false;
       // 3. Status Filter (Selected vs Not Selected)
-      if (selectionFilter === 'selected' && !allSelectedSet.has(sIdStr)) return false;
+      if (selectionFilter === 'selected') {
+        if (!allSelectedSet.has(sIdStr)) return false;
+        if (selectedSessionSlotFilter !== 'all') {
+          const targetSlotStudentIds = new Set(
+            (slotStudentMap[selectedSessionSlotFilter] || slotStudentMap[String(selectedSessionSlotFilter)] || []).map(String)
+          );
+          trainingGroups.forEach(g => {
+            if (String(g.slotId) === String(selectedSessionSlotFilter)) {
+              (g.studentIds || []).forEach(id => targetSlotStudentIds.add(String(id)));
+            }
+          });
+          if (!targetSlotStudentIds.has(sIdStr)) return false;
+        }
+      }
       if (selectionFilter === 'not_selected' && allSelectedSet.has(sIdStr)) return false;
       if (selectionFilter === 'this_slot' && !currentSlotStudentIds.has(sIdStr)) return false;
       // 4. Gender Filter
@@ -2953,7 +3104,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         if (swimmingFilterStep2 === 'swimmer' && (sSwim.includes('non') || sSwim === 'no')) return false;
         if (swimmingFilterStep2 === 'non-swimmer' && !(sSwim.includes('non') || sSwim === 'no')) return false;
       }
-      // 6. Search Text
+      // 6. Expected Time Filter
+      if (!isStudentMatchingTimeFilter(s, expectedTimeFilter, currentActiveSlotDisplayTime)) return false;
+      // 7. Search Text
       if (studentSearchStep2 && studentSearchStep2.trim()) {
         const q = studentSearchStep2.toLowerCase().trim();
         const n = (s.name || '').toLowerCase();
@@ -2962,7 +3115,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       }
       return true;
     });
-  }, [allPoolStudents, courseDayFilter, levelFilter, selectionFilter, genderFilterStep2, swimmingFilterStep2, studentSearchStep2, allSelectedStudentIds, slotStudentMap, trainingGroups, selectedSlotId, activeSlotsForDay, slots]);
+  }, [allPoolStudents, courseDayFilter, levelFilter, selectionFilter, selectedSessionSlotFilter, genderFilterStep2, swimmingFilterStep2, studentSearchStep2, allSelectedStudentIds, slotStudentMap, trainingGroups, selectedSlotId, activeSlotsForDay, slots, expectedTimeFilter, isStudentMatchingTimeFilter, currentActiveSlotDisplayTime]);
 
   // Step 2 Filtered & Sorted students from database:
   // Active slot's assigned students on TOP (0), Unassigned in MIDDLE (1), Other slots' students at BOTTOM (2)
@@ -2978,34 +3131,79 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     });
     const allSelectedSet = new Set(allSelectedStudentIds.map(String));
 
-    const getStudentPriority = (student) => {
-      const idStr = String(student.id);
-      const isScheduledInDb = isStudentScheduledInDbOnDate(student);
-      const isInCurrentSlot = currentSlotStudentIds.has(idStr);
+    const getSingleStudentPriority = (s) => {
+      if (!s) return 1;
+      const sIdStr = String(s.id);
+      const isScheduledInDb = isStudentScheduledInDbOnDate(s);
+      const isInCurrentSlot = currentSlotStudentIds.has(sIdStr);
+      const isOtherSlot = allSelectedSet.has(sIdStr) && !isInCurrentSlot;
 
-      if (isInCurrentSlot) {
-        // Priority 0: Newly/freshly selected students in this slot (FIRST / ABOVE scheduled)
-        if (!isScheduledInDb) return 0;
-        // Priority 1: Already scheduled students in this slot (from DB)
+      // 1. ⚫ Black Circle (✓): Pudhusa select panna student (Priority 0)
+      if (isInCurrentSlot && !isScheduledInDb) {
+        return 0;
+      }
+
+      // 2. ⚪ White Circle: Select aagadha available student (Priority 1)
+      if (!allSelectedSet.has(sIdStr) && !isScheduledInDb) {
         return 1;
       }
 
-      if (!allSelectedSet.has(idStr)) {
-        // Priority 2: Available / unassigned students (Not Selected)
-        if (!isScheduledInDb) return 2;
-        // Priority 3: Other DB scheduled students
+      // 3. 🔘 Grey Circle: Vera slot student (Priority 2)
+      if (isOtherSlot && !isScheduledInDb) {
+        return 2;
+      }
+
+      // 4. 🟠 Orange Circle (✓): Already DB-la schedule aana student (Priority 3)
+      if (isScheduledInDb) {
         return 3;
       }
 
-      // Priority 4: Assigned in another slot
       return 4;
     };
 
+    const getStudentPriority = (student) => {
+      // Keep family together: evaluate priority based on family head
+      const familyHead = (student.isGuest && student.parentStudentId)
+        ? (allPoolStudents.find(p => String(p.id) === String(student.parentStudentId)) || student)
+        : student;
+
+      let bestPrio = getSingleStudentPriority(familyHead);
+
+      // If family head isn't priority 0, check if any guest is newly selected (0) to keep family at top
+      if (bestPrio !== 0) {
+        const guests = allPoolStudents.filter(g => g.isGuest && String(g.parentStudentId) === String(familyHead.id));
+        for (const g of guests) {
+          const gPrio = getSingleStudentPriority(g);
+          if (gPrio === 0) {
+            bestPrio = 0;
+            break;
+          }
+        }
+      }
+
+      return bestPrio;
+    };
+
     return allPoolStudents
+      .filter(s => courseDayFilter === 'all' || String(s.whichDay) === String(courseDayFilter))
       .filter(s => levelFilter === 'all' || s.level.toLowerCase() === levelFilter.toLowerCase())
       .filter(s => {
         const sIdStr = String(s.id);
-        if (selectionFilter === 'selected') return allSelectedSet.has(sIdStr);
+        if (selectionFilter === 'selected') {
+          if (!allSelectedSet.has(sIdStr)) return false;
+          if (selectedSessionSlotFilter !== 'all') {
+            const targetSlotStudentIds = new Set(
+              (slotStudentMap[selectedSessionSlotFilter] || slotStudentMap[String(selectedSessionSlotFilter)] || []).map(String)
+            );
+            trainingGroups.forEach(g => {
+              if (String(g.slotId) === String(selectedSessionSlotFilter)) {
+                (g.studentIds || []).forEach(id => targetSlotStudentIds.add(String(id)));
+              }
+            });
+            return targetSlotStudentIds.has(sIdStr);
+          }
+          return true;
+        }
         if (selectionFilter === 'not_selected') return !allSelectedSet.has(sIdStr);
         if (selectionFilter === 'this_slot') return currentSlotStudentIds.has(sIdStr);
         return true;
@@ -3018,6 +3216,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         if (swimmingFilterStep2 === 'non-swimmer') return sSwim.includes('non') || sSwim === 'no';
         return true;
       })
+      .filter(s => isStudentMatchingTimeFilter(s, expectedTimeFilter, currentActiveSlotDisplayTime))
       .filter(s => !studentSearchStep2 || s.name.toLowerCase().includes(studentSearchStep2.toLowerCase()) || (s.parentStudentName && s.parentStudentName.toLowerCase().includes(studentSearchStep2.toLowerCase())))
       .slice()
       .sort((a, b) => {
@@ -3055,7 +3254,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         const subB = b.isGuest ? (b.guestIndex || 1) : 0;
         return subA - subB;
       });
-  }, [allPoolStudents, levelFilter, selectionFilter, courseDayFilter, genderFilterStep2, swimmingFilterStep2, studentSearchStep2, allSelectedStudentIds, slotStudentMap, selectedSlotId, activeSlotsForDay, slots, existingScheduledStudentNamesOnDate, existingDbScheduledInfoMapOnDate]);
+  }, [allPoolStudents, levelFilter, selectionFilter, selectedSessionSlotFilter, courseDayFilter, genderFilterStep2, swimmingFilterStep2, studentSearchStep2, allSelectedStudentIds, slotStudentMap, trainingGroups, selectedSlotId, activeSlotsForDay, slots, existingScheduledStudentNamesOnDate, existingDbScheduledInfoMapOnDate, expectedTimeFilter, isStudentMatchingTimeFilter, currentActiveSlotDisplayTime]);
 
   // Transition from Step 2 to Step 3: Multi-slot aware group initialization
   const proceedToStep3 = () => {
@@ -3386,26 +3585,22 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     });
   };
 
-  // Smoothly scroll to the "Want to create another training group?" card so it appears clearly above sticky bar
+  // Smoothly scroll to the "Want to create another training group?" card to the exact vertical center
   const scrollToCreateGroupSection = (force = false) => {
     setTimeout(() => {
       const createCard = document.getElementById('ns-create-next-group-card');
       const listContainer = document.querySelector('.ns-training-groups-list');
 
-      if (listContainer) {
+      if (listContainer && createCard) {
+        const targetTop = createCard.offsetTop - listContainer.offsetTop - (listContainer.clientHeight / 2) + (createCard.clientHeight / 2);
         listContainer.scrollTo({
-          top: listContainer.scrollHeight,
+          top: Math.max(0, targetTop),
           behavior: 'smooth'
         });
       }
 
       if (createCard) {
-        const rect = createCard.getBoundingClientRect();
-        // Check if card is comfortably visible above bottom sticky bar (sticky bar is ~80px)
-        const isComfortablyInView = rect.top >= 80 && rect.bottom <= (window.innerHeight - 90);
-        if (force || !isComfortablyInView) {
-          createCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
+        createCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
         createCard.classList.add('highlight-pulse');
         setTimeout(() => {
           createCard.classList.remove('highlight-pulse');
@@ -3418,7 +3613,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const handleCreateGroup = () => {
     const checkedStudents = importedStudents.filter(s => step3CheckedStudentIds.includes(s.id));
     const levelLabel = checkedStudents.length > 0 ? (checkedStudents[0]?.level || 'General') : 'General';
-    
+
     // Determine default slot for the group
     let defaultSlotId = step3SlotFilter !== 'ALL' ? step3SlotFilter : null;
     if (!defaultSlotId && checkedStudents.length > 0) {
@@ -3470,13 +3665,13 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     setActiveDropGroupId(newGroup.id);
     setStep3CheckedStudentIds([]);
 
-    // Auto-scroll smoothly to the newly created group card and focus it
+    // Auto-scroll smoothly to the newly created group card and focus it in the center
     setTimeout(() => {
       const el = document.getElementById(`ns-grp-card-${newGroup.id}`);
       const listContainer = document.querySelector('.ns-training-groups-list');
       if (listContainer && el) {
-        const targetTop = el.offsetTop - listContainer.offsetTop;
-        listContainer.scrollTo({ top: Math.max(0, targetTop - 12), behavior: 'smooth' });
+        const targetTop = el.offsetTop - listContainer.offsetTop - (listContainer.clientHeight / 2) + (el.clientHeight / 2);
+        listContainer.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
       }
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -3548,8 +3743,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       const delParams = new URLSearchParams({ date: selectedSessionDateYYYYMMDD });
       if (schoolId) delParams.set('school_id', schoolId);
       if (schoolName) delParams.set('school_name', schoolName);
-      fetch(`${API}/api/session-drafts?${delParams.toString()}`, { method: 'DELETE' }).catch(() => {});
-    } catch (e) {}
+      fetch(`${API}/api/session-drafts?${delParams.toString()}`, { method: 'DELETE' }).catch(() => { });
+    } catch (e) { }
   };
 
   // Remove individual student from a group
@@ -3801,7 +3996,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           g.id === data.fromGroupId ? { ...g, studentIds: g.studentIds.filter(id => !sIds.includes(id)) } : g
         ));
       }
-    } catch (err) {}
+    } catch (err) { }
   };
 
   // Finalize & Publish to Backend API
@@ -4126,8 +4321,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             if (schoolId) delParams.set('school_id', schoolId);
             if (schoolName) delParams.set('school_name', schoolName);
             delParams.set('date', selectedSessionDateYYYYMMDD);
-            fetch(`${API}/api/session-drafts?${delParams.toString()}`, { method: 'DELETE' }).catch(() => {});
-          } catch (e) {}
+            fetch(`${API}/api/session-drafts?${delParams.toString()}`, { method: 'DELETE' }).catch(() => { });
+          } catch (e) { }
         }
         // Immediately refresh existing DB sessions so published indicator turns active
         try {
@@ -4137,7 +4332,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             try {
               const p = JSON.parse(activeSchoolStr);
               sName = typeof p.name === 'string' ? p.name : p.name?.name || (typeof p === 'string' ? p : '');
-            } catch(e) { sName = activeSchoolStr; }
+            } catch (e) { sName = activeSchoolStr; }
           }
           const sParam = sName ? `?school=${encodeURIComponent(sName)}` : '';
           fetch(`${API}/api/sessions${sParam}`)
@@ -4145,7 +4340,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             .then(data => {
               if (Array.isArray(data)) setExistingDbSessions(data);
             })
-            .catch(() => {});
+            .catch(() => { });
           fetch(`${API}/api/students${sParam}`)
             .then(r => r.json())
             .then(data => {
@@ -4154,8 +4349,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                 setDbStudents(mapped);
               }
             })
-            .catch(() => {});
-        } catch(e) {}
+            .catch(() => { });
+        } catch (e) { }
         if (editSession) {
           if (isModal && modalHistoryPushedRef.current) {
             modalHistoryPushedRef.current = false;
@@ -4227,15 +4422,15 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                 transition: 'all 0.15s ease'
               }}
             >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
               <span>Back</span>
             </button>
           )}
           <h1 className="ns-title" style={isModal ? { fontSize: '20px' } : {}}>
             {editSession ? 'Edit Session' : (
               currentStep === 1 ? 'Schedule Surf Session' :
-              currentStep === 2 ? 'Roster Selector Pool' :
-              'Instructor Groups Matching'
+                currentStep === 2 ? 'Roster Selector Pool' :
+                  'Instructor Groups Matching'
             )}
           </h1>
           <span className={`ns-status-tag ${currentStep === 3 ? 'review' : 'upcoming'}`}>
@@ -4251,7 +4446,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             >
               <div className="ns-step-circle">
                 {currentStep > 1 ? (
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
                 ) : '1'}
               </div>
               <span className="ns-step-text">1. Session Setup</span>
@@ -4264,7 +4459,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             >
               <div className="ns-step-circle">
                 {currentStep > 2 ? (
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
                 ) : '2'}
               </div>
               <span className="ns-step-text">2. Select Students</span>
@@ -4525,99 +4720,99 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
               {/* Row 1, Col 1: 1. Select Date */}
               <section className="ns-card ns-step1-date-card">
                 <h3 className="ns-card-heading">1. Select Date</h3>
-                  <div className="ns-calendar-widget">
-                    {(() => {
+                <div className="ns-calendar-widget">
+                  {(() => {
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+                    const isPrevMonthDisabled = currentCalendarDate.getFullYear() < today.getFullYear() ||
+                      (currentCalendarDate.getFullYear() === today.getFullYear() && currentCalendarDate.getMonth() <= today.getMonth());
+
+                    return (
+                      <div className="ns-cal-header">
+                        <span className="ns-cal-month-title">
+                          {currentCalendarDate.toLocaleString('default', { month: 'long' })} {currentCalendarDate.getFullYear()}
+                        </span>
+                        <div className="ns-cal-arrows">
+                          <button
+                            type="button"
+                            className="ns-cal-arrow-btn"
+                            onClick={handlePrevMonth}
+                            disabled={isPrevMonthDisabled}
+                            style={{ opacity: isPrevMonthDisabled ? 0.35 : 1, cursor: isPrevMonthDisabled ? 'not-allowed' : 'pointer' }}
+                            title={isPrevMonthDisabled ? "Cannot navigate to past months" : "Previous Month"}
+                          >
+                            &larr;
+                          </button>
+                          <button type="button" className="ns-cal-arrow-btn" onClick={handleNextMonth} title="Next Month">&rarr;</button>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  <div className="ns-cal-weekdays">
+                    <span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span>
+                  </div>
+
+                  <div className="ns-cal-days-grid">
+                    {calendarDays.map((cd, idx) => {
                       const today = new Date();
                       today.setHours(0, 0, 0, 0);
-                      const isPrevMonthDisabled = currentCalendarDate.getFullYear() < today.getFullYear() ||
-                        (currentCalendarDate.getFullYear() === today.getFullYear() && currentCalendarDate.getMonth() <= today.getMonth());
+
+                      const year = currentCalendarDate.getFullYear();
+                      const month = currentCalendarDate.getMonth();
+                      const cellDate = new Date(year, month, cd.day);
+                      cellDate.setHours(0, 0, 0, 0);
+
+                      const isPast = cd.isCurrentMonth && cellDate < today;
+                      const isSelected = cd.isCurrentMonth && cd.day === selectedDayNumber;
+
+                      const monthStr = String(month + 1).padStart(2, '0');
+                      const dayStr = String(cd.day).padStart(2, '0');
+                      const cellDateYYYYMMDD = `${year}-${monthStr}-${dayStr}`;
+                      const hasCustomSchedule = cd.isCurrentMonth && customDatesList.includes(cellDateYYYYMMDD);
 
                       return (
-                        <div className="ns-cal-header">
-                          <span className="ns-cal-month-title">
-                            {currentCalendarDate.toLocaleString('default', { month: 'long' })} {currentCalendarDate.getFullYear()}
-                          </span>
-                          <div className="ns-cal-arrows">
-                            <button
-                              type="button"
-                              className="ns-cal-arrow-btn"
-                              onClick={handlePrevMonth}
-                              disabled={isPrevMonthDisabled}
-                              style={{ opacity: isPrevMonthDisabled ? 0.35 : 1, cursor: isPrevMonthDisabled ? 'not-allowed' : 'pointer' }}
-                              title={isPrevMonthDisabled ? "Cannot navigate to past months" : "Previous Month"}
-                            >
-                              &larr;
-                            </button>
-                            <button type="button" className="ns-cal-arrow-btn" onClick={handleNextMonth} title="Next Month">&rarr;</button>
-                          </div>
+                        <div
+                          key={idx}
+                          className={`ns-cal-day-cell ${!cd.isCurrentMonth ? 'other-month' : ''} ${isSelected ? 'selected' : ''} ${isPast ? 'disabled-past' : ''} ${hasCustomSchedule ? 'has-custom-schedule' : ''}`}
+                          style={{
+                            position: 'relative',
+                            opacity: isPast ? 0.3 : (cd.isCurrentMonth ? 1 : 0.4),
+                            cursor: (isPast || !cd.isCurrentMonth) ? 'not-allowed' : 'pointer',
+                            background: isPast ? '#F1F5F9' : undefined,
+                            color: isPast ? '#94A3B8' : undefined,
+                            pointerEvents: isPast ? 'none' : 'auto'
+                          }}
+                          title={
+                            isPast
+                              ? 'Past dates cannot be selected'
+                              : (hasCustomSchedule ? `Custom Schedule Configured (${cellDateYYYYMMDD})` : undefined)
+                          }
+                          onClick={() => {
+                            if (cd.isCurrentMonth && !isPast) handleSelectCalendarDay(cd.day);
+                          }}
+                        >
+                          <span className="ns-cal-day-num" style={isPast ? { textDecoration: 'line-through' } : {}}>{cd.day}</span>
+                          {hasCustomSchedule && (
+                            <span
+                              className="ns-cal-custom-dot"
+                              title="Custom Schedule Configured"
+                            />
+                          )}
                         </div>
                       );
-                    })()}
-
-                    <div className="ns-cal-weekdays">
-                      <span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span>
-                    </div>
-
-                    <div className="ns-cal-days-grid">
-                      {calendarDays.map((cd, idx) => {
-                        const today = new Date();
-                        today.setHours(0, 0, 0, 0);
-
-                        const year = currentCalendarDate.getFullYear();
-                        const month = currentCalendarDate.getMonth();
-                        const cellDate = new Date(year, month, cd.day);
-                        cellDate.setHours(0, 0, 0, 0);
-
-                        const isPast = cd.isCurrentMonth && cellDate < today;
-                        const isSelected = cd.isCurrentMonth && cd.day === selectedDayNumber;
-
-                        const monthStr = String(month + 1).padStart(2, '0');
-                        const dayStr = String(cd.day).padStart(2, '0');
-                        const cellDateYYYYMMDD = `${year}-${monthStr}-${dayStr}`;
-                        const hasCustomSchedule = cd.isCurrentMonth && customDatesList.includes(cellDateYYYYMMDD);
-
-                        return (
-                          <div
-                            key={idx}
-                            className={`ns-cal-day-cell ${!cd.isCurrentMonth ? 'other-month' : ''} ${isSelected ? 'selected' : ''} ${isPast ? 'disabled-past' : ''} ${hasCustomSchedule ? 'has-custom-schedule' : ''}`}
-                            style={{
-                              position: 'relative',
-                              opacity: isPast ? 0.3 : (cd.isCurrentMonth ? 1 : 0.4),
-                              cursor: (isPast || !cd.isCurrentMonth) ? 'not-allowed' : 'pointer',
-                              background: isPast ? '#F1F5F9' : undefined,
-                              color: isPast ? '#94A3B8' : undefined,
-                              pointerEvents: isPast ? 'none' : 'auto'
-                            }}
-                            title={
-                              isPast
-                                ? 'Past dates cannot be selected'
-                                : (hasCustomSchedule ? `Custom Schedule Configured (${cellDateYYYYMMDD})` : undefined)
-                            }
-                            onClick={() => {
-                              if (cd.isCurrentMonth && !isPast) handleSelectCalendarDay(cd.day);
-                            }}
-                          >
-                            <span className="ns-cal-day-num" style={isPast ? { textDecoration: 'line-through' } : {}}>{cd.day}</span>
-                            {hasCustomSchedule && (
-                              <span
-                                className="ns-cal-custom-dot"
-                                title="Custom Schedule Configured"
-                              />
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {/* Calendar legend for custom schedules */}
-                    {customDatesList.length > 0 && (
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', marginTop: '10px', fontSize: '11px', color: '#B45309', fontWeight: 600 }}>
-                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#D97706', display: 'inline-block' }} />
-                        <span>Dates with Custom Schedule</span>
-                      </div>
-                    )}
+                    })}
                   </div>
-                </section>
+
+                  {/* Calendar legend for custom schedules */}
+                  {customDatesList.length > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', marginTop: '10px', fontSize: '11px', color: '#B45309', fontWeight: 600 }}>
+                      <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#D97706', display: 'inline-block' }} />
+                      <span>Dates with Custom Schedule</span>
+                    </div>
+                  )}
+                </div>
+              </section>
 
               {/* Row 1, Col 2: Available Students Pool */}
               <div className="ns-pool-card ns-step1-pool-card">
@@ -4769,44 +4964,44 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
                             {/* Interactive Active / Inactive Toggle Switch */}
                             {/* Active / Inactive Dropdown */}
-<select
-  className="ns-slot-pill clickable-toggle"
-  value={slot.active === false ? 'inactive' : 'active'}
-  onChange={(e) => {
-    const isActive = e.target.value === 'active';
+                            <select
+                              className="ns-slot-pill clickable-toggle"
+                              value={slot.active === false ? 'inactive' : 'active'}
+                              onChange={(e) => {
+                                const isActive = e.target.value === 'active';
 
-    if (
-      (slot.active === false && isActive) ||
-      (slot.active !== false && !isActive)
-    ) {
-      handleToggleSlotActive(slot.id);
-    }
-  }}
-  style={{
-    cursor: 'pointer',
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '6px',
-    border: slot.active === false
-      ? '1.5px solid #FECACA'
-      : '1.5px solid #86EFAC',
-    background: slot.active === false ? '#FEE2E2' : '#DCFCE7',
-    color: slot.active === false ? '#B91C1C' : '#15803D',
-    padding: '6px 10px',
-    borderRadius: '8px',
-    fontSize: '12px',
-    fontWeight: 700
-  }}
->
-  <option value="active">Active ({selectedDayOfWeek})</option>
-  <option value="inactive">Inactive</option>
-</select>
+                                if (
+                                  (slot.active === false && isActive) ||
+                                  (slot.active !== false && !isActive)
+                                ) {
+                                  handleToggleSlotActive(slot.id);
+                                }
+                              }}
+                              style={{
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                border: slot.active === false
+                                  ? '1.5px solid #FECACA'
+                                  : '1.5px solid #86EFAC',
+                                background: slot.active === false ? '#FEE2E2' : '#DCFCE7',
+                                color: slot.active === false ? '#B91C1C' : '#15803D',
+                                padding: '6px 10px',
+                                borderRadius: '8px',
+                                fontSize: '12px',
+                                fontWeight: 700
+                              }}
+                            >
+                              <option value="active">Active ({selectedDayOfWeek})</option>
+                              <option value="inactive">Inactive</option>
+                            </select>
 
-{slot.active !== false && !isDayMatch && (
-  <span className="ns-slot-pill off-day">
-    Off today ({selectedDayOfWeek})
-  </span>
-)}  
+                            {slot.active !== false && !isDayMatch && (
+                              <span className="ns-slot-pill off-day">
+                                Off today ({selectedDayOfWeek})
+                              </span>
+                            )}
                           </div>
                         </div>
 
@@ -4975,72 +5170,72 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
               </section>
             </div>
 
-          {/* Sticky Floating Bottom Action Bar for Step 1 */}
-          <div className="ns-sticky-bar-wrapper">
-            <div className="ns-sticky-bar">
-              <div className="ns-sb-left" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                <span className="ns-sb-capacity" style={{ fontSize: '13px', fontWeight: 600, color: '#E2E8F0' }}>
-                  {formattedSessionDate} &bull; {selectedSlot ? (selectedSlot.startTime || selectedSlot.time) : 'Select Time Slot'} &bull; Capacity: {capacity} Students
-                </span>
-              </div>
+            {/* Sticky Floating Bottom Action Bar for Step 1 */}
+            <div className="ns-sticky-bar-wrapper">
+              <div className="ns-sticky-bar">
+                <div className="ns-sb-left" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <span className="ns-sb-capacity" style={{ fontSize: '13px', fontWeight: 600, color: '#E2E8F0' }}>
+                    {formattedSessionDate} &bull; {selectedSlot ? (selectedSlot.startTime || selectedSlot.time) : 'Select Time Slot'} &bull; Capacity: {capacity} Students
+                  </span>
+                </div>
 
-              <div className="ns-sb-right" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <button
-                  type="button"
-                  className="ns-sb-draft-btn"
-                  onClick={handleManualSaveDraft}
-                  title="Save current progress as draft"
-                  style={{
-                    background: draftSavedToast ? '#059669' : 'rgba(255, 255, 255, 0.08)',
-                    color: '#FFFFFF',
-                    border: draftSavedToast ? '1px solid #10B981' : '1px solid rgba(255, 255, 255, 0.18)',
-                    borderRadius: '8px',
-                    padding: '8px 14px',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    cursor: 'pointer',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '5px',
-                    transition: 'all 0.2s ease',
-                    whiteSpace: 'nowrap'
-                  }}
-                  onMouseEnter={(e) => { if (!draftSavedToast) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)'; }}
-                  onMouseLeave={(e) => { if (!draftSavedToast) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)'; }}
-                >
-                  <span>{draftSavedToast ? '✓ Draft Saved' : 'Save Draft'}</span>
-                </button>
-                <button
-                  type="button"
-                  className="ns-primary-btn"
-                  onClick={() => {
-                    const isSelectedActiveForToday = selectedSlotId && activeSlotsForDay.some(s => s.id === selectedSlotId);
-                    if (!isSelectedActiveForToday) {
-                      const firstActive = activeSlotsForDay[0] || slots.find(s => s.active !== false) || slots[0];
-                      if (firstActive) setSelectedSlotId(firstActive.id);
-                    }
-                    setCurrentStep(2);
-                  }}
-                  style={{
-                    background: '#00D2B4',
-                    color: '#0F172A',
-                    border: 'none',
-                    padding: '12px 24px',
-                    fontSize: '14px',
-                    fontWeight: 800,
-                    borderRadius: '10px',
-                    cursor: 'pointer',
-                    boxShadow: '0 4px 14px rgba(0, 210, 180, 0.4)',
-                    transition: 'all 0.15s ease'
-                  }}
-                >
-                  {editSession ? 'Confirm Date & Slot → Review Groups' : 'Save configuration and Next: Import Students »'}
-                </button>
+                <div className="ns-sb-right" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <button
+                    type="button"
+                    className="ns-sb-draft-btn"
+                    onClick={handleManualSaveDraft}
+                    title="Save current progress as draft"
+                    style={{
+                      background: draftSavedToast ? '#059669' : 'rgba(255, 255, 255, 0.08)',
+                      color: '#FFFFFF',
+                      border: draftSavedToast ? '1px solid #10B981' : '1px solid rgba(255, 255, 255, 0.18)',
+                      borderRadius: '8px',
+                      padding: '8px 14px',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '5px',
+                      transition: 'all 0.2s ease',
+                      whiteSpace: 'nowrap'
+                    }}
+                    onMouseEnter={(e) => { if (!draftSavedToast) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.15)'; }}
+                    onMouseLeave={(e) => { if (!draftSavedToast) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)'; }}
+                  >
+                    <span>{draftSavedToast ? '✓ Draft Saved' : 'Save Draft'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="ns-primary-btn"
+                    onClick={() => {
+                      const isSelectedActiveForToday = selectedSlotId && activeSlotsForDay.some(s => s.id === selectedSlotId);
+                      if (!isSelectedActiveForToday) {
+                        const firstActive = activeSlotsForDay[0] || slots.find(s => s.active !== false) || slots[0];
+                        if (firstActive) setSelectedSlotId(firstActive.id);
+                      }
+                      setCurrentStep(2);
+                    }}
+                    style={{
+                      background: '#00D2B4',
+                      color: '#0F172A',
+                      border: 'none',
+                      padding: '12px 24px',
+                      fontSize: '14px',
+                      fontWeight: 800,
+                      borderRadius: '10px',
+                      cursor: 'pointer',
+                      boxShadow: '0 4px 14px rgba(0, 210, 180, 0.4)',
+                      transition: 'all 0.15s ease'
+                    }}
+                  >
+                    {editSession ? 'Confirm Date & Slot → Review Groups' : 'Save configuration and Next: Import Students »'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
         {/* ═════════════════════════════════════════════════════════════════ */}
         {/* STEP 2: IMPORT STUDENTS IN SPECIFIC SLOTS                      */}
@@ -5159,47 +5354,321 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                 const notSelectedCount = Math.max(0, allPoolStudents.length - totalSelectedCount);
 
                 return (
-                  <div className="ns-filter-row" style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #F1F5F9' }}>
-                    <span className="ns-filter-label">Filter by Status:</span>
-                    <div className="ns-pill-group" style={{ flexWrap: 'wrap', gap: '6px' }}>
-                      <button
-                        type="button"
-                        className={`ns-pill ${selectionFilter === 'all' ? 'active' : ''}`}
-                        onClick={() => setSelectionFilter('all')}
-                      >
-                        All Students ({allPoolStudents.length})
-                      </button>
-                      <button
-                        type="button"
-                        className={`ns-pill ${selectionFilter === 'selected' ? 'active' : ''}`}
-                        onClick={() => setSelectionFilter('selected')}
-                        style={selectionFilter === 'selected' ? { backgroundColor: '#0284C7', borderColor: '#0284C7', color: '#FFFFFF' } : {}}
-                      >
-                         Selected ({totalSelectedCount})
-                      </button>
-                      {slots.length > 1 && totalSelectedCount > currentSlotCount && currentSlotCount > 0 && (
+                  <div className="ns-filter-row" style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #F1F5F9', flexDirection: 'column', alignItems: 'stretch' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <span className="ns-filter-label" style={{ margin: 0 }}>Filter by Status:</span>
+                      <div className="ns-pill-group" style={{ flexWrap: 'wrap', gap: '6px' }}>
                         <button
                           type="button"
-                          className={`ns-pill ${selectionFilter === 'this_slot' ? 'active' : ''}`}
-                          onClick={() => setSelectionFilter('this_slot')}
-                          style={selectionFilter === 'this_slot' ? { backgroundColor: '#0F172A', borderColor: '#0F172A', color: '#FFFFFF' } : {}}
-                          title="Students selected specifically in this time slot"
+                          className={`ns-pill ${selectionFilter === 'all' ? 'active' : ''}`}
+                          onClick={() => {
+                            setSelectionFilter('all');
+                            setSelectedSessionSlotFilter('all');
+                          }}
                         >
-                          🎯 In This Slot ({currentSlotCount})
+                          All Students ({allPoolStudents.length})
                         </button>
-                      )}
-                      <button
-                        type="button"
-                        className={`ns-pill ${selectionFilter === 'not_selected' ? 'active' : ''}`}
-                        onClick={() => setSelectionFilter('not_selected')}
-                        style={selectionFilter === 'not_selected' ? { backgroundColor: '#64748B', borderColor: '#64748B', color: '#FFFFFF' } : {}}
-                      >
-                         Not Selected ({notSelectedCount})
-                      </button>
+                        <button
+                          type="button"
+                          className={`ns-pill ${(selectionFilter === 'selected' || selectionFilter === 'this_slot') ? 'active' : ''}`}
+                          onClick={() => {
+                            setSelectionFilter('selected');
+                            setSelectedSessionSlotFilter('all');
+                          }}
+                          style={(selectionFilter === 'selected' || selectionFilter === 'this_slot') ? { backgroundColor: '#0284C7', borderColor: '#0284C7', color: '#FFFFFF' } : {}}
+                        >
+                           Selected ({totalSelectedCount})
+                        </button>
+                        {slots.length > 1 && totalSelectedCount > currentSlotCount && currentSlotCount > 0 && (
+                          <button
+                            type="button"
+                            className={`ns-pill ${(selectionFilter === 'this_slot' || (selectionFilter === 'selected' && String(selectedSessionSlotFilter) === String(activeSlotIdStep2))) ? 'active' : ''}`}
+                            onClick={() => {
+                              setSelectionFilter('selected');
+                              setSelectedSessionSlotFilter(String(activeSlotIdStep2));
+                            }}
+                            style={(selectionFilter === 'this_slot' || (selectionFilter === 'selected' && String(selectedSessionSlotFilter) === String(activeSlotIdStep2))) ? { backgroundColor: '#0F172A', borderColor: '#0F172A', color: '#FFFFFF' } : {}}
+                            title="Students selected specifically in this time slot"
+                          >
+                            🎯 In This Slot ({currentSlotCount})
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className={`ns-pill ${selectionFilter === 'not_selected' ? 'active' : ''}`}
+                          onClick={() => {
+                            setSelectionFilter('not_selected');
+                            setSelectedSessionSlotFilter('all');
+                          }}
+                          style={selectionFilter === 'not_selected' ? { backgroundColor: '#64748B', borderColor: '#64748B', color: '#FFFFFF' } : {}}
+                        >
+                           Not Selected ({notSelectedCount})
+                        </button>
+                      </div>
                     </div>
+
+                    {/* Secondary Sub-Filter: Which Session Slot's Selected Students to Show */}
+                    {(selectionFilter === 'selected' || selectionFilter === 'this_slot') && activeSlotsForDay.length > 1 && (
+                      <div
+                        style={{
+                          width: '100%',
+                          marginTop: '10px',
+                          padding: '10px 14px',
+                          background: 'linear-gradient(135deg, #F0F9FF 0%, #E0F2FE 100%)',
+                          border: '1.5px solid #BAE6FD',
+                          borderRadius: '10px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '10px',
+                          flexWrap: 'wrap',
+                          boxShadow: '0 2px 6px rgba(2, 132, 199, 0.06)',
+                          boxSizing: 'border-box'
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
+                          <span style={{ fontSize: '14px' }}>🎯</span>
+                          <span style={{ fontSize: '12px', fontWeight: 800, color: '#0369A1', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                            Selected in Session Slot:
+                          </span>
+                        </div>
+
+                        <div className="ns-pill-group" style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                          {/* All Selected Slots Button */}
+                          <button
+                            type="button"
+                            className={`ns-pill ${(selectionFilter === 'selected' && selectedSessionSlotFilter === 'all') ? 'active' : ''}`}
+                            onClick={() => {
+                              setSelectionFilter('selected');
+                              setSelectedSessionSlotFilter('all');
+                            }}
+                            style={(selectionFilter === 'selected' && selectedSessionSlotFilter === 'all') ? {
+                              backgroundColor: '#0284C7',
+                              borderColor: '#0284C7',
+                              color: '#FFFFFF',
+                              fontWeight: 800,
+                              padding: '4px 12px',
+                              fontSize: '12px'
+                            } : {
+                              backgroundColor: '#FFFFFF',
+                              borderColor: '#BAE6FD',
+                              color: '#0369A1',
+                              fontWeight: 700,
+                              padding: '4px 12px',
+                              fontSize: '12px'
+                            }}
+                          >
+                            <span>All Selected</span>
+                            <span style={{
+                              background: (selectionFilter === 'selected' && selectedSessionSlotFilter === 'all') ? 'rgba(255, 255, 255, 0.25)' : '#E0F2FE',
+                              color: (selectionFilter === 'selected' && selectedSessionSlotFilter === 'all') ? '#FFFFFF' : '#0284C7',
+                              padding: '1px 6px',
+                              borderRadius: '10px',
+                              fontSize: '11px',
+                              fontWeight: 800,
+                              marginLeft: '4px'
+                            }}>
+                              {totalSelectedCount}
+                            </span>
+                          </button>
+
+                          {/* Individual Slot Buttons */}
+                          {activeSlotsForDay.map((slot, sIdx) => {
+                            const slotIds = new Set(
+                              (slotStudentMap[slot.id] || slotStudentMap[String(slot.id)] || []).map(String)
+                            );
+                            trainingGroups.forEach(g => {
+                              if (String(g.slotId) === String(slot.id)) {
+                                (g.studentIds || []).forEach(id => slotIds.add(String(id)));
+                              }
+                            });
+                            const count = slotIds.size;
+                            const isCurrentActive = String(slot.id) === String(activeSlotIdStep2);
+                            const isThisFilterActive = (selectionFilter === 'this_slot' && isCurrentActive) ||
+                              (selectionFilter === 'selected' && String(selectedSessionSlotFilter) === String(slot.id));
+
+                            return (
+                              <button
+                                key={slot.id || sIdx}
+                                type="button"
+                                className={`ns-pill ${isThisFilterActive ? 'active' : ''}`}
+                                onClick={() => {
+                                  setSelectionFilter('selected');
+                                  setSelectedSessionSlotFilter(String(slot.id));
+                                }}
+                                style={isThisFilterActive ? {
+                                  backgroundColor: '#0F172A',
+                                  borderColor: '#0F172A',
+                                  color: '#FFFFFF',
+                                  fontWeight: 800,
+                                  padding: '4px 12px',
+                                  fontSize: '12px'
+                                } : {
+                                  backgroundColor: '#FFFFFF',
+                                  borderColor: '#CBD5E1',
+                                  color: '#1E293B',
+                                  fontWeight: 600,
+                                  padding: '4px 12px',
+                                  fontSize: '12px'
+                                }}
+                              >
+                                <span style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  width: '16px',
+                                  height: '16px',
+                                  borderRadius: '50%',
+                                  background: isThisFilterActive ? '#38BDF8' : '#F1F5F9',
+                                  color: isThisFilterActive ? '#0F172A' : '#475569',
+                                  fontSize: '10px',
+                                  fontWeight: 800,
+                                  marginRight: '4px'
+                                }}>
+                                  {sIdx + 1}
+                                </span>
+                                <span>{slot.startTime || slot.time}</span>
+                                {isCurrentActive && (
+                                  <span style={{
+                                    fontSize: '9.5px',
+                                    fontWeight: 800,
+                                    color: isThisFilterActive ? '#38BDF8' : '#0284C7',
+                                    background: isThisFilterActive ? 'rgba(56, 189, 248, 0.18)' : '#F0F9FF',
+                                    padding: '1px 5px',
+                                    borderRadius: '4px',
+                                    marginLeft: '3px'
+                                  }}>
+                                    Current Tab
+                                  </span>
+                                )}
+                                <span style={{
+                                  marginLeft: '4px',
+                                  fontWeight: 700,
+                                  background: isThisFilterActive ? 'rgba(255, 255, 255, 0.2)' : '#F1F5F9',
+                                  color: isThisFilterActive ? '#FFFFFF' : '#475569',
+                                  padding: '1px 6px',
+                                  borderRadius: '10px',
+                                  fontSize: '11px'
+                                }}>
+                                  {count}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })()}
+
+              {/* Filter by Expected Time */}
+              <div className="ns-filter-row" style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #F1F5F9' }}>
+                <span className="ns-filter-label" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                  <span>⏰</span> Expected Time:
+                </span>
+                <div className="ns-pill-group" style={{ flexWrap: 'wrap', gap: '6px' }}>
+                  <button
+                    type="button"
+                    className={`ns-pill ${expectedTimeFilter === 'all' ? 'active' : ''}`}
+                    onClick={() => setExpectedTimeFilter('all')}
+                  >
+                    All ({allPoolStudents.length})
+                  </button>
+
+                  {/* Matches current selected session slot */}
+                  {currentSlotMatchingCount > 0 && (
+                    <button
+                      type="button"
+                      className={`ns-pill ${expectedTimeFilter === 'current_slot' ? 'active' : ''}`}
+                      onClick={() => setExpectedTimeFilter(prev => prev === 'current_slot' ? 'all' : 'current_slot')}
+                      style={expectedTimeFilter === 'current_slot' ? {
+                        backgroundColor: '#0D9488',
+                        borderColor: '#0D9488',
+                        color: '#FFFFFF',
+                        fontWeight: 700
+                      } : {
+                        borderColor: '#99F6E4',
+                        color: '#0F766E',
+                        background: '#F0FDFA'
+                      }}
+                      title={`Filter students whose expected time matches current slot (${currentActiveSlotDisplayTime})`}
+                    >
+                      <span>🎯 Matches Current Slot ({currentActiveSlotDisplayTime})</span>
+                      <span style={{
+                        background: expectedTimeFilter === 'current_slot' ? 'rgba(255, 255, 255, 0.25)' : '#CCFBF1',
+                        color: expectedTimeFilter === 'current_slot' ? '#FFFFFF' : '#0F766E',
+                        padding: '1px 6px',
+                        borderRadius: '10px',
+                        fontSize: '11px',
+                        fontWeight: 800,
+                        marginLeft: '4px'
+                      }}>
+                        {currentSlotMatchingCount}
+                      </span>
+                    </button>
+                  )}
+
+                  {/* All distinct student expected times */}
+                  {distinctExpectedTimes.map(({ time, count }) => {
+                    const isSelected = expectedTimeFilter === time;
+                    return (
+                      <button
+                        key={time}
+                        type="button"
+                        className={`ns-pill ${isSelected ? 'active' : ''}`}
+                        onClick={() => setExpectedTimeFilter(prev => prev === time ? 'all' : time)}
+                        style={isSelected ? {
+                          backgroundColor: '#0D9488',
+                          borderColor: '#0D9488',
+                          color: '#FFFFFF',
+                          fontWeight: 700
+                        } : {}}
+                      >
+                        <span>{time}</span>
+                        <span style={{
+                          background: isSelected ? 'rgba(255, 255, 255, 0.25)' : '#F1F5F9',
+                          color: isSelected ? '#FFFFFF' : '#475569',
+                          padding: '1px 6px',
+                          borderRadius: '10px',
+                          fontSize: '11px',
+                          fontWeight: 700,
+                          marginLeft: '4px'
+                        }}>
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+
+                  {/* Students with No Expected Time */}
+                  {noExpectedTimeCount > 0 && (
+                    <button
+                      type="button"
+                      className={`ns-pill ${expectedTimeFilter === 'none' ? 'active' : ''}`}
+                      onClick={() => setExpectedTimeFilter(prev => prev === 'none' ? 'all' : 'none')}
+                      style={expectedTimeFilter === 'none' ? {
+                        backgroundColor: '#64748B',
+                        borderColor: '#64748B',
+                        color: '#FFFFFF',
+                        fontWeight: 700
+                      } : {}}
+                    >
+                      <span>No Expected Time</span>
+                      <span style={{
+                        background: expectedTimeFilter === 'none' ? 'rgba(255, 255, 255, 0.25)' : '#F1F5F9',
+                        color: expectedTimeFilter === 'none' ? '#FFFFFF' : '#64748B',
+                        padding: '1px 6px',
+                        borderRadius: '10px',
+                        fontSize: '11px',
+                        fontWeight: 700,
+                        marginLeft: '4px'
+                      }}>
+                        {noExpectedTimeCount}
+                      </span>
+                    </button>
+                  )}
+                </div>
+              </div>
 
               {/* Mobile More Filters Toggle Button */}
               <div className="ns-more-filters-bar">
@@ -5209,7 +5678,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                   onClick={() => setShowMoreFiltersMobile(prev => !prev)}
                 >
                   <span>{showMoreFiltersMobile ? '▲ Fewer Filters' : '▼ More Filters (Day, Gender, Swimming)'}</span>
-                  {(courseDayFilter !== 'all' || genderFilterStep2 !== 'all' || swimmingFilterStep2 !== 'all') && (
+                  {(courseDayFilter !== 'all' || genderFilterStep2 !== 'all' || swimmingFilterStep2 !== 'all' || expectedTimeFilter !== 'all') && (
                     <span className="ns-active-filter-badge">Active</span>
                   )}
                 </button>
@@ -5317,11 +5786,20 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                 const activeSlotId = selectedSlotId || activeSlotsForDay[0]?.id || slots[0]?.id;
                 const activeSlot = slots.find(s => s.id === activeSlotId) || selectedSlot;
                 const slotCap = getSlotCapacity(activeSlot);
-                const currentSlotList = slotStudentMap[activeSlotId] || [];
+                const currentSlotList = Array.from(new Set([
+                  ...(slotStudentMap[activeSlotId] || slotStudentMap[String(activeSlotId)] || []).map(String),
+                  ...trainingGroups
+                    .filter(g => !g.isExistingDbGroup && String(g.slotId) === String(activeSlotId))
+                    .flatMap(g => (g.studentIds || []).map(String))
+                ])).filter(id => {
+                  const st = allPoolStudents.find(s => String(s.id) === String(id));
+                  return !st || !isStudentScheduledInDbOnDate(st);
+                });
+                const currentSlotSet = new Set(currentSlotList);
                 const visibleIds = filteredStudents.map(s => s.id);
                 const matchingFilteredIds = filterMatchingStudents.map(s => s.id);
-                const isAllFilteredSelected = matchingFilteredIds.length > 0 && matchingFilteredIds.every(id => currentSlotList.includes(id));
-                const isAllSelected = visibleIds.length > 0 && visibleIds.every(id => currentSlotList.includes(id));
+                const isAllFilteredSelected = matchingFilteredIds.length > 0 && matchingFilteredIds.every(id => currentSlotSet.has(String(id)));
+                const isAllSelected = visibleIds.length > 0 && visibleIds.every(id => currentSlotSet.has(String(id)));
                 const isSlotFull = currentSlotList.length >= slotCap;
 
                 return (
@@ -5416,21 +5894,32 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                               title: 'No Matching Students',
                               message: 'No students match the current active filter criteria.',
                               type: 'info',
-              
+
                             });
                             return;
                           }
 
                           if (isAllFilteredSelected) {
                             // Deselect filtered students from active slot
+                            const filterIdStrs = matchingFilteredIds.map(String);
                             setSlotStudentMap(prevMap => {
                               const newMap = { ...prevMap };
-                              newMap[activeSlotId] = (newMap[activeSlotId] || []).filter(id => !matchingFilteredIds.includes(id));
+                              newMap[activeSlotId] = (newMap[activeSlotId] || []).filter(id => !filterIdStrs.includes(String(id)));
+                              newMap[String(activeSlotId)] = (newMap[String(activeSlotId)] || []).filter(id => !filterIdStrs.includes(String(id)));
                               return newMap;
                             });
+                            setTrainingGroups(prev => prev.map(grp => {
+                              if (String(grp.slotId) === String(activeSlotId)) {
+                                return {
+                                  ...grp,
+                                  studentIds: (grp.studentIds || []).filter(id => !filterIdStrs.includes(String(id)))
+                                };
+                              }
+                              return grp;
+                            }));
                           } else {
                             // Keep previously selected students and ADD matching filtered students!
-                            const currentSelected = slotStudentMap[activeSlotId] || [];
+                            const currentSelected = slotStudentMap[activeSlotId] || slotStudentMap[String(activeSlotId)] || [];
                             const combinedIds = Array.from(new Set([...currentSelected, ...matchingFilteredIds]));
 
                             // Automatically expand slot capacity if combined students exceed current capacity
@@ -5442,19 +5931,22 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                               const newMap = { ...prevMap };
                               // Remove matching students from other slots first
                               Object.keys(newMap).forEach(sId => {
-                                if (sId !== activeSlotId && Array.isArray(newMap[sId])) {
-                                  newMap[sId] = newMap[sId].filter(id => !matchingFilteredIds.includes(id));
+                                if (String(sId) !== String(activeSlotId) && Array.isArray(newMap[sId])) {
+                                  newMap[sId] = newMap[sId].filter(id => !matchingFilteredIds.map(String).includes(String(id)));
                                 }
                               });
                               // PRESERVE existing selected students and append new filtered students!
-                              const existingInActive = newMap[activeSlotId] || [];
-                              newMap[activeSlotId] = Array.from(new Set([...existingInActive, ...matchingFilteredIds]));
+                              const existingInActive = newMap[activeSlotId] || newMap[String(activeSlotId)] || [];
+                              const updated = Array.from(new Set([...existingInActive, ...matchingFilteredIds]));
+                              newMap[activeSlotId] = updated;
+                              newMap[String(activeSlotId)] = updated;
                               return newMap;
                             });
 
                             const filterInfo = [
                               courseDayFilter !== 'all' ? `Day ${courseDayFilter}` : '',
                               levelFilter !== 'all' ? levelFilter : '',
+                              expectedTimeFilter !== 'all' ? (expectedTimeFilter === 'current_slot' ? `Slot: ${currentActiveSlotDisplayTime}` : expectedTimeFilter === 'none' ? 'No Expected Time' : `Exp: ${expectedTimeFilter}`) : '',
                               genderFilterStep2 !== 'all' ? genderFilterStep2 : '',
                               swimmingFilterStep2 !== 'all' ? swimmingFilterStep2 : '',
                               studentSearchStep2 ? `"${studentSearchStep2}"` : ''
@@ -5498,11 +5990,22 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                         onClick={() => {
                           if (!activeSlotId) return;
                           if (isAllSelected) {
+                            const visIdStrs = visibleIds.map(String);
                             setSlotStudentMap(prevMap => {
                               const newMap = { ...prevMap };
-                              newMap[activeSlotId] = (newMap[activeSlotId] || []).filter(id => !visibleIds.includes(id));
+                              newMap[activeSlotId] = (newMap[activeSlotId] || []).filter(id => !visIdStrs.includes(String(id)));
+                              newMap[String(activeSlotId)] = (newMap[String(activeSlotId)] || []).filter(id => !visIdStrs.includes(String(id)));
                               return newMap;
                             });
+                            setTrainingGroups(prev => prev.map(grp => {
+                              if (String(grp.slotId) === String(activeSlotId)) {
+                                return {
+                                  ...grp,
+                                  studentIds: (grp.studentIds || []).filter(id => !visIdStrs.includes(String(id)))
+                                };
+                              }
+                              return grp;
+                            }));
                           } else {
                             if (currentSlotList.length >= slotCap) {
                               setUiAlert({
@@ -5595,44 +6098,37 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                   {filteredStudents.map(student => {
                     const badge = getBadgeStyle(student.level);
                     const isSelectedFilterMatch = courseDayFilter !== 'all' && String(student.whichDay) === String(courseDayFilter);
-                    const assignment = getStudentSlotAssignment(student.id);
-                    const activeSlotId = selectedSlotId || activeSlotsForDay[0]?.id || slots[0]?.id;
-                    const isCurrentSlotStudent = assignment && String(assignment.slot.id) === String(activeSlotId);
-                    const isOtherSlotStudent = assignment && String(assignment.slot.id) !== String(activeSlotId);
                     const isScheduledInDb = isStudentScheduledInDbOnDate(student);
+                    const assignment = !isScheduledInDb ? getStudentSlotAssignment(student.id) : null;
+                    const activeSlotId = selectedSlotId || activeSlotsForDay[0]?.id || slots[0]?.id;
+                    const isCurrentSlotStudent = !isScheduledInDb && assignment && String(assignment.slot.id) === String(activeSlotId);
+                    const isOtherSlotStudent = !isScheduledInDb && assignment && String(assignment.slot.id) !== String(activeSlotId);
                     // Only freshly selected students (not auto-hydrated from DB) get the dark badge
-                    const isNewlySelected = isCurrentSlotStudent && !isScheduledInDb;
-                    const isChecked = isCurrentSlotStudent;
+                    const isNewlySelected = !isScheduledInDb && isCurrentSlotStudent;
+                    const isChecked = !isScheduledInDb && isCurrentSlotStudent;
                     const assignedGroup = getStudentAssignedGroup(student);
 
                     const cardStyle = () => {
-                      const borderSide = isNewlySelected
-                        ? (student.isGuest ? '1.5px solid #0284C7' : '1.5px solid #0F172A')
-                        : isCurrentSlotStudent && isScheduledInDb
-                        ? '1.5px solid #FDE68A'
-                        : isOtherSlotStudent
-                        ? '1.5px dashed #CBD5E1'
-                        : student.isGuest
-                        ? '1.5px solid #BAE6FD'
-                        : '1.5px solid #E2E8F0';
-
-                      const leftBorder = student.isGuest
-                        ? (isNewlySelected ? '4px solid #0284C7' : '4px solid #38BDF8')
-                        : isCurrentSlotStudent && isScheduledInDb
-                        ? '4px solid #F59E0B'
-                        : borderSide;
-
+                      if (isScheduledInDb) {
+                        return {
+                          background: '#FFFDF5',
+                          borderTop: '1px solid #FDE68A',
+                          borderRight: '1px solid #FDE68A',
+                          borderBottom: '1px solid #FDE68A',
+                          borderLeft: '1px solid #FDE68A',
+                          boxShadow: 'none',
+                          opacity: 0.95,
+                          transition: 'all 0.15s ease',
+                          cursor: 'default'
+                        };
+                      }
                       return {
-                        background: student.isGuest
-                          ? (isCurrentSlotStudent ? '#F0F9FF' : isOtherSlotStudent ? '#F8FAFC' : '#F8FAFC')
-                          : isCurrentSlotStudent && isScheduledInDb
-                          ? '#FFFBEB'
-                          : (isNewlySelected ? '#FFFFFF' : isOtherSlotStudent ? '#F8FAFC' : '#FFFFFF'),
-                        borderTop: borderSide,
-                        borderRight: borderSide,
-                        borderBottom: borderSide,
-                        borderLeft: leftBorder,
-                        boxShadow: isNewlySelected ? '0 1px 4px rgba(15, 23, 42, 0.08)' : '0 1px 2px rgba(0, 0, 0, 0.02)',
+                        background: isOtherSlotStudent ? '#F8FAFC' : '#FFFFFF',
+                        borderTop: isOtherSlotStudent ? '1px dashed #CBD5E1' : '1px solid #E2E8F0',
+                        borderRight: isOtherSlotStudent ? '1px dashed #CBD5E1' : '1px solid #E2E8F0',
+                        borderBottom: isOtherSlotStudent ? '1px dashed #CBD5E1' : '1px solid #E2E8F0',
+                        borderLeft: isOtherSlotStudent ? '1px dashed #CBD5E1' : '1px solid #E2E8F0',
+                        boxShadow: isNewlySelected ? '0 1px 3px rgba(15, 23, 42, 0.05)' : 'none',
                         opacity: isOtherSlotStudent ? 0.72 : 1,
                         transition: 'all 0.15s ease',
                         cursor: 'pointer'
@@ -5643,7 +6139,18 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                       <div
                         key={student.id}
                         className={`ns-student-row ${isChecked ? 'selected' : ''} ${student.isGuest ? 'ns-guest-row' : ''}`}
-                        onClick={() => toggleSelectStudent(student.id)}
+                        onClick={() => {
+                          if (isScheduledInDb) {
+                            setUiAlert({
+                              title: 'Student Already Scheduled',
+                              message: `${student.name} is already scheduled in an existing session on ${formattedSessionDate}. Scheduled students cannot be selected in a new session.`,
+                              type: 'info',
+                              icon: 'ℹ️'
+                            });
+                            return;
+                          }
+                          toggleSelectStudent(student.id);
+                        }}
                         style={cardStyle()}
                       >
                         {/* Left Side: Checkbox + Avatar + Student Name */}
@@ -5672,26 +6179,22 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                               width: '20px',
                               height: '20px',
                               borderRadius: '50%',
-                              border: isNewlySelected
-                                ? (student.isGuest ? '2px solid #0284C7' : '2px solid #0F172A')
-                                : (isCurrentSlotStudent && isScheduledInDb)
+                              border: isScheduledInDb
                                 ? '2px solid #D97706'
-                                : isOtherSlotStudent
-                                ? '2px solid #94A3B8'
-                                : isScheduledInDb
-                                ? '2px solid #D97706'
-                                : student.isGuest
-                                ? '2px solid #7DD3FC'
-                                : '2px solid #CBD5E1',
-                              background: isNewlySelected
-                                ? (student.isGuest ? '#0284C7' : '#0F172A')
-                                : (isCurrentSlotStudent && isScheduledInDb)
+                                : isNewlySelected
+                                  ? (student.isGuest ? '2px solid #0284C7' : '2px solid #0F172A')
+                                  : isOtherSlotStudent
+                                    ? '2px solid #94A3B8'
+                                    : student.isGuest
+                                      ? '2px solid #7DD3FC'
+                                      : '2px solid #CBD5E1',
+                              background: isScheduledInDb
                                 ? '#D97706'
-                                : isOtherSlotStudent
-                                ? '#E2E8F0'
-                                : isScheduledInDb
-                                ? '#D97706'
-                                : '#FFFFFF',
+                                : isNewlySelected
+                                  ? (student.isGuest ? '#0284C7' : '#0F172A')
+                                  : isOtherSlotStudent
+                                    ? '#E2E8F0'
+                                    : '#FFFFFF',
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
@@ -5699,18 +6202,18 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                               transition: 'all 0.15s ease'
                             }}
                           >
-                            {(isNewlySelected || (isCurrentSlotStudent && isScheduledInDb)) && (
+                            {isScheduledInDb && (
                               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
                                 <polyline points="20 6 9 17 4 12" />
                               </svg>
                             )}
-                            {isOtherSlotStudent && !isScheduledInDb && (
+                            {!isScheduledInDb && isNewlySelected && (
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="20 6 9 17 4 12" />
+                              </svg>
+                            )}
+                            {!isScheduledInDb && isOtherSlotStudent && (
                               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#64748B" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                                <polyline points="20 6 9 17 4 12" />
-                              </svg>
-                            )}
-                            {!isCurrentSlotStudent && !isOtherSlotStudent && isScheduledInDb && (
-                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
                                 <polyline points="20 6 9 17 4 12" />
                               </svg>
                             )}
@@ -5778,7 +6281,43 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                         <div className="ns-student-row-right">
                           {/* Column 1: Slot Status & Group Badge (on mobile: HIDE if Not Selected & no group to keep it compact) */}
                           <div className={`ns-student-col-slot ${(!isCurrentSlotStudent && !isOtherSlotStudent && !isScheduledInDb && !assignedGroup) ? 'ns-hide-mobile' : ''}`}>
-                            {isNewlySelected && assignment ? (
+                            {isScheduledInDb ? (
+                              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
+                                <span className="ns-slot-badge-scheduled" style={{
+                                  background: '#FEF3C7',
+                                  color: '#B45309',
+                                  border: '1px solid #FDE68A',
+                                  padding: '3px 8px',
+                                  borderRadius: '12px',
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '3px',
+                                  whiteSpace: 'nowrap'
+                                }}>
+                                  ✓ Sched
+                                </span>
+                                {assignedGroup && (
+                                  <span className="ns-student-group-tag" style={{
+                                    background: '#EEF2FF',
+                                    color: '#4338CA',
+                                    border: '1px solid #C7D2FE',
+                                    padding: '2.5px 8px',
+                                    borderRadius: '12px',
+                                    fontSize: '11px',
+                                    fontWeight: 700,
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    whiteSpace: 'nowrap',
+                                    boxShadow: '0 1px 2px rgba(67, 56, 202, 0.08)'
+                                  }} title={`Group: ${assignedGroup.name}${assignedGroup.time ? ` (${assignedGroup.time})` : ''}`}>
+                                    👥 {assignedGroup.name}
+                                  </span>
+                                )}
+                              </div>
+                            ) : isNewlySelected && assignment ? (
                               <div style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
                                 <span className="ns-slot-badge-assigned" style={{
                                   background: '#0F172A',
@@ -5814,42 +6353,6 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                   </span>
                                 )}
                               </div>
-                            ) : isCurrentSlotStudent && isScheduledInDb ? (
-                              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
-                                <span className="ns-slot-badge-scheduled" style={{
-                                  background: '#FEF3C7',
-                                  color: '#B45309',
-                                  border: '1px solid #FDE68A',
-                                  padding: '3px 8px',
-                                  borderRadius: '12px',
-                                  fontSize: '11px',
-                                  fontWeight: 700,
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: '3px',
-                                  whiteSpace: 'nowrap'
-                                }}>
-                                  ✓ Sched
-                                </span>
-                                {assignedGroup && (
-                                  <span className="ns-student-group-tag" style={{
-                                    background: '#EEF2FF',
-                                    color: '#4338CA',
-                                    border: '1px solid #C7D2FE',
-                                    padding: '2.5px 8px',
-                                    borderRadius: '12px',
-                                    fontSize: '11px',
-                                    fontWeight: 700,
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '4px',
-                                    whiteSpace: 'nowrap',
-                                    boxShadow: '0 1px 2px rgba(67, 56, 202, 0.08)'
-                                  }} title={`Group: ${assignedGroup.name}${assignedGroup.time ? ` (${assignedGroup.time})` : ''}`}>
-                                    👥 {assignedGroup.name}
-                                  </span>
-                                )}
-                              </div>
                             ) : isOtherSlotStudent && assignment ? (
                               <div style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
                                 <span className="ns-slot-badge-other" style={{
@@ -5881,42 +6384,6 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                     gap: '4px',
                                     whiteSpace: 'nowrap'
                                   }} title={`Group: ${assignedGroup.name}`}>
-                                    👥 {assignedGroup.name}
-                                  </span>
-                                )}
-                              </div>
-                            ) : isScheduledInDb ? (
-                              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
-                                <span className="ns-slot-badge-scheduled" style={{
-                                  background: '#FEF3C7',
-                                  color: '#B45309',
-                                  border: '1px solid #FDE68A',
-                                  padding: '3px 8px',
-                                  borderRadius: '12px',
-                                  fontSize: '11px',
-                                  fontWeight: 700,
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: '3px',
-                                  whiteSpace: 'nowrap'
-                                }}>
-                                  ✓ Sched
-                                </span>
-                                {assignedGroup && (
-                                  <span className="ns-student-group-tag" style={{
-                                    background: '#EEF2FF',
-                                    color: '#4338CA',
-                                    border: '1px solid #C7D2FE',
-                                    padding: '2.5px 8px',
-                                    borderRadius: '12px',
-                                    fontSize: '11px',
-                                    fontWeight: 700,
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '4px',
-                                    whiteSpace: 'nowrap',
-                                    boxShadow: '0 1px 2px rgba(67, 56, 202, 0.08)'
-                                  }} title={`Group: ${assignedGroup.name}${assignedGroup.time ? ` (${assignedGroup.time})` : ''}`}>
                                     👥 {assignedGroup.name}
                                   </span>
                                 )}
@@ -5974,7 +6441,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                 title={`Expected Session Slot: ${student.session_time}`}
                               >
                                 <span style={{ fontSize: '9.5px', color: '#64748B', fontWeight: 600 }}>Exp:</span>
-                                <span>{student.session_time}</span>
+                                <span>{student.session_time ? String(student.session_time).split(/\s*[-–—to]+\s*/i)[0].trim() : ''}</span>
                               </span>
                             </div>
                           ) : null}
@@ -6083,8 +6550,17 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                   const activeSlotId = selectedSlotId || activeSlotsForDay[0]?.id || slots[0]?.id;
                   const activeSlot = slots.find(s => s.id === activeSlotId) || selectedSlot;
                   const slotCap = getSlotCapacity(activeSlot);
-                  const currentSlotCount = (slotStudentMap[activeSlotId] || []).length;
-                  const anySlotOver = slots.some(s => (slotStudentMap[s.id] || []).length > getSlotCapacity(s));
+                  const currentSlotCount = (slotStudentMap[activeSlotId] || []).filter(id => {
+                    const st = allPoolStudents.find(sp => String(sp.id) === String(id));
+                    return !st || !isStudentScheduledInDbOnDate(st);
+                  }).length;
+                  const anySlotOver = slots.some(s => {
+                    const cnt = (slotStudentMap[s.id] || []).filter(id => {
+                      const st = allPoolStudents.find(sp => String(sp.id) === String(id));
+                      return !st || !isStudentScheduledInDbOnDate(st);
+                    }).length;
+                    return cnt > getSlotCapacity(s);
+                  });
                   const totalPoolCount = allPoolStudents.length;
                   const totalSelectedCount = allSelectedStudentIds.length;
                   const notSelectedCount = Math.max(0, totalPoolCount - totalSelectedCount);
@@ -6143,8 +6619,18 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                   scrollbarWidth: 'none',
                   padding: '0 4px'
                 }}>
-                  {slots.filter(s => (slotStudentMap[s.id] || []).length > 0).map((s) => {
-                    const count = (slotStudentMap[s.id] || []).length;
+                  {slots.filter(s => {
+                    const validCount = (slotStudentMap[s.id] || []).filter(id => {
+                      const st = allPoolStudents.find(sp => String(sp.id) === String(id));
+                      return !st || !isStudentScheduledInDbOnDate(st);
+                    }).length;
+                    return validCount > 0;
+                  }).map((s) => {
+                    const validStudents = (slotStudentMap[s.id] || []).filter(id => {
+                      const st = allPoolStudents.find(sp => String(sp.id) === String(id));
+                      return !st || !isStudentScheduledInDbOnDate(st);
+                    });
+                    const count = validStudents.length;
                     const sCap = getSlotCapacity(s);
                     const isSlotOver = count > sCap;
                     const isSlotFull = count === sCap;
@@ -6434,8 +6920,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                       title="Reset all filters"
                     >
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
-                        <path d="M3 3v5h5"/>
+                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                        <path d="M3 3v5h5" />
                       </svg>
                       Reset
                     </button>
@@ -6744,7 +7230,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                               } : {}}
                             >
                               {isChecked && (
-                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
                               )}
                             </div>
                             <UserAvatar src={student.avatar} name={student.name} size={student.isGuest ? 26 : 30} className="ns-ws-avatar" />
@@ -6861,7 +7347,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                       if (m < 0 || (m === 0 && now.getDate() < bd.getDate())) a--;
                                       if (a >= 0) stAge = a;
                                     }
-                                  } catch (e) {}
+                                  } catch (e) { }
                                 }
                                 if (stAge !== null && !isNaN(stAge) && stAge > 0 && stAge < 16) {
                                   return (
@@ -7117,517 +7603,475 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                     </div>
                   ) : (
                     <>
-                    {displayedTrainingGroups.map(grp => {
-                      const assignedInstIds = grp.assignedInstructorIds || (grp.assignedInstructorId ? [grp.assignedInstructorId] : []);
-                      const assignedInstructors = assignedInstIds
-                        .map(id => allInstructors.find(i => String(i.id) === String(id)))
-                        .filter(Boolean);
-                      const effectiveGroupCoaches = assignedInstructors.length > 0
-                        ? assignedInstructors
-                        : (isIndividualCoach && currentIndividualCoach ? [currentIndividualCoach] : []);
-                      const grpStudents = grp.studentIds
-                        .map(id => allPoolStudents.find(s => s.id === id))
-                        .filter(Boolean)
-                        .slice()
-                        .sort((a, b) => {
-                          const familyIdA = a.parentStudentId || a.id;
-                          const familyIdB = b.parentStudentId || b.id;
-                          if (String(familyIdA) !== String(familyIdB)) {
-                            return (a.parentStudentName || a.name).localeCompare(b.parentStudentName || b.name);
-                          }
-                          const subA = a.isGuest ? (a.guestIndex || 1) : 0;
-                          const subB = b.isGuest ? (b.guestIndex || 1) : 0;
-                          return subA - subB;
-                        });
-                      const isDragOver = dragOverGroupId === grp.id;
+                      {displayedTrainingGroups.map(grp => {
+                        const assignedInstIds = grp.assignedInstructorIds || (grp.assignedInstructorId ? [grp.assignedInstructorId] : []);
+                        const assignedInstructors = assignedInstIds
+                          .map(id => allInstructors.find(i => String(i.id) === String(id)))
+                          .filter(Boolean);
+                        const effectiveGroupCoaches = assignedInstructors.length > 0
+                          ? assignedInstructors
+                          : (isIndividualCoach && currentIndividualCoach ? [currentIndividualCoach] : []);
+                        const grpStudents = grp.studentIds
+                          .map(id => allPoolStudents.find(s => s.id === id))
+                          .filter(Boolean)
+                          .slice()
+                          .sort((a, b) => {
+                            const familyIdA = a.parentStudentId || a.id;
+                            const familyIdB = b.parentStudentId || b.id;
+                            if (String(familyIdA) !== String(familyIdB)) {
+                              return (a.parentStudentName || a.name).localeCompare(b.parentStudentName || b.name);
+                            }
+                            const subA = a.isGuest ? (a.guestIndex || 1) : 0;
+                            const subB = b.isGuest ? (b.guestIndex || 1) : 0;
+                            return subA - subB;
+                          });
+                        const isDragOver = dragOverGroupId === grp.id;
 
-                      const grpSlot = slots.find(s => s.id === grp.slotId) || slots[0];
-                      const grpTheme = getSlotThemeForSlot(grp.slotId || grpSlot?.id);
+                        const grpSlot = slots.find(s => s.id === grp.slotId) || slots[0];
+                        const grpTheme = getSlotThemeForSlot(grp.slotId || grpSlot?.id);
 
-                      return (
-                        <div
-                          key={grp.id}
-                          id={`ns-grp-card-${grp.id}`}
-                          className={`ns-group-card ${activeDropGroupId === grp.id ? 'focused' : ''} ${isDragOver ? 'drag-over' : ''}`}
-                          onClick={() => setActiveDropGroupId(grp.id)}
-                          onDragOver={(e) => {
-                            e.preventDefault();
-                            e.dataTransfer.dropEffect = 'copy';
-                            if (dragOverGroupId !== grp.id) setDragOverGroupId(grp.id);
-                          }}
-                          onDragLeave={() => {
-                            if (dragOverGroupId === grp.id) setDragOverGroupId(null);
-                          }}
-                          onDrop={(e) => handleDropOnGroup(e, grp.id)}
-                        >
-                          <div className="ns-gc-title-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <h4 className="ns-gc-title">{grp.name}</h4>
-                              <select
-                                value={grp.slotId || selectedSlotId || slots[0]?.id}
-                                onChange={(e) => {
-                                  const newSlotId = isNaN(parseInt(e.target.value, 10)) ? e.target.value : parseInt(e.target.value, 10);
-                                  setTrainingGroups(prev => {
-                                    const updated = prev.map(g => g.id === grp.id ? { ...g, slotId: newSlotId } : g);
-                                    return reindexGroups(updated);
-                                  });
-                                  setSlotStudentMap(prev => {
-                                    const newMap = { ...prev };
-                                    Object.keys(newMap).forEach(k => {
-                                      if (Array.isArray(newMap[k])) {
-                                        newMap[k] = newMap[k].filter(id => !grp.studentIds.includes(id));
-                                      }
+                        return (
+                          <div
+                            key={grp.id}
+                            id={`ns-grp-card-${grp.id}`}
+                            className={`ns-group-card ${activeDropGroupId === grp.id ? 'focused' : ''} ${isDragOver ? 'drag-over' : ''}`}
+                            onClick={() => setActiveDropGroupId(grp.id)}
+                            onDragOver={(e) => {
+                              e.preventDefault();
+                              e.dataTransfer.dropEffect = 'copy';
+                              if (dragOverGroupId !== grp.id) setDragOverGroupId(grp.id);
+                            }}
+                            onDragLeave={() => {
+                              if (dragOverGroupId === grp.id) setDragOverGroupId(null);
+                            }}
+                            onDrop={(e) => handleDropOnGroup(e, grp.id)}
+                            style={{ position: 'relative' }}
+                          >
+                            {/* Card Edge Close/Delete Button */}
+                            <button
+                              type="button"
+                              className="ns-gc-delete-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteGroup(grp.id);
+                              }}
+                              style={{
+                                position: 'absolute',
+                                top: '12px',
+                                right: '12px',
+                                width: '28px',
+                                height: '28px',
+                                borderRadius: '8px',
+                                border: '1px solid #E2E8F0',
+                                background: '#FFFFFF',
+                                color: '#94A3B8',
+                                cursor: 'pointer',
+                                fontSize: '14px',
+                                fontWeight: 700,
+                                lineHeight: 1,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                transition: 'all 0.15s ease',
+                                boxShadow: '0 1px 2px rgba(0,0,0,0.04)',
+                                zIndex: 5
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.color = '#EF4444';
+                                e.currentTarget.style.borderColor = '#FECACA';
+                                e.currentTarget.style.background = '#FEF2F2';
+                                e.currentTarget.style.transform = 'scale(1.08)';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.color = '#94A3B8';
+                                e.currentTarget.style.borderColor = '#E2E8F0';
+                                e.currentTarget.style.background = '#FFFFFF';
+                                e.currentTarget.style.transform = 'scale(1)';
+                              }}
+                              title="Delete group"
+                              aria-label="Delete group"
+                            >
+                              ✕
+                            </button>
+
+                            <div className="ns-gc-title-row" style={{ display: 'flex', flexDirection: 'column', gap: '8px', paddingRight: '36px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                                <h4 className="ns-gc-title" style={{ fontSize: '15px', fontWeight: 800, color: '#0F172A', letterSpacing: '-0.2px', margin: 0 }}>
+                                  {grp.name}
+                                </h4>
+                                <select
+                                  value={grp.slotId || selectedSlotId || slots[0]?.id}
+                                  onChange={(e) => {
+                                    const newSlotId = isNaN(parseInt(e.target.value, 10)) ? e.target.value : parseInt(e.target.value, 10);
+                                    setTrainingGroups(prev => {
+                                      const updated = prev.map(g => g.id === grp.id ? { ...g, slotId: newSlotId } : g);
+                                      return reindexGroups(updated);
                                     });
-                                    newMap[newSlotId] = Array.from(new Set([...(newMap[newSlotId] || []), ...grp.studentIds]));
-                                    return newMap;
-                                  });
-                                  setSelectedSlotId(newSlotId);
-                                  setStep3SlotFilter(newSlotId);
-                                }}
-                                style={{
-                                  padding: '2px 8px',
-                                  fontSize: '11px',
-                                  fontWeight: 700,
-                                  borderRadius: '6px',
-                                  border: '1.5px solid #0D9488',
-                                  background: '#F0FDFA',
-                                  color: '#0F766E',
-                                  cursor: 'pointer',
-                                  outline: 'none'
-                                }}
-                                title="Change group time slot"
-                              >
-                                {(() => {
-                                  const activeSlotsList = activeSlotsForDay.length > 0
-                                    ? activeSlotsForDay
-                                    : slots.filter(s => s.active !== false);
-                                  // Fallback: If current group slot is somehow outside activeSlotsList, include it
-                                  const currentSlot = slots.find(s => s.id === grp.slotId);
-                                  const slotsToRender = (currentSlot && !activeSlotsList.some(s => s.id === currentSlot.id))
-                                    ? [currentSlot, ...activeSlotsList]
-                                    : activeSlotsList;
+                                    setSlotStudentMap(prev => {
+                                      const newMap = { ...prev };
+                                      Object.keys(newMap).forEach(k => {
+                                        if (Array.isArray(newMap[k])) {
+                                          newMap[k] = newMap[k].filter(id => !grp.studentIds.includes(id));
+                                        }
+                                      });
+                                      newMap[newSlotId] = Array.from(new Set([...(newMap[newSlotId] || []), ...grp.studentIds]));
+                                      return newMap;
+                                    });
+                                    setSelectedSlotId(newSlotId);
+                                    setStep3SlotFilter(newSlotId);
+                                  }}
+                                  style={{
+                                    padding: '3px 8px',
+                                    fontSize: '11px',
+                                    fontWeight: 700,
+                                    borderRadius: '6px',
+                                    border: '1.5px solid #0D9488',
+                                    background: '#F0FDFA',
+                                    color: '#0F766E',
+                                    cursor: 'pointer',
+                                    outline: 'none',
+                                    boxShadow: '0 1px 2px rgba(13,148,136,0.06)'
+                                  }}
+                                  title="Change group time slot"
+                                >
+                                  {(() => {
+                                    const activeSlotsList = activeSlotsForDay.length > 0
+                                      ? activeSlotsForDay
+                                      : slots.filter(s => s.active !== false);
+                                    // Fallback: If current group slot is somehow outside activeSlotsList, include it
+                                    const currentSlot = slots.find(s => s.id === grp.slotId);
+                                    const slotsToRender = (currentSlot && !activeSlotsList.some(s => s.id === currentSlot.id))
+                                      ? [currentSlot, ...activeSlotsList]
+                                      : activeSlotsList;
 
-                                  return slotsToRender.map((s, idx) => (
-                                    <option key={s.id} value={s.id}>
-                                      ⏰ {s.startTime || s.time || `Slot ${idx + 1}`}
-                                    </option>
-                                  ));
-                                })()}
-                              </select>
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                              <span
-                                style={{
-                                  fontSize: '11px',
-                                  fontWeight: 700,
-                                  padding: '2px 8px',
-                                  borderRadius: '6px',
-                                  background: effectiveGroupCoaches.length > 0 ? '#EFF6FF' : '#FEF2F2',
-                                  color: effectiveGroupCoaches.length > 0 ? '#1D4ED8' : '#DC2626',
-                                  border: effectiveGroupCoaches.length > 0 ? '1.5px solid #BFDBFE' : '1.5px solid #FECACA',
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: '4px'
-                                }}
-                                title="Group Coach to Student Ratio"
-                              >
-                                {effectiveGroupCoaches.length > 0
-                                  ? `🏄‍♂️ ${effectiveGroupCoaches.length} Coach : ${grpStudents.length} ${grpStudents.length === 1 ? 'Student' : 'Students'}`
-                                  : `⚠️ 0 Coach : ${grpStudents.length} ${grpStudents.length === 1 ? 'Student' : 'Students'}`}
-                              </span>
-                              {(grp.isExistingDbGroup || (grp.existingSessionIds && grp.existingSessionIds.length > 0) || isSessionAlreadyPublishedOnDate) && (
+                                    return slotsToRender.map((s, idx) => (
+                                      <option key={s.id} value={s.id}>
+                                        ⏰ {s.startTime || s.time || `Slot ${idx + 1}`}
+                                      </option>
+                                    ));
+                                  })()}
+                                </select>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                                 <span
                                   style={{
-                                    fontSize: '10.5px',
+                                    fontSize: '11px',
                                     fontWeight: 700,
-                                    padding: '2px 7px',
+                                    padding: '2.5px 8px',
                                     borderRadius: '6px',
-                                    background: '#ECFDF5',
-                                    color: '#047857',
-                                    border: '1.5px solid #A7F3D0',
+                                    background: effectiveGroupCoaches.length > 0 ? '#EFF6FF' : '#FEF2F2',
+                                    color: effectiveGroupCoaches.length > 0 ? '#1D4ED8' : '#DC2626',
+                                    border: effectiveGroupCoaches.length > 0 ? '1.5px solid #BFDBFE' : '1.5px solid #FECACA',
                                     display: 'inline-flex',
                                     alignItems: 'center',
-                                    gap: '3px'
+                                    gap: '4px',
+                                    lineHeight: 1.3
                                   }}
-                                  title="This group is already published in the database schedule"
+                                  title="Group Coach to Student Ratio"
                                 >
-                                  <span>✓</span> Published
+                                  {effectiveGroupCoaches.length > 0
+                                    ? `🏄‍♂️ ${effectiveGroupCoaches.length} Coach : ${grpStudents.length} ${grpStudents.length === 1 ? 'Student' : 'Students'}`
+                                    : `⚠️ 0 Coach : ${grpStudents.length} ${grpStudents.length === 1 ? 'Student' : 'Students'}`}
                                 </span>
-                              )}
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  deleteGroup(grp.id);
-                                }}
-                                style={{
-                                  background: 'none',
-                                  border: 'none',
-                                  color: '#94A3B8',
-                                  cursor: 'pointer',
-                                  fontSize: '18px',
-                                  padding: '2px 6px',
-                                  borderRadius: '4px',
-                                  lineHeight: 1
-                                }}
-                                title="Delete group"
-                              >
-                                &times;
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Students Inside Group */}
-                          <div className="ns-group-students-box">
-                            {grpStudents.length === 0 ? (
-                              <div className="ns-empty-students-dropzone">
-                                <span>📥 Drag &amp; Drop students here</span>
+                                {(grp.isExistingDbGroup || (grp.existingSessionIds && grp.existingSessionIds.length > 0) || isSessionAlreadyPublishedOnDate) && (
+                                  <span
+                                    style={{
+                                      fontSize: '10.5px',
+                                      fontWeight: 700,
+                                      padding: '2.5px 7px',
+                                      borderRadius: '6px',
+                                      background: '#ECFDF5',
+                                      color: '#047857',
+                                      border: '1.5px solid #A7F3D0',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '3px',
+                                      lineHeight: 1.3
+                                    }}
+                                    title="This group is already published in the database schedule"
+                                  >
+                                    <span>✓</span> Published
+                                  </span>
+                                )}
                               </div>
-                            ) : (
-                              <div className="ns-group-students-grid">
-                                {grpStudents.map((s) => {
-                                  const sSlotAssign = getStudentSlotAssignment(s.id);
+                            </div>
 
-                                  return (
-                                    <div
-                                      key={s.id}
-                                      className="ns-group-student-chip"
-                                      draggable={true}
-                                      onDragStart={(e) => {
-                                        e.dataTransfer.setData('application/json', JSON.stringify({
-                                          type: 'student',
-                                          studentIds: [s.id],
-                                          fromGroupId: grp.id
-                                        }));
-                                        e.dataTransfer.effectAllowed = 'copyMove';
-                                        setDraggingType('student');
-                                      }}
-                                      onDragEnd={() => {
-                                        setDraggingType(null);
-                                        setDragOverGroupId(null);
-                                      }}
-                                      title="Drag to another group or click × to remove"
-                                    >
-                                      <UserAvatar src={s.avatar} name={s.name} size={20} className="ns-chip-avatar" />
-                                      <span className="ns-chip-name">{s.name}</span>
-                                      {s.isGuest && (
-                                        <span style={{
-                                          fontSize: '9px',
-                                          fontWeight: 700,
-                                          color: '#0369A1',
-                                          background: '#E0F2FE',
-                                          border: '1px solid #BAE6FD',
-                                          padding: '1px 5px',
-                                          borderRadius: '3px',
-                                          flexShrink: 0
-                                        }} title={`Accompanying Guest of ${s.parentStudentName}`}>
-                                          Guest
-                                        </span>
-                                      )}
+                            {/* Students Inside Group */}
+                            <div className="ns-group-students-box">
+                              {grpStudents.length === 0 ? (
+                                <div className="ns-empty-students-dropzone">
+                                  <span>📥 Drag &amp; Drop students here</span>
+                                </div>
+                              ) : (
+                                <div className="ns-group-students-grid">
+                                  {grpStudents.map((s) => {
+                                    const sSlotAssign = getStudentSlotAssignment(s.id);
 
-                                      {/* Gender Badge */}
-                                      {(() => {
-                                        const isFemale = (s.gender || '').toLowerCase() === 'female';
-                                        return (
-                                          <span style={{
-                                            fontSize: '9.5px',
-                                            fontWeight: 700,
-                                            color: isFemale ? '#BE185D' : '#0369A1',
-                                            background: isFemale ? '#FDF2F8' : '#F0F9FF',
-                                            border: `1px solid ${isFemale ? '#FBCFE8' : '#BAE6FD'}`,
-                                            padding: '1px 5px',
-                                            borderRadius: '4px',
-                                            flexShrink: 0,
-                                            display: 'inline-flex',
-                                            alignItems: 'center',
-                                            gap: '2px'
-                                          }} title={`Gender: ${s.gender || 'Male'}`}>
-                                            {isFemale ? '♀ Female' : '♂ Male'}
-                                          </span>
-                                        );
-                                      })()}
-
-                                      {/* Kids Badge (Kids-only, no Adult badge) */}
-                                      {(() => {
-                                        let stAge = (s.age !== undefined && s.age !== null && s.age !== '') ? Number(s.age) : null;
-                                        if ((stAge === null || isNaN(stAge)) && s.dob) {
-                                          try {
-                                            const bd = new Date(s.dob);
-                                            if (!isNaN(bd.getTime())) {
-                                              const now = new Date();
-                                              let a = now.getFullYear() - bd.getFullYear();
-                                              const m = now.getMonth() - bd.getMonth();
-                                              if (m < 0 || (m === 0 && now.getDate() < bd.getDate())) a--;
-                                              if (a >= 0) stAge = a;
-                                            }
-                                          } catch (e) {}
-                                        }
-                                        const isKid = (stAge !== null && !isNaN(stAge) && stAge > 0 && stAge < 16) ||
-                                          (s.division && /kid|child|junior/i.test(s.division)) ||
-                                          (s.category && /kid|child|junior/i.test(s.category));
-
-                                        if (!isKid) return null;
-
-                                        return (
-                                          <span style={{
-                                            fontSize: '9.5px',
-                                            fontWeight: 800,
-                                            color: '#7C3AED',
-                                            background: '#F5F3FF',
-                                            border: '1px solid #DDD6FE',
-                                            padding: '1px 5px',
-                                            borderRadius: '4px',
-                                            flexShrink: 0,
-                                            display: 'inline-flex',
-                                            alignItems: 'center',
-                                            gap: '2px'
-                                          }} title={`Kid / Under 16${stAge ? ` (${stAge} yrs)` : ''}`}>
-                                            🧒 Kids
-                                          </span>
-                                        );
-                                      })()}
-
-                                      {/* Which Day Badge */}
-                                      <span style={{
-                                        fontSize: '9.5px',
-                                        fontWeight: 700,
-                                        color: '#047857',
-                                        background: '#ECFDF5',
-                                        border: '1px solid #A7F3D0',
-                                        padding: '1px 5px',
-                                        borderRadius: '4px',
-                                        flexShrink: 0,
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: '2px'
-                                      }} title={`Day ${s.whichDay || 1}${s.totalDays ? ` of ${s.totalDays} Days` : ''}`}>
-                                        Day {s.whichDay || 1}{s.totalDays ? `/${s.totalDays}` : ''}
-                                      </span>
-
-                                      <button
-                                        type="button"
-                                        className="ns-chip-remove"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          removeStudentFromGroup(grp.id, s.id);
+                                    return (
+                                      <div
+                                        key={s.id}
+                                        className="ns-group-student-chip"
+                                        draggable={true}
+                                        onDragStart={(e) => {
+                                          e.dataTransfer.setData('application/json', JSON.stringify({
+                                            type: 'student',
+                                            studentIds: [s.id],
+                                            fromGroupId: grp.id
+                                          }));
+                                          e.dataTransfer.effectAllowed = 'copyMove';
+                                          setDraggingType('student');
                                         }}
+                                        onDragEnd={() => {
+                                          setDraggingType(null);
+                                          setDragOverGroupId(null);
+                                        }}
+                                        title="Drag to another group or click × to remove"
                                       >
-                                        &times;
-                                      </button>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </div>
+                                        <UserAvatar src={s.avatar} name={s.name} size={20} className="ns-chip-avatar" />
+                                        <span className="ns-chip-name">{s.name}</span>
+                                        {s.isGuest && (
+                                          <span style={{
+                                            fontSize: '9px',
+                                            fontWeight: 700,
+                                            color: '#0369A1',
+                                            background: '#E0F2FE',
+                                            border: '1px solid #BAE6FD',
+                                            padding: '1px 5px',
+                                            borderRadius: '3px',
+                                            flexShrink: 0
+                                          }} title={`Accompanying Guest of ${s.parentStudentName}`}>
+                                            Guest
+                                          </span>
+                                        )}
 
-                          {/* Assigned Coaches (Single auto-assigned for Individual Coach, multi-coach for schools) */}
-                          <div className="ns-assigned-instructors-section" style={{ marginTop: '12px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                              <span style={{ fontSize: '11px', fontWeight: 700, color: '#475569' }}>
-                                Assigned Coach {isIndividualCoach ? '(Auto-Assigned)' : (assignedInstructors.length > 0 ? `(${assignedInstructors.length})` : '')}
-                              </span>
-                            </div>
+                                        {/* Gender Badge */}
+                                        {(() => {
+                                          const isFemale = (s.gender || '').toLowerCase() === 'female';
+                                          return (
+                                            <span style={{
+                                              fontSize: '9.5px',
+                                              fontWeight: 700,
+                                              color: isFemale ? '#BE185D' : '#0369A1',
+                                              background: isFemale ? '#FDF2F8' : '#F0F9FF',
+                                              border: `1px solid ${isFemale ? '#FBCFE8' : '#BAE6FD'}`,
+                                              padding: '1px 5px',
+                                              borderRadius: '4px',
+                                              flexShrink: 0,
+                                              display: 'inline-flex',
+                                              alignItems: 'center',
+                                              gap: '2px'
+                                            }} title={`Gender: ${s.gender || 'Male'}`}>
+                                              {isFemale ? '♀ Female' : '♂ Male'}
+                                            </span>
+                                          );
+                                        })()}
 
-                            {(() => {
-                              const displayCoaches = assignedInstructors.length > 0
-                                ? assignedInstructors
-                                : (isIndividualCoach && currentIndividualCoach ? [currentIndividualCoach] : []);
+                                        {/* Kids Badge (Kids-only, no Adult badge) */}
+                                        {(() => {
+                                          let stAge = (s.age !== undefined && s.age !== null && s.age !== '') ? Number(s.age) : null;
+                                          if ((stAge === null || isNaN(stAge)) && s.dob) {
+                                            try {
+                                              const bd = new Date(s.dob);
+                                              if (!isNaN(bd.getTime())) {
+                                                const now = new Date();
+                                                let a = now.getFullYear() - bd.getFullYear();
+                                                const m = now.getMonth() - bd.getMonth();
+                                                if (m < 0 || (m === 0 && now.getDate() < bd.getDate())) a--;
+                                                if (a >= 0) stAge = a;
+                                              }
+                                            } catch (e) { }
+                                          }
+                                          const isKid = (stAge !== null && !isNaN(stAge) && stAge > 0 && stAge < 16) ||
+                                            (s.division && /kid|child|junior/i.test(s.division)) ||
+                                            (s.category && /kid|child|junior/i.test(s.category));
 
-                              if (displayCoaches.length > 0) {
-                                return (
-                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                    {displayCoaches.map(coach => {
-                                      const coachLeave = getInstructorLeaveOnDate(coach, selectedSessionDateYYYYMMDD);
-                                      const isCoachOnLeave = Boolean(coachLeave);
-                                      return (
-                                        <div
-                                          key={coach.id}
-                                          className={`ns-assigned-inst-box ${isCoachOnLeave ? 'ns-coach-on-leave-box' : ''}`}
-                                          style={{
-                                            padding: '7px 10px',
-                                            background: isCoachOnLeave ? '#FEF2F2' : '#F0FDF4',
-                                            border: isCoachOnLeave ? '1.5px solid #F87171' : '1.5px solid #86EFAC',
-                                            borderRadius: '8px',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            gap: '8px'
+                                          if (!isKid) return null;
+
+                                          return (
+                                            <span style={{
+                                              fontSize: '9.5px',
+                                              fontWeight: 800,
+                                              color: '#7C3AED',
+                                              background: '#F5F3FF',
+                                              border: '1px solid #DDD6FE',
+                                              padding: '1px 5px',
+                                              borderRadius: '4px',
+                                              flexShrink: 0,
+                                              display: 'inline-flex',
+                                              alignItems: 'center',
+                                              gap: '2px'
+                                            }} title={`Kid / Under 16${stAge ? ` (${stAge} yrs)` : ''}`}>
+                                              🧒 Kids
+                                            </span>
+                                          );
+                                        })()}
+
+                                        {/* Which Day Badge */}
+                                        <span style={{
+                                          fontSize: '9.5px',
+                                          fontWeight: 700,
+                                          color: '#047857',
+                                          background: '#ECFDF5',
+                                          border: '1px solid #A7F3D0',
+                                          padding: '1px 5px',
+                                          borderRadius: '4px',
+                                          flexShrink: 0,
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '2px'
+                                        }} title={`Day ${s.whichDay || 1}${s.totalDays ? ` of ${s.totalDays} Days` : ''}`}>
+                                          Day {s.whichDay || 1}{s.totalDays ? `/${s.totalDays}` : ''}
+                                        </span>
+
+                                        <button
+                                          type="button"
+                                          className="ns-chip-remove"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            removeStudentFromGroup(grp.id, s.id);
                                           }}
                                         >
-                                          <UserAvatar src={coach.avatar} name={coach.name} size={26} className="ns-ai-avatar" />
-                                          <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
-                                            <span className="ns-ai-name" style={{ fontSize: '12px', fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                              {coach.name}
-                                            </span>
-                                            {isCoachOnLeave ? (
-                                              <span style={{ fontSize: '10.5px', color: '#DC2626', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '3px' }}>
-                                                <span>⚠️</span> On Leave on this date ({coachLeave?.leave_type || 'Leave'})
-                                              </span>
-                                            ) : (
-                                              <span style={{ fontSize: '10px', color: '#16A34A', fontWeight: 700 }}>
-                                                ✓ Assigned Coach {isIndividualCoach ? '• Individual Account' : `(${coach.role || 'Instructor'})`}
-                                              </span>
-                                            )}
-                                          </div>
-                                          {!isIndividualCoach && (
-                                            <button
-                                              type="button"
-                                              className="ns-ai-remove"
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                removeInstructorFromGroup(grp.id, coach.id);
-                                              }}
-                                              title={`Remove ${coach.name}`}
-                                              style={{ fontSize: '16px', color: isCoachOnLeave ? '#DC2626' : '#94A3B8', cursor: 'pointer', background: 'none', border: 'none', padding: '2px 6px', lineHeight: 1 }}
-                                            >
-                                              &times;
-                                            </button>
-                                          )}
-                                        </div>
-                                      );
-                                    })}
-
-                                    {/* Add Another Coach Dropzone: ONLY for School accounts */}
-                                    {!isIndividualCoach && (
-                                      <div
-                                        className="ns-dropzone-box"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          setActiveDropGroupId(grp.id);
-                                        }}
-                                        onDragOver={(e) => {
-                                          e.preventDefault();
-                                          e.dataTransfer.dropEffect = 'copy';
-                                          if (dragOverGroupId !== grp.id) setDragOverGroupId(grp.id);
-                                        }}
-                                        onDrop={(e) => handleDropOnGroup(e, grp.id)}
-                                        style={{
-                                          border: '1.5px dashed #86EFAC',
-                                          borderRadius: '8px',
-                                          padding: '7px 10px',
-                                          textAlign: 'center',
-                                          background: '#F0FDF4',
-                                          cursor: 'pointer',
-                                          fontSize: '11.5px',
-                                          fontWeight: 700,
-                                          color: '#16A34A',
-                                          display: 'flex',
-                                          alignItems: 'center',
-                                          justifyContent: 'center',
-                                          gap: '6px'
-                                        }}
-                                        title="Drag or click another instructor to assign"
-                                      >
-                                        <span>+</span> Drag or click to assign another coach
+                                          &times;
+                                        </button>
                                       </div>
-                                    )}
-                                  </div>
-                                );
-                              }
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
 
-                              // When NO coach is assigned yet to this group:
-                              // Check if students in this group had previous / Day 1 coach(es)
-                              const previousCoaches = getPreviousCoachesForGroup(grpStudents);
+                            {/* Assigned Coaches (Single auto-assigned for Individual Coach, multi-coach for schools) */}
+                            <div className="ns-assigned-instructors-section" style={{ marginTop: '12px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                                <span style={{ fontSize: '11px', fontWeight: 700, color: '#475569' }}>
+                                  Assigned Coach {isIndividualCoach ? '(Auto-Assigned)' : (assignedInstructors.length > 0 ? `(${assignedInstructors.length})` : '')}
+                                </span>
+                              </div>
 
-                              return (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                  {previousCoaches.length > 0 && (
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-                                      {previousCoaches.map(({ coach, count, studentNames }) => {
+                              {(() => {
+                                const displayCoaches = assignedInstructors.length > 0
+                                  ? assignedInstructors
+                                  : (isIndividualCoach && currentIndividualCoach ? [currentIndividualCoach] : []);
+
+                                if (displayCoaches.length > 0) {
+                                  return (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                      {displayCoaches.map(coach => {
                                         const coachLeave = getInstructorLeaveOnDate(coach, selectedSessionDateYYYYMMDD);
                                         const isCoachOnLeave = Boolean(coachLeave);
-                                        const conflict = getCoachSlotConflict(grp.id, coach.id);
-
                                         return (
                                           <div
-                                            key={`prev-coach-${grp.id}-${coach.id}`}
+                                            key={coach.id}
+                                            className={`ns-assigned-inst-box ${isCoachOnLeave ? 'ns-coach-on-leave-box' : ''}`}
                                             style={{
                                               padding: '7px 10px',
-                                              background: '#F8FAFC',
-                                              border: '1.5px dashed #94A3B8',
+                                              background: isCoachOnLeave ? '#FEF2F2' : '#F0FDF4',
+                                              border: isCoachOnLeave ? '1.5px solid #F87171' : '1.5px solid #86EFAC',
                                               borderRadius: '8px',
                                               display: 'flex',
                                               alignItems: 'center',
-                                              gap: '8px',
-                                              opacity: 0.55,
-                                              cursor: isCoachOnLeave ? 'not-allowed' : 'pointer',
-                                              transition: 'all 0.18s ease',
-                                              userSelect: 'none'
-                                            }}
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              if (!isCoachOnLeave) {
-                                                assignInstructorToGroup(grp.id, coach.id);
-                                              }
-                                            }}
-                                            title={
-                                              isCoachOnLeave
-                                                ? `${coach.name} is on leave on this date`
-                                                : conflict
-                                                ? `${coach.name} is already coaching ${conflict.conflictingGroup.name} at ${conflict.time}`
-                                                : `Click to assign ${coach.name} (Previous Day Coach for ${count} of ${grpStudents.length} students: ${studentNames.join(', ')})`
-                                            }
-                                            onMouseEnter={(e) => {
-                                              if (!isCoachOnLeave) {
-                                                e.currentTarget.style.opacity = '0.95';
-                                                e.currentTarget.style.borderColor = '#0D9488';
-                                                e.currentTarget.style.background = '#F0FDFA';
-                                              }
-                                            }}
-                                            onMouseLeave={(e) => {
-                                              e.currentTarget.style.opacity = '0.55';
-                                              e.currentTarget.style.borderColor = '#94A3B8';
-                                              e.currentTarget.style.background = '#F8FAFC';
+                                              gap: '8px'
                                             }}
                                           >
-                                            <UserAvatar src={coach.avatar} name={coach.name} size={26} />
+                                            <UserAvatar src={coach.avatar} name={coach.name} size={26} className="ns-ai-avatar" />
                                             <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
-                                              <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
-                                                <span style={{ fontSize: '12px', fontWeight: 700, color: '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                                  {coach.name}
-                                                </span>
-                                                <span style={{
-                                                  fontSize: '9.5px',
-                                                  background: '#F1F5F9',
-                                                  color: '#475569',
-                                                  padding: '1px 5px',
-                                                  borderRadius: '4px',
-                                                  fontWeight: 700,
-                                                  border: '1px solid #CBD5E1',
-                                                  display: 'inline-flex',
-                                                  alignItems: 'center',
-                                                  gap: '3px'
-                                                }}>
-                                                  🕒 Previous Coach ({count} student{count > 1 ? 's' : ''})
-                                                </span>
-                                              </div>
+                                              <span className="ns-ai-name" style={{ fontSize: '12px', fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                {coach.name}
+                                              </span>
                                               {isCoachOnLeave ? (
-                                                <span style={{ fontSize: '10px', color: '#DC2626', fontWeight: 600 }}>
-                                                  ⚠️ On Leave on this date ({coachLeave?.leave_type || 'Leave'})
-                                                </span>
-                                              ) : conflict ? (
-                                                <span style={{ fontSize: '10px', color: '#EA580C', fontWeight: 600 }}>
-                                                  ⚠️ Busy at this time ({conflict.conflictingGroup.name})
+                                                <span style={{ fontSize: '10.5px', color: '#DC2626', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                                  <span>⚠️</span> On Leave on this date ({coachLeave?.leave_type || 'Leave'})
                                                 </span>
                                               ) : (
-                                                <span style={{ fontSize: '10px', color: '#0F766E', fontWeight: 600 }}>
-                                                  💡 Click to assign this coach
+                                                <span style={{ fontSize: '10px', color: '#16A34A', fontWeight: 700 }}>
+                                                  ✓ Assigned Coach {isIndividualCoach ? '• Individual Account' : `(${coach.role || 'Instructor'})`}
                                                 </span>
                                               )}
                                             </div>
+                                            {!isIndividualCoach && (
+                                              <button
+                                                type="button"
+                                                className="ns-ai-remove"
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  removeInstructorFromGroup(grp.id, coach.id);
+                                                }}
+                                                title={`Remove ${coach.name}`}
+                                                style={{ fontSize: '16px', color: isCoachOnLeave ? '#DC2626' : '#94A3B8', cursor: 'pointer', background: 'none', border: 'none', padding: '2px 6px', lineHeight: 1 }}
+                                              >
+                                                &times;
+                                              </button>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
 
-                                            <button
-                                              type="button"
+                                      {/* Add Another Coach Dropzone: ONLY for School accounts */}
+                                      {!isIndividualCoach && (
+                                        <div
+                                          className="ns-dropzone-box"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setActiveDropGroupId(grp.id);
+                                          }}
+                                          onDragOver={(e) => {
+                                            e.preventDefault();
+                                            e.dataTransfer.dropEffect = 'copy';
+                                            if (dragOverGroupId !== grp.id) setDragOverGroupId(grp.id);
+                                          }}
+                                          onDrop={(e) => handleDropOnGroup(e, grp.id)}
+                                          style={{
+                                            border: '1.5px dashed #86EFAC',
+                                            borderRadius: '8px',
+                                            padding: '7px 10px',
+                                            textAlign: 'center',
+                                            background: '#F0FDF4',
+                                            cursor: 'pointer',
+                                            fontSize: '11.5px',
+                                            fontWeight: 700,
+                                            color: '#16A34A',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            gap: '6px'
+                                          }}
+                                          title="Drag or click another instructor to assign"
+                                        >
+                                          <span>+</span> Drag or click to assign another coach
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                }
+
+                                // When NO coach is assigned yet to this group:
+                                // Check if students in this group had previous / Day 1 coach(es)
+                                const previousCoaches = getPreviousCoachesForGroup(grpStudents);
+
+                                return (
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                    {previousCoaches.length > 0 && (
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                                        {previousCoaches.map(({ coach, count, studentNames }) => {
+                                          const coachLeave = getInstructorLeaveOnDate(coach, selectedSessionDateYYYYMMDD);
+                                          const isCoachOnLeave = Boolean(coachLeave);
+                                          const conflict = getCoachSlotConflict(grp.id, coach.id);
+
+                                          return (
+                                            <div
+                                              key={`prev-coach-${grp.id}-${coach.id}`}
                                               style={{
-                                                fontSize: '11px',
-                                                fontWeight: 700,
-                                                padding: '3px 8px',
-                                                borderRadius: '5px',
-                                                border: '1px solid #99F6E4',
-                                                background: '#F0FDFA',
-                                                color: '#0F766E',
+                                                padding: '7px 10px',
+                                                background: '#F8FAFC',
+                                                border: '1.5px dashed #94A3B8',
+                                                borderRadius: '8px',
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: '8px',
+                                                opacity: 0.55,
                                                 cursor: isCoachOnLeave ? 'not-allowed' : 'pointer',
-                                                flexShrink: 0
+                                                transition: 'all 0.18s ease',
+                                                userSelect: 'none'
                                               }}
                                               onClick={(e) => {
                                                 e.stopPropagation();
@@ -7635,125 +8079,200 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                                   assignInstructorToGroup(grp.id, coach.id);
                                                 }
                                               }}
+                                              title={
+                                                isCoachOnLeave
+                                                  ? `${coach.name} is on leave on this date`
+                                                  : conflict
+                                                    ? `${coach.name} is already coaching ${conflict.conflictingGroup.name} at ${conflict.time}`
+                                                    : `Click to assign ${coach.name} (Previous Day Coach for ${count} of ${grpStudents.length} students: ${studentNames.join(', ')})`
+                                              }
+                                              onMouseEnter={(e) => {
+                                                if (!isCoachOnLeave) {
+                                                  e.currentTarget.style.opacity = '0.95';
+                                                  e.currentTarget.style.borderColor = '#0D9488';
+                                                  e.currentTarget.style.background = '#F0FDFA';
+                                                }
+                                              }}
+                                              onMouseLeave={(e) => {
+                                                e.currentTarget.style.opacity = '0.55';
+                                                e.currentTarget.style.borderColor = '#94A3B8';
+                                                e.currentTarget.style.background = '#F8FAFC';
+                                              }}
                                             >
-                                              + Assign
-                                            </button>
-                                          </div>
-                                        );
-                                      })}
+                                              <UserAvatar src={coach.avatar} name={coach.name} size={26} />
+                                              <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
+                                                  <span style={{ fontSize: '12px', fontWeight: 700, color: '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                    {coach.name}
+                                                  </span>
+                                                  <span style={{
+                                                    fontSize: '9.5px',
+                                                    background: '#F1F5F9',
+                                                    color: '#475569',
+                                                    padding: '1px 5px',
+                                                    borderRadius: '4px',
+                                                    fontWeight: 700,
+                                                    border: '1px solid #CBD5E1',
+                                                    display: 'inline-flex',
+                                                    alignItems: 'center',
+                                                    gap: '3px'
+                                                  }}>
+                                                    🕒 Previous Coach ({count} student{count > 1 ? 's' : ''})
+                                                  </span>
+                                                </div>
+                                                {isCoachOnLeave ? (
+                                                  <span style={{ fontSize: '10px', color: '#DC2626', fontWeight: 600 }}>
+                                                    ⚠️ On Leave on this date ({coachLeave?.leave_type || 'Leave'})
+                                                  </span>
+                                                ) : conflict ? (
+                                                  <span style={{ fontSize: '10px', color: '#EA580C', fontWeight: 600 }}>
+                                                    ⚠️ Busy at this time ({conflict.conflictingGroup.name})
+                                                  </span>
+                                                ) : (
+                                                  <span style={{ fontSize: '10px', color: '#0F766E', fontWeight: 600 }}>
+                                                    💡 Click to assign this coach
+                                                  </span>
+                                                )}
+                                              </div>
+
+                                              <button
+                                                type="button"
+                                                style={{
+                                                  fontSize: '11px',
+                                                  fontWeight: 700,
+                                                  padding: '3px 8px',
+                                                  borderRadius: '5px',
+                                                  border: '1px solid #99F6E4',
+                                                  background: '#F0FDFA',
+                                                  color: '#0F766E',
+                                                  cursor: isCoachOnLeave ? 'not-allowed' : 'pointer',
+                                                  flexShrink: 0
+                                                }}
+                                                onClick={(e) => {
+                                                  e.stopPropagation();
+                                                  if (!isCoachOnLeave) {
+                                                    assignInstructorToGroup(grp.id, coach.id);
+                                                  }
+                                                }}
+                                              >
+                                                + Assign
+                                              </button>
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+
+                                    <div
+                                      className="ns-dropzone-box"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setActiveDropGroupId(grp.id);
+                                      }}
+                                      onDragOver={(e) => {
+                                        e.preventDefault();
+                                        e.dataTransfer.dropEffect = 'copy';
+                                        if (dragOverGroupId !== grp.id) setDragOverGroupId(grp.id);
+                                      }}
+                                      onDrop={(e) => handleDropOnGroup(e, grp.id)}
+                                      style={{
+                                        border: '1.5px dashed #CBD5E1',
+                                        borderRadius: '8px',
+                                        padding: '9px 10px',
+                                        textAlign: 'center',
+                                        background: '#F8FAFC',
+                                        cursor: 'pointer',
+                                        fontSize: '12px',
+                                        color: '#64748B'
+                                      }}
+                                    >
+                                      <span>🏄‍♂️ <strong>Assign Coach</strong> (Drag or click instructor)</span>
                                     </div>
-                                  )}
-
-                                  <div
-                                    className="ns-dropzone-box"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setActiveDropGroupId(grp.id);
-                                    }}
-                                    onDragOver={(e) => {
-                                      e.preventDefault();
-                                      e.dataTransfer.dropEffect = 'copy';
-                                      if (dragOverGroupId !== grp.id) setDragOverGroupId(grp.id);
-                                    }}
-                                    onDrop={(e) => handleDropOnGroup(e, grp.id)}
-                                    style={{
-                                      border: '1.5px dashed #CBD5E1',
-                                      borderRadius: '8px',
-                                      padding: '9px 10px',
-                                      textAlign: 'center',
-                                      background: '#F8FAFC',
-                                      cursor: 'pointer',
-                                      fontSize: '12px',
-                                      color: '#64748B'
-                                    }}
-                                  >
-                                    <span>🏄‍♂️ <strong>Assign Coach</strong> (Drag or click instructor)</span>
                                   </div>
-                                </div>
-                              );
-                            })()}
+                                );
+                              })()}
+                            </div>
                           </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
 
-                    {/* Dynamic Card to Create Second / Next Group Card - matches first group creation style */}
-                    {(() => {
-                      const nextIndex = displayedTrainingGroups.length + 1;
-                      const ordinalWords = ['First', 'Second', 'Third', 'Fourth', 'Fifth', 'Sixth', 'Seventh', 'Eighth', 'Ninth', 'Tenth'];
-                      const nextOrdinal = ordinalWords[nextIndex - 1] || `${nextIndex}th`;
+                      {/* Dynamic Card to Create Second / Next Group Card - matches first group creation style */}
+                      {(() => {
+                        const nextIndex = displayedTrainingGroups.length + 1;
+                        const ordinalWords = ['First', 'Second', 'Third', 'Fourth', 'Fifth', 'Sixth', 'Seventh', 'Eighth', 'Ninth', 'Tenth'];
+                        const nextOrdinal = ordinalWords[nextIndex - 1] || `${nextIndex}th`;
 
-                      // Calculate next letter for active slot
-                      const activeSlotId = step3SlotFilter !== 'ALL' ? step3SlotFilter : (selectedSlotId || slots[0]?.id);
-                      const currentSlotGroups = trainingGroups.filter(g => String(g.slotId || slots[0]?.id) === String(activeSlotId));
-                      const usedLetters = new Set();
-                      currentSlotGroups.forEach(g => {
-                        const m = (g.name || '').match(/Group\s+([A-Za-z])/i);
-                        if (m) usedLetters.add(m[1].toUpperCase());
-                      });
-                      let code = 65;
-                      while (usedLetters.has(String.fromCharCode(code))) {
-                        code++;
-                      }
-                      const nextLetter = String.fromCharCode(code);
+                        // Calculate next letter for active slot
+                        const activeSlotId = step3SlotFilter !== 'ALL' ? step3SlotFilter : (selectedSlotId || slots[0]?.id);
+                        const currentSlotGroups = trainingGroups.filter(g => String(g.slotId || slots[0]?.id) === String(activeSlotId));
+                        const usedLetters = new Set();
+                        currentSlotGroups.forEach(g => {
+                          const m = (g.name || '').match(/Group\s+([A-Za-z])/i);
+                          if (m) usedLetters.add(m[1].toUpperCase());
+                        });
+                        let code = 65;
+                        while (usedLetters.has(String.fromCharCode(code))) {
+                          code++;
+                        }
+                        const nextLetter = String.fromCharCode(code);
 
-                      return (
-                        <div
-                          id="ns-create-next-group-card"
-                          className="ns-create-next-group-card"
-                          style={{
-                            padding: '24px 20px',
-                            textAlign: 'center',
-                            color: '#64748B',
-                            background: '#FFFFFF',
-                            borderRadius: '12px',
-                            border: '1.5px dashed #CBD5E1',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            alignItems: 'center',
-                            gap: '8px',
-                            marginTop: '4px',
-                            transition: 'all 0.3s ease'
-                          }}
-                        >
-                          <p style={{ margin: 0, fontWeight: 700, fontSize: '13.5px', color: '#0F172A' }}>
-                            Want to create another training group?
-                          </p>
-                          <p style={{ margin: '2px 0 10px 0', fontSize: '12px', color: '#64748B' }}>
-                            Click below to add <strong>Group {nextLetter}</strong> for this session.
-                          </p>
-                          <button
-                            type="button"
-                            className="ns-create-grp-btn"
-                            onClick={handleCreateGroup}
+                        return (
+                          <div
+                            id="ns-create-next-group-card"
+                            className="ns-create-next-group-card"
                             style={{
-                              margin: '0 auto',
-                              display: 'inline-flex',
+                              padding: '24px 20px',
+                              textAlign: 'center',
+                              color: '#64748B',
+                              background: '#FFFFFF',
+                              borderRadius: '12px',
+                              border: '1.5px dashed #CBD5E1',
+                              display: 'flex',
+                              flexDirection: 'column',
                               alignItems: 'center',
-                              gap: '6px',
-                              padding: '9px 18px',
-                              fontSize: '13px',
-                              fontWeight: 700
+                              gap: '8px',
+                              marginTop: '4px',
+                              transition: 'all 0.3s ease'
                             }}
-                            title={step3CheckedStudentIds.length > 0 ? `Create Group ${nextLetter} with ${step3CheckedStudentIds.length} selected student(s)` : `Create Group ${nextLetter}`}
                           >
-                            <span>+ Create {nextOrdinal} Group (Group {nextLetter})</span>
-                            {step3CheckedStudentIds.length > 0 && (
-                              <span style={{
-                                background: 'rgba(255, 255, 255, 0.28)',
-                                color: '#FFFFFF',
-                                padding: '1px 7px',
-                                borderRadius: '10px',
-                                fontSize: '11px',
-                                fontWeight: 800
-                              }}>
-                                {step3CheckedStudentIds.length}
-                              </span>
-                            )}
-                          </button>
-                        </div>
-                      );
-                    })()}
+                            <p style={{ margin: 0, fontWeight: 700, fontSize: '13.5px', color: '#0F172A' }}>
+                              Want to create another training group?
+                            </p>
+                            <p style={{ margin: '2px 0 10px 0', fontSize: '12px', color: '#64748B' }}>
+                              Click below to add <strong>Group {nextLetter}</strong> for this session.
+                            </p>
+                            <button
+                              type="button"
+                              className="ns-create-grp-btn"
+                              onClick={handleCreateGroup}
+                              style={{
+                                margin: '0 auto',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                padding: '9px 18px',
+                                fontSize: '13px',
+                                fontWeight: 700
+                              }}
+                              title={step3CheckedStudentIds.length > 0 ? `Create Group ${nextLetter} with ${step3CheckedStudentIds.length} selected student(s)` : `Create Group ${nextLetter}`}
+                            >
+                              <span>+ Create {nextOrdinal} Group (Group {nextLetter})</span>
+                              {step3CheckedStudentIds.length > 0 && (
+                                <span style={{
+                                  background: 'rgba(255, 255, 255, 0.28)',
+                                  color: '#FFFFFF',
+                                  padding: '1px 7px',
+                                  borderRadius: '10px',
+                                  fontSize: '11px',
+                                  fontWeight: 800
+                                }}>
+                                  {step3CheckedStudentIds.length}
+                                </span>
+                              )}
+                            </button>
+                          </div>
+                        );
+                      })()}
                     </>
                   )}
                 </div>
@@ -7820,292 +8339,292 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                 </div>
               ) : (
                 <div className="ns-ws-col ns-ws-col-instructors">
-                <div className="ns-col-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <h3 className="ns-col-title">Available Instructors</h3>
-                    <span className="ns-col-badge">
-                      {filteredInstructors.length} Staff {onLeaveInstructorsCount > 0 ? `(${onLeaveInstructorsCount} On Leave)` : ''}
-                    </span>
-                  </div>
-                  {(step3CoachGenderFilter !== 'all' || Boolean(instructorSearch)) && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setStep3CoachGenderFilter('all');
-                        setInstructorSearch('');
-                      }}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        color: '#0284C7',
-                        fontSize: '11.5px',
-                        fontWeight: 600,
-                        cursor: 'pointer',
-                        padding: '2px 4px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px'
-                      }}
-                      title="Reset coach filter"
-                    >
-                      Reset
-                    </button>
-                  )}
-                </div>
-
-                {/* Coach Gender Filter Toolbar */}
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: '6px',
-                  background: '#F8FAFC',
-                  padding: '6px 10px',
-                  borderRadius: '8px',
-                  border: '1px solid #E2E8F0',
-                  boxSizing: 'border-box'
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '10.5px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
-                    <span>👤</span> Gender:
-                  </div>
-                  <div style={{ display: 'flex', gap: '4px' }}>
-                    {[
-                      { key: 'all', label: 'All', count: allInstructors.length },
-                      { key: 'male', label: 'Male', count: allInstructors.filter(i => (i.gender || 'male').toLowerCase() === 'male').length },
-                      { key: 'female', label: 'Female', count: allInstructors.filter(i => (i.gender || '').toLowerCase() === 'female').length },
-                    ].map(({ key, label, count }) => {
-                      const isActive = step3CoachGenderFilter === key;
-                      return (
-                        <button
-                          key={key}
-                          type="button"
-                          onClick={() => setStep3CoachGenderFilter(key)}
-                          style={{
-                            border: `1px solid ${isActive ? '#0284C7' : '#CBD5E1'}`,
-                            borderRadius: '6px',
-                            padding: '3px 8px',
-                            fontSize: '11px',
-                            fontWeight: isActive ? 700 : 500,
-                            background: isActive ? '#F0F9FF' : '#FFFFFF',
-                            color: isActive ? '#0284C7' : '#475569',
-                            cursor: 'pointer',
-                            transition: 'all 0.15s ease'
-                          }}
-                        >
-                          {label} ({count})
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {/* Search Instructors */}
-                <div className="ns-ws-search">
-                  <span>🔍</span>
-                  <input
-                    type="text"
-                    placeholder="Search instructors..."
-                    value={instructorSearch}
-                    onChange={(e) => setInstructorSearch(e.target.value)}
-                  />
-                  {instructorSearch && (
-                    <button
-                      type="button"
-                      onClick={() => setInstructorSearch('')}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        color: '#94A3B8',
-                        cursor: 'pointer',
-                        fontSize: '12px',
-                        padding: '0 4px',
-                        display: 'flex',
-                        alignItems: 'center'
-                      }}
-                      title="Clear search"
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-
-                <div style={{ fontSize: '11px', color: '#64748B', display: 'flex', alignItems: 'center', gap: '4px', background: '#F8FAFC', padding: '6px 10px', borderRadius: '6px' }}>
-                  <span>🖐️</span> Drag instructor card into any Group Card in the center.
-                </div>
-
-                <div className="ns-instructors-list">
-                  {filteredInstructors.length === 0 ? (
-                    <div style={{ padding: '24px', textAlign: 'center', color: '#64748B', background: '#FFFFFF', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
-                      {instructorSearch.trim()
-                        ? `No instructors found matching "${instructorSearch}".`
-                        : step3CoachGenderFilter !== 'all'
-                          ? `No ${step3CoachGenderFilter} instructors registered.`
-                          : 'No instructors registered for this school yet.'}
+                  <div className="ns-col-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <h3 className="ns-col-title">Available Instructors</h3>
+                      <span className="ns-col-badge">
+                        {filteredInstructors.length} Staff {onLeaveInstructorsCount > 0 ? `(${onLeaveInstructorsCount} On Leave)` : ''}
+                      </span>
                     </div>
-                  ) : (
-                    filteredInstructors.map(inst => {
-                      const currentSlotId = step3SlotFilter !== 'ALL' ? step3SlotFilter : (selectedSlotId || slots[0]?.id);
-                      const currentSlotGroups = displayedTrainingGroups;
-                      const currentActiveGroup = currentSlotGroups.find(g => g.id === activeDropGroupId) || currentSlotGroups[0] || null;
+                    {(step3CoachGenderFilter !== 'all' || Boolean(instructorSearch)) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStep3CoachGenderFilter('all');
+                          setInstructorSearch('');
+                        }}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: '#0284C7',
+                          fontSize: '11.5px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          padding: '2px 4px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}
+                        title="Reset coach filter"
+                      >
+                        Reset
+                      </button>
+                    )}
+                  </div>
 
-                      // Is instructor already assigned to a group in THIS current time slot?
-                      const isAssignedInCurrentSlot = currentSlotGroups.some(g => {
-                        const ids = g.assignedInstructorIds || (g.assignedInstructorId ? [g.assignedInstructorId] : []);
-                        return ids.map(String).includes(String(inst.id));
-                      });
-
-                      const totalAssignedCount = trainingGroups.filter(g => {
-                        const ids = g.assignedInstructorIds || (g.assignedInstructorId ? [g.assignedInstructorId] : []);
-                        return ids.map(String).includes(String(inst.id));
-                      }).length;
-
-                      const leaveOnDate = getInstructorLeaveOnDate(inst, selectedSessionDateYYYYMMDD);
-                      const isOnLeave = Boolean(leaveOnDate) || inst.status === 'On Leave';
-
-                      const activeConflict = currentActiveGroup
-                        ? getCoachSlotConflict(currentActiveGroup.id, inst.id)
-                        : getCoachSlotConflict(null, inst.id, currentSlotId);
-
-                      const badgeText = isOnLeave
-                        ? '🏖️ On Leave'
-                        : activeConflict
-                          ? `Busy (${activeConflict.conflictingGroup.name})`
-                          : isAssignedInCurrentSlot
-                            ? 'Assigned'
-                            : totalAssignedCount > 0
-                              ? `Assigned (Other slot)`
-                              : 'Available';
-                      const badgeClass = isOnLeave
-                        ? 'leave'
-                        : activeConflict
-                          ? 'conflict'
-                          : isAssignedInCurrentSlot
-                            ? 'assigned'
-                            : 'available';
-
-                      return (
-                        <div
-                          key={inst.id}
-                          className={`ns-inst-card ${isAssignedInCurrentSlot ? 'assigned' : ''} ${isOnLeave ? 'leave' : ''} ${activeConflict ? 'conflict-busy' : ''}`}
-                          style={isOnLeave ? {
-                            background: '#FFF5F5',
-                            borderColor: '#FECACA',
-                            cursor: 'not-allowed',
-                            opacity: 0.85
-                          } : {}}
-                          draggable={!isOnLeave}
-                          onDragStart={(e) => {
-                            if (isOnLeave) return;
-                            e.dataTransfer.setData('application/json', JSON.stringify({
-                              type: 'instructor',
-                              id: inst.id
-                            }));
-                            e.dataTransfer.effectAllowed = 'copy';
-                            setDraggingType('instructor');
-                          }}
-                          onDragEnd={() => {
-                            setDraggingType(null);
-                            setDragOverGroupId(null);
-                          }}
-                          onClick={() => {
-                            if (isOnLeave) {
-                              setUiAlert({
-                                title: 'Staff On Leave',
-                                message: `${inst.name} is on approved leave on ${formattedSessionDate}${leaveOnDate?.leave_type ? ` (${leaveOnDate.leave_type})` : ''}. Cannot assign to sessions on this date.`,
-                                type: 'warning',
-                                icon: '🏖️'
-                              });
-                              return;
-                            }
-
-                            // Strictly target groups in the CURRENT time slot
-                            const activeSlotId = step3SlotFilter !== 'ALL' ? step3SlotFilter : (selectedSlotId || slots[0]?.id);
-                            const activeSlotGroups = displayedTrainingGroups;
-
-                            let targetGroup = activeSlotGroups.find(g => g.id === activeDropGroupId);
-
-                            // If active group is from another slot, pick an unassigned group in this slot
-                            if (!targetGroup) {
-                              targetGroup = activeSlotGroups.find(g => {
-                                const ids = g.assignedInstructorIds || (g.assignedInstructorId ? [g.assignedInstructorId] : []);
-                                return ids.length === 0;
-                              });
-                            }
-
-                            // If still none, fallback to first group in current slot
-                            if (!targetGroup && activeSlotGroups.length > 0) {
-                              targetGroup = activeSlotGroups[0];
-                            }
-
-                            if (targetGroup) {
-                              setActiveDropGroupId(targetGroup.id);
-                              assignInstructorToGroup(targetGroup.id, inst.id);
-                            } else {
-                              // If NO group exists in current slot yet, auto-create Group A for THIS slot and assign coach
-                              const slotStudents = slotStudentMap[activeSlotId] || [];
-                              const newGroup = {
-                                id: `group-${activeSlotId}-${Date.now()}`,
-                                name: 'Group A',
-                                day: 'Day 1',
-                                level: 'General',
-                                slotId: activeSlotId,
-                                studentIds: slotStudents,
-                                assignedInstructorId: inst.id,
-                                assignedInstructorIds: [inst.id],
-                              };
-                              setTrainingGroups(prev => reindexGroups([...prev, newGroup]));
-                              setActiveDropGroupId(newGroup.id);
-                            }
-                          }}
-                          title={isOnLeave ? `On Leave on ${formattedSessionDate}${leaveOnDate?.leave_type ? ` (${leaveOnDate.leave_type})` : ''}` : activeConflict ? `Already coaching ${activeConflict.conflictingGroup.name} at ${activeConflict.time}` : 'Drag into a group or click to assign'}
-                        >
-                          <span className="ns-drag-grip" style={{ color: isOnLeave ? '#CBD5E1' : '#0D9488', fontSize: '13px' }}>⠿</span>
-                          <UserAvatar src={inst.avatar} name={inst.name} size={36} className="ns-inst-avatar" />
-                          <div className="ns-inst-info">
-                            <h4 className="ns-inst-name">{inst.name}</h4>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                              <span className="ns-inst-role">
-                                {inst.role || 'Instructor'}
-                              </span>
-                              <span
-                                style={{
-                                  fontSize: '9.5px',
-                                  padding: '1px 5px',
-                                  borderRadius: '4px',
-                                  fontWeight: 700,
-                                  background: (inst.gender || '').toLowerCase() === 'female' ? '#FDF2F8' : '#EFF6FF',
-                                  color: (inst.gender || '').toLowerCase() === 'female' ? '#DB2777' : '#1D4ED8',
-                                  border: `1px solid ${(inst.gender || '').toLowerCase() === 'female' ? '#FBCFE8' : '#BFDBFE'}`,
-                                  whiteSpace: 'nowrap'
-                                }}
-                              >
-                                {(inst.gender || '').toLowerCase() === 'female' ? '♀ Female' : '♂ Male'}
-                              </span>
-                            </div>
-                          </div>
-                          <span
-                            className={`ns-inst-badge ${badgeClass}`}
-                            style={isOnLeave ? {
-                              background: '#FEE2E2',
-                              color: '#B91C1C',
-                              border: '1px solid #FECACA',
-                              fontWeight: 700
-                            } : (activeConflict ? {
-                              background: '#FEF2F2',
-                              color: '#DC2626',
-                              border: '1px solid #FECACA',
-                              fontWeight: 700
-                            } : {})}
+                  {/* Coach Gender Filter Toolbar */}
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '6px',
+                    background: '#F8FAFC',
+                    padding: '6px 10px',
+                    borderRadius: '8px',
+                    border: '1px solid #E2E8F0',
+                    boxSizing: 'border-box'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '10.5px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+                      <span>👤</span> Gender:
+                    </div>
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      {[
+                        { key: 'all', label: 'All', count: allInstructors.length },
+                        { key: 'male', label: 'Male', count: allInstructors.filter(i => (i.gender || 'male').toLowerCase() === 'male').length },
+                        { key: 'female', label: 'Female', count: allInstructors.filter(i => (i.gender || '').toLowerCase() === 'female').length },
+                      ].map(({ key, label, count }) => {
+                        const isActive = step3CoachGenderFilter === key;
+                        return (
+                          <button
+                            key={key}
+                            type="button"
+                            onClick={() => setStep3CoachGenderFilter(key)}
+                            style={{
+                              border: `1px solid ${isActive ? '#0284C7' : '#CBD5E1'}`,
+                              borderRadius: '6px',
+                              padding: '3px 8px',
+                              fontSize: '11px',
+                              fontWeight: isActive ? 700 : 500,
+                              background: isActive ? '#F0F9FF' : '#FFFFFF',
+                              color: isActive ? '#0284C7' : '#475569',
+                              cursor: 'pointer',
+                              transition: 'all 0.15s ease'
+                            }}
                           >
-                            {badgeText}
-                          </span>
-                        </div>
-                      );
-                    })
-                  )}
+                            {label} ({count})
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Search Instructors */}
+                  <div className="ns-ws-search">
+                    <span>🔍</span>
+                    <input
+                      type="text"
+                      placeholder="Search instructors..."
+                      value={instructorSearch}
+                      onChange={(e) => setInstructorSearch(e.target.value)}
+                    />
+                    {instructorSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setInstructorSearch('')}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: '#94A3B8',
+                          cursor: 'pointer',
+                          fontSize: '12px',
+                          padding: '0 4px',
+                          display: 'flex',
+                          alignItems: 'center'
+                        }}
+                        title="Clear search"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+
+                  <div style={{ fontSize: '11px', color: '#64748B', display: 'flex', alignItems: 'center', gap: '4px', background: '#F8FAFC', padding: '6px 10px', borderRadius: '6px' }}>
+                    <span>🖐️</span> Drag instructor card into any Group Card in the center.
+                  </div>
+
+                  <div className="ns-instructors-list">
+                    {filteredInstructors.length === 0 ? (
+                      <div style={{ padding: '24px', textAlign: 'center', color: '#64748B', background: '#FFFFFF', borderRadius: '10px', border: '1px solid #E2E8F0' }}>
+                        {instructorSearch.trim()
+                          ? `No instructors found matching "${instructorSearch}".`
+                          : step3CoachGenderFilter !== 'all'
+                            ? `No ${step3CoachGenderFilter} instructors registered.`
+                            : 'No instructors registered for this school yet.'}
+                      </div>
+                    ) : (
+                      filteredInstructors.map(inst => {
+                        const currentSlotId = step3SlotFilter !== 'ALL' ? step3SlotFilter : (selectedSlotId || slots[0]?.id);
+                        const currentSlotGroups = displayedTrainingGroups;
+                        const currentActiveGroup = currentSlotGroups.find(g => g.id === activeDropGroupId) || currentSlotGroups[0] || null;
+
+                        // Is instructor already assigned to a group in THIS current time slot?
+                        const isAssignedInCurrentSlot = currentSlotGroups.some(g => {
+                          const ids = g.assignedInstructorIds || (g.assignedInstructorId ? [g.assignedInstructorId] : []);
+                          return ids.map(String).includes(String(inst.id));
+                        });
+
+                        const totalAssignedCount = trainingGroups.filter(g => {
+                          const ids = g.assignedInstructorIds || (g.assignedInstructorId ? [g.assignedInstructorId] : []);
+                          return ids.map(String).includes(String(inst.id));
+                        }).length;
+
+                        const leaveOnDate = getInstructorLeaveOnDate(inst, selectedSessionDateYYYYMMDD);
+                        const isOnLeave = Boolean(leaveOnDate) || inst.status === 'On Leave';
+
+                        const activeConflict = currentActiveGroup
+                          ? getCoachSlotConflict(currentActiveGroup.id, inst.id)
+                          : getCoachSlotConflict(null, inst.id, currentSlotId);
+
+                        const badgeText = isOnLeave
+                          ? '🏖️ On Leave'
+                          : activeConflict
+                            ? `Busy (${activeConflict.conflictingGroup.name})`
+                            : isAssignedInCurrentSlot
+                              ? 'Assigned'
+                              : totalAssignedCount > 0
+                                ? `Assigned (Other slot)`
+                                : 'Available';
+                        const badgeClass = isOnLeave
+                          ? 'leave'
+                          : activeConflict
+                            ? 'conflict'
+                            : isAssignedInCurrentSlot
+                              ? 'assigned'
+                              : 'available';
+
+                        return (
+                          <div
+                            key={inst.id}
+                            className={`ns-inst-card ${isAssignedInCurrentSlot ? 'assigned' : ''} ${isOnLeave ? 'leave' : ''} ${activeConflict ? 'conflict-busy' : ''}`}
+                            style={isOnLeave ? {
+                              background: '#FFF5F5',
+                              borderColor: '#FECACA',
+                              cursor: 'not-allowed',
+                              opacity: 0.85
+                            } : {}}
+                            draggable={!isOnLeave}
+                            onDragStart={(e) => {
+                              if (isOnLeave) return;
+                              e.dataTransfer.setData('application/json', JSON.stringify({
+                                type: 'instructor',
+                                id: inst.id
+                              }));
+                              e.dataTransfer.effectAllowed = 'copy';
+                              setDraggingType('instructor');
+                            }}
+                            onDragEnd={() => {
+                              setDraggingType(null);
+                              setDragOverGroupId(null);
+                            }}
+                            onClick={() => {
+                              if (isOnLeave) {
+                                setUiAlert({
+                                  title: 'Staff On Leave',
+                                  message: `${inst.name} is on approved leave on ${formattedSessionDate}${leaveOnDate?.leave_type ? ` (${leaveOnDate.leave_type})` : ''}. Cannot assign to sessions on this date.`,
+                                  type: 'warning',
+                                  icon: '🏖️'
+                                });
+                                return;
+                              }
+
+                              // Strictly target groups in the CURRENT time slot
+                              const activeSlotId = step3SlotFilter !== 'ALL' ? step3SlotFilter : (selectedSlotId || slots[0]?.id);
+                              const activeSlotGroups = displayedTrainingGroups;
+
+                              let targetGroup = activeSlotGroups.find(g => g.id === activeDropGroupId);
+
+                              // If active group is from another slot, pick an unassigned group in this slot
+                              if (!targetGroup) {
+                                targetGroup = activeSlotGroups.find(g => {
+                                  const ids = g.assignedInstructorIds || (g.assignedInstructorId ? [g.assignedInstructorId] : []);
+                                  return ids.length === 0;
+                                });
+                              }
+
+                              // If still none, fallback to first group in current slot
+                              if (!targetGroup && activeSlotGroups.length > 0) {
+                                targetGroup = activeSlotGroups[0];
+                              }
+
+                              if (targetGroup) {
+                                setActiveDropGroupId(targetGroup.id);
+                                assignInstructorToGroup(targetGroup.id, inst.id);
+                              } else {
+                                // If NO group exists in current slot yet, auto-create Group A for THIS slot and assign coach
+                                const slotStudents = slotStudentMap[activeSlotId] || [];
+                                const newGroup = {
+                                  id: `group-${activeSlotId}-${Date.now()}`,
+                                  name: 'Group A',
+                                  day: 'Day 1',
+                                  level: 'General',
+                                  slotId: activeSlotId,
+                                  studentIds: slotStudents,
+                                  assignedInstructorId: inst.id,
+                                  assignedInstructorIds: [inst.id],
+                                };
+                                setTrainingGroups(prev => reindexGroups([...prev, newGroup]));
+                                setActiveDropGroupId(newGroup.id);
+                              }
+                            }}
+                            title={isOnLeave ? `On Leave on ${formattedSessionDate}${leaveOnDate?.leave_type ? ` (${leaveOnDate.leave_type})` : ''}` : activeConflict ? `Already coaching ${activeConflict.conflictingGroup.name} at ${activeConflict.time}` : 'Drag into a group or click to assign'}
+                          >
+                            <span className="ns-drag-grip" style={{ color: isOnLeave ? '#CBD5E1' : '#0D9488', fontSize: '13px' }}>⠿</span>
+                            <UserAvatar src={inst.avatar} name={inst.name} size={36} className="ns-inst-avatar" />
+                            <div className="ns-inst-info">
+                              <h4 className="ns-inst-name">{inst.name}</h4>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                <span className="ns-inst-role">
+                                  {inst.role || 'Instructor'}
+                                </span>
+                                <span
+                                  style={{
+                                    fontSize: '9.5px',
+                                    padding: '1px 5px',
+                                    borderRadius: '4px',
+                                    fontWeight: 700,
+                                    background: (inst.gender || '').toLowerCase() === 'female' ? '#FDF2F8' : '#EFF6FF',
+                                    color: (inst.gender || '').toLowerCase() === 'female' ? '#DB2777' : '#1D4ED8',
+                                    border: `1px solid ${(inst.gender || '').toLowerCase() === 'female' ? '#FBCFE8' : '#BFDBFE'}`,
+                                    whiteSpace: 'nowrap'
+                                  }}
+                                >
+                                  {(inst.gender || '').toLowerCase() === 'female' ? '♀ Female' : '♂ Male'}
+                                </span>
+                              </div>
+                            </div>
+                            <span
+                              className={`ns-inst-badge ${badgeClass}`}
+                              style={isOnLeave ? {
+                                background: '#FEE2E2',
+                                color: '#B91C1C',
+                                border: '1px solid #FECACA',
+                                fontWeight: 700
+                              } : (activeConflict ? {
+                                background: '#FEF2F2',
+                                color: '#DC2626',
+                                border: '1px solid #FECACA',
+                                fontWeight: 700
+                              } : {})}
+                            >
+                              {badgeText}
+                            </span>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
             </div>
 
             {/* Finalize Action Bottom Bar (Sticky Bar format like Step 1 & Step 2) */}
@@ -8259,27 +8778,27 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                     </label>
                     <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                       <input
-                      type="number"
-                      min="1"
-                      step="1"
-                      placeholder="Enter duration in minutes"
-                      value={editingSlotModal.duration ?? ''}
-                      onChange={(e) => {
-                        const value = e.target.value;
+                        type="number"
+                        min="1"
+                        step="1"
+                        placeholder="Enter duration in minutes"
+                        value={editingSlotModal.duration ?? ''}
+                        onChange={(e) => {
+                          const value = e.target.value;
 
-                        setEditingSlotModal(prev => ({
-                          ...prev,
-                          duration: value === '' ? '' : Number(value)
-                        }));
-                      }}
-                      style={{
-                        width: '100%',
-                        padding: '10px 12px',
-                        border: '1px solid #CBD5E1',
-                        borderRadius: '8px',
-                        fontSize: '14px'
-                      }}
-                    />
+                          setEditingSlotModal(prev => ({
+                            ...prev,
+                            duration: value === '' ? '' : Number(value)
+                          }));
+                        }}
+                        style={{
+                          width: '100%',
+                          padding: '10px 12px',
+                          border: '1px solid #CBD5E1',
+                          borderRadius: '8px',
+                          fontSize: '14px'
+                        }}
+                      />
                     </div>
                   </div>
                   <div>
@@ -10338,7 +10857,16 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           max-height: calc(88vh - 200px);
           overflow-y: auto;
           scroll-behavior: smooth;
-          padding-bottom: 32px;
+          padding-bottom: 300px;
+        }
+
+        @keyframes pulseBorder {
+          0% { border-color: #0D9488; box-shadow: 0 0 0 0 rgba(13, 148, 136, 0.4); transform: scale(1); }
+          50% { border-color: #0D9488; box-shadow: 0 0 0 8px rgba(13, 148, 136, 0.15); transform: scale(1.015); }
+          100% { border-color: #CBD5E1; box-shadow: none; transform: scale(1); }
+        }
+        .highlight-pulse {
+          animation: pulseBorder 1.2s ease-in-out;
         }
         .ns-training-groups-list::-webkit-scrollbar {
           width: 7px;
@@ -10368,6 +10896,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         }
 
         .ns-group-card {
+          position: relative;
           border: 1.5px solid #E2E8F0;
           border-radius: 12px;
           padding: 16px;
@@ -10388,6 +10917,33 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           box-shadow: 0 4px 16px rgba(2, 132, 199, 0.2);
           transform: scale(1.01);
         }
+        .ns-gc-delete-btn {
+          position: absolute;
+          top: 12px;
+          right: 12px;
+          width: 28px;
+          height: 28px;
+          border-radius: 8px;
+          border: 1px solid #E2E8F0;
+          background: #FFFFFF;
+          color: #94A3B8;
+          cursor: pointer;
+          font-size: 14px;
+          font-weight: 700;
+          line-height: 1;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          transition: all 0.15s ease;
+          box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+          z-index: 5;
+        }
+        .ns-gc-delete-btn:hover {
+          color: #EF4444;
+          border-color: #FECACA;
+          background: #FEF2F2;
+          transform: scale(1.08);
+        }
         .ns-gc-day {
           font-size: 11px;
           font-weight: 700;
@@ -10398,8 +10954,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         }
         .ns-gc-title-row {
           display: flex;
-          justify-content: space-between;
-          align-items: center;
+          flex-direction: column;
+          gap: 8px;
+          padding-right: 36px;
         }
         .ns-gc-title {
           font-size: 14px;
@@ -11178,7 +11735,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             max-height: 360px !important;
           }
           .ns-training-groups-list {
-            max-height: 400px !important;
+            max-height: 440px !important;
+            padding-bottom: 260px !important;
           }
           .ns-step3-filters-grid {
             grid-template-columns: repeat(3, 1fr) !important;

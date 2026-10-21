@@ -265,28 +265,14 @@ const AuthPage = () => {
 
   const formatSlotDisplayTime = (slot) => {
     if (!slot) return '';
-    const timeStr = slot.time || slot.startTime || '';
-    if (!timeStr) return '';
-    if (timeStr.includes(' - ')) return timeStr;
-
-    const m = String(timeStr).trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
-    if (!m) return timeStr;
-    let [_, hStr, mStr, meridiem] = m;
-    let hours = parseInt(hStr, 10);
-    let minutes = parseInt(mStr, 10);
-    if (meridiem) {
-      const med = meridiem.toUpperCase();
-      if (med === 'PM' && hours < 12) hours += 12;
-      if (med === 'AM' && hours === 12) hours = 0;
-    }
-    const dur = parseInt(slot.duration || 120, 10);
-    const totalMinutes = hours * 60 + minutes + dur;
-    const endH24 = Math.floor((totalMinutes / 60) % 24);
-    const endM = totalMinutes % 60;
-    const endMeridiem = endH24 >= 12 ? 'PM' : 'AM';
-    const endH12 = endH24 % 12 === 0 ? 12 : endH24 % 12;
+    const raw = typeof slot === 'string' ? slot : (slot.time || slot.startTime || '');
+    if (!raw) return '';
+    const startPart = String(raw).split(/\s*[-–—to]+\s*/i)[0].trim();
+    const m = startPart.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+    if (!m) return startPart;
+    const [_, hStr, mStr, meridiem] = m;
     const pad = (n) => String(n).padStart(2, '0');
-    return `${timeStr} - ${pad(endH12)}:${pad(endM)} ${endMeridiem}`;
+    return `${pad(hStr)}:${mStr} ${(meridiem || 'AM').toUpperCase()}`;
   };
 
   // Fetch school schedule session slots for selected date
@@ -1413,22 +1399,6 @@ const AuthPage = () => {
                   <button type="submit" className="btn-primary auth-submit" disabled={loading}>
                     {loading ? <span className="auth-spinner" /> : 'Log In'}
                   </button>
-
-                  <div style={{
-                    marginTop: '12px',
-                    textAlign: 'center',
-                    fontSize: '11.5px',
-                    color: 'rgba(255, 255, 255, 0.6)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '6px',
-                    fontFamily: "'Outfit', sans-serif"
-                  }}>
-                    <span>🛡️</span>
-                    <span>Account scheduled for deletion? Log in to retain it within 30 days.</span>
-                  </div>
-
                 </form>
               </>
             )}

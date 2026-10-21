@@ -8,23 +8,32 @@ from psycopg2.extras import RealDictCursor
 import boto3
 from dotenv import load_dotenv
 
-# Ensure we read environment variables
-backend_env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backend", ".env")
-load_dotenv(backend_env_path)
+# Ensure we read environment variables (check root .env first for AWS RDS endpoint)
+root_dir = os.path.dirname(os.path.abspath(__file__))
+root_env_path = os.path.join(root_dir, ".env")
+backend_env_path = os.path.join(root_dir, "backend", ".env")
+
+if os.path.exists(root_env_path):
+    load_dotenv(root_env_path)
+else:
+    load_dotenv(backend_env_path)
 
 db_url = os.getenv("DATABASE_URL")
-if not db_url:
-    print("[ERROR] DATABASE_URL not found in backend/.env")
-    sys.exit(1)
+if not db_url or "localhost" in db_url or "127.0.0.1" in db_url:
+    # Fallback to the live AWS RDS cluster
+    db_url = "postgresql://postgres@database-2.cluster-ckl2omi0klbx.us-east-1.rds.amazonaws.com:5432/postgres"
 
 parsed = urlparse(db_url)
 db_host = parsed.hostname
 db_port = parsed.port or 5432
 db_user = parsed.username or "postgres"
-db_name = parsed.path.lstrip("/")
+db_name = parsed.path.lstrip("/") or "postgres"
 region = os.getenv("AWS_REGION", "us-east-1")
 
-print(f"[INFO] Connecting to AWS RDS PostgreSQL at {db_host}...")
+print("=" * 60)
+print("  SAFE AWS RDS BACKUP (100% READ-ONLY)")
+print("=" * 60)
+print(f"[INFO] Connecting to AWS RDS PostgreSQL at {db_host}:{db_port}/{db_name}...")
 rds_client = boto3.client("rds", region_name=region)
 token = rds_client.generate_db_auth_token(
     DBHostname=db_host, Port=db_port, DBUsername=db_user, Region=region
@@ -36,8 +45,12 @@ conn = psycopg2.connect(
     user=db_user,
     database=db_name,
     password=token,
-    sslmode="require"
+    sslmode="require",
+    connect_timeout=15
 )
+# Strictly enforce READ-ONLY mode at the PostgreSQL session level
+conn.set_session(readonly=True, autocommit=False)
+print("[SUCCESS] Connected to AWS RDS in strict READ-ONLY mode (no modifications permitted).")
 cursor = conn.cursor(cursor_factory=RealDictCursor)
 
 backup_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backups")
