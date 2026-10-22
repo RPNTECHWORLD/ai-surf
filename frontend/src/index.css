@@ -530,6 +530,27 @@ h2 {
   background: #050B1A !important;
 }
 
+/* Global Loading Spinner & Containers */
+@keyframes db-spin {
+  to { transform: rotate(360deg); }
+}
+.db-loading {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  min-height: 250px;
+  gap: 16px;
+}
+.db-spinner {
+  width: 44px;
+  height: 44px;
+  border: 3.5px solid rgba(13, 148, 136, 0.2);
+  border-top-color: #0D9488;
+  border-radius: 50%;
+  animation: db-spin 0.8s linear infinite;
+}
+
 /* Quick Stats - Horizontal Row */
 .db-stats-row {
   display: grid;

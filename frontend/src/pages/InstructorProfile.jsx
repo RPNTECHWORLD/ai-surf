@@ -854,8 +854,16 @@ const InstructorProfile = () => {
     (currentUser?.name && instructor?.name && currentUser.name.toLowerCase().trim() === instructor.name.toLowerCase().trim())
   );
 
-  // School Admin should NEVER see Edit Profile button; only the coach themselves when logged in
-  const canEditProfile = isCoachThemselves;
+  // School Admin and Super Admin can edit their school's coaches; coach can edit their own profile
+  const canEditProfile = isCoachThemselves || isSuperAdmin || (
+    isSchoolAdmin && (
+      !instructor.school ||
+      instructor.school === 'Individual / Freelance Coach' ||
+      (currentUser?.school_name && instructor.school.toLowerCase().trim() === currentUser.school_name.toLowerCase().trim()) ||
+      (currentUser?.school && typeof currentUser.school === 'string' && instructor.school.toLowerCase().trim() === currentUser.school.toLowerCase().trim()) ||
+      (activeSchoolName && instructor.school.toLowerCase().trim() === activeSchoolName.toLowerCase().trim())
+    )
+  );
 
 
   return (
@@ -980,60 +988,62 @@ const InstructorProfile = () => {
                 </button>
               )}
 
-              <button 
-                className="btn-secondary apply-leave-btn" 
-                onClick={() => {
-                  setShowLeaveModal(true);
-                  if (unacknowledgedLeaves.length > 0) {
-                    setLeaveTab('history');
-                  } else {
-                    setLeaveTab('apply');
-                  }
-                }} 
-                style={{ 
-                  background: 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)', 
-                  color: '#FFF', 
-                  border: '1px solid rgba(45, 212, 191, 0.4)', 
-                  padding: '10px 18px', 
-                  borderRadius: '10px', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  cursor: 'pointer',
-                  fontWeight: 700,
-                  fontSize: '13.5px',
-                  boxShadow: '0 4px 14px rgba(13, 148, 136, 0.25)',
-                  transition: 'all 0.2s ease',
-                  position: 'relative'
-                }}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '7px' }}>
-                  <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
-                  <line x1="16" y1="2" x2="16" y2="6"></line>
-                  <line x1="8" y1="2" x2="8" y2="6"></line>
-                  <line x1="3" y1="10" x2="21" y2="10"></line>
-                </svg>
-                <span>Apply Leave</span>
-                {unacknowledgedLeaves.length > 0 && (
-                  <span
-                    style={{
-                      marginLeft: '8px',
-                      background: unacknowledgedLeaves[0].status === 'Approved' ? '#10B981' : '#EF4444',
-                      color: '#FFFFFF',
-                      padding: '2px 8px',
-                      borderRadius: '10px',
-                      fontSize: '11px',
-                      fontWeight: 800,
-                      boxShadow: '0 2px 6px rgba(0,0,0,0.3)',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '4px'
-                    }}
-                  >
-                    <span>{unacknowledgedLeaves[0].status === 'Approved' ? '✓' : '!'}</span>
-                    <span>{unacknowledgedLeaves[0].status}</span>
-                  </span>
-                )}
-              </button>
+              {isCoachThemselves && (
+                <button 
+                  className="btn-secondary apply-leave-btn" 
+                  onClick={() => {
+                    setShowLeaveModal(true);
+                    if (unacknowledgedLeaves.length > 0) {
+                      setLeaveTab('history');
+                    } else {
+                      setLeaveTab('apply');
+                    }
+                  }} 
+                  style={{ 
+                    background: 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)', 
+                    color: '#FFF', 
+                    border: '1px solid rgba(45, 212, 191, 0.4)', 
+                    padding: '10px 18px', 
+                    borderRadius: '10px', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    cursor: 'pointer',
+                    fontWeight: 700,
+                    fontSize: '13.5px',
+                    boxShadow: '0 4px 14px rgba(13, 148, 136, 0.25)',
+                    transition: 'all 0.2s ease',
+                    position: 'relative'
+                  }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '7px' }}>
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                    <line x1="16" y1="2" x2="16" y2="6"></line>
+                    <line x1="8" y1="2" x2="8" y2="6"></line>
+                    <line x1="3" y1="10" x2="21" y2="10"></line>
+                  </svg>
+                  <span>Apply Leave</span>
+                  {unacknowledgedLeaves.length > 0 && (
+                    <span
+                      style={{
+                        marginLeft: '8px',
+                        background: unacknowledgedLeaves[0].status === 'Approved' ? '#10B981' : '#EF4444',
+                        color: '#FFFFFF',
+                        padding: '2px 8px',
+                        borderRadius: '10px',
+                        fontSize: '11px',
+                        fontWeight: 800,
+                        boxShadow: '0 2px 6px rgba(0,0,0,0.3)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px'
+                      }}
+                    >
+                      <span>{unacknowledgedLeaves[0].status === 'Approved' ? '✓' : '!'}</span>
+                      <span>{unacknowledgedLeaves[0].status}</span>
+                    </span>
+                  )}
+                </button>
+              )}
 
               <button className="btn-secondary edit-profile-btn" onClick={handleEditClick} style={{ background: 'rgba(255,255,255,0.1)', color: '#FFF', border: '1px solid rgba(255,255,255,0.2)', padding: '10px 18px', borderRadius: '10px', display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px' }}>
@@ -1276,7 +1286,35 @@ const InstructorProfile = () => {
               </div>
               <div className="ip-divider" />
               <div className="ip-bio">
-                <span className="ip-bio-label">Bio</span>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span className="ip-bio-label">Bio</span>
+                  {canEditProfile && (
+                    <button
+                      type="button"
+                      onClick={handleEditClick}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: '#0D9488',
+                        fontSize: '12px',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        padding: '2px 6px',
+                        borderRadius: '6px'
+                      }}
+                      title="Edit Bio / Profile Details"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                        <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                      </svg>
+                      <span>Edit</span>
+                    </button>
+                  )}
+                </div>
                 <p className="ip-bio-text">{instructor.bio || 'No bio added yet.'}</p>
               </div>
             </div>
@@ -1410,7 +1448,11 @@ const InstructorProfile = () => {
                           borderBottom: i === displayedList.length - 1 ? 'none' : '1px solid #E2E8F0',
                           cursor: 'pointer'
                         }}
-                        onClick={() => navigate(`/students/${s.id}`)}
+                        onClick={() => {
+                          if (s && s.id && s.id !== 'undefined') {
+                            navigate(`/students/${s.id}`);
+                          }
+                        }}
                       >
                         <div className="ip-student-info">
                           {s.image && typeof s.image === 'string' && s.image.trim() !== '' && !s.image.includes('unsplash.com') && !s.image.includes('1500648767791') ? (

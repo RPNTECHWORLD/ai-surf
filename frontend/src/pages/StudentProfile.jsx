@@ -197,6 +197,21 @@ const StudentProfile = () => {
   const [loading, setLoading] = useState(true);
   const [mockHeats, setMockHeats] = useState([]);
   const [expandedHeatId, setExpandedHeatId] = useState(null);
+
+  // Guard against invalid or undefined student IDs (e.g. /students/undefined)
+  useEffect(() => {
+    if (!id || id === 'undefined' || id === 'null') {
+      try {
+        const rawUser = sessionStorage.getItem('user') || localStorage.getItem('user');
+        const u = rawUser ? JSON.parse(rawUser) : null;
+        if (u && (u.role === 'athlete' || u.role === 'student' || u.role === 'user') && (u.student_id || u.id)) {
+          navigate(`/students/${u.student_id || u.id}`, { replace: true });
+          return;
+        }
+      } catch (e) {}
+      navigate('/students', { replace: true });
+    }
+  }, [id, navigate]);
   
   // Auth state
   const [currentUser, setCurrentUser] = useState(null);
@@ -691,6 +706,10 @@ const StudentProfile = () => {
   };
 
   const fetchStudent = async () => {
+    if (!id || id === 'undefined' || id === 'null') {
+      setLoading(false);
+      return;
+    }
     try {
       const savedUser = JSON.parse(sessionStorage.getItem('user') || '{}');
       const isStudentSelf = Boolean(
@@ -955,13 +974,16 @@ const StudentProfile = () => {
   };
 
   const fetchMockHeats = () => {
+    if (!id || id === 'undefined' || id === 'null') return;
     fetch(`${API}/api/students/${id}/mock-heats`)
-      .then(res => res.json())
+      .then(res => res.ok ? res.json() : [])
       .then(setMockHeats)
       .catch(() => {});
   };
 
   useEffect(() => {
+    if (!id || id === 'undefined' || id === 'null') return;
+
     const syncUserAndFetch = () => {
       const saved = sessionStorage.getItem('user');
       if (saved) {
@@ -989,7 +1011,7 @@ const StudentProfile = () => {
 
     window.addEventListener('storage', syncUserAndFetch);
     window.addEventListener('focus', syncUserAndFetch);
-    const interval = setInterval(syncUserAndFetch, 2000);
+    const interval = setInterval(syncUserAndFetch, 15000);
 
     return () => {
       clearInterval(interval);
@@ -1100,8 +1122,60 @@ const StudentProfile = () => {
     }
   };
 
-  if (loading) return <div className="db-page"><Sidebar /><main className="db-main"><div className="db-loading"><div className="db-spinner" /></div></main></div>;
-  if (!student) return <div className="db-page"><Sidebar /><main className="db-main">Student not found</main></div>;
+  if (loading) {
+    return (
+      <div className="db-page">
+        <Sidebar />
+        <main className="db-main" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '65vh', padding: '40px 20px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px' }}>
+            <div className="db-spinner" style={{ width: '46px', height: '46px', border: '3.5px solid rgba(13, 148, 136, 0.2)', borderTopColor: '#0D9488', borderRadius: '50%', animation: 'db-spin 0.8s linear infinite' }} />
+            <p style={{ color: '#64748B', fontSize: '15px', fontWeight: 600, margin: 0, fontFamily: 'Outfit, sans-serif' }}>Loading Student Profile…</p>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  if (!student) {
+    return (
+      <div className="db-page">
+        <Sidebar />
+        <main className="db-main" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '65vh', padding: '24px' }}>
+          <div style={{
+            background: '#FFFFFF',
+            border: '1px solid #E2E8F0',
+            borderRadius: '16px',
+            padding: '40px 32px',
+            textAlign: 'center',
+            maxWidth: '460px',
+            boxShadow: '0 8px 30px rgba(0,0,0,0.06)'
+          }}>
+            <div style={{ fontSize: '44px', marginBottom: '16px' }}>🏄‍♂️</div>
+            <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#0F172A', marginBottom: '8px', fontFamily: 'Outfit, sans-serif' }}>Student Profile Not Found</h2>
+            <p style={{ fontSize: '14px', color: '#64748B', lineHeight: '1.5', marginBottom: '24px' }}>
+              We could not find the requested student profile or the link is invalid.
+            </p>
+            <button
+              onClick={() => navigate('/students')}
+              style={{
+                background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
+                color: '#FFFFFF',
+                border: 'none',
+                borderRadius: '10px',
+                padding: '10px 22px',
+                fontWeight: 700,
+                fontSize: '14px',
+                cursor: 'pointer',
+                boxShadow: '0 4px 12px rgba(13,148,136,0.25)'
+              }}
+            >
+              ← Back to Students
+            </button>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   const isOwnProfile = Boolean(
     currentUser &&

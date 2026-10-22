@@ -495,11 +495,22 @@ const StudentsManagement = () => {
   // Only Admins and Individual / Freelance Coaches can delete students.
   const canDeleteStudent = isAdminOrSchoolAdmin || (isCoach && isCoachFreelance);
 
+  const resolveUserSchool = () => {
+    const raw = currentUser?.school || currentUser?.school_name;
+    if (!raw) return '';
+    if (typeof raw === 'string') return raw;
+    if (typeof raw === 'object') return raw.name || raw.school_name || '';
+    return '';
+  };
+  const fallbackUserSchool = resolveUserSchool();
+
   const effectiveSchool = (isCoach && isCoachFreelance)
     ? 'Individual / Freelance Coach'
     : (activeSchoolName && schoolLower !== 'school admin' && schoolLower !== 'super admin')
       ? activeSchoolName
-      : '';
+      : (fallbackUserSchool && fallbackUserSchool.toLowerCase() !== 'school admin' && fallbackUserSchool.toLowerCase() !== 'super admin')
+        ? fallbackUserSchool
+        : '';
   const effectiveSchoolLower = effectiveSchool.toLowerCase().trim();
   const isDefaultSchool = !activeSchoolName || (typeof activeSchoolName === 'string' && activeSchoolName.toLowerCase() === 'school admin');
 
@@ -594,9 +605,13 @@ const StudentsManagement = () => {
 
   const fetchStudents = () => {
     setLoading(true);
-    let url = (effectiveSchool && !isSuperAdmin)
-      ? `${API}/api/students?school=${encodeURIComponent(effectiveSchool)}`
-      : `${API}/api/students`;
+    let targetSch = effectiveSchool || fallbackUserSchool;
+    if (typeof targetSch === 'object') targetSch = targetSch?.name || '';
+    if (targetSch && targetSch.toLowerCase() === 'school admin') targetSch = '';
+
+    let url = (targetSch && !isSuperAdmin)
+      ? `${API}/api/students?school=${encodeURIComponent(targetSch)}`
+      : `${API}/api/students?school=all`;
     if (isCoach && currentCoachId) {
       url += (url.includes('?') ? '&' : '?') + `instructor_id=${encodeURIComponent(currentCoachId)}`;
     }
@@ -611,16 +626,20 @@ const StudentsManagement = () => {
 
   useEffect(() => {
     fetchStudents();
-    const instUrl = (effectiveSchool && !isSuperAdmin)
-      ? `${API}/api/instructors?school=${encodeURIComponent(effectiveSchool)}`
+    let targetSch = effectiveSchool || fallbackUserSchool;
+    if (typeof targetSch === 'object') targetSch = targetSch?.name || '';
+    if (targetSch && targetSch.toLowerCase() === 'school admin') targetSch = '';
+
+    const instUrl = (targetSch && !isSuperAdmin)
+      ? `${API}/api/instructors?school=${encodeURIComponent(targetSch)}`
       : `${API}/api/instructors`;
     fetch(instUrl)
       .then(r => r.json())
       .then(data => setInstructors(data))
       .catch(() => { });
 
-    const sessUrl = (effectiveSchool && !isSuperAdmin)
-      ? `${API}/api/sessions?school=${encodeURIComponent(effectiveSchool)}`
+    const sessUrl = (targetSch && !isSuperAdmin)
+      ? `${API}/api/sessions?school=${encodeURIComponent(targetSch)}`
       : `${API}/api/sessions`;
     fetch(sessUrl)
       .then(r => r.json())
@@ -789,6 +808,10 @@ const StudentsManagement = () => {
       setDateFilter('All');
     } else if (label === 'ADVANCED') {
       setLevelFilter('Advanced');
+      setDateRange({ startDate: '', endDate: '', preset: 'all' });
+      setDateFilter('All');
+    } else if (label === 'PRO') {
+      setLevelFilter('Pro');
       setDateRange({ startDate: '', endDate: '', preset: 'all' });
       setDateFilter('All');
     }
@@ -988,9 +1011,11 @@ const StudentsManagement = () => {
       matchStat = s.level === 'Intermediate';
     } else if (activeStatFilter === 'ADVANCED') {
       matchStat = s.level === 'Advanced';
+    } else if (activeStatFilter === 'PRO') {
+      matchStat = s.level === 'Pro' || (s.level || '').toLowerCase().trim() === 'pro';
     }
 
-    const matchLevel = levelFilter === 'All' || s.level === levelFilter;
+    const matchLevel = levelFilter === 'All' || s.level === levelFilter || (levelFilter === 'Pro' && (s.level || '').toLowerCase().trim() === 'pro');
     const matchInstructor = instructorFilter === 'All' || s.instructor === instructorFilter;
     const matchSession = sessionTimeFilter === 'All' ||
       s.session_time === sessionTimeFilter ||
@@ -1078,6 +1103,7 @@ const StudentsManagement = () => {
     { value: approvedStudents.filter(s => s.level === 'Beginner').length, label: 'BEGINNER', shortLabel: 'BEGINNER', color: '#F59E0B', active: activeStatFilter === 'BEGINNER' },
     { value: approvedStudents.filter(s => s.level === 'Intermediate').length, label: 'INTERMEDIATE', shortLabel: 'INTERMED', color: '#0D9488', active: activeStatFilter === 'INTERMEDIATE' },
     { value: approvedStudents.filter(s => s.level === 'Advanced').length, label: 'ADVANCED', shortLabel: 'ADVANCED', color: '#7C3AED', active: activeStatFilter === 'ADVANCED' },
+    { value: approvedStudents.filter(s => s.level === 'Pro' || (s.level || '').toLowerCase().trim() === 'pro').length, label: 'PRO', shortLabel: 'PRO', color: '#E11D48', active: activeStatFilter === 'PRO' },
   ];
 
 
@@ -2125,6 +2151,41 @@ const StudentsManagement = () => {
     return `${pad(hStr)}:${mStr} ${(meridiem || 'AM').toUpperCase()}`;
   };
 
+  const time24To12 = (time24Str) => {
+    if (!time24Str) return '';
+    const clean = String(time24Str).trim();
+    const match = clean.match(/^(\d{1,2}):(\d{2})$/);
+    if (!match) return clean;
+    let hours = parseInt(match[1], 10);
+    const minutes = match[2];
+    const meridiem = hours >= 12 ? 'PM' : 'AM';
+    const h12 = hours % 12 === 0 ? 12 : hours % 12;
+    return `${String(h12).padStart(2, '0')}:${minutes} ${meridiem}`;
+  };
+
+  const time12To24 = (time12Str) => {
+    if (!time12Str) return '';
+    const clean = String(time12Str).trim();
+    const startPart = clean.split(/\s*[-–—to]+\s*/i)[0].trim();
+    const match = startPart.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?$/i);
+    if (!match) return '';
+
+    let [_, hStr, mStr, meridiem] = match;
+    let hours = parseInt(hStr, 10);
+    let minutes = parseInt(mStr, 10);
+    if (isNaN(hours) || isNaN(minutes)) return '';
+
+    if (meridiem) {
+      const med = meridiem.toUpperCase();
+      if (med === 'PM' && hours < 12) hours += 12;
+      if (med === 'AM' && hours === 12) hours = 0;
+    }
+
+    const h24 = String(hours).padStart(2, '0');
+    const m24 = String(minutes).padStart(2, '0');
+    return `${h24}:${m24}`;
+  };
+
   // Load configured slots for school and invite start date
   useEffect(() => {
     if (!showSchoolInviteModal) return;
@@ -3132,7 +3193,11 @@ const StudentsManagement = () => {
                     <tr
                       key={s.id}
                       style={{ borderBottom: i === filtered.length - 1 ? 'none' : '1px solid #E2E8F0', cursor: 'pointer' }}
-                      onClick={() => navigate(`/students/${s.id}`)}
+                      onClick={() => {
+                        if (s && s.id && s.id !== 'undefined') {
+                          navigate(`/students/${s.id}`);
+                        }
+                      }}
                     >
                       <td>
                         <div className="sm-student-info">
@@ -3707,7 +3772,12 @@ const StudentsManagement = () => {
                               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                             </button>
                           )}
-                          <button className="sm-action-btn" title="View Profile" onClick={e => { e.stopPropagation(); navigate(`/students/${s.id}`); }}>
+                          <button className="sm-action-btn" title="View Profile" onClick={e => {
+                            e.stopPropagation();
+                            if (s && s.id && s.id !== 'undefined') {
+                              navigate(`/students/${s.id}`);
+                            }
+                          }}>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
                           </button>
                         </div>
@@ -3940,13 +4010,65 @@ const StudentsManagement = () => {
                 <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>
                   Custom Time / Range
                 </label>
-                <input
-                  type="text"
-                  value={editingStudentTime.session_time || ''}
-                  onChange={(e) => setEditingStudentTime(prev => ({ ...prev, session_time: e.target.value }))}
-                  placeholder="e.g. 06:00 AM - 08:00 AM"
-                  style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1.5px solid #CBD5E1', fontSize: '13.5px', boxSizing: 'border-box' }}
-                />
+                <div
+                  onClick={() => {
+                    const el = document.getElementById('edit-student-clock-input');
+                    if (el) {
+                      try {
+                        if (typeof el.showPicker === 'function') el.showPicker();
+                        else el.focus();
+                      } catch (e) {
+                        el.focus();
+                      }
+                    }
+                  }}
+                  style={{
+                    position: 'relative',
+                    width: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: '7px 12px',
+                    borderRadius: '8px',
+                    border: '1.5px solid',
+                    borderColor: editingStudentTime.session_time ? '#0D9488' : '#CBD5E1',
+                    background: editingStudentTime.session_time ? '#F0FDFA' : '#FFFFFF',
+                    cursor: 'pointer',
+                    boxSizing: 'border-box'
+                  }}
+                >
+                  <span style={{ fontSize: '18px', marginRight: '8px', display: 'flex', alignItems: 'center' }} title="Click clock to choose time">
+                    ⏰
+                  </span>
+                  <input
+                    id="edit-student-clock-input"
+                    type="time"
+                    value={time12To24(editingStudentTime.session_time)}
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        setEditingStudentTime(prev => ({ ...prev, session_time: time24To12(e.target.value) }));
+                      }
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      try {
+                        if (typeof e.target.showPicker === 'function') e.target.showPicker();
+                      } catch (err) {}
+                    }}
+                    style={{
+                      border: 'none',
+                      background: 'transparent',
+                      fontSize: '13.5px',
+                      fontWeight: '700',
+                      color: '#0F172A',
+                      outline: 'none',
+                      cursor: 'pointer',
+                      fontFamily: 'Outfit, sans-serif'
+                    }}
+                  />
+                  <span style={{ marginLeft: 'auto', fontSize: '12px', fontWeight: '700', color: editingStudentTime.session_time ? '#0D9488' : '#64748B' }}>
+                    {editingStudentTime.session_time ? `Selected: ${editingStudentTime.session_time}` : 'Pick with Clock 🕒'}
+                  </span>
+                </div>
                 <span style={{ display: 'block', marginTop: '4px', fontSize: '11px', color: '#94A3B8' }}>
                   Pick from standard slots above or enter any custom time slot.
                 </span>
@@ -4247,26 +4369,66 @@ const StudentsManagement = () => {
                     </div>
 
                     <div style={{ marginTop: '8px' }}>
-                      <input
-                        type="text"
-                        value={form.session_time || ''}
-                        onChange={(e) => setForm(prev => ({ ...prev, session_time: e.target.value }))}
-                        placeholder="Or enter custom slot manually (e.g. 06:00 AM)"
+                      <div
+                        onClick={() => {
+                          const el = document.getElementById('single-student-clock-input');
+                          if (el) {
+                            try {
+                              if (typeof el.showPicker === 'function') el.showPicker();
+                              else el.focus();
+                            } catch (e) {
+                              el.focus();
+                            }
+                          }
+                        }}
                         style={{
+                          position: 'relative',
                           width: '100%',
-                          padding: '8px 12px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          padding: '7px 12px',
                           borderRadius: '8px',
                           border: '1.5px solid',
                           borderColor: form.session_time ? '#0D9488' : '#CBD5E1',
                           background: form.session_time ? '#F0FDFA' : '#FFFFFF',
-                          fontSize: '12.5px',
-                          fontWeight: '600',
-                          color: '#0F172A',
+                          cursor: 'pointer',
                           boxSizing: 'border-box',
-                          outline: 'none',
                           transition: 'all 0.15s ease'
                         }}
-                      />
+                      >
+                        <span style={{ fontSize: '18px', marginRight: '8px', display: 'flex', alignItems: 'center', cursor: 'pointer' }} title="Click clock to choose time">
+                          ⏰
+                        </span>
+                        <input
+                          id="single-student-clock-input"
+                          type="time"
+                          value={time12To24(form.session_time)}
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              setForm(prev => ({ ...prev, session_time: time24To12(e.target.value) }));
+                            }
+                          }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            try {
+                              if (typeof e.target.showPicker === 'function') e.target.showPicker();
+                            } catch (err) {}
+                          }}
+                          style={{
+                            border: 'none',
+                            background: 'transparent',
+                            fontSize: '13px',
+                            fontWeight: '700',
+                            color: '#0F172A',
+                            outline: 'none',
+                            cursor: 'pointer',
+                            fontFamily: 'Outfit, sans-serif'
+                          }}
+                        />
+                        <span style={{ marginLeft: 'auto', fontSize: '12px', fontWeight: '700', color: form.session_time ? '#0D9488' : '#64748B' }}>
+                          {form.session_time ? `Selected: ${form.session_time}` : 'Pick custom slot with Clock 🕒'}
+                        </span>
+                      </div>
                     </div>
                   </div>
 
@@ -5409,7 +5571,14 @@ const StudentsManagement = () => {
                       <button type="button" className="sm-btn-primary sm-summary-pink-btn" onClick={() => { setAddMode('single'); setAddedStudentSummary(null); }}>
                         + Add Another Student
                       </button>
-                      <button type="button" className="sm-btn-secondary" onClick={() => { closeModal(); navigate(`/students/${addedStudentSummary.id}`); }}>
+                      <button type="button" className="sm-btn-secondary" onClick={() => {
+                        closeModal();
+                        if (addedStudentSummary?.id && addedStudentSummary.id !== 'undefined') {
+                          navigate(`/students/${addedStudentSummary.id}`);
+                        } else {
+                          navigate('/students');
+                        }
+                      }}>
                         View Student Profile
                       </button>
                     </div>
@@ -6103,30 +6272,77 @@ const StudentsManagement = () => {
                     })}
                   </div>
 
-                  {/* Manual Custom Time Slot Input */}
+                  {/* Custom Clock Time Slot Picker */}
                   <div style={{ marginTop: '10px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <div style={{ position: 'relative', flex: 1 }}>
-                        <input
-                          type="text"
-                          value={inviteSessionTime || ''}
-                          onChange={(e) => setInviteSessionTime(e.target.value)}
-                          placeholder="Or type custom slot (e.g. 06:00 AM)"
+                      <div
+                        onClick={() => {
+                          const el = document.getElementById('invite-clock-time-input');
+                          if (el) {
+                            try {
+                              if (typeof el.showPicker === 'function') el.showPicker();
+                              else el.focus();
+                            } catch (e) {
+                              el.focus();
+                            }
+                          }
+                        }}
+                        style={{
+                          position: 'relative',
+                          flex: 1,
+                          display: 'flex',
+                          alignItems: 'center',
+                          padding: '7px 12px',
+                          borderRadius: '8px',
+                          border: '1.5px solid',
+                          borderColor: inviteSessionTime ? '#0D9488' : '#CBD5E1',
+                          background: inviteSessionTime ? '#F0FDFA' : '#FFFFFF',
+                          cursor: 'pointer',
+                          boxSizing: 'border-box',
+                          transition: 'all 0.15s ease'
+                        }}
+                      >
+                        <span
                           style={{
-                            width: '100%',
-                            padding: '8px 12px',
-                            borderRadius: '8px',
-                            border: '1.5px solid',
-                            borderColor: inviteSessionTime ? '#0D9488' : '#CBD5E1',
-                            background: inviteSessionTime ? '#F0FDFA' : '#FFFFFF',
-                            fontSize: '12.5px',
-                            fontWeight: '600',
+                            fontSize: '18px',
+                            marginRight: '8px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            cursor: 'pointer'
+                          }}
+                          title="Click to open clock and pick custom time"
+                        >
+                          ⏰
+                        </span>
+                        <input
+                          id="invite-clock-time-input"
+                          type="time"
+                          value={time12To24(inviteSessionTime)}
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              setInviteSessionTime(time24To12(e.target.value));
+                            }
+                          }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            try {
+                              if (typeof e.target.showPicker === 'function') e.target.showPicker();
+                            } catch (err) {}
+                          }}
+                          style={{
+                            border: 'none',
+                            background: 'transparent',
+                            fontSize: '13px',
+                            fontWeight: '700',
                             color: '#0F172A',
-                            boxSizing: 'border-box',
                             outline: 'none',
-                            transition: 'all 0.15s ease'
+                            cursor: 'pointer',
+                            fontFamily: 'Outfit, sans-serif'
                           }}
                         />
+                        <span style={{ marginLeft: 'auto', fontSize: '12px', fontWeight: '700', color: inviteSessionTime ? '#0D9488' : '#64748B' }}>
+                          {inviteSessionTime ? `Selected: ${inviteSessionTime}` : 'Pick custom slot with Clock 🕒'}
+                        </span>
                       </div>
                       {inviteSessionTime && (
                         <button
@@ -7657,8 +7873,8 @@ const StudentsManagement = () => {
           }
           .sm-stats-grid {
             display: grid !important;
-            grid-template-columns: repeat(5, 1fr) !important;
-            gap: 4px !important;
+            grid-template-columns: repeat(auto-fit, minmax(60px, 1fr)) !important;
+            gap: 6px !important;
             width: 100% !important;
             box-sizing: border-box !important;
           }

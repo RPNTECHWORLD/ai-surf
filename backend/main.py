@@ -1464,6 +1464,7 @@ class InstructorCreate(BaseModel):
     image: Optional[str] = ""
     school: Optional[str] = "Individual / Freelance Coach"
     location: Optional[str] = ""
+    bio: Optional[str] = ""
 
 
 class StudentCreate(BaseModel):
@@ -3936,6 +3937,7 @@ def create_instructor(data: InstructorCreate, request: Request, db: OrmSession =
         certifications=json.dumps(data.certifications),
         languages=json.dumps(saved_langs),
         image=data.image or "",
+        bio=(data.bio or "").strip(),
         school=coach_school,
         location=coach_location,
     )
