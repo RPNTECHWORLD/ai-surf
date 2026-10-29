@@ -286,6 +286,70 @@ const parseTimeToMinutes = (timeStr) => {
   return hours * 60 + mins;
 };
 
+const resolveStudentAndGuestDisplay = (sess, allStudentsList = [], guestOccurrenceIndex = 0) => {
+  if (!sess) return { displayName: 'Student', isGuest: false, parentName: null, level: 'Beginner' };
+
+  // 1. Match parent student in student directory
+  const matchSt = (allStudentsList || []).find(st => {
+    if (sess.student_id != null && (String(st.id) === String(sess.student_id) || st.id === parseInt(sess.student_id, 10))) return true;
+    const stName = (st.name || '').trim().toLowerCase();
+    const sName = (sess.student || sess.student_name || '').trim().toLowerCase();
+    return Boolean(stName && sName && stName === sName);
+  });
+
+  // 2. Parse guest list for this parent student
+  let parsedGuests = [];
+  if (matchSt) {
+    if (Array.isArray(matchSt.guests_details)) {
+      parsedGuests = matchSt.guests_details;
+    } else if (typeof matchSt.guests_details === 'string') {
+      try { parsedGuests = JSON.parse(matchSt.guests_details); } catch (e) {}
+    }
+  }
+
+  // 3. Detect if this session row is a guest — ONLY from session data, never from occurrenceIndex
+  const isGuest = Boolean(sess.is_guest || (sess.guest_name && sess.guest_name.trim()));
+
+  let displayName, parentName = null, level, guestId = null, phone = sess.phone || '', whatsapp = sess.whatsapp_number || '';
+
+  if (isGuest) {
+    let gName = (sess.guest_name && sess.guest_name.trim()) ? sess.guest_name.trim() : null;
+    const parentStr = matchSt?.name || sess.student || sess.student_name || 'Student';
+
+    // If guest_name is missing, generic "Guest", or same as parent name, look up from guests_details
+    if (!gName || gName.toLowerCase() === parentStr.toLowerCase() || gName.toLowerCase() === 'guest' || gName.toLowerCase().startsWith('guest #') || gName.toLowerCase().startsWith('guest ')) {
+      if (parsedGuests.length > 0 && guestOccurrenceIndex < parsedGuests.length && parsedGuests[guestOccurrenceIndex]?.name) {
+        gName = parsedGuests[guestOccurrenceIndex].name;
+      } else if (parsedGuests[0]?.name) {
+        gName = parsedGuests[0].name;
+      }
+    }
+
+    displayName = gName || sess.guest_name || 'Guest';
+    parentName = (parentStr && parentStr.toLowerCase() !== displayName.toLowerCase()) ? parentStr : null;
+
+    // Guest level and contact from guests_details if available
+    const matchedGuestObj = parsedGuests.find(g => (g.name || '').trim().toLowerCase() === displayName.toLowerCase()) || parsedGuests[guestOccurrenceIndex];
+    level = matchedGuestObj?.level || sess.level || 'Beginner';
+    if (matchedGuestObj?.whatsapp_number || matchedGuestObj?.phone) {
+      phone = String(matchedGuestObj.whatsapp_number || matchedGuestObj.phone).trim();
+      whatsapp = String(matchedGuestObj.whatsapp_number || matchedGuestObj.phone).trim();
+    } else if (matchSt?.whatsapp_number || matchSt?.phone) {
+      phone = String(matchSt.whatsapp_number || matchSt.phone).trim();
+      whatsapp = String(matchSt.whatsapp_number || matchSt.phone).trim();
+    }
+    guestId = `G-${matchSt?.id || sess.student_id || '0'}-${guestOccurrenceIndex + 1}`;
+  } else {
+    // Regular student — use student profile level, never fall back to group type
+    displayName = matchSt?.name || sess.student || sess.student_name || 'Student';
+    level = sess.level || matchSt?.level || 'Beginner';
+    phone = matchSt?.whatsapp_number || matchSt?.phone || sess.phone || '';
+    whatsapp = matchSt?.whatsapp_number || matchSt?.phone || sess.whatsapp_number || '';
+  }
+
+  return { displayName, isGuest, parentName, level, guestId, phone, whatsapp };
+};
+
 const Sessions = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -334,10 +398,13 @@ const Sessions = () => {
 
     if (allStudentsList && allStudentsList.length > 0) {
       const match = allStudentsList.find(st => {
+        // Match by student_id first (most authoritative)
         if (currentUser?.student_id && (st.id === parseInt(currentUser.student_id) || String(st.id) === String(currentUser.student_id))) return true;
+        // Match by email (unique per account)
         if (userEmail && (st.email || '').toLowerCase().trim() === userEmail) return true;
-        if (userName && (st.name || '').toLowerCase().trim() === userName) return true;
+        // Match by user_id link
         if (userStudentId && (st.id === parseInt(userStudentId) || st.user_id === parseInt(userStudentId))) return true;
+        // NOTE: Do NOT match by name alone — same name can belong to different students with different emails
         return false;
       });
       if (match) return match;
@@ -345,9 +412,9 @@ const Sessions = () => {
 
     try {
       const savedAccs = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
-      const accMatch = savedAccs.find(a => 
-        (userEmail && (a.email || '').toLowerCase().trim() === userEmail) ||
-        (userName && (a.name || '').toLowerCase().trim() === userName)
+      // Only match saved accounts by email — never by name alone
+      const accMatch = savedAccs.find(a =>
+        userEmail && (a.email || '').toLowerCase().trim() === userEmail
       );
       if (accMatch) return accMatch;
     } catch (e) {}
@@ -1115,13 +1182,13 @@ const Sessions = () => {
         whatToImprove: p.whatToImprove || '',
         whatToImproveScore: p.whatToImproveScore || ''
       };
-      let resolvedLvl = s.level || s.type || '';
-      if (!resolvedLvl && s.student_id && allStudentsList.length > 0) {
-        const matchSt = allStudentsList.find(st => st.id === s.student_id);
-        if (matchSt && matchSt.level) resolvedLvl = matchSt.level;
-      }
-      if (!resolvedLvl) resolvedLvl = 'Beginner';
-      levelMap[s.id] = resolvedLvl;
+      const prevGuestOcc = sessionList.slice(0, sessionList.indexOf(s)).filter(ps =>
+        Boolean(ps.is_guest || (ps.guest_name && ps.guest_name.trim())) &&
+        ((s.student_id != null && ps.student_id != null && String(ps.student_id) === String(s.student_id)) ||
+         ((ps.student || '').trim().toLowerCase() === (s.student || '').trim().toLowerCase()))
+      ).length;
+      const resInfo = resolveStudentAndGuestDisplay(s, allStudentsList, prevGuestOcc);
+      levelMap[s.id] = resInfo.level || 'Beginner';
     });
     setHubStudentNotesMap(notesMap);
     setHubStudentLevelMap(levelMap);
@@ -1772,6 +1839,7 @@ const Sessions = () => {
   const [selectedSessionDetail, setSelectedSessionDetail] = useState(null);
   const [selectedDayDetailsModal, setSelectedDayDetailsModal] = useState(null);
   const [dayModalStudentSearch, setDayModalStudentSearch] = useState('');
+  const [dayModalSlotFilter, setDayModalSlotFilter] = useState('All');
   const [dayAttendanceMap, setDayAttendanceMap] = useState({});
   const [attendanceLoadingIds, setAttendanceLoadingIds] = useState({});
 
@@ -1779,6 +1847,8 @@ const Sessions = () => {
   useEffect(() => {
     if (!selectedDayDetailsModal) {
       setDayAttendanceMap({});
+      setDayModalStudentSearch('');
+      setDayModalSlotFilter('All');
       return;
     }
     const map = {};
@@ -1991,11 +2061,23 @@ const Sessions = () => {
 
     const url = targetSchool
       ? `${API}/api/sessions?school=${encodeURIComponent(targetSchool)}`
-      : `${API}/api/sessions`;
+      : (isSuperAdmin ? `${API}/api/sessions` : `${API}/api/sessions?school=${encodeURIComponent(effectiveSchool || 'none')}`);
 
     fetch(url)
       .then(r => r.json())
-      .then(data => setSessions(Array.isArray(data) ? data : []))
+      .then(data => {
+        const list = Array.isArray(data) ? data : [];
+        if (!isSuperAdmin && effectiveSchool) {
+          const normTarget = effectiveSchool.toLowerCase().trim();
+          setSessions(list.filter(s => {
+            const stSchool = (s.student_school || s.school || '').toLowerCase().trim();
+            const instSchool = (s.instructor_school || '').toLowerCase().trim();
+            return !stSchool || stSchool === normTarget || instSchool === normTarget;
+          }));
+        } else {
+          setSessions(list);
+        }
+      })
       .catch((err) => console.error('Error fetching sessions:', err))
       .finally(() => setLoading(false));
   };
@@ -2004,7 +2086,7 @@ const Sessions = () => {
     fetchSessions();
     const instUrl = (effectiveSchool && !isSuperAdmin)
       ? `${API}/api/instructors?school=${encodeURIComponent(effectiveSchool)}`
-      : `${API}/api/instructors`;
+      : (isSuperAdmin ? `${API}/api/instructors` : `${API}/api/instructors?school=${encodeURIComponent(effectiveSchool || 'none')}`);
     fetch(instUrl)
       .then(r => r.json())
       .then(data => { if (Array.isArray(data)) setAllInstructorsList(data); })
@@ -2013,10 +2095,19 @@ const Sessions = () => {
     // Always fetch student records so loggedInStudent can be resolved immediately
     const stUrl = (effectiveSchool && !isSuperAdmin && !isStudent)
       ? `${API}/api/students?school=${encodeURIComponent(effectiveSchool)}`
-      : `${API}/api/students`;
+      : (isSuperAdmin ? `${API}/api/students?school=all` : `${API}/api/students?school=${encodeURIComponent(effectiveSchool || 'none')}`);
     fetch(stUrl)
       .then(r => r.json())
-      .then(data => { if (Array.isArray(data)) setAllStudentsList(data); })
+      .then(data => {
+        if (Array.isArray(data)) {
+          if (!isSuperAdmin && effectiveSchool) {
+            const normTarget = effectiveSchool.toLowerCase().trim();
+            setAllStudentsList(data.filter(s => (s.school || '').toLowerCase().trim() === normTarget));
+          } else {
+            setAllStudentsList(data);
+          }
+        }
+      })
       .catch(() => {});
   }, [activeSchoolName, isSuperAdmin, isCoachFreelance, isStudent]);
 
@@ -2051,29 +2142,37 @@ const Sessions = () => {
 
     // Student Role: Strictly isolate to ONLY sessions belonging to this specific student
     if (isStudent) {
+      const userEmail = (currentUser?.email || '').toLowerCase().trim();
       return sessions.filter(s => {
-        // 1. Direct Student ID match
+        // 1. Session has a student_id — ONLY allow if it matches this student's IDs.
+        //    Never fall through to name-match for ID'd sessions (prevents same-name cross-contamination).
         const sid = s.student_id ? String(s.student_id) : '';
-        if (sid && studentCandidateIds.includes(sid)) return true;
+        if (sid) {
+          return studentCandidateIds.includes(sid);
+        }
 
-        // 2. Direct name, student_name, or guest_name match
+        // 2. Legacy session with NO student_id — allow name match only.
+        //    (These are old records without a student_id column value.)
         const sStudent = (s.student || '').toLowerCase().trim();
         const sStudentName = (s.student_name || '').toLowerCase().trim();
         const sGuest = (s.guest_name || '').toLowerCase().trim();
 
-        for (const cName of studentCandidateNames) {
-          if (!cName) continue;
-          if (sStudent && (sStudent === cName || sStudent.includes(cName) || cName.includes(sStudent))) return true;
-          if (sStudentName && (sStudentName === cName || sStudentName.includes(cName) || cName.includes(sStudentName))) return true;
-          if (sGuest && (sGuest === cName || sGuest.includes(cName) || cName.includes(sGuest))) return true;
+        // If we have a resolved loggedInStudent matched by email/ID, use their name exclusively
+        const strictName = (loggedInStudent?.name || '').toLowerCase().trim();
+        if (strictName) {
+          return (
+            (sStudent && sStudent === strictName) ||
+            (sStudentName && sStudentName === strictName) ||
+            (sGuest && sGuest === strictName)
+          );
         }
 
-        // 3. Notes mention match (e.g. Group A - Coaches: demo1 - Ericsheldon2604)
-        if (s.notes) {
-          const notesLower = s.notes.toLowerCase();
-          for (const cName of studentCandidateNames) {
-            if (cName && notesLower.includes(cName)) return true;
-          }
+        // No resolved student — use candidate names but require exact match (no partial/includes)
+        for (const cName of studentCandidateNames) {
+          if (!cName) continue;
+          if (sStudent && sStudent === cName) return true;
+          if (sStudentName && sStudentName === cName) return true;
+          if (sGuest && sGuest === cName) return true;
         }
 
         return false;
@@ -3478,27 +3577,33 @@ const Sessions = () => {
                               <div className="ses-td-secondary" style={{ paddingLeft: '18px', whiteSpace: 'nowrap' }}>{session.time} · {session.duration_mins || 60} mins</div>
                             </td>
                             <td>
-                              <div className="ses-td-primary" style={{ fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#0D9488" strokeWidth="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-                                <span>{session.student || '—'}</span>
-                                {(session.is_guest || session.guest_name) && (
-                                  <span style={{
-                                    fontSize: '11px',
-                                    background: '#FEF3C7',
-                                    color: '#92400E',
-                                    border: '1px solid #FDE68A',
-                                    borderRadius: '4px',
-                                    padding: '1px 5px',
-                                    fontWeight: 700,
-                                    letterSpacing: '0.02em',
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '2px'
-                                  }}>
-                                    👥 Guest
-                                  </span>
-                                )}
-                              </div>
+                              {(() => {
+                                const { displayName, isGuest, parentName } = resolveStudentAndGuestDisplay(session, allStudentsList, 0);
+
+                                return (
+                                  <div className="ses-td-primary" style={{ fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#0D9488" strokeWidth="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                                    <span>{displayName}</span>
+                                    {isGuest && (
+                                      <span style={{
+                                        fontSize: '11px',
+                                        background: '#FEF3C7',
+                                        color: '#92400E',
+                                        border: '1px solid #FDE68A',
+                                        borderRadius: '4px',
+                                        padding: '1px 5px',
+                                        fontWeight: 700,
+                                        letterSpacing: '0.02em',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '2px'
+                                      }}>
+                                        👥 Guest {parentName ? `(${parentName})` : ''}
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </td>
                             <td>
                               {renderCoachBadge(session.instructor, session.instructor_id)}
@@ -3713,27 +3818,33 @@ const Sessions = () => {
                               {session.group_name}
                             </span>
                           )}
-                          <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#0D9488" strokeWidth="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-                            <span>{session.student || '—'}</span>
-                            {(session.is_guest || session.guest_name) && (
-                              <span style={{
-                                fontSize: '11px',
-                                background: '#FEF3C7',
-                                color: '#92400E',
-                                border: '1px solid #FDE68A',
-                                borderRadius: '4px',
-                                padding: '1px 5px',
-                                fontWeight: 700,
-                                letterSpacing: '0.02em',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '2px'
-                              }}>
-                                👥 Guest
+                          {(() => {
+                            const { displayName, isGuest, parentName } = resolveStudentAndGuestDisplay(session, allStudentsList, 0);
+
+                            return (
+                              <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#0D9488" strokeWidth="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                                <span>{displayName}</span>
+                                {isGuest && (
+                                  <span style={{
+                                    fontSize: '11px',
+                                    background: '#FEF3C7',
+                                    color: '#92400E',
+                                    border: '1px solid #FDE68A',
+                                    borderRadius: '4px',
+                                    padding: '1px 5px',
+                                    fontWeight: 700,
+                                    letterSpacing: '0.02em',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '2px'
+                                  }}>
+                                    👥 Guest {parentName ? `(${parentName})` : ''}
+                                  </span>
+                                )}
                               </span>
-                            )}
-                          </span>
+                            );
+                          })()}
                         </div>
                       </td>
                       <td>
@@ -4070,48 +4181,113 @@ const Sessions = () => {
                           </tr>
                         </thead>
                         <tbody>
-                          {(selectedHubSession.sessions || [selectedHubSession]).map((s, idx) => (
-                            <tr key={s.id || idx} className="ses-table-row" style={{ borderBottom: '1px solid #F1F5F9' }}>
-                              <td style={{ fontWeight: 600, color: '#94A3B8', padding: '12px 14px' }}>{idx + 1}</td>
-                              <td style={{ padding: '12px 14px' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                  <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#0284C7', color: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '12px', flexShrink: 0 }}>
-                                    {(s.student || 'A').charAt(0).toUpperCase()}
+                          {(() => {
+                            // Deduplicate: remove duplicate non-guest entries for the same student_id
+                            // (happens when a student is added again to an already-published session)
+                            const sessionList = selectedHubSession.sessions || [selectedHubSession];
+                            const seenStudentIds = new Set();
+                            let guestCounter = 0;
+                            const dedupedList = sessionList.filter(s => {
+                              const isGuestRow = Boolean(s.is_guest || (s.guest_name && s.guest_name.trim()));
+                              if (isGuestRow) return true; // always keep guest rows
+                              if (!s.student_id) return true; // no id to dedup on
+                              const key = String(s.student_id);
+                              if (seenStudentIds.has(key)) return false; // duplicate — skip
+                              seenStudentIds.add(key);
+                              return true;
+                            });
+                            return dedupedList.map((s, idx) => {
+                            const isGuestRow = Boolean(s.is_guest || (s.guest_name && s.guest_name.trim()));
+                            if (isGuestRow) guestCounter++;
+                            const thisGuestNum = isGuestRow ? guestCounter : 0;
+                            const prevGuestOcc = dedupedList
+                              .slice(0, idx)
+                              .filter(prevS => 
+                                Boolean(prevS.is_guest || (prevS.guest_name && prevS.guest_name.trim())) &&
+                                ((s.student_id != null && prevS.student_id != null && String(prevS.student_id) === String(s.student_id)) ||
+                                 ((prevS.student || '').trim().toLowerCase() === (s.student || '').trim().toLowerCase()))
+                              ).length;
+
+                            const { displayName, isGuest, parentName, level: studentSurfingLevel, guestId: thisGuestId, phone: guestPhone } = resolveStudentAndGuestDisplay(s, allStudentsList, prevGuestOcc);
+
+                            return (
+                              <tr key={s.id || idx} className="ses-table-row" style={{ borderBottom: '1px solid #F1F5F9' }}>
+                                <td style={{ fontWeight: 600, color: '#94A3B8', padding: '12px 14px' }}>{idx + 1}</td>
+                                <td style={{ padding: '12px 14px' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                    <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: isGuest ? '#0D9488' : '#0284C7', color: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '12px', flexShrink: 0 }}>
+                                      {(displayName || 'A').charAt(0).toUpperCase()}
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                      <div style={{ fontWeight: 700, color: '#0F172A', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                        <span>{displayName}</span>
+                                        {isGuest && (
+                                          <span style={{
+                                            fontSize: '11px',
+                                            background: '#FEF3C7',
+                                            color: '#92400E',
+                                            border: '1px solid #FDE68A',
+                                            borderRadius: '4px',
+                                            padding: '1px 6px',
+                                            fontWeight: 800,
+                                            letterSpacing: '0.02em',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '3px'
+                                          }}>
+                                            👥 Guest #{thisGuestNum}
+                                          </span>
+                                        )}
+                                      </div>
+                                      {isGuest && parentName && (
+                                        <span style={{ fontSize: '11.5px', color: '#64748B', fontWeight: 500 }}>
+                                          Guest of <strong style={{ color: '#334155' }}>{parentName}</strong>
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
-                                  <div style={{ fontWeight: 600, color: '#0F172A', fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                                    <span>{s.student || 'Student'}</span>
-                                    {(s.is_guest || s.guest_name) && (
-                                      <span style={{
-                                        fontSize: '11px',
-                                        background: '#FEF3C7',
-                                        color: '#92400E',
-                                        border: '1px solid #FDE68A',
-                                        borderRadius: '4px',
-                                        padding: '1px 5px',
-                                        fontWeight: 700,
-                                        letterSpacing: '0.02em',
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: '2px'
-                                      }}>
-                                        👥 Guest
+                                </td>
+                                <td style={{ padding: '12px 14px' }}>
+                                  <span className="ses-badge-type" style={{ padding: '3px 8px', fontSize: '11px', borderRadius: '6px' }}>
+                                    {studentSurfingLevel}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '12px 14px' }}>
+                                  {(() => {
+                                    const rowStatus = formatSessionStatus(s, s.date || selectedHubSession?.date, s.time || selectedHubSession?.time, s.duration_mins || selectedHubSession?.duration_mins);
+                                    return (
+                                      <span className="ses-status-pill" style={{ backgroundColor: statusBg(rowStatus), color: statusColor(rowStatus), fontSize: '11px', padding: '3px 8px' }}>
+                                        {rowStatus}
                                       </span>
-                                    )}
-                                  </div>
-                                </div>
-                              </td>
-                              <td style={{ padding: '12px 14px' }}>
-                                <span className="ses-badge-type" style={{ padding: '3px 8px', fontSize: '11px', borderRadius: '6px' }}>
-                                  {s.type || selectedHubSession.type || 'Beginner'}
-                                </span>
-                              </td>
-                              <td style={{ padding: '12px 14px' }}>
-                                <span className="ses-status-pill" style={{ backgroundColor: statusBg(s.status || hubStatus), color: statusColor(s.status || hubStatus), fontSize: '11px', padding: '3px 8px' }}>
-                                  {s.status || hubStatus}
-                                </span>
-                              </td>
+                                    );
+                                  })()}
+                                </td>
                               <td style={{ padding: '12px 20px', textAlign: 'right', whiteSpace: 'nowrap' }}>
                                 <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '8px', flexWrap: 'nowrap' }}>
+                                  {guestPhone ? (
+                                    <a
+                                      href={`tel:${guestPhone.replace(/[^\d+]/g, '')}`}
+                                      onClick={(e) => e.stopPropagation()}
+                                      title={`Call ${displayName}: ${guestPhone}`}
+                                      style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '4px',
+                                        padding: '4px 10px',
+                                        borderRadius: '6px',
+                                        fontSize: '11px',
+                                        fontWeight: 700,
+                                        textDecoration: 'none',
+                                        border: '1px solid #0284C7',
+                                        background: '#F0F9FF',
+                                        color: '#0284C7',
+                                        flexShrink: 0,
+                                        whiteSpace: 'nowrap'
+                                      }}
+                                    >
+                                      📞 Call
+                                    </a>
+                                  ) : null}
                                   {selectedHubSession.isGroup && (
                                     s.video_url ? (
                                       <button
@@ -4194,7 +4370,9 @@ const Sessions = () => {
                                 </div>
                               </td>
                             </tr>
-                          ))}
+                          );
+                        });
+                      })()}
                         </tbody>
                       </table>
                     </div>
@@ -6002,7 +6180,7 @@ const Sessions = () => {
         {/* Enhanced Pro Calendar Modal (Assigned Sessions & Group Rosters Only) */}
         {showCalendarModal && (
           <div className="ses-modal-overlay" onClick={() => { setShowCalendarModal(false); setSelectedSessionDetail(null); }}>
-            <div className="ses-modal-box" onClick={(e) => e.stopPropagation()}>
+            <div className="ses-modal-box ses-cal-main-modal" onClick={(e) => e.stopPropagation()}>
               {/* Modal Topbar */}
               <div className="ses-modal-header">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -6082,17 +6260,38 @@ const Sessions = () => {
                             const isToday = cellISO === todayISO;
                             const isPastDate = cellISO < todayISO;
 
-                            // Count groups for clean summary
-                            const dayGroups = {};
-                            let ungroupedCount = 0;
+                            // Group day sessions by Time Slot and by Groups within each slot
+                            const slotMap = new Map();
+
                             daySessions.forEach(s => {
+                              const t = (s.time || 'Unscheduled').trim();
+                              if (!slotMap.has(t)) {
+                                slotMap.set(t, {
+                                  time: t,
+                                  groups: {},
+                                  ungroupedCount: 0,
+                                  totalStudents: 0
+                                });
+                              }
+                              const slotData = slotMap.get(t);
+                              slotData.totalStudents++;
+
                               const grp = s.group_name || (s.notes && s.notes.includes(' - Automated') ? s.notes.split(' - Automated')[0].trim() : null);
                               if (grp) {
-                                dayGroups[grp] = (dayGroups[grp] || 0) + 1;
+                                slotData.groups[grp] = (slotData.groups[grp] || 0) + 1;
                               } else {
-                                ungroupedCount++;
+                                slotData.ungroupedCount++;
                               }
                             });
+
+                            const sortedSlots = Array.from(slotMap.values()).sort((a, b) => {
+                              if (a.time === 'Unscheduled') return 1;
+                              if (b.time === 'Unscheduled') return -1;
+                              return parseTimeToMinutes(a.time) - parseTimeToMinutes(b.time);
+                            });
+
+                            const totalSlotsCount = sortedSlots.length;
+                            const totalGroupsCount = sortedSlots.reduce((sum, slot) => sum + Object.keys(slot.groups).length, 0);
 
                             return (
                               <div
@@ -6100,110 +6299,217 @@ const Sessions = () => {
                                 className={`ses-cal-day-cell ${isSelected ? 'selected' : ''} ${hasSessions ? 'has-sessions' : ''} ${isToday ? 'today' : ''} ${isPastDate ? 'past-date' : ''}`}
                                 style={{
                                   backgroundColor: isToday
-                                    ? (isSelected ? '#DBEAFE' : '#EFF6FF')
+                                    ? '#F0F9FF'
                                     : isSelected
-                                      ? 'rgba(13, 148, 136, 0.08)'
+                                      ? '#F0FDFA'
                                       : isPastDate
-                                        ? '#F8FAFC'
-                                        : (hasSessions ? '#F0FDFA' : '#FFFFFF'),
+                                        ? '#FAFAFA'
+                                        : '#FFFFFF',
                                   borderColor: isToday
-                                    ? '#2563EB'
+                                    ? '#3B82F6'
                                     : isSelected
                                       ? '#0D9488'
                                       : isPastDate
                                         ? '#E2E8F0'
-                                        : (hasSessions ? '#5EEAD4' : '#CBD5E1'),
-                                  boxShadow: isToday ? '0 0 0 2px rgba(37, 99, 235, 0.25)' : undefined,
-                                  opacity: isPastDate && !hasSessions ? 0.85 : 1,
-                                  cursor: 'pointer'
+                                        : (hasSessions ? '#CBD5E1' : '#E2E8F0'),
+                                  boxShadow: isToday
+                                    ? '0 0 0 2px rgba(59, 130, 246, 0.25), 0 2px 8px rgba(0,0,0,0.04)'
+                                    : isSelected
+                                      ? '0 0 0 2px rgba(13, 148, 136, 0.2), 0 2px 8px rgba(0,0,0,0.04)'
+                                      : '0 1px 3px rgba(0,0,0,0.03)',
+                                  borderRadius: '12px',
+                                  padding: '10px 10px 8px',
+                                  minHeight: '275px',
+                                  opacity: isPastDate && !hasSessions ? 0.75 : 1,
+                                  cursor: 'pointer',
+                                  transition: 'all 0.2s ease',
+                                  display: 'flex',
+                                  flexDirection: 'column'
                                 }}
                                 title={isPastDate ? `${cellISO} (Past Date)` : `Date: ${cellISO}`}
                                 onClick={() => {
                                   setSelectedCalendarDate(cellISO);
                                   setSelectedDayDetailsModal(cellISO);
+                                  setDayModalSlotFilter('All');
                                 }}
                               >
-                                <div className="ses-cal-day-num">
+                                <div className="ses-cal-day-num" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                     <span style={{
-                                      fontWeight: (isToday || hasSessions || isSelected) ? 700 : 500,
-                                      color: isToday ? '#1D4ED8' : isSelected ? '#0D9488' : isPastDate ? '#94A3B8' : (hasSessions ? '#0F766E' : '#334155')
+                                      fontFamily: "'Outfit', sans-serif",
+                                      fontSize: '14px',
+                                      fontWeight: (isToday || hasSessions || isSelected) ? 800 : 600,
+                                      color: isToday ? '#FFFFFF' : isSelected ? '#0D9488' : isPastDate ? '#94A3B8' : '#0F172A',
+                                      width: isToday ? '24px' : 'auto',
+                                      height: isToday ? '24px' : 'auto',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      justifyContent: 'center',
+                                      borderRadius: isToday ? '50%' : '0',
+                                      background: isToday ? '#2563EB' : 'transparent',
                                     }}>
                                       {dayNum}
                                     </span>
-                                    {isToday && (
-                                      <span style={{
-                                        background: '#2563EB',
-                                        color: '#FFFFFF',
-                                        fontSize: '9px',
-                                        fontWeight: 800,
-                                        padding: '1px 5px',
-                                        borderRadius: '4px',
-                                        letterSpacing: '0.4px'
-                                      }}>
-                                        TODAY
-                                      </span>
-                                    )}
                                   </div>
 
                                   {hasSessions && (
-                                    <span className="ses-cal-session-count-badge" style={{ background: isToday ? '#2563EB' : '#0D9488', color: '#FFFFFF' }}>
-                                      {daySessions.length} {daySessions.length === 1 ? 'slot' : 'slots'}
-                                    </span>
+                                    <div
+                                      style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '4px',
+                                        background: isToday ? '#EFF6FF' : '#F1F5F9',
+                                        color: isToday ? '#1D4ED8' : '#334155',
+                                        border: `1px solid ${isToday ? '#BFDBFE' : '#E2E8F0'}`,
+                                        padding: '2px 8px',
+                                        fontSize: '11px',
+                                        fontWeight: 800,
+                                        borderRadius: '9999px',
+                                        letterSpacing: '-0.1px',
+                                        whiteSpace: 'nowrap',
+                                        flexShrink: 0
+                                      }}
+                                      title={`${totalSlotsCount} Time Slots, ${totalGroupsCount} Groups, ${daySessions.length} Surfers`}
+                                    >
+                                      <span>⚡ {totalSlotsCount} {totalSlotsCount === 1 ? 'Slot' : 'Slots'}</span>
+                                      <span style={{ color: '#94A3B8' }}>•</span>
+                                      <span style={{ color: isToday ? '#2563EB' : '#0D9488' }}>{totalGroupsCount} {totalGroupsCount === 1 ? 'Grp' : 'Grps'}</span>
+                                    </div>
                                   )}
                                   {isPastDate && !hasSessions && (
-                                    <span style={{ fontSize: '10px', color: '#94A3B8', fontWeight: 500 }}>Past</span>
+                                    <span style={{ fontSize: '11px', color: '#CBD5E1', fontWeight: 600 }}>Past</span>
                                   )}
                                 </div>
 
-                                {/* Session Pills Inside Day */}
-                                <div className="ses-cal-day-events">
-                                  {Object.entries(dayGroups)
-                                    .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
-                                    .map(([gName, count]) => (
-                                    <div
-                                      key={gName}
-                                      className="ses-cal-event-pill"
-                                      style={{
-                                        borderLeftColor: isToday ? '#2563EB' : '#0D9488',
-                                        backgroundColor: isToday ? '#DBEAFE' : '#CCFBF1',
-                                        color: isToday ? '#1E40AF' : '#0F766E',
-                                        fontWeight: 600,
-                                        fontSize: '11px',
-                                        padding: '2px 6px',
-                                        cursor: 'pointer'
-                                      }}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setSelectedCalendarDate(cellISO);
-                                        setSelectedDayDetailsModal(cellISO);
-                                      }}
-                                      title={`Click to view ${gName} roster & details`}
-                                    >
-                                      🏄‍♂️ {gName} ({count})
-                                    </div>
-                                  ))}
-                                  {ungroupedCount > 0 && (
-                                    daySessions.filter(s => !s.group_name && (!s.notes || !s.notes.includes(' - Automated'))).slice(0, 2).map(s => (
+                                {/* Slot Rows with Groups per Slot */}
+                                <div
+                                  className="ses-cal-day-events"
+                                  style={{
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '6px',
+                                    flex: 1,
+                                    overflowY: 'auto',
+                                    maxHeight: '195px',
+                                    paddingRight: '2px'
+                                  }}
+                                >
+                                  {sortedSlots.map((slot, sIdx) => {
+                                    const grpList = Object.entries(slot.groups)
+                                      .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+                                    const numGroups = grpList.length;
+
+                                    const slotMins = parseTimeToMinutes(slot.time);
+                                    const isAfternoon = slotMins >= 720;
+                                    const accentColor = isToday ? '#2563EB' : isAfternoon ? '#6366F1' : '#0D9488';
+                                    const lightBg = isToday ? '#F8FAFC' : '#FFFFFF';
+                                    const displayTime = slot.time.includes(' - ') ? slot.time.split(' - ')[0].trim() : slot.time;
+
+                                    return (
                                       <div
-                                        key={s.id}
-                                        className="ses-cal-event-pill"
+                                        key={slot.time || sIdx}
+                                        className="ses-cal-slot-box"
                                         style={{
-                                          borderLeftColor: statusColor(s.status, s.date),
-                                          backgroundColor: statusBg(s.status, s.date),
-                                          cursor: 'pointer'
+                                          background: lightBg,
+                                          border: '1px solid #E2E8F0',
+                                          borderLeft: `3px solid ${accentColor}`,
+                                          borderRadius: '8px',
+                                          padding: '6px 8px',
+                                          boxShadow: '0 1px 3px rgba(15, 23, 42, 0.03)',
+                                          cursor: 'pointer',
+                                          transition: 'all 0.18s cubic-bezier(0.16, 1, 0.3, 1)'
                                         }}
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           setSelectedCalendarDate(cellISO);
                                           setSelectedDayDetailsModal(cellISO);
+                                          setDayModalSlotFilter(slot.time);
                                         }}
-                                        title="Click to view session details"
+                                        title={`Slot ${slot.time}: ${numGroups} ${numGroups === 1 ? 'Group' : 'Groups'} (${slot.totalStudents} surfers). Click to open roster.`}
                                       >
-                                        <strong>{s.time}</strong> {s.student}
+                                        {/* Slot Top Bar: Time on left, Group count badge on right */}
+                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '6px', marginBottom: numGroups > 0 ? '5px' : '0' }}>
+                                          <span style={{
+                                            fontSize: '11.5px',
+                                            fontWeight: 800,
+                                            color: '#0F172A',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '4px',
+                                            whiteSpace: 'nowrap',
+                                            letterSpacing: '-0.2px'
+                                          }}>
+                                            <span style={{ fontSize: '11px' }}>⏰</span> {displayTime}
+                                          </span>
+                                          <span style={{
+                                            fontSize: '10px',
+                                            fontWeight: 800,
+                                            background: isAfternoon ? '#EEF2FF' : '#F0FDFA',
+                                            color: isAfternoon ? '#4F46E5' : '#0D9488',
+                                            border: `1px solid ${isAfternoon ? '#C7D2FE' : '#99F6E4'}`,
+                                            padding: '1.5px 6px',
+                                            borderRadius: '5px',
+                                            whiteSpace: 'nowrap',
+                                            flexShrink: 0
+                                          }}>
+                                            {numGroups} {numGroups === 1 ? 'Group' : 'Groups'}
+                                          </span>
+                                        </div>
+
+                                        {/* Groups in this slot */}
+                                        {numGroups > 0 && (
+                                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
+                                            {grpList.slice(0, 3).map(([gName, count]) => (
+                                              <span
+                                                key={gName}
+                                                style={{
+                                                  fontSize: '10px',
+                                                  fontWeight: 700,
+                                                  background: '#F8FAFC',
+                                                  color: '#334155',
+                                                  border: '1px solid #E2E8F0',
+                                                  padding: '1.5px 6px',
+                                                  borderRadius: '4px',
+                                                  whiteSpace: 'nowrap',
+                                                  display: 'inline-flex',
+                                                  alignItems: 'center',
+                                                  gap: '3px'
+                                                }}
+                                              >
+                                                <span>🏄</span>
+                                                <span>{gName.replace(/^Group\s+/i, 'G-')}</span>
+                                                <span style={{ color: '#64748B', fontWeight: 600 }}>({count})</span>
+                                              </span>
+                                            ))}
+                                            {numGroups > 3 && (
+                                              <span
+                                                style={{
+                                                  fontSize: '9.5px',
+                                                  fontWeight: 800,
+                                                  color: isAfternoon ? '#4F46E5' : '#0D9488',
+                                                  background: isAfternoon ? '#EEF2FF' : '#F0FDFA',
+                                                  border: `1px solid ${isAfternoon ? '#C7D2FE' : '#99F6E4'}`,
+                                                  padding: '1.5px 6px',
+                                                  borderRadius: '4px',
+                                                  whiteSpace: 'nowrap'
+                                                }}
+                                                title={`${numGroups - 3} more groups in this slot`}
+                                              >
+                                                +{numGroups - 3} more
+                                              </span>
+                                            )}
+                                          </div>
+                                        )}
+
+                                        {/* Ungrouped in this slot */}
+                                        {slot.ungroupedCount > 0 && (
+                                          <div style={{ fontSize: '9.5px', color: '#D97706', fontWeight: 700, marginTop: '3px', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                            <span>⚠️</span> {slot.ungroupedCount} ungrouped
+                                          </div>
+                                        )}
                                       </div>
-                                    ))
-                                  )}
+                                    );
+                                  })}
                                 </div>
 
                                 {/* Quick + Create Button in Date Box */}
@@ -6214,13 +6520,14 @@ const Sessions = () => {
                                     style={{
                                       marginTop: 'auto',
                                       width: '100%',
-                                      padding: '3px 6px',
+                                      height: '26px',
+                                      padding: '0 8px',
                                       fontSize: '11px',
                                       fontWeight: 700,
-                                      borderRadius: '6px',
-                                      border: isSelected ? '1px solid #0D9488' : '1px dashed #99F6E4',
-                                      background: isSelected ? '#0D9488' : '#F0FDFA',
-                                      color: isSelected ? '#FFFFFF' : '#0F766E',
+                                      borderRadius: '7px',
+                                      border: isSelected ? '1px solid #0D9488' : '1px dashed #CBD5E1',
+                                      background: isSelected ? '#0D9488' : '#F8FAFC',
+                                      color: isSelected ? '#FFFFFF' : '#64748B',
                                       cursor: 'pointer',
                                       display: 'flex',
                                       alignItems: 'center',
@@ -6259,7 +6566,7 @@ const Sessions = () => {
                             {formatCalendarLongDate(selectedCalendarDate)}
                           </h3>
                           <span style={{ fontSize: '12px', color: '#64748B' }}>
-                            {activeDaySessions.length} total session{activeDaySessions.length === 1 ? '' : 's'} scheduled
+                            {activeDaySessions.length} total student{activeDaySessions.length === 1 ? '' : 's'} scheduled
                           </span>
                         </div>
                       </div>
@@ -6352,26 +6659,57 @@ const Sessions = () => {
                                 Students ({grp.sessions.length}):
                               </div>
                               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                                {grp.sessions.map((sess, sIdx) => (
-                                  <span
-                                    key={sess.id || sIdx}
-                                    style={{
-                                      background: '#FFFFFF',
-                                      border: '1px solid #CBD5E1',
-                                      borderRadius: '6px',
-                                      padding: '2px 8px',
-                                      fontSize: '12px',
-                                      fontWeight: 600,
-                                      color: '#0F172A',
-                                      display: 'inline-flex',
-                                      alignItems: 'center',
-                                      gap: '4px'
-                                    }}
-                                  >
-                                    👤 {sess.student}
-                                    <span style={{ fontSize: '10px', color: '#0D9488' }}>({sess.type || 'General'})</span>
-                                  </span>
-                                ))}
+                                {grp.sessions.map((sess, sIdx) => {
+                                  const prevGuestOcc = grp.sessions
+                                    .slice(0, sIdx)
+                                    .filter(prevS => 
+                                      Boolean(prevS.is_guest || (prevS.guest_name && prevS.guest_name.trim())) &&
+                                      ((sess.student_id != null && prevS.student_id != null && String(prevS.student_id) === String(sess.student_id)) ||
+                                       ((prevS.student || '').trim().toLowerCase() === (sess.student || '').trim().toLowerCase()))
+                                    ).length;
+
+                                  const { displayName, isGuest, parentName, level: resolvedLevel } = resolveStudentAndGuestDisplay(sess, allStudentsList, prevGuestOcc);
+                                  const displayLevel = resolvedLevel || sess.level || sess.type || 'Beginner';
+
+                                  return (
+                                    <span
+                                      key={sess.id || sIdx}
+                                      style={{
+                                        background: '#FFFFFF',
+                                        border: '1px solid #CBD5E1',
+                                        borderRadius: '6px',
+                                        padding: '2px 8px',
+                                        fontSize: '12px',
+                                        fontWeight: 600,
+                                        color: '#0F172A',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '4px'
+                                      }}
+                                      title={isGuest && parentName ? `Guest of ${parentName}` : displayName}
+                                    >
+                                      <span>👤</span>
+                                      <span>{displayName}</span>
+                                      {isGuest && (
+                                        <span style={{
+                                          fontSize: '10px',
+                                          background: '#FEF3C7',
+                                          color: '#92400E',
+                                          border: '1px solid #FDE68A',
+                                          borderRadius: '4px',
+                                          padding: '1px 5px',
+                                          fontWeight: 700,
+                                          lineHeight: '1.2'
+                                        }}>
+                                          Guest
+                                        </span>
+                                      )}
+                                      <span style={{ fontSize: '10px', color: '#0D9488' }}>
+                                        ({displayLevel})
+                                      </span>
+                                    </span>
+                                  );
+                                })}
                               </div>
                             </div>
 
@@ -6400,9 +6738,22 @@ const Sessions = () => {
                           >
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
                               <div>
-                                <h4 style={{ margin: '0 0 2px', fontSize: '14px', color: '#0F172A', fontWeight: 700 }}>
-                                  👤 {sess.student}
-                                </h4>
+                                {(() => {
+                                  const isG = Boolean(sess.is_guest || (sess.guest_name && sess.guest_name.trim()));
+                                  const dName = (isG && sess.guest_name) ? sess.guest_name.trim() : sess.student;
+                                  const pName = (isG && sess.student && sess.student !== dName) ? sess.student : null;
+                                  return (
+                                    <h4 style={{ margin: '0 0 2px', fontSize: '14px', color: '#0F172A', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                      <span>{isG ? '👥' : '👤'}</span>
+                                      <span>{dName}</span>
+                                      {isG && (
+                                        <span style={{ fontSize: '10.5px', background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A', borderRadius: '4px', padding: '1px 5px', fontWeight: 700 }}>
+                                          Guest{pName ? ` (${pName})` : ''}
+                                        </span>
+                                      )}
+                                    </h4>
+                                  );
+                                })()}
                                 <span style={{ fontSize: '12px', color: '#0D9488', fontWeight: 600 }}>
                                   ⏰ {sess.time}
                                 </span>
@@ -6453,9 +6804,48 @@ const Sessions = () => {
               const isPast = targetISO < getTodayYYYYMMDD();
               const isToday = targetISO === getTodayYYYYMMDD();
 
+              // Compute all unique time slots for this day sorted chronologically
+              const dayTimeSlots = Array.from(
+                new Set([
+                  ...modalGroups.map(g => (g.time || '').trim()).filter(Boolean),
+                  ...modalUngrouped.map(s => (s.time || '').trim()).filter(Boolean)
+                ])
+              ).sort((a, b) => parseTimeToMinutes(a) - parseTimeToMinutes(b));
+
+              // Count groups and students per time slot for accurate badge indicators
+              const slotGroupCounts = {};
+              const slotStudentCounts = {};
+              modalGroups.forEach(grp => {
+                const t = (grp.time || '').trim();
+                slotGroupCounts[t] = (slotGroupCounts[t] || 0) + 1;
+                slotStudentCounts[t] = (slotStudentCounts[t] || 0) + (grp.sessions ? grp.sessions.length : 0);
+              });
+              modalUngrouped.forEach(sess => {
+                const t = (sess.time || '').trim();
+                slotStudentCounts[t] = (slotStudentCounts[t] || 0) + 1;
+              });
+
+              const matchesSlot = (itemTime, filterTime) => {
+                if (!filterTime || filterTime === 'All') return true;
+                if (!itemTime) return false;
+                const t1 = itemTime.trim().toLowerCase();
+                const t2 = filterTime.trim().toLowerCase();
+                if (t1 === t2) return true;
+                if (t1.includes(t2) || t2.includes(t1)) return true;
+                const start1 = t1.includes(' - ') ? t1.split(' - ')[0].trim() : t1;
+                const start2 = t2.includes(' - ') ? t2.split(' - ')[0].trim() : t2;
+                return start1 === start2;
+              };
+
               const query = (dayModalStudentSearch || '').trim().toLowerCase();
               let filteredGroups = modalGroups;
               let filteredUngrouped = modalUngrouped;
+
+              // Filter by time slot
+              if (dayModalSlotFilter !== 'All') {
+                filteredGroups = filteredGroups.filter(grp => matchesSlot(grp.time, dayModalSlotFilter));
+                filteredUngrouped = filteredUngrouped.filter(sess => matchesSlot(sess.time, dayModalSlotFilter));
+              }
 
               const matchesNamePrefix = (nameStr, q) => {
                 if (!nameStr || !q) return false;
@@ -6484,7 +6874,7 @@ const Sessions = () => {
                   matchesNamePrefix(sess.student, query) ||
                   matchesNamePrefix(sess.guest_name, query);
 
-                filteredGroups = modalGroups.map(grp => {
+                filteredGroups = filteredGroups.map(grp => {
                   const matchingSessions = grp.sessions.filter(matchesSession);
                   if (matchingSessions.length > 0) {
                     return { ...grp, sessions: matchingSessions };
@@ -6492,7 +6882,7 @@ const Sessions = () => {
                   return null;
                 }).filter(Boolean);
 
-                filteredUngrouped = modalUngrouped.filter(matchesSession);
+                filteredUngrouped = filteredUngrouped.filter(matchesSession);
               }
 
               const totalMatchingStudents = filteredGroups.reduce((acc, g) => acc + g.sessions.length, 0) + filteredUngrouped.length;
@@ -6508,14 +6898,14 @@ const Sessions = () => {
               }).length;
 
               return (
-                <div className="ses-modal-overlay" style={{ zIndex: 10002 }} onClick={() => { setSelectedDayDetailsModal(null); setDayModalStudentSearch(''); }}>
+                <div className="ses-modal-overlay" style={{ zIndex: 10002 }} onClick={() => { setSelectedDayDetailsModal(null); setDayModalStudentSearch(''); setDayModalSlotFilter('All'); }}>
                   <div
-                    className="ses-modal-box"
+                    className="ses-modal-box ses-day-details-modal-box"
                     style={{ maxWidth: '640px', width: '92%', maxHeight: '88vh', display: 'flex', flexDirection: 'column', padding: '0', overflow: 'hidden' }}
                     onClick={(e) => e.stopPropagation()}
                   >
                     {/* Modal Header */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: '1px solid #E2E8F0', background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', color: '#FFFFFF' }}>
+                    <div className="ses-day-modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: '1px solid #E2E8F0', background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', color: '#FFFFFF' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                         <span style={{ fontSize: '24px' }}>📅</span>
                         <div>
@@ -6531,7 +6921,7 @@ const Sessions = () => {
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '3px' }}>
                             <span style={{ fontSize: '12px', color: '#94A3B8' }}>
-                              {targetDaySessions.length} total session{targetDaySessions.length === 1 ? '' : 's'} scheduled &bull; {modalGroups.length} group{modalGroups.length === 1 ? '' : 's'}
+                              {targetDaySessions.length} total student{targetDaySessions.length === 1 ? '' : 's'} scheduled &bull; {modalGroups.length} group{modalGroups.length === 1 ? '' : 's'}
                             </span>
                             <span style={{ color: '#475569', fontSize: '11px' }}>&bull;</span>
                             <span style={{
@@ -6568,35 +6958,44 @@ const Sessions = () => {
                       <button
                         className="ses-modal-close"
                         style={{ width: '28px', height: '28px', fontSize: '12px', color: '#FFFFFF', background: 'rgba(255,255,255,0.1)' }}
-                        onClick={() => { setSelectedDayDetailsModal(null); setDayModalStudentSearch(''); }}
+                        onClick={() => { setSelectedDayDetailsModal(null); setDayModalStudentSearch(''); setDayModalSlotFilter('All'); }}
                       >
                         ✕
                       </button>
                     </div>
 
-                    {/* Student Search Bar */}
+                    {/* Search & Time Slot Filter Bar */}
                     {targetDaySessions.length > 0 && (
-                      <div style={{ padding: '12px 20px', background: '#FFFFFF', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <div style={{ position: 'relative', flex: 1, display: 'flex', alignItems: 'center' }}>
-                          <span style={{ position: 'absolute', left: '12px', fontSize: '14px', color: '#64748B', pointerEvents: 'none' }}>
+                      <div style={{
+                        padding: '10px 18px',
+                        background: '#FFFFFF',
+                        borderBottom: '1px solid #E2E8F0',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}>
+                        {/* Student Search */}
+                        <div style={{ position: 'relative', flex: 1, minWidth: 0, display: 'flex', alignItems: 'center' }}>
+                          <span style={{ position: 'absolute', left: '10px', fontSize: '13px', color: '#64748B', pointerEvents: 'none' }}>
                             🔍
                           </span>
                           <input
                             type="text"
-                            placeholder="Search student name in this day's sessions..."
+                            placeholder="Search student..."
                             value={dayModalStudentSearch}
                             onChange={e => setDayModalStudentSearch(e.target.value)}
                             style={{
                               width: '100%',
-                              padding: '8px 34px 8px 34px',
-                              borderRadius: '8px',
+                              padding: '6px 26px 6px 28px',
+                              borderRadius: '7px',
                               border: dayModalStudentSearch.trim() ? '1.5px solid #0D9488' : '1px solid #CBD5E1',
                               background: dayModalStudentSearch.trim() ? '#F0FDFA' : '#F8FAFC',
-                              fontSize: '13px',
+                              fontSize: '12.5px',
                               fontWeight: 600,
                               color: '#0F172A',
                               outline: 'none',
-                              boxSizing: 'border-box'
+                              boxSizing: 'border-box',
+                              height: '33px'
                             }}
                           />
                           {dayModalStudentSearch && (
@@ -6605,17 +7004,17 @@ const Sessions = () => {
                               onClick={() => setDayModalStudentSearch('')}
                               style={{
                                 position: 'absolute',
-                                right: '10px',
+                                right: '7px',
                                 background: '#E2E8F0',
                                 border: 'none',
                                 color: '#475569',
                                 borderRadius: '50%',
-                                width: '18px',
-                                height: '18px',
+                                width: '16px',
+                                height: '16px',
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                fontSize: '10px',
+                                fontSize: '9px',
                                 fontWeight: 800,
                                 cursor: 'pointer'
                               }}
@@ -6625,25 +7024,97 @@ const Sessions = () => {
                             </button>
                           )}
                         </div>
+
+                        {/* Search count badge */}
                         {dayModalStudentSearch.trim() && (
                           <span style={{
-                            fontSize: '11.5px',
+                            fontSize: '11px',
                             fontWeight: 700,
                             color: totalMatchingStudents > 0 ? '#0D9488' : '#DC2626',
                             background: totalMatchingStudents > 0 ? '#F0FDFA' : '#FEF2F2',
                             border: totalMatchingStudents > 0 ? '1px solid #99F6E4' : '1px solid #FECACA',
-                            padding: '4px 10px',
-                            borderRadius: '6px',
-                            whiteSpace: 'nowrap'
+                            padding: '3px 7px',
+                            borderRadius: '5px',
+                            whiteSpace: 'nowrap',
+                            flexShrink: 0
                           }}>
-                            {totalMatchingStudents} {totalMatchingStudents === 1 ? 'student' : 'students'} found
+                            {totalMatchingStudents}
                           </span>
+                        )}
+
+                        {/* Compact Time Slot Select Dropdown Filter */}
+                        {dayTimeSlots.length > 0 && (
+                          <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
+                            <span style={{ position: 'absolute', left: '8px', fontSize: '11.5px', pointerEvents: 'none' }}>
+                              ⏰
+                            </span>
+                            <select
+                              value={dayModalSlotFilter}
+                              onChange={e => setDayModalSlotFilter(e.target.value)}
+                              style={{
+                                padding: '4px 22px 4px 25px',
+                                borderRadius: '7px',
+                                border: dayModalSlotFilter !== 'All' ? '1.5px solid #0D9488' : '1px solid #CBD5E1',
+                                background: dayModalSlotFilter !== 'All' ? '#F0FDFA' : '#F8FAFC',
+                                color: dayModalSlotFilter !== 'All' ? '#0D9488' : '#0F172A',
+                                fontWeight: dayModalSlotFilter !== 'All' ? 700 : 600,
+                                fontSize: '12px',
+                                cursor: 'pointer',
+                                outline: 'none',
+                                height: '33px',
+                                maxWidth: '175px',
+                                textOverflow: 'ellipsis',
+                                appearance: 'none',
+                                WebkitAppearance: 'none',
+                                MozAppearance: 'none',
+                                boxSizing: 'border-box'
+                              }}
+                              title="Filter by Time Slot"
+                            >
+                              <option value="All">All Slots ({modalGroups.length > 0 ? modalGroups.length : targetDaySessions.length})</option>
+                              {dayTimeSlots.map(slotTime => (
+                                <option key={slotTime} value={slotTime}>
+                                  {slotTime}
+                                </option>
+                              ))}
+                            </select>
+                            <span style={{ position: 'absolute', right: '7px', fontSize: '8px', color: dayModalSlotFilter !== 'All' ? '#0D9488' : '#64748B', pointerEvents: 'none' }}>
+                              ▼
+                            </span>
+                          </div>
+                        )}
+
+                        {/* Tiny Clear Button for Slot Filter */}
+                        {dayModalSlotFilter !== 'All' && (
+                          <button
+                            type="button"
+                            onClick={() => setDayModalSlotFilter('All')}
+                            style={{
+                              background: '#FEE2E2',
+                              border: '1px solid #FECACA',
+                              color: '#DC2626',
+                              fontSize: '10px',
+                              fontWeight: 800,
+                              cursor: 'pointer',
+                              width: '24px',
+                              height: '24px',
+                              borderRadius: '50%',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              padding: 0,
+                              flexShrink: 0
+                            }}
+                            title="Reset time slot"
+                          >
+                            ✕
+                          </button>
                         )}
                       </div>
                     )}
 
                     {/* Modal Body */}
-                    <div style={{ padding: '18px 20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px', background: '#F8FAFC', flex: 1 }}>
+                    <div className="ses-day-details-content" style={{ padding: '18px 20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px', background: '#F8FAFC', flex: 1 }}>
                       {targetDaySessions.length === 0 ? (
                         <div style={{ textAlign: 'center', padding: '36px 16px', background: '#FFFFFF', borderRadius: '12px', border: '1.5px dashed #CBD5E1' }}>
                           <div style={{ fontSize: '36px', marginBottom: '8px' }}>🏖️</div>
@@ -6663,37 +7134,66 @@ const Sessions = () => {
                                 setShowScheduleModal(true);
                                 setSelectedDayDetailsModal(null);
                                 setDayModalStudentSearch('');
+                                setDayModalSlotFilter('All');
                               }}
                             >
                               + Schedule Session for this Date
                             </button>
                           )}
                         </div>
-                      ) : query && totalMatchingStudents === 0 ? (
+                      ) : (filteredGroups.length === 0 && filteredUngrouped.length === 0) ? (
                         <div style={{ textAlign: 'center', padding: '36px 16px', background: '#FFFFFF', borderRadius: '12px', border: '1.5px dashed #CBD5E1' }}>
-                          <div style={{ fontSize: '32px', marginBottom: '8px' }}>🔍</div>
+                          <div style={{ fontSize: '32px', marginBottom: '8px' }}>{query ? '🔍' : '⏰'}</div>
                           <h4 style={{ margin: '0 0 6px', color: '#0F172A', fontSize: '15px', fontWeight: 700 }}>
-                            No Students Found
+                            {query ? 'No Students Found' : 'No Sessions in this Time Slot'}
                           </h4>
                           <p style={{ margin: '0 0 14px', color: '#64748B', fontSize: '13px' }}>
-                            No student matching &ldquo;<strong>{dayModalStudentSearch}</strong>&rdquo; was found in this day&rsquo;s sessions.
+                            {query && dayModalSlotFilter !== 'All' ? (
+                              <>No student matching &ldquo;<strong>{dayModalStudentSearch}</strong>&rdquo; was found in slot <strong>{dayModalSlotFilter}</strong>.</>
+                            ) : query ? (
+                              <>No student matching &ldquo;<strong>{dayModalStudentSearch}</strong>&rdquo; was found in this day&rsquo;s sessions.</>
+                            ) : (
+                              <>No sessions scheduled for time slot <strong>{dayModalSlotFilter}</strong>.</>
+                            )}
                           </p>
-                          <button
-                            type="button"
-                            onClick={() => setDayModalStudentSearch('')}
-                            style={{
-                              background: '#0D9488',
-                              color: '#FFFFFF',
-                              border: 'none',
-                              borderRadius: '8px',
-                              padding: '7px 16px',
-                              fontSize: '12.5px',
-                              fontWeight: 700,
-                              cursor: 'pointer'
-                            }}
-                          >
-                            ✕ Clear Search
-                          </button>
+                          <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            {query && (
+                              <button
+                                type="button"
+                                onClick={() => setDayModalStudentSearch('')}
+                                style={{
+                                  background: '#0D9488',
+                                  color: '#FFFFFF',
+                                  border: 'none',
+                                  borderRadius: '8px',
+                                  padding: '7px 16px',
+                                  fontSize: '12.5px',
+                                  fontWeight: 700,
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                ✕ Clear Student Search
+                              </button>
+                            )}
+                            {dayModalSlotFilter !== 'All' && (
+                              <button
+                                type="button"
+                                onClick={() => setDayModalSlotFilter('All')}
+                                style={{
+                                  background: '#F1F5F9',
+                                  color: '#334155',
+                                  border: '1px solid #CBD5E1',
+                                  borderRadius: '8px',
+                                  padding: '7px 16px',
+                                  fontSize: '12.5px',
+                                  fontWeight: 700,
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                ★ Show All Slots
+                              </button>
+                            )}
+                          </div>
                         </div>
                       ) : (
                         <>
@@ -6822,6 +7322,7 @@ const Sessions = () => {
                                       return (
                                         <div
                                           key={sess.id || sIdx}
+                                          className="ses-day-modal-student-row"
                                           style={{
                                             display: 'flex',
                                             alignItems: 'center',
@@ -6839,8 +7340,13 @@ const Sessions = () => {
                                             <div style={{ minWidth: 0 }}>
                                               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                                 <span style={{ fontWeight: 700, color: '#0F172A', fontSize: '13px' }}>
-                                                  {sess.student}
+                                                  {sess.guest_name ? sess.guest_name : sess.student}
                                                 </span>
+                                                {sess.guest_name && (
+                                                  <span style={{ fontSize: '10px', background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A', borderRadius: '4px', padding: '1px 5px', fontWeight: 700 }}>
+                                                    👥 Guest ({sess.student})
+                                                  </span>
+                                                )}
                                                 {isPresent && (
                                                   <span style={{ fontSize: '10px', fontWeight: 800, color: '#15803D', background: '#DCFCE7', padding: '1px 6px', borderRadius: '10px', border: '1px solid #86EFAC' }}>
                                                     ✓ PRESENT
@@ -6859,7 +7365,7 @@ const Sessions = () => {
                                           </div>
 
                                           {/* Present / Absent Action Buttons */}
-                                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0 }}>
+                                          <div className="ses-day-modal-actions" style={{ display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0 }}>
                                             {!isCoach && (() => {
                                               const phone = resolveStudentPhone(sess);
                                               const cleanDigits = phone ? phone.replace(/[^\d+]/g, '') : '';
@@ -6874,10 +7380,10 @@ const Sessions = () => {
                                                     e.stopPropagation();
                                                     if (!finalTel) {
                                                       e.preventDefault();
-                                                      showToast(`No phone number available for ${sess.student || 'student'}`, 'info');
+                                                      showToast(`No phone number available for ${sess.guest_name ? `${sess.guest_name} (Guest of ${sess.student})` : (sess.student || 'student')}`, 'info');
                                                     }
                                                   }}
-                                                  title={phone ? `Call ${sess.student}: ${phone}` : `No phone number for ${sess.student}`}
+                                                  title={phone ? `Call ${sess.guest_name ? `${sess.guest_name} (Guest of ${sess.student})` : sess.student}: ${phone}` : `No phone number for ${sess.guest_name ? sess.guest_name : sess.student}`}
                                                   style={{
                                                     display: 'inline-flex',
                                                     alignItems: 'center',
@@ -7026,6 +7532,7 @@ const Sessions = () => {
                             return (
                               <div
                                 key={sess.id || uIdx}
+                                className="ses-day-modal-student-row"
                                 style={{
                                   background: isPresent ? '#F0FDF4' : isAbsent ? '#FEF2F2' : '#FFFFFF',
                                   border: isPresent ? '1.5px solid #86EFAC' : isAbsent ? '1.5px solid #FECACA' : '1px solid #E2E8F0',
@@ -7043,8 +7550,13 @@ const Sessions = () => {
                                   <div style={{ minWidth: 0 }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                       <h4 style={{ margin: 0, fontSize: '14.5px', color: '#0F172A', fontWeight: 700 }}>
-                                        {sess.student}
+                                        {sess.guest_name ? sess.guest_name : sess.student}
                                       </h4>
+                                      {sess.guest_name && (
+                                        <span style={{ fontSize: '10px', background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A', borderRadius: '4px', padding: '1px 5px', fontWeight: 700 }}>
+                                          👥 Guest ({sess.student})
+                                        </span>
+                                      )}
                                       {isPresent && (
                                         <span style={{ fontSize: '10px', fontWeight: 800, color: '#15803D', background: '#DCFCE7', padding: '1px 6px', borderRadius: '10px', border: '1px solid #86EFAC' }}>
                                           ✓ PRESENT
@@ -7062,7 +7574,7 @@ const Sessions = () => {
                                   </div>
                                 </div>
 
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0 }}>
+                                <div className="ses-day-modal-actions" style={{ display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0 }}>
                                   {!isCoach && (() => {
                                     const phone = resolveStudentPhone(sess);
                                     const cleanDigits = phone ? phone.replace(/[^\d+]/g, '') : '';
@@ -7077,10 +7589,10 @@ const Sessions = () => {
                                           e.stopPropagation();
                                           if (!finalTel) {
                                             e.preventDefault();
-                                            showToast(`No phone number available for ${sess.student || 'student'}`, 'info');
+                                                      showToast(`No phone number available for ${sess.guest_name ? `${sess.guest_name} (Guest of ${sess.student})` : (sess.student || 'student')}`, 'info');
                                           }
                                         }}
-                                        title={phone ? `Call ${sess.student}: ${phone}` : `No phone number for ${sess.student}`}
+                                                  title={phone ? `Call ${sess.guest_name ? `${sess.guest_name} (Guest of ${sess.student})` : sess.student}: ${phone}` : `No phone number for ${sess.guest_name ? sess.guest_name : sess.student}`}
                                         style={{
                                           display: 'inline-flex',
                                           alignItems: 'center',
@@ -7167,7 +7679,7 @@ const Sessions = () => {
                         type="button"
                         className="ses-btn-secondary"
                         style={{ fontSize: '12px', padding: '6px 14px' }}
-                        onClick={() => { setSelectedDayDetailsModal(null); setDayModalStudentSearch(''); }}
+                        onClick={() => { setSelectedDayDetailsModal(null); setDayModalStudentSearch(''); setDayModalSlotFilter('All'); }}
                       >
                         Close
                       </button>
@@ -7194,7 +7706,14 @@ const Sessions = () => {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', fontSize: '14px' }}>
                       <div className="ses-detail-row">
                         <span className="ses-detail-label">Student</span>
-                        <span className="ses-detail-val" style={{ fontWeight: 700, color: '#0F172A' }}>{selectedSessionDetail.student}</span>
+                        <span className="ses-detail-val" style={{ fontWeight: 700, color: '#0F172A' }}>
+                          {selectedSessionDetail.guest_name ? selectedSessionDetail.guest_name : selectedSessionDetail.student}
+                          {selectedSessionDetail.guest_name && (
+                            <span style={{ marginLeft: '8px', fontSize: '11px', background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A', borderRadius: '4px', padding: '1px 5px', fontWeight: 700 }}>
+                              👥 Guest ({selectedSessionDetail.student})
+                            </span>
+                          )}
+                        </span>
                       </div>
                       <div className="ses-detail-row">
                         <span className="ses-detail-label">Instructor / Coach</span>
@@ -8214,7 +8733,15 @@ const Sessions = () => {
           padding: 24px 28px; overflow-y: auto; flex: 1;
         }
 
-        /* Month View */
+        .ses-cal-main-modal {
+          max-width: 1480px !important;
+          width: 96vw !important;
+          height: min(920px, 94vh) !important;
+          max-height: 94vh !important;
+        }
+        .ses-cal-month-view {
+          min-width: 1100px;
+        }
         .ses-cal-nav-bar {
           display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;
         }
@@ -8228,23 +8755,31 @@ const Sessions = () => {
         .ses-cal-nav-btn:hover { background: #E2E8F0; }
 
         .ses-cal-grid-header {
-          display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; margin-bottom: 8px; text-align: center;
+          display: grid; grid-template-columns: repeat(7, minmax(145px, 1fr)); gap: 10px; margin-bottom: 8px; text-align: center;
         }
         .ses-cal-grid-th {
           font-size: 12px; font-weight: 700; color: #64748B; text-transform: uppercase; padding: 6px 0;
         }
 
         .ses-cal-days-grid {
-          display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px;
+          display: grid; grid-template-columns: repeat(7, minmax(145px, 1fr)); gap: 10px;
         }
         .ses-cal-day-cell {
-          min-height: 90px; background: #FFFFFF; border: 1.5px solid #E2E8F0; border-radius: 10px;
-          padding: 8px; display: flex; flex-direction: column; gap: 4px; cursor: pointer; transition: all 0.2s;
+          min-height: 275px; background: #FFFFFF; border: 1.5px solid #E2E8F0; border-radius: 12px;
+          padding: 10px; display: flex; flex-direction: column; gap: 4px; cursor: pointer; transition: all 0.2s;
         }
         .ses-cal-day-cell:hover { border-color: #0D9488; transform: translateY(-1px); box-shadow: 0 4px 10px rgba(0,0,0,0.04); }
         .ses-cal-day-cell.selected { border-color: #0D9488; background: rgba(13, 148, 136, 0.03); }
-        .ses-cal-day-cell.today { border-color: #F43F5E; }
+        .ses-cal-day-cell.today { border-color: #3B82F6; }
         .ses-cal-day-cell.empty { background: transparent; border-color: transparent; cursor: default; }
+
+        .ses-cal-day-events::-webkit-scrollbar {
+          width: 4px;
+        }
+        .ses-cal-day-events::-webkit-scrollbar-thumb {
+          background: #CBD5E1;
+          border-radius: 4px;
+        }
 
         .ses-cal-day-num {
           display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 700; color: #0F172A;
@@ -8262,6 +8797,23 @@ const Sessions = () => {
           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #334155;
         }
         .ses-cal-more-events { font-size: 10px; color: #64748B; font-weight: 600; text-align: center; }
+        .ses-cal-slot-box {
+          transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .ses-cal-slot-box:hover {
+          border-color: #CBD5E1 !important;
+          box-shadow: 0 3px 10px rgba(15, 23, 42, 0.08) !important;
+          transform: translateY(-1px);
+        }
+        .ses-cal-add-btn {
+          transition: all 0.15s ease;
+        }
+        .ses-cal-add-btn:hover {
+          background: #0D9488 !important;
+          color: #FFFFFF !important;
+          border-color: #0D9488 !important;
+          border-style: solid !important;
+        }
 
         .ses-cal-day-drawer {
           margin-top: 20px; background: #F8FAFC; border: 1.5px solid #E2E8F0; border-radius: 14px; padding: 18px;
@@ -8608,6 +9160,40 @@ const Sessions = () => {
           }
           .ses-cal-drawer-cards {
             grid-template-columns: 1fr !important;
+          }
+          .ses-day-details-modal-box {
+            width: 96% !important;
+            max-width: 96vw !important;
+            max-height: 94vh !important;
+            border-radius: 14px !important;
+          }
+          .ses-day-modal-header {
+            padding: 12px 14px !important;
+          }
+          .ses-day-details-content {
+            padding: 12px 10px !important;
+            gap: 10px !important;
+          }
+          .ses-day-modal-student-row {
+            flex-direction: column !important;
+            align-items: stretch !important;
+            gap: 8px !important;
+            padding: 10px !important;
+          }
+          .ses-day-modal-actions {
+            width: 100% !important;
+            display: flex !important;
+            gap: 6px !important;
+            border-top: 1px dashed #E2E8F0 !important;
+            padding-top: 8px !important;
+            margin-top: 2px !important;
+          }
+          .ses-day-modal-actions > * {
+            flex: 1 !important;
+            justify-content: center !important;
+            text-align: center !important;
+            padding: 6px 4px !important;
+            font-size: 11.5px !important;
           }
         }
       `}</style>

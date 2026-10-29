@@ -40,6 +40,17 @@ const Hero = () => {
 
       {/* Balance spacer */}
       <div className="hero-bottom-spacer" aria-hidden="true" />
+
+      {/* Bottom Right Corner Branding */}
+      <a
+        href="https://rpntechworld.com"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="hero-corner-footer"
+      >
+        <span>Developed by</span>
+        <span className="hero-footer-link">rpntechworld</span>
+      </a>
     </section>
   );
 };

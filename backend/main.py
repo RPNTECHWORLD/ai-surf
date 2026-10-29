@@ -1509,6 +1509,8 @@ class SessionCreate(BaseModel):
     video_url: Optional[str] = ""
     image_url: Optional[str] = ""
     group_name: Optional[str] = ""
+    student_name: Optional[str] = None
+    guest_name: Optional[str] = None
 
 
 class SessionUpdate(BaseModel):
@@ -1529,6 +1531,8 @@ class SessionUpdate(BaseModel):
     image_url: Optional[str] = None
     group_name: Optional[str] = None
     attendance: Optional[str] = None
+    student_name: Optional[str] = None
+    guest_name: Optional[str] = None
 
 
 class SessionBulkCreate(BaseModel):
@@ -1610,6 +1614,8 @@ class UserSignup(BaseModel):
     invite_token: Optional[str] = None
     # School batch invite code (locks school and limits total capacity)
     invite_code: Optional[str] = None
+    # Purge previous account if one with this email was scheduled for deletion
+    purge_previous: Optional[bool] = False
 
 
 class SchoolInviteCreate(BaseModel):
@@ -2172,9 +2178,9 @@ def get_current_user(authorization: Optional[str] = Header(None), db: OrmSession
         raise HTTPException(status_code=401, detail="User not found")
     if user.deletion_scheduled_at:
         elapsed = datetime.utcnow() - user.deletion_scheduled_at
-        if elapsed.total_seconds() > 30 * 86400:
+        if elapsed.total_seconds() > 7 * 86400:
             delete_user_by_id(user.id, db)
-            raise HTTPException(status_code=401, detail="Account deleted (30-day retention grace period expired).")
+            raise HTTPException(status_code=401, detail="Account deleted (7-day retention grace period expired).")
         else:
             raise HTTPException(status_code=403, detail="Account is scheduled for deletion. Please log in to retain and restore your account.")
     if user.is_active is False:
@@ -2243,11 +2249,7 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
         inst_name = student_obj.instructor_rel.name if student_obj.instructor_rel else ""
         if (not inst_name or inst_name == "Assigned Surf Coach") and session:
             sess = session.query(SurfSession).filter(
-                or_(
-                    SurfSession.student_id == student_obj.id,
-                    and_(SurfSession.student_name != None, func.lower(SurfSession.student_name) == student_obj.name.lower().strip()),
-                    and_(SurfSession.guest_name != None, func.lower(SurfSession.guest_name) == student_obj.name.lower().strip())
-                )
+                SurfSession.student_id == student_obj.id
             ).order_by(SurfSession.id.desc()).first()
             if sess and sess.instructor_rel and sess.instructor_rel.name:
                 inst_id = sess.instructor_id
@@ -2287,12 +2289,17 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
 
     # Check matching school by school_id, school_name, or email
     try:
-        session = db_session or inspect(user).session
+        session = db_session
+        if not session:
+            try:
+                session = inspect(user).session
+            except Exception:
+                session = None
         if session:
             sch = None
             if getattr(user, "school_id", None):
                 sch = session.query(School).filter(School.id == user.school_id).first()
-            if not sch and getattr(user, "school_name", None):
+            if not sch and getattr(user, "school_name", None) and user.school_name.strip().lower() != "school admin":
                 sch = session.query(School).filter(func.lower(School.name) == user.school_name.lower().strip()).first()
             if not sch and user.email:
                 sch = session.query(School).filter(func.lower(School.email) == user.email.lower().strip()).first()
@@ -2300,6 +2307,17 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
                 res["school_name"] = sch.name
                 res["school_id"] = sch.id
                 res["school"] = sch.name
+                # Ensure the user entity has this school saved
+                if user.role == "admin":
+                    if not getattr(user, "school_name", None) or user.school_name != sch.name or not getattr(user, "school_id", None):
+                        try:
+                            user.school_name = sch.name
+                            user.school_id = sch.id
+                            if not getattr(user, "name", None) and sch.owner:
+                                user.name = sch.owner
+                            session.commit()
+                        except Exception:
+                            pass
                 sch_logo = getattr(sch, "logo", None) or ""
                 sch_city = getattr(sch, "city", None) or ""
                 sch_country = getattr(sch, "country", None) or ""
@@ -2351,8 +2369,37 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
         func.lower(User.email) == email_clean
     ).first()
     if existing:
-        role_label = "Student" if existing.role == "athlete" else ("Coach" if existing.role == "coach" else "School Admin")
-        raise HTTPException(status_code=400, detail=f"This email is already registered as {role_label}. Please log in instead.")
+        if getattr(existing, "deletion_scheduled_at", None):
+            elapsed = datetime.utcnow() - existing.deletion_scheduled_at
+            if elapsed.total_seconds() > 7 * 86400:
+                # 7-day retention grace period expired -> permanently delete and proceed with new account
+                delete_user_by_id(existing.id, db)
+            elif data.purge_previous:
+                # User confirmed deletion of previous account associated with this email
+                db.add(ActivityLog(
+                    text=f"Previous account for {existing.email} was permanently deleted on new signup confirmation",
+                    type="individual",
+                    school=existing.school_name or ""
+                ))
+                delete_user_by_id(existing.id, db)
+            else:
+                days_left = max(1, 7 - elapsed.days)
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "status": "previous_account_pending_deletion",
+                        "pending_previous_account": True,
+                        "days_remaining": days_left,
+                        "deletion_scheduled_at": existing.deletion_scheduled_at.isoformat(),
+                        "email": existing.email,
+                        "previous_user_id": existing.id,
+                        "previous_role": existing.role,
+                        "message": f"A previous account associated with this email ({existing.email}) is currently scheduled for deletion ({days_left} day(s) remaining in the 7-day retention period). Would you like to permanently delete the previous account and its data to create this new account?"
+                    }
+                )
+        else:
+            role_label = "Student" if existing.role == "athlete" else ("Coach" if existing.role == "coach" else "School Admin")
+            raise HTTPException(status_code=400, detail=f"This email is already registered as {role_label}. Please log in instead.")
 
     phone_clean = (data.phone or data.whatsapp_number or "").strip()
     phone_digits = "".join(ch for ch in phone_clean if ch.isdigit())
@@ -2360,6 +2407,39 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
         raise HTTPException(status_code=400, detail="Phone number is required for registration.")
     if len(phone_digits) < 10:
         raise HTTPException(status_code=400, detail="Please enter a valid 10-digit phone number.")
+
+    # Check if a previous user with this phone number was scheduled for deletion
+    existing_phone_user = db.query(User).filter(
+        User.phone == phone_clean,
+        User.deletion_scheduled_at != None
+    ).first()
+    if existing_phone_user:
+        elapsed = datetime.utcnow() - existing_phone_user.deletion_scheduled_at
+        if elapsed.total_seconds() > 7 * 86400:
+            delete_user_by_id(existing_phone_user.id, db)
+        elif data.purge_previous:
+            db.add(ActivityLog(
+                text=f"Previous account for {existing_phone_user.email} (phone {phone_clean}) permanently deleted on new signup confirmation",
+                type="individual",
+                school=existing_phone_user.school_name or ""
+            ))
+            delete_user_by_id(existing_phone_user.id, db)
+        else:
+            days_left = max(1, 7 - elapsed.days)
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "status": "previous_account_pending_deletion",
+                    "pending_previous_account": True,
+                    "days_remaining": days_left,
+                    "deletion_scheduled_at": existing_phone_user.deletion_scheduled_at.isoformat(),
+                    "email": existing_phone_user.email,
+                    "phone": phone_clean,
+                    "previous_user_id": existing_phone_user.id,
+                    "previous_role": existing_phone_user.role,
+                    "message": f"A previous account associated with this phone number ({phone_clean}) is currently scheduled for deletion ({days_left} day(s) remaining in the 7-day retention period). Would you like to permanently delete the previous account and its data to create this new account?"
+                }
+            )
 
     selected_school = (data.school or "").strip()
     if role == "coach":
@@ -2406,7 +2486,9 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
         password_plain=data.password,
         role=role,
         auth_provider="email",
-        approval_status=initial_approval
+        approval_status=initial_approval,
+        name=data.name,
+        phone=phone_clean
     )
     try:
         db.add(user)
@@ -2534,6 +2616,10 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
                 website=""
             )
             db.add(new_sch)
+            db.flush()
+            user.school_name = new_sch.name
+            user.school_id = new_sch.id
+            user.name = data.name
         else:
             if requested_school:
                 existing_school.name = requested_school
@@ -2542,7 +2628,10 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
             existing_school.owner = data.name
             if phone_clean:
                 existing_school.phone = phone_clean
-        created_sch_name = requested_school if requested_school else (existing_school.name if existing_school else f"{data.name}'s Surf School")
+            user.school_name = existing_school.name
+            user.school_id = existing_school.id
+            user.name = data.name
+        created_sch_name = user.school_name or (existing_school.name if existing_school else f"{data.name}'s Surf School")
         db.add(ActivityLog(text=f"School Admin account created for {data.name}", type="individual", school=created_sch_name))
 
     db.commit()
@@ -2620,7 +2709,7 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
     token = generate_token({"user_id": user.id, "email": user.email, "role": user.role})
     return {
         "token": token,
-        "user": make_user_response(user)
+        "user": make_user_response(user, db)
     }
 
 
@@ -2649,6 +2738,21 @@ class SendOtpRequest(BaseModel):
     email: str
     purpose: Optional[str] = "login"
     role: Optional[str] = "athlete"
+    purge_previous: Optional[bool] = False
+
+class PurgePendingAccountRequest(BaseModel):
+    email: str
+
+@app.post("/api/auth/purge-pending-account")
+def purge_pending_account(data: PurgePendingAccountRequest, db: OrmSession = Depends(get_db)):
+    clean_email = data.email.lower().strip()
+    users = db.query(User).filter(func.lower(User.email) == clean_email).all()
+    deleted_count = 0
+    for u in users:
+        if getattr(u, "deletion_scheduled_at", None):
+            delete_user_by_id(u.id, db)
+            deleted_count += 1
+    return {"status": "success", "message": f"Purged {deleted_count} pending deletion account(s)."}
 
 class VerifyOtpRequest(BaseModel):
     email: str
@@ -2664,15 +2768,73 @@ def send_otp_endpoint(data: SendOtpRequest, db: OrmSession = Depends(get_db)):
 
     # If purpose is signup, check if email is already registered before sending OTP
     if data.purpose == "signup":
+        requested_role = (data.role or "athlete").lower().strip()
         existing = db.query(User).filter(
-            func.lower(User.email) == email
+            func.lower(User.email) == email,
+            User.role == requested_role
         ).first()
+
+        # If no user matches the requested role, check all roles
+        if not existing:
+            existing = db.query(User).filter(
+                func.lower(User.email) == email
+            ).first()
+
         if existing:
-            role_display = "Student" if existing.role == "athlete" else ("Coach" if existing.role == "coach" else "School Admin")
-            raise HTTPException(
-                status_code=400,
-                detail=f"This email address is already registered as {role_display}. Please log in instead."
-            )
+            # Check if this account is currently scheduled for deletion (7-day window)
+            if getattr(existing, "deletion_scheduled_at", None):
+                elapsed = datetime.utcnow() - existing.deletion_scheduled_at
+                if elapsed.total_seconds() > 7 * 86400:
+                    # 7-day retention grace period expired -> purge immediately
+                    delete_user_by_id(existing.id, db)
+                    existing = None
+                elif data.purge_previous:
+                    # User confirmed in notification modal to purge old account and create new!
+                    delete_user_by_id(existing.id, db)
+                    existing = None
+                else:
+                    # DO NOT SEND OTP YET! Notify the user first!
+                    days_left = max(1, 7 - elapsed.days)
+                    return JSONResponse(
+                        status_code=409,
+                        content={
+                            "status": "previous_account_pending_deletion",
+                            "pending_previous_account": True,
+                            "days_remaining": days_left,
+                            "deletion_scheduled_at": existing.deletion_scheduled_at.isoformat(),
+                            "email": existing.email,
+                            "name": existing.name or existing.email,
+                            "role": existing.role,
+                            "message": f"An account associated with {existing.email} is scheduled for deletion with {days_left} day(s) left in the retention window."
+                        }
+                    )
+
+            # If role is athlete (Student), check if student profile actually exists in students table
+            if existing and existing.role == "athlete":
+                student_exists = db.query(Student).filter(
+                    or_(
+                        Student.user_id == existing.id,
+                        func.lower(Student.email) == email
+                    )
+                ).first()
+                if not student_exists:
+                    # Student was already deleted from database! Auto-remove orphaned user and allow signup
+                    try:
+                        db.delete(existing)
+                        db.commit()
+                    except Exception:
+                        db.rollback()
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="This email address is already registered as Student. Please log in instead."
+                    )
+            elif existing and requested_role == existing.role:
+                role_display = "Coach" if existing.role == "coach" else "School Admin"
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"This email address is already registered as {role_display}. Please log in instead."
+                )
     
     # Invalidate previous unused OTPs
     try:
@@ -2856,18 +3018,18 @@ def auth_login(data: UserLogin, db: OrmSession = Depends(get_db)):
     if not matched_user:
         raise HTTPException(status_code=400, detail="Invalid email or password")
 
-    # Check if account is scheduled for deletion (30-day grace period)
+    # Check if account is scheduled for deletion (7-day grace period)
     if getattr(matched_user, "deletion_scheduled_at", None):
         elapsed = datetime.utcnow() - matched_user.deletion_scheduled_at
-        if elapsed.total_seconds() > 30 * 86400:
-            # 30-day grace period has expired -> hard delete account and cascade
+        if elapsed.total_seconds() > 7 * 86400:
+            # 7-day grace period has expired -> hard delete account and cascade
             delete_user_by_id(matched_user.id, db)
             raise HTTPException(
                 status_code=403,
-                detail="Your account's 30-day retention grace period has expired and the account has been permanently deleted."
+                detail="Your account's 7-day retention grace period has expired and the account has been permanently deleted."
             )
         
-        # User is within the 30-day retention window
+        # User is within the 7-day retention window
         if data.restore:
             # User confirmed to retain and restore the account!
             matched_user.deletion_scheduled_at = None
@@ -2884,7 +3046,7 @@ def auth_login(data: UserLogin, db: OrmSession = Depends(get_db)):
             db.commit()
             db.refresh(matched_user)
         else:
-            days_left = max(1, 30 - elapsed.days)
+            days_left = max(1, 7 - elapsed.days)
             return {
                 "status": "pending_deletion",
                 "pending_deletion": True,
@@ -2908,7 +3070,7 @@ def auth_login(data: UserLogin, db: OrmSession = Depends(get_db)):
     token = generate_token({"user_id": matched_user.id, "email": matched_user.email, "role": matched_user.role})
     return {
         "token": token,
-        "user": make_user_response(matched_user)
+        "user": make_user_response(matched_user, db)
     }
 
 
@@ -2921,11 +3083,11 @@ def auth_sso(data: SSOLogin, db: OrmSession = Depends(get_db)):
     
     if user and getattr(user, "deletion_scheduled_at", None):
         elapsed = datetime.utcnow() - user.deletion_scheduled_at
-        if elapsed.total_seconds() > 30 * 86400:
+        if elapsed.total_seconds() > 7 * 86400:
             delete_user_by_id(user.id, db)
             raise HTTPException(
                 status_code=403,
-                detail="Your account's 30-day retention grace period has expired and the account has been permanently deleted."
+                detail="Your account's 7-day retention grace period has expired and the account has been permanently deleted."
             )
         # Restore SSO user
         user.deletion_scheduled_at = None
@@ -3685,8 +3847,8 @@ def get_instructors(school: Optional[str] = None, date: Optional[str] = None, db
     query = db.query(Instructor)
     school_clean = (school or "").lower().strip()
 
-    if school_clean in ["all", "super admin", "school admin", "superadmin"]:
-        # Super admin — can see all instructors across all schools
+    if school_clean in ["all", "superadmin", "super admin"]:
+        # Super admin ONLY — can see all instructors across all schools
         pass
     elif school_clean:
         # Scoped to a specific school — only return coaches of that school
@@ -3997,7 +4159,18 @@ def create_instructor(data: InstructorCreate, request: Request, db: OrmSession =
 
 
 @app.put("/api/instructors/{instructor_id}")
-def update_instructor(instructor_id: int, data: InstructorUpdate, db: OrmSession = Depends(get_db)):
+def update_instructor(instructor_id: int, data: InstructorUpdate, request: Request, db: OrmSession = Depends(get_db)):
+    auth_header = request.headers.get("authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ")[1]
+        payload = verify_token(token)
+        if payload:
+            user_role = (payload.get("role") or "").lower().strip()
+            if user_role in ["admin", "school", "school_admin", "schooladmin"]:
+                raise HTTPException(
+                    status_code=403,
+                    detail="School admins are not permitted to edit coach details. Coach profiles can only be updated by the coach or platform super admin."
+                )
     i = db.query(Instructor).filter(
         (Instructor.id == instructor_id) | (Instructor.user_id == instructor_id)
     ).first()
@@ -4343,8 +4516,8 @@ def get_students(school: Optional[str] = None, instructor_id: Optional[int] = No
     query = db.query(Student).order_by(Student.id.desc())
     school_clean = (school or "").lower().strip()
 
-    if school_clean in ["all", "super admin", "school admin", "superadmin"]:
-        # Super admin — can see all students across all schools
+    if school_clean in ["all", "superadmin", "super admin"]:
+        # Super admin ONLY — can see all students across all schools
         if instructor_id:
             query = query.filter(Student.instructor_id == instructor_id)
     elif school_clean:
@@ -4407,13 +4580,11 @@ def get_student(student_id: int, db: OrmSession = Depends(get_db)):
     d = student_to_dict(s)
     d["badges"] = [b.badge_level for b in s.badges]
     
-    # Query all sessions matching this student by student id or student/guest name
+    # Query sessions strictly by student_id to avoid cross-contamination
+    # between students who share the same name but have different emails/IDs.
+    # Never match by name alone — student_id is the authoritative identifier.
     all_sess = db.query(SurfSession).filter(
-        or_(
-            SurfSession.student_id == s.id,
-            and_(SurfSession.student_name != None, func.lower(SurfSession.student_name) == s.name.lower().strip()),
-            and_(SurfSession.guest_name != None, func.lower(SurfSession.guest_name) == s.name.lower().strip())
-        )
+        SurfSession.student_id == s.id
     ).order_by(SurfSession.id.desc()).all()
     
     d["session_count"] = len(all_sess)
@@ -5514,7 +5685,7 @@ def delete_student(student_id: int, db: OrmSession = Depends(get_db)):
 def get_sessions(school: Optional[str] = None, db: OrmSession = Depends(get_db)):
     try:
         query = db.query(SurfSession).order_by(SurfSession.id.desc())
-        if school and school.lower().strip() not in ["all", "super admin", "school admin"]:
+        if school and school.lower().strip() not in ["all", "superadmin", "super admin"]:
             clean_sch = school.lower().strip()
             query = query.outerjoin(Student, SurfSession.student_id == Student.id)\
                          .outerjoin(Instructor, SurfSession.instructor_id == Instructor.id)\
@@ -5544,10 +5715,13 @@ def create_session(data: SessionCreate, db: OrmSession = Depends(get_db)):
         if data.time:
             student.session_time = data.time
     inst_ids = data.instructor_ids if data.instructor_ids else ([data.instructor_id] if data.instructor_id else [])
+    resolved_student_name = data.student_name or (student.name if student else "Unknown")
     session = SurfSession(
         date=data.date, time=data.time, duration_mins=data.duration_mins,
         student_id=data.student_id, instructor_id=data.instructor_id,
         instructor_ids=json.dumps(inst_ids),
+        student_name=resolved_student_name,
+        guest_name=data.guest_name or "",
         location=data.location, condition=data.condition,
         type=data.type, status=data.status or "Upcoming",
         notes=data.notes or "",
@@ -5727,6 +5901,10 @@ def update_session(session_id: int, data: SessionUpdate, db: OrmSession = Depend
         s.group_name = data.group_name
     if data.attendance is not None:
         s.attendance = data.attendance
+    if data.student_name is not None:
+        s.student_name = data.student_name
+    if data.guest_name is not None:
+        s.guest_name = data.guest_name
 
     db.commit()
     db.refresh(s)
@@ -5790,14 +5968,21 @@ def delete_session(session_id: int, db: OrmSession = Depends(get_db)):
 # ─── Session Slots Configuration (Database Synced across all Devices) ─────────
 
 def _get_custom_dates_list(db: OrmSession, school_id: Optional[int], clean_name: Optional[str]) -> List[str]:
+    if clean_name and not school_id and clean_name.lower() not in ["all", "super admin", "school admin", "superadmin"]:
+        sch_obj = db.query(School).filter(func.lower(School.name) == clean_name.lower()).first()
+        if sch_obj:
+            school_id = sch_obj.id
+
     custom_dates_query = db.query(SchoolSlotConfig.slot_date).filter(
         SchoolSlotConfig.slot_date != None,
         SchoolSlotConfig.slot_date != ""
     )
     if school_id:
         custom_dates_query = custom_dates_query.filter(SchoolSlotConfig.school_id == school_id)
-    elif clean_name and clean_name.lower() not in ["all", "super admin", "school admin"]:
+    elif clean_name and clean_name.lower() not in ["all", "super admin", "school admin", "superadmin"]:
         custom_dates_query = custom_dates_query.filter(func.lower(SchoolSlotConfig.school_name) == clean_name.lower())
+    else:
+        return []
     return [r[0] for r in custom_dates_query.distinct().all() if r[0]]
 
 
@@ -5822,34 +6007,34 @@ def get_session_slots(
     clean_name = school_name.strip() if school_name else None
     target_date = date.strip() if date and date.strip() else None
 
+    # Resolve school_id from school_name if missing
+    if clean_name and not school_id and clean_name.lower() not in ["all", "super admin", "school admin", "superadmin"]:
+        sch_obj = db.query(School).filter(func.lower(School.name) == clean_name.lower()).first()
+        if sch_obj:
+            school_id = sch_obj.id
+
     cfg = None
     is_custom_date = False
 
-    # 1. If date is requested, first try to find date-specific custom config
+    # 1. If date is requested, find date-specific custom config strictly for THIS school
     if target_date:
         query_date = db.query(SchoolSlotConfig).filter(SchoolSlotConfig.slot_date == target_date)
         if school_id:
             cfg = query_date.filter(SchoolSlotConfig.school_id == school_id).first()
-        if not cfg and clean_name and clean_name.lower() not in ["all", "super admin", "school admin"]:
+        if not cfg and clean_name and clean_name.lower() not in ["all", "super admin", "school admin", "superadmin"]:
             cfg = query_date.filter(func.lower(SchoolSlotConfig.school_name) == clean_name.lower()).first()
-        if not cfg:
-            # Fallback to any date-specific config created for this date
-            cfg = query_date.order_by(SchoolSlotConfig.id.desc()).first()
         if cfg:
             is_custom_date = True
 
-    # 2. If no custom config for this date (or no date requested), fall back to Master Default (slot_date IS NULL or empty)
+    # 2. Master Default strictly for THIS school (slot_date IS NULL or empty)
     if not cfg:
         query_default = db.query(SchoolSlotConfig).filter(
             or_(SchoolSlotConfig.slot_date == None, SchoolSlotConfig.slot_date == "")
         )
         if school_id:
             cfg = query_default.filter(SchoolSlotConfig.school_id == school_id).first()
-        if not cfg and clean_name and clean_name.lower() not in ["all", "super admin", "school admin"]:
+        if not cfg and clean_name and clean_name.lower() not in ["all", "super admin", "school admin", "superadmin"]:
             cfg = query_default.filter(func.lower(SchoolSlotConfig.school_name) == clean_name.lower()).first()
-        if not cfg:
-            # Fallback to any master default in table
-            cfg = query_default.order_by(SchoolSlotConfig.id.desc()).first()
 
     custom_dates = _get_custom_dates_list(db, school_id, clean_name)
 
@@ -5888,7 +6073,19 @@ def save_session_slots(
     clean_name = data.school_name.strip() if data.school_name else None
     target_date = data.date.strip() if data.date and data.date.strip() else None
 
-    # Find existing config for this school and date (or master default if date is None)
+    # Resolve school_id from school_name if missing
+    eff_school_id = data.school_id
+    if clean_name and not eff_school_id and clean_name.lower() not in ["all", "super admin", "school admin", "superadmin"]:
+        sch_obj = db.query(School).filter(func.lower(School.name) == clean_name.lower()).first()
+        if sch_obj:
+            eff_school_id = sch_obj.id
+
+    if eff_school_id and not clean_name:
+        sch_obj = db.query(School).filter(School.id == eff_school_id).first()
+        if sch_obj:
+            clean_name = sch_obj.name
+
+    # Find existing config strictly for THIS school and date (or master default if date is None)
     if target_date:
         query = db.query(SchoolSlotConfig).filter(SchoolSlotConfig.slot_date == target_date)
     else:
@@ -5897,20 +6094,19 @@ def save_session_slots(
         )
 
     cfg = None
-    if data.school_id:
-        cfg = query.filter(SchoolSlotConfig.school_id == data.school_id).first()
-    if not cfg and clean_name and clean_name.lower() not in ["all", "super admin", "school admin"]:
+    if eff_school_id:
+        cfg = query.filter(SchoolSlotConfig.school_id == eff_school_id).first()
+    if not cfg and clean_name and clean_name.lower() not in ["all", "super admin", "school admin", "superadmin"]:
         cfg = query.filter(func.lower(SchoolSlotConfig.school_name) == clean_name.lower()).first()
-    if not cfg:
-        # Fallback to any existing record for this date or global default to update in place
-        cfg = query.order_by(SchoolSlotConfig.id.desc()).first()
 
     slots_str = json.dumps(data.slots)
     settings_str = json.dumps(data.settings or {})
 
+    # If NOT found for THIS school, ALWAYS insert a new record for THIS school!
+    # NEVER overwrite another school's row!
     if not cfg:
         cfg = SchoolSlotConfig(
-            school_id=data.school_id,
+            school_id=eff_school_id,
             school_name=clean_name,
             slot_date=target_date,
             slots_json=slots_str,
@@ -5919,9 +6115,9 @@ def save_session_slots(
         )
         db.add(cfg)
     else:
-        if data.school_id:
-            cfg.school_id = data.school_id
-        if clean_name and clean_name.lower() not in ["all", "super admin", "school admin"]:
+        if eff_school_id:
+            cfg.school_id = eff_school_id
+        if clean_name and clean_name.lower() not in ["all", "super admin", "school admin", "superadmin"]:
             cfg.school_name = clean_name
         cfg.slot_date = target_date
         cfg.slots_json = slots_str
@@ -5932,7 +6128,7 @@ def save_session_slots(
     db.commit()
     db.refresh(cfg)
 
-    custom_dates = _get_custom_dates_list(db, data.school_id, clean_name)
+    custom_dates = _get_custom_dates_list(db, eff_school_id, clean_name)
     return {
         "status": "success",
         "school_id": cfg.school_id,
@@ -5959,13 +6155,17 @@ def delete_session_slots_override(
     clean_name = school_name.strip() if school_name else None
     target_date = date.strip()
 
+    if clean_name and not school_id and clean_name.lower() not in ["all", "super admin", "school admin", "superadmin"]:
+        sch_obj = db.query(School).filter(func.lower(School.name) == clean_name.lower()).first()
+        if sch_obj:
+            school_id = sch_obj.id
+
     query = db.query(SchoolSlotConfig).filter(SchoolSlotConfig.slot_date == target_date)
+    cfg = None
     if school_id:
         cfg = query.filter(SchoolSlotConfig.school_id == school_id).first()
-    elif clean_name and clean_name.lower() not in ["all", "super admin", "school admin"]:
+    elif clean_name and clean_name.lower() not in ["all", "super admin", "school admin", "superadmin"]:
         cfg = query.filter(func.lower(SchoolSlotConfig.school_name) == clean_name.lower()).first()
-    else:
-        cfg = query.first()
 
     if cfg:
         db.delete(cfg)
@@ -6369,14 +6569,56 @@ def create_school(data: SchoolCreate, db: OrmSession = Depends(get_db)):
     if len(phone_digits) < 10:
         raise HTTPException(status_code=400, detail="Please enter a valid 10-digit phone number.")
     school = School(
-        name=data.name, owner=data.owner, email=data.email,
-        phone=phone_clean, country=data.country, city=data.city,
+        name=data.name.strip(), owner=data.owner.strip(), email=data.email.lower().strip(),
+        phone=phone_clean, country=data.country.strip(), city=data.city.strip(),
         instructor_count=data.instructor_count, website=data.website,
     )
     db.add(school)
+    db.flush()
+
+    # Link or auto-provision the admin user for this school
+    admin_user = db.query(User).filter(func.lower(User.email) == data.email.lower().strip()).first()
+    if admin_user:
+        admin_user.school_name = school.name
+        admin_user.school_id = school.id
+        if not getattr(admin_user, "name", None) or admin_user.name == 'None':
+            admin_user.name = data.owner.strip()
+        if not getattr(admin_user, "phone", None):
+            admin_user.phone = phone_clean
+    else:
+        admin_user = User(
+            email=data.email.lower().strip(),
+            password_hash=hash_password("SurfAdmin@123"),
+            password_plain="SurfAdmin@123",
+            role="admin",
+            name=data.owner.strip(),
+            school_name=school.name,
+            school_id=school.id,
+            phone=phone_clean,
+            auth_provider="email",
+            approval_status="approved"
+        )
+        db.add(admin_user)
     db.commit()
     db.refresh(school)
-    return {"id": school.id, "message": f"School '{data.name}' registered successfully!"}
+    db.refresh(admin_user)
+
+    token = generate_token({"user_id": admin_user.id, "email": admin_user.email, "role": admin_user.role})
+    return {
+        "id": school.id,
+        "message": f"School '{data.name}' registered successfully!",
+        "token": token,
+        "user": make_user_response(admin_user, db),
+        "school": {
+            "id": school.id,
+            "name": school.name,
+            "owner": school.owner,
+            "email": school.email,
+            "city": school.city,
+            "country": school.country,
+            "phone": school.phone
+        }
+    }
 
 
 @app.delete("/api/schools/{school_id}")
@@ -6586,6 +6828,53 @@ def get_competitions_data(db: OrmSession = Depends(get_db)):
 
 
 # ─── Super Admin Endpoints ───────────────────────────────────────────────────
+
+class SuperAdminLoginRequest(BaseModel):
+    id: str  # Admin ID, email, or username
+    password: str
+
+@app.post("/api/superadmin/login")
+def superadmin_login(data: SuperAdminLoginRequest, db: OrmSession = Depends(get_db)):
+    clean_id = data.id.lower().strip()
+    clean_pwd = data.password.strip()
+
+    # Master credentials check for platform owner
+    is_master = (
+        clean_id in ["rpntechworld@gmail.com", "admin", "superadmin", "rpntechworld", "eric"]
+        and clean_pwd in ["123456789", "admin123", "eric@2004", "IndicaSurfSchool@123"]
+    )
+
+    # Check against database users with admin or superadmin role
+    user = db.query(User).filter(
+        func.lower(User.email) == clean_id,
+        User.role.in_(["admin", "superadmin"])
+    ).first()
+
+    db_valid = False
+    if user:
+        if user.password_plain and user.password_plain == clean_pwd:
+            db_valid = True
+        elif user.password_hash and verify_password(clean_pwd, user.password_hash):
+            db_valid = True
+
+    if not is_master and not db_valid:
+        raise HTTPException(status_code=401, detail="Invalid Super Admin ID or Password")
+
+    name = user.name if user and user.name else ("Eric Sheldon R" if ("rpn" in clean_id or "eric" in clean_id) else "Super Administrator")
+    email = user.email if user and user.email else ("rpntechworld@gmail.com" if "rpn" in clean_id else clean_id)
+    token = generate_token({"user_id": user.id if user else 99999, "email": email, "role": "superadmin"})
+
+    return {
+        "status": "success",
+        "token": token,
+        "user": {
+            "id": user.id if user else 99999,
+            "name": name,
+            "email": email,
+            "role": "superadmin"
+        }
+    }
+
 
 class PasswordResetRequest(BaseModel):
     user_id: int
@@ -6915,7 +7204,7 @@ def delete_my_account(data: DeleteAccountRequest, db: OrmSession = Depends(get_d
     if not valid:
         raise HTTPException(status_code=400, detail="Incorrect account password. Please enter your valid password.")
     
-    # 2. DO NOT delete data! Keep all data for 30-day retention grace period
+    # 2. DO NOT delete data! Keep all data for 7-day retention grace period
     user.deletion_scheduled_at = datetime.utcnow()
     user.is_active = False
     
@@ -6925,16 +7214,16 @@ def delete_my_account(data: DeleteAccountRequest, db: OrmSession = Depends(get_d
             sch.is_active = False
     
     db.add(ActivityLog(
-        text=f"Account deletion scheduled for {user.email} (30-day retention grace period active)",
+        text=f"Account deletion scheduled for {user.email} (7-day retention grace period active)",
         type="individual",
         school=user.school_name or ""
     ))
     db.commit()
     
     return {
-        "message": "Your account has been scheduled for deletion. All your data is safely retained for 30 days. You can log back in anytime within 30 days to retain and restore your account.",
+        "message": "Your account has been scheduled for deletion. All your data is safely retained for 7 days. You can log back in anytime within 7 days to retain and restore your account.",
         "deletion_scheduled_at": user.deletion_scheduled_at.isoformat(),
-        "days_remaining": 30
+        "days_remaining": 7
     }
 
 
@@ -6976,11 +7265,11 @@ def restore_my_account(data: RestoreAccountRequest, db: OrmSession = Depends(get
         }
         
     elapsed = datetime.utcnow() - matched_user.deletion_scheduled_at
-    if elapsed.total_seconds() > 30 * 86400:
+    if elapsed.total_seconds() > 7 * 86400:
         delete_user_by_id(matched_user.id, db)
         raise HTTPException(
             status_code=403,
-            detail="The 30-day retention grace period has expired. This account has been permanently deleted."
+            detail="The 7-day retention grace period has expired. This account has been permanently deleted."
         )
         
     # Retain and restore account!

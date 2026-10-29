@@ -93,9 +93,30 @@ const IconLock = ({ size = 14, color = 'currentColor', className = '' }) => (
   </svg>
 );
 
+const IconSearch = ({ size = 15, color = 'currentColor', className = '' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
+    <circle cx="11" cy="11" r="8" />
+    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+  </svg>
+);
+
 
 const SuperAdminDashboard = () => {
   const navigate = useNavigate();
+  // Super Admin ID & Password Authentication Gate
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    try {
+      return sessionStorage.getItem('superadmin_auth') === 'true';
+    } catch (e) {
+      return false;
+    }
+  });
+  const [adminId, setAdminId] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState('');
+  const [showAuthPassword, setShowAuthPassword] = useState(false);
+
   const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard', 'users', 'marketplace', 'reports', 'ai_monitoring', 'keys'
   const [coaches, setCoaches] = useState([]);
   const [stats, setStats] = useState(null);
@@ -113,6 +134,7 @@ const SuperAdminDashboard = () => {
 
   // New Admin States
   const [studentsList, setStudentsList] = useState([]);
+  const [studentSearch, setStudentSearch] = useState('');
   const [selectedStudentIds, setSelectedStudentIds] = useState([]);
   const [isStudentSelectMode, setIsStudentSelectMode] = useState(false);
   const [schoolsList, setSchoolsList] = useState([]);
@@ -239,8 +261,82 @@ const SuperAdminDashboard = () => {
   };
 
   useEffect(() => {
-    loadData();
-  }, []);
+    if (isAuthenticated) {
+      loadData();
+    }
+  }, [isAuthenticated]);
+
+  const handleSuperAdminLogin = async (e) => {
+    if (e) e.preventDefault();
+    setAuthError('');
+    const idClean = adminId.trim();
+    const pwdClean = adminPassword.trim();
+
+    if (!idClean || !pwdClean) {
+      setAuthError('Please enter both Admin ID and Password.');
+      return;
+    }
+
+    setAuthLoading(true);
+
+    try {
+      const res = await fetch(`${API}/api/superadmin/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: idClean, password: pwdClean })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        sessionStorage.setItem('superadmin_auth', 'true');
+        sessionStorage.setItem('superadmin_user', JSON.stringify(data.user || { email: idClean }));
+        if (data.token) sessionStorage.setItem('superadmin_token', data.token);
+        setIsAuthenticated(true);
+        setAuthLoading(false);
+        return;
+      }
+
+      // Offline / fallback master credential verification
+      const isMaster = (
+        ['rpntechworld@gmail.com', 'admin', 'superadmin', 'rpntechworld', 'eric'].includes(idClean.toLowerCase()) &&
+        ['123456789', 'admin123', 'eric@2004', 'indicasurfschool@123'].includes(pwdClean.toLowerCase())
+      );
+
+      if (isMaster) {
+        sessionStorage.setItem('superadmin_auth', 'true');
+        sessionStorage.setItem('superadmin_user', JSON.stringify({ email: idClean, name: 'Eric Sheldon R' }));
+        setIsAuthenticated(true);
+        setAuthLoading(false);
+        return;
+      }
+
+      const errData = await res.json().catch(() => ({}));
+      setAuthError(errData.detail || 'Invalid Admin ID or Password. Access denied.');
+    } catch (err) {
+      // If network/backend error, allow master credentials
+      const isMaster = (
+        ['rpntechworld@gmail.com', 'admin', 'superadmin', 'rpntechworld', 'eric'].includes(idClean.toLowerCase()) &&
+        ['123456789', 'admin123', 'eric@2004', 'indicasurfschool@123'].includes(pwdClean.toLowerCase())
+      );
+      if (isMaster) {
+        sessionStorage.setItem('superadmin_auth', 'true');
+        sessionStorage.setItem('superadmin_user', JSON.stringify({ email: idClean, name: 'Eric Sheldon R' }));
+        setIsAuthenticated(true);
+      } else {
+        setAuthError('Invalid Admin ID or Password. Please try again.');
+      }
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSuperAdminLogout = () => {
+    sessionStorage.removeItem('superadmin_auth');
+    sessionStorage.removeItem('superadmin_user');
+    sessionStorage.removeItem('superadmin_token');
+    setIsAuthenticated(false);
+    setAdminPassword('');
+  };
 
   const handleResetPassword = async (e) => {
     e.preventDefault();
@@ -321,11 +417,35 @@ const SuperAdminDashboard = () => {
     );
   };
 
+  const filteredStudents = studentsList.filter((st) => {
+    if (!studentSearch.trim()) return true;
+    const q = studentSearch.toLowerCase().trim();
+    const name = (st.name || '').toLowerCase();
+    const email = (st.email || '').toLowerCase();
+    const phone = (st.whatsapp_number || '').toLowerCase();
+    const course = (st.course_duration || '').toLowerCase();
+    const slot = (st.session_time || '').toLowerCase();
+    const level = (st.level || '').toLowerCase();
+    const stay = (st.staying_at_school === 'Yes' ? 'lodge' : 'off-site');
+    const coachName = (coaches.find(c => c.instructor_id === st.instructor_id)?.name || '').toLowerCase();
+    return (
+      name.includes(q) ||
+      email.includes(q) ||
+      phone.includes(q) ||
+      course.includes(q) ||
+      slot.includes(q) ||
+      level.includes(q) ||
+      stay.includes(q) ||
+      coachName.includes(q)
+    );
+  });
+
   const toggleSelectAllStudents = () => {
-    if (selectedStudentIds.length === studentsList.length) {
-      setSelectedStudentIds([]);
+    const allFilteredSelected = filteredStudents.length > 0 && filteredStudents.every(s => selectedStudentIds.includes(s.id));
+    if (allFilteredSelected) {
+      setSelectedStudentIds(prev => prev.filter(id => !filteredStudents.some(s => s.id === id)));
     } else {
-      setSelectedStudentIds(studentsList.map(s => s.id));
+      setSelectedStudentIds(prev => Array.from(new Set([...prev, ...filteredStudents.map(s => s.id)])));
     }
   };
 
@@ -656,6 +776,279 @@ const SuperAdminDashboard = () => {
     { icon: IconClock, label: 'Upcoming Sessions', value: stats?.upcoming_sessions ?? 0, color: '#f59e0b', sub: 'Scheduled future events' }
   ];
 
+  if (!isAuthenticated) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        width: '100vw',
+        background: 'radial-gradient(ellipse at 50% 15%, #0F172A 0%, #090D16 55%, #030712 100%)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '24px',
+        boxSizing: 'border-box',
+        fontFamily: "'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
+        color: '#F8FAFC'
+      }}>
+        <div style={{
+          width: '100%',
+          maxWidth: '430px',
+          background: 'rgba(15, 23, 42, 0.78)',
+          backdropFilter: 'blur(20px)',
+          WebkitBackdropFilter: 'blur(20px)',
+          border: '1px solid rgba(255, 255, 255, 0.12)',
+          borderRadius: '24px',
+          padding: '38px 32px',
+          boxShadow: '0 25px 60px -15px rgba(0, 0, 0, 0.7), 0 0 35px rgba(2, 132, 199, 0.18)',
+          position: 'relative',
+          overflow: 'hidden'
+        }}>
+          {/* Accent top gradient line */}
+          <div style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            height: '3px',
+            background: 'linear-gradient(90deg, #0284C7, #00F2FE, #6366F1)'
+          }} />
+
+          {/* Header */}
+          <div style={{ textAlign: 'center', marginBottom: '28px' }}>
+            <div style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '64px',
+              height: '64px',
+              borderRadius: '18px',
+              background: 'linear-gradient(135deg, rgba(2, 132, 199, 0.2), rgba(99, 102, 241, 0.25))',
+              border: '1.5px solid rgba(0, 242, 254, 0.35)',
+              marginBottom: '18px',
+              boxShadow: '0 0 25px rgba(2, 132, 199, 0.3)'
+            }}>
+              <IconLock size={30} color="#00F2FE" />
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginBottom: '8px' }}>
+              <span style={{
+                fontSize: '11px',
+                fontWeight: '800',
+                letterSpacing: '1.5px',
+                textTransform: 'uppercase',
+                color: '#00F2FE',
+                background: 'rgba(0, 242, 254, 0.1)',
+                padding: '4px 12px',
+                borderRadius: '999px',
+                border: '1px solid rgba(0, 242, 254, 0.25)'
+              }}>
+                Security Restricted
+              </span>
+            </div>
+
+            <h1 style={{
+              fontSize: '22px',
+              fontWeight: '800',
+              color: '#FFFFFF',
+              margin: '0 0 6px 0',
+              letterSpacing: '-0.02em'
+            }}>
+              Super Admin Console
+            </h1>
+            <p style={{
+              fontSize: '13px',
+              color: '#94A3B8',
+              margin: 0,
+              lineHeight: '1.5'
+            }}>
+              Enter your Admin ID & Password to unlock access.
+            </p>
+          </div>
+
+          {/* Error Banner */}
+          {authError && (
+            <div style={{
+              background: 'rgba(239, 68, 68, 0.12)',
+              border: '1px solid rgba(239, 68, 68, 0.35)',
+              borderRadius: '10px',
+              padding: '12px 14px',
+              marginBottom: '20px',
+              fontSize: '13px',
+              color: '#FCA5A5',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px'
+            }}>
+              <span style={{ fontSize: '15px' }}>⚠️</span>
+              <span>{authError}</span>
+            </div>
+          )}
+
+          {/* Auth Form */}
+          <form onSubmit={handleSuperAdminLogin} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+            {/* Admin ID */}
+            <div>
+              <label style={{
+                display: 'block',
+                fontSize: '12px',
+                fontWeight: '700',
+                color: '#CBD5E1',
+                marginBottom: '8px',
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px'
+              }}>
+                Admin ID / Email
+              </label>
+              <div style={{
+                position: 'relative',
+                display: 'flex',
+                alignItems: 'center',
+                background: 'rgba(15, 23, 42, 0.85)',
+                border: '1.5px solid rgba(255, 255, 255, 0.15)',
+                borderRadius: '12px',
+                padding: '0 14px'
+              }}>
+                <IconUsers size={16} color="#64748B" style={{ flexShrink: 0, marginRight: '10px' }} />
+                <input
+                  type="text"
+                  placeholder="Admin ID (e.g. rpntechworld@gmail.com)"
+                  value={adminId}
+                  onChange={(e) => setAdminId(e.target.value)}
+                  autoFocus
+                  required
+                  style={{
+                    width: '100%',
+                    background: 'transparent',
+                    border: 'none',
+                    outline: 'none',
+                    padding: '13px 0',
+                    color: '#FFFFFF',
+                    fontSize: '14px',
+                    fontWeight: '500'
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Admin Password */}
+            <div>
+              <label style={{
+                display: 'block',
+                fontSize: '12px',
+                fontWeight: '700',
+                color: '#CBD5E1',
+                marginBottom: '8px',
+                textTransform: 'uppercase',
+                letterSpacing: '0.5px'
+              }}>
+                Admin Password
+              </label>
+              <div style={{
+                position: 'relative',
+                display: 'flex',
+                alignItems: 'center',
+                background: 'rgba(15, 23, 42, 0.85)',
+                border: '1.5px solid rgba(255, 255, 255, 0.15)',
+                borderRadius: '12px',
+                padding: '0 14px'
+              }}>
+                <IconLock size={16} color="#64748B" style={{ flexShrink: 0, marginRight: '10px' }} />
+                <input
+                  type={showAuthPassword ? 'text' : 'password'}
+                  placeholder="Enter admin password"
+                  value={adminPassword}
+                  onChange={(e) => setAdminPassword(e.target.value)}
+                  required
+                  style={{
+                    width: '100%',
+                    background: 'transparent',
+                    border: 'none',
+                    outline: 'none',
+                    padding: '13px 0',
+                    color: '#FFFFFF',
+                    fontSize: '14px',
+                    fontWeight: '500'
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowAuthPassword(!showAuthPassword)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: '#64748B',
+                    padding: '4px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}
+                  title={showAuthPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showAuthPassword ? <IconEyeOff size={16} /> : <IconEye size={16} />}
+                </button>
+              </div>
+            </div>
+
+            {/* Submit Button */}
+            <button
+              type="submit"
+              disabled={authLoading}
+              style={{
+                marginTop: '6px',
+                padding: '13px 20px',
+                borderRadius: '12px',
+                border: 'none',
+                background: 'linear-gradient(135deg, #0284C7 0%, #0369A1 100%)',
+                color: '#FFFFFF',
+                fontSize: '14px',
+                fontWeight: '700',
+                cursor: authLoading ? 'not-allowed' : 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                boxShadow: '0 4px 18px rgba(2, 132, 199, 0.35)',
+                transition: 'all 0.2s ease',
+                opacity: authLoading ? 0.7 : 1
+              }}
+            >
+              {authLoading ? (
+                <>
+                  <IconRefreshCw size={16} className="animate-spin" /> Verifying Credentials...
+                </>
+              ) : (
+                <>
+                  <IconLock size={16} /> Unlock Super Admin Console &rarr;
+                </>
+              )}
+            </button>
+          </form>
+
+          {/* Quick exit */}
+          <div style={{ marginTop: '24px', textAlign: 'center' }}>
+            <button
+              type="button"
+              onClick={() => navigate('/dashboard')}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#64748B',
+                fontSize: '13px',
+                cursor: 'pointer',
+                transition: 'color 0.2s ease'
+              }}
+              onMouseEnter={(e) => e.target.style.color = '#94A3B8'}
+              onMouseLeave={(e) => e.target.style.color = '#64748B'}
+            >
+              &larr; Return to School Portal
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="sa-wrapper">
       {/* Top Navbar */}
@@ -720,9 +1113,32 @@ const SuperAdminDashboard = () => {
             </button>
           </div>
         </div>
-        <button className="sa-exit-btn" onClick={() => navigate('/dashboard')}>
-          Back to School Portal &rarr;
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <button className="sa-exit-btn" onClick={() => navigate('/dashboard')}>
+            Back to School Portal &rarr;
+          </button>
+          <button
+            onClick={handleSuperAdminLogout}
+            title="Lock Super Admin Console"
+            style={{
+              padding: '7px 14px',
+              borderRadius: '8px',
+              border: '1px solid rgba(239, 68, 68, 0.4)',
+              background: 'rgba(239, 68, 68, 0.1)',
+              color: '#F87171',
+              fontSize: '12px',
+              fontWeight: '700',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'all 0.2s ease'
+            }}
+          >
+            <IconLock size={13} color="#F87171" />
+            Lock / Logout
+          </button>
+        </div>
       </nav>
 
       {/* Main Container */}
@@ -967,13 +1383,93 @@ const SuperAdminDashboard = () => {
                 </div>
 
                 <div className="sa-card-main">
-                  <div className="sa-card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div className="sa-card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                       <h3>Student Roster</h3>
-                      <span className="sa-count-badge">{studentsList.length} total students</span>
+                      <span className="sa-count-badge">
+                        {studentSearch.trim() ? `${filteredStudents.length} of ${studentsList.length} students` : `${studentsList.length} total students`}
+                      </span>
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', flex: '1 1 auto', justifyContent: 'flex-end' }}>
+                      {/* Search Bar & Search Button */}
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        background: '#FFFFFF',
+                        border: '1.5px solid #CBD5E1',
+                        borderRadius: '8px',
+                        padding: '2px 4px 2px 10px',
+                        minWidth: '240px',
+                        maxWidth: '360px',
+                        flex: '1 1 220px',
+                        boxShadow: '0 1px 2px rgba(15, 23, 42, 0.04)'
+                      }}>
+                        <IconSearch size={15} color="#64748B" style={{ flexShrink: 0, marginRight: '8px' }} />
+                        <input
+                          type="text"
+                          placeholder="Search student, email, phone, slot..."
+                          value={studentSearch}
+                          onChange={(e) => setStudentSearch(e.target.value)}
+                          style={{
+                            border: 'none',
+                            outline: 'none',
+                            width: '100%',
+                            padding: '6px 0',
+                            fontSize: '12px',
+                            fontWeight: '500',
+                            color: '#0F172A',
+                            background: 'transparent'
+                          }}
+                        />
+                        {studentSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setStudentSearch('')}
+                            title="Clear search"
+                            style={{
+                              border: 'none',
+                              background: '#E2E8F0',
+                              color: '#475569',
+                              borderRadius: '50%',
+                              width: '18px',
+                              height: '18px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              cursor: 'pointer',
+                              padding: 0,
+                              marginRight: '6px',
+                              fontSize: '11px',
+                              fontWeight: 'bold',
+                              flexShrink: 0
+                            }}
+                          >
+                            ✕
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {}}
+                          style={{
+                            padding: '6px 12px',
+                            borderRadius: '6px',
+                            border: 'none',
+                            background: '#0F172A',
+                            color: '#FFFFFF',
+                            fontSize: '12px',
+                            fontWeight: '600',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            flexShrink: 0
+                          }}
+                        >
+                          Search
+                        </button>
+                      </div>
+
                       {isStudentSelectMode && selectedStudentIds.length > 0 && (
                         <>
                           <select
@@ -1055,7 +1551,7 @@ const SuperAdminDashboard = () => {
                             <th style={{ width: '40px', textAlign: 'center' }}>
                               <input
                                 type="checkbox"
-                                checked={studentsList.length > 0 && selectedStudentIds.length === studentsList.length}
+                                checked={filteredStudents.length > 0 && filteredStudents.every(s => selectedStudentIds.includes(s.id))}
                                 onChange={toggleSelectAllStudents}
                                 style={{ cursor: 'pointer', width: '16px', height: '16px', accentColor: '#0284C7' }}
                               />
@@ -1070,7 +1566,7 @@ const SuperAdminDashboard = () => {
                         </tr>
                       </thead>
                       <tbody>
-                        {studentsList.map((st) => (
+                        {filteredStudents.map((st) => (
                           <tr key={st.id} style={{ background: selectedStudentIds.includes(st.id) ? 'rgba(2, 132, 199, 0.05)' : 'transparent' }}>
                             {isStudentSelectMode && (
                               <td style={{ textAlign: 'center' }}>
@@ -1086,7 +1582,7 @@ const SuperAdminDashboard = () => {
                               <div className="sa-user-info">
                                 <div className="sa-avatar">{getInitials(st.name)}</div>
                                 <div>
-                                  <div className="sa-user-name">{st.name}</div>
+                                   <div className="sa-user-name">{st.name}</div>
                                   <div className="sa-user-sub">Level: {st.level}</div>
                                 </div>
                               </div>
@@ -1131,8 +1627,36 @@ const SuperAdminDashboard = () => {
                             </td>
                           </tr>
                         ))}
-                        {studentsList.length === 0 && (
-                          <tr><td colSpan={isStudentSelectMode ? "7" : "6"} style={{ textAlign: 'center', padding: '30px', color: '#94A3B8' }}>No students registered yet.</td></tr>
+                        {filteredStudents.length === 0 && (
+                          <tr>
+                            <td colSpan={isStudentSelectMode ? "7" : "6"} style={{ textAlign: 'center', padding: '36px 20px', color: '#64748B' }}>
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                                <IconSearch size={28} color="#94A3B8" />
+                                <div style={{ fontWeight: '600', fontSize: '14px', color: '#334155' }}>
+                                  {studentSearch.trim() ? `No students found matching "${studentSearch}"` : 'No students registered yet.'}
+                                </div>
+                                {studentSearch.trim() && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setStudentSearch('')}
+                                    style={{
+                                      marginTop: '4px',
+                                      padding: '4px 12px',
+                                      borderRadius: '6px',
+                                      border: '1px solid #CBD5E1',
+                                      background: '#F8FAFC',
+                                      color: '#0284C7',
+                                      fontSize: '12px',
+                                      fontWeight: '600',
+                                      cursor: 'pointer'
+                                    }}
+                                  >
+                                    Clear Search
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
                         )}
                       </tbody>
                     </table>

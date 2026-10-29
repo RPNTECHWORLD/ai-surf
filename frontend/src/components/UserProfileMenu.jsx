@@ -449,8 +449,8 @@ export default function UserProfileMenu({ user, school, onLogout }) {
       setShowDeleteAccountModal(false);
       setDeleteSuccessModal({
         isOpen: true,
-        message: data.message || 'Your account has been scheduled for deletion. All your data is safely retained for 30 days. You can log back in anytime within 30 days to retain and restore your account.',
-        daysRemaining: data.days_remaining || 30
+        message: data.message || 'Your account has been scheduled for deletion. All your data is safely retained for 7 days. You can log back in anytime within 7 days to retain and restore your account.',
+        daysRemaining: data.days_remaining || 7
       });
     } catch (err) {
       setDeleteError(err.message || 'Failed to delete account.');
@@ -464,7 +464,7 @@ export default function UserProfileMenu({ user, school, onLogout }) {
     localStorage.removeItem('user');
     localStorage.removeItem('token');
     localStorage.removeItem('activeSchool');
-    setDeleteSuccessModal({ isOpen: false, message: '', daysRemaining: 30 });
+    setDeleteSuccessModal({ isOpen: false, message: '', daysRemaining: 7 });
     navigate('/auth');
   };
 
@@ -2025,9 +2025,9 @@ export default function UserProfileMenu({ user, school, onLogout }) {
                   }}
                 >
                   <li>Your account access will be deactivated immediately.</li>
-                  <li><strong>Your data will NOT be deleted now.</strong> All student records, sessions, instructors, and reports remain safely preserved for <strong>30 days</strong>.</li>
-                  <li><strong>How to retain:</strong> If you change your mind, simply log back in with your password within 30 days to retain and restore your account along with all your data.</li>
-                  <li>After 30 days, un-retained accounts and associated data are permanently wiped.</li>
+                  <li><strong>Your data will NOT be deleted now.</strong> All student records, sessions, instructors, and reports remain safely preserved for <strong>7 days</strong>.</li>
+                  <li><strong>How to retain:</strong> If you change your mind, simply log back in with your password within 7 days to retain and restore your account along with all your data.</li>
+                  <li>After 7 days, un-retained accounts and associated data are permanently wiped.</li>
                 </ul>
               </div>
 
@@ -2211,7 +2211,7 @@ export default function UserProfileMenu({ user, school, onLogout }) {
                   ) : (
                     <>
                       <span>🗑️</span>
-                      <span>Schedule Deletion (30 Days)</span>
+                      <span>Schedule Deletion (7 Days)</span>
                     </>
                   )}
                 </button>
@@ -2307,7 +2307,7 @@ export default function UserProfileMenu({ user, school, onLogout }) {
                 </p>
               </div>
               <p style={{ margin: 0, fontSize: '12px', lineHeight: '1.6', color: '#64748B' }}>
-                All student records, coaching sessions, instructors, and reports remain safely preserved for <strong>30 days</strong>. If you change your mind, simply log back in with your password within 30 days to retain and restore your account along with all your data.
+                All student records, coaching sessions, instructors, and reports remain safely preserved for <strong>7 days</strong>. If you change your mind, simply log back in with your password within 7 days to retain and restore your account along with all your data.
               </p>
             </div>
 

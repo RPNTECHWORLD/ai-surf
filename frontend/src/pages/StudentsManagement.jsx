@@ -435,27 +435,32 @@ const StudentsManagement = () => {
 
   const activeSchoolName = (() => {
     try {
-      const savedSchool = sessionStorage.getItem('activeSchool');
+      const savedSchool = sessionStorage.getItem('activeSchool') || localStorage.getItem('activeSchool');
       if (savedSchool) {
         try {
           const parsed = JSON.parse(savedSchool);
           if (parsed && typeof parsed === 'object') {
-            if (parsed.name) return typeof parsed.name === 'string' ? parsed.name : (parsed.name?.name || null);
-          } else if (typeof parsed === 'string') {
+            if (parsed.name && parsed.name.toLowerCase() !== 'school admin') {
+              return typeof parsed.name === 'string' ? parsed.name : (parsed.name?.name || null);
+            }
+          } else if (typeof parsed === 'string' && parsed.toLowerCase() !== 'school admin') {
             return parsed;
           }
         } catch (e) {
-          return savedSchool;
+          if (savedSchool.toLowerCase() !== 'school admin') return savedSchool;
         }
       }
-      const savedUser = sessionStorage.getItem('user');
+      const savedUser = sessionStorage.getItem('user') || localStorage.getItem('user');
       if (savedUser) {
         const parsed = JSON.parse(savedUser);
-        if (parsed.school) {
+        if (parsed.school_name && parsed.school_name.toLowerCase() !== 'school admin') {
+          return typeof parsed.school_name === 'string' ? parsed.school_name : (parsed.school_name?.name || null);
+        }
+        if (parsed.school && parsed.school.toLowerCase() !== 'school admin') {
           return typeof parsed.school === 'string' ? parsed.school : (parsed.school?.name || null);
         }
-        if (parsed.school_name) {
-          return typeof parsed.school_name === 'string' ? parsed.school_name : (parsed.school_name?.name || null);
+        if (parsed.school_details?.name && parsed.school_details.name.toLowerCase() !== 'school admin') {
+          return parsed.school_details.name;
         }
       }
     } catch (e) { }
@@ -607,17 +612,29 @@ const StudentsManagement = () => {
     setLoading(true);
     let targetSch = effectiveSchool || fallbackUserSchool;
     if (typeof targetSch === 'object') targetSch = targetSch?.name || '';
-    if (targetSch && targetSch.toLowerCase() === 'school admin') targetSch = '';
+    if (targetSch && (targetSch.toLowerCase() === 'school admin' || targetSch.toLowerCase() === 'super admin')) targetSch = '';
 
-    let url = (targetSch && !isSuperAdmin)
-      ? `${API}/api/students?school=${encodeURIComponent(targetSch)}`
-      : `${API}/api/students?school=all`;
+    // Strict school isolation: Non-superadmins must NEVER query or see school=all
+    let url = '';
+    if (isSuperAdmin) {
+      url = targetSch ? `${API}/api/students?school=${encodeURIComponent(targetSch)}` : `${API}/api/students?school=all`;
+    } else {
+      url = targetSch ? `${API}/api/students?school=${encodeURIComponent(targetSch)}` : `${API}/api/students?school=none`;
+    }
     if (isCoach && currentCoachId) {
       url += (url.includes('?') ? '&' : '?') + `instructor_id=${encodeURIComponent(currentCoachId)}`;
     }
     fetch(url)
       .then(r => r.json())
-      .then(data => setStudents(Array.isArray(data) ? data : []))
+      .then(data => {
+        const list = Array.isArray(data) ? data : [];
+        if (!isSuperAdmin && targetSch) {
+          const normTarget = targetSch.toLowerCase().trim();
+          setStudents(list.filter(s => (s.school || '').toLowerCase().trim() === normTarget));
+        } else {
+          setStudents(list);
+        }
+      })
       .catch(() => { })
       .finally(() => setLoading(false));
   };
@@ -667,6 +684,17 @@ const StudentsManagement = () => {
   }, [effectiveSchool, isSuperAdmin]);
 
   const levels = ['Beginner', 'Advance Beginner', 'Intermediate', 'Advance Intermediate', 'Pro'];
+
+  const normalizeLevel = (lvl) => {
+    const s = String(lvl || '').trim().toLowerCase();
+    if (s.includes('advance intermediate') || s.includes('advanced intermediate')) return 'Advance Intermediate';
+    if (s.includes('advance beginner') || s.includes('advanced beginner') || s.includes('yellow')) return 'Advance Beginner';
+    if (s.includes('intermediate')) return 'Intermediate';
+    if (s.includes('pro') || s.includes('master')) return 'Pro';
+    if (s.includes('advanced')) return 'Pro';
+    if (s.includes('beginner')) return 'Beginner';
+    return 'Beginner';
+  };
 
   const approvedStudents = useMemo(() => {
     // Pure AWS Backend Students Only - Approved students
@@ -796,24 +824,23 @@ const StudentsManagement = () => {
       setDateFilter('All');
     } else if (label === 'ACTIVE') {
       setLevelFilter('All');
+      if (dateRange.preset === 'all') {
+        const todayIso = getIsoDate(0);
+        setDateRange({ startDate: todayIso, endDate: todayIso, preset: 'today' });
+        setDateFilter(todayIso);
+      }
     } else if (label === 'UPCOMING') {
       setLevelFilter('All');
     } else if (label === 'BEGINNER') {
       setLevelFilter('Beginner');
-      setDateRange({ startDate: '', endDate: '', preset: 'all' });
-      setDateFilter('All');
+    } else if (label === 'ADV. BEGINNER') {
+      setLevelFilter('Advance Beginner');
     } else if (label === 'INTERMEDIATE') {
       setLevelFilter('Intermediate');
-      setDateRange({ startDate: '', endDate: '', preset: 'all' });
-      setDateFilter('All');
-    } else if (label === 'ADVANCED') {
-      setLevelFilter('Advanced');
-      setDateRange({ startDate: '', endDate: '', preset: 'all' });
-      setDateFilter('All');
-    } else if (label === 'PRO') {
+    } else if (label === 'ADV. INTERMEDIATE') {
+      setLevelFilter('Advance Intermediate');
+    } else if (label === 'ADVANCED' || label === 'PRO') {
       setLevelFilter('Pro');
-      setDateRange({ startDate: '', endDate: '', preset: 'all' });
-      setDateFilter('All');
     }
   };
 
@@ -923,9 +950,25 @@ const StudentsManagement = () => {
       const parsed = parseLocalDateOnly(dateFilter);
       if (parsed) return parsed;
     }
+    if (dateRange && dateRange.preset !== 'all') {
+      const now = new Date();
+      const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const start = dateRange.startDate || '';
+      const end = dateRange.endDate || '';
+      if (start && end && start === end) {
+        const parsed = parseLocalDateOnly(start);
+        if (parsed) return parsed;
+      }
+      if (start && end && start <= todayStr && todayStr <= end) {
+        return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      }
+      if (end && end >= todayStr && (!start || start <= todayStr)) {
+        return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      }
+    }
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  }, [dateFilter]);
+  }, [dateFilter, dateRange]);
 
   const calculateCurrentCourseDay = (s, targetDate = targetEvaluationDate) => {
     if (!s) return { which_day: 1, total_days: 3, status: 'no_data', completed: false, isActive: false };
@@ -1000,22 +1043,34 @@ const StudentsManagement = () => {
         sPhone.includes(search) ||
         matchGuest);
 
+    const isTotalScope = activeStatFilter === 'TOTAL' || (dateRange.preset === 'all' && activeStatFilter !== 'ACTIVE' && activeStatFilter !== 'UPCOMING');
+    const isUpcomingScope = activeStatFilter === 'UPCOMING';
+
     let matchStat = true;
     if (activeStatFilter === 'ACTIVE') {
       matchStat = isStudentActive(s, targetEvaluationDate);
     } else if (activeStatFilter === 'UPCOMING') {
       matchStat = isStudentUpcoming(s, targetEvaluationDate);
     } else if (activeStatFilter === 'BEGINNER') {
-      matchStat = s.level === 'Beginner';
+      const matchLvl = normalizeLevel(s.level) === 'Beginner' || (guestList || []).some(g => normalizeLevel(g.level) === 'Beginner');
+      matchStat = isTotalScope ? matchLvl : isUpcomingScope ? (isStudentUpcoming(s, targetEvaluationDate) && matchLvl) : (isStudentActive(s, targetEvaluationDate) && matchLvl);
+    } else if (activeStatFilter === 'ADV. BEGINNER') {
+      const matchLvl = normalizeLevel(s.level) === 'Advance Beginner' || (guestList || []).some(g => normalizeLevel(g.level) === 'Advance Beginner');
+      matchStat = isTotalScope ? matchLvl : isUpcomingScope ? (isStudentUpcoming(s, targetEvaluationDate) && matchLvl) : (isStudentActive(s, targetEvaluationDate) && matchLvl);
     } else if (activeStatFilter === 'INTERMEDIATE') {
-      matchStat = s.level === 'Intermediate';
-    } else if (activeStatFilter === 'ADVANCED') {
-      matchStat = s.level === 'Advanced';
-    } else if (activeStatFilter === 'PRO') {
-      matchStat = s.level === 'Pro' || (s.level || '').toLowerCase().trim() === 'pro';
+      const matchLvl = normalizeLevel(s.level) === 'Intermediate' || (guestList || []).some(g => normalizeLevel(g.level) === 'Intermediate');
+      matchStat = isTotalScope ? matchLvl : isUpcomingScope ? (isStudentUpcoming(s, targetEvaluationDate) && matchLvl) : (isStudentActive(s, targetEvaluationDate) && matchLvl);
+    } else if (activeStatFilter === 'ADV. INTERMEDIATE') {
+      const matchLvl = normalizeLevel(s.level) === 'Advance Intermediate' || (guestList || []).some(g => normalizeLevel(g.level) === 'Advance Intermediate');
+      matchStat = isTotalScope ? matchLvl : isUpcomingScope ? (isStudentUpcoming(s, targetEvaluationDate) && matchLvl) : (isStudentActive(s, targetEvaluationDate) && matchLvl);
+    } else if (activeStatFilter === 'ADVANCED' || activeStatFilter === 'PRO') {
+      const matchLvl = normalizeLevel(s.level) === 'Pro' || (guestList || []).some(g => normalizeLevel(g.level) === 'Pro');
+      matchStat = isTotalScope ? matchLvl : isUpcomingScope ? (isStudentUpcoming(s, targetEvaluationDate) && matchLvl) : (isStudentActive(s, targetEvaluationDate) && matchLvl);
     }
 
-    const matchLevel = levelFilter === 'All' || s.level === levelFilter || (levelFilter === 'Pro' && (s.level || '').toLowerCase().trim() === 'pro');
+    const matchLevel = (!levelFilter || levelFilter === 'All')
+      ? true
+      : (normalizeLevel(s.level) === normalizeLevel(levelFilter) || (guestList || []).some(g => normalizeLevel(g.level) === normalizeLevel(levelFilter)));
     const matchInstructor = instructorFilter === 'All' || s.instructor === instructorFilter;
     const matchSession = sessionTimeFilter === 'All' ||
       s.session_time === sessionTimeFilter ||
@@ -1025,7 +1080,11 @@ const StudentsManagement = () => {
 
     // If a specific date or date range is selected:
     let matchDate = true;
-    if (dateRange && (dateRange.startDate || dateRange.endDate)) {
+    if (activeStatFilter === 'TOTAL') {
+      matchDate = true;
+    } else if (activeStatFilter === 'UPCOMING' || isUpcomingScope) {
+      matchDate = isStudentUpcoming(s, targetEvaluationDate);
+    } else if (dateRange && (dateRange.startDate || dateRange.endDate)) {
       if (dateRange.startDate && dateRange.endDate && dateRange.startDate === dateRange.endDate) {
         matchDate = isStudentActive(s, dateRange.startDate) || s.start_date === dateRange.startDate;
       } else {
@@ -1078,6 +1137,40 @@ const StudentsManagement = () => {
       .reduce((sum, s) => sum + 1 + getStudentGuestCount(s), 0);
   }, [approvedStudents, targetEvaluationDate]);
 
+  const levelCounts = React.useMemo(() => {
+    const counts = {
+      'Beginner': 0,
+      'Advance Beginner': 0,
+      'Intermediate': 0,
+      'Advance Intermediate': 0,
+      'Pro': 0
+    };
+
+    const isTotalScope = activeStatFilter === 'TOTAL' || (dateRange.preset === 'all' && activeStatFilter !== 'ACTIVE' && activeStatFilter !== 'UPCOMING');
+    const isUpcomingScope = activeStatFilter === 'UPCOMING';
+
+    let targetStudents = approvedStudents;
+    if (isUpcomingScope) {
+      targetStudents = approvedStudents.filter(s => isStudentUpcoming(s, targetEvaluationDate));
+    } else if (!isTotalScope) {
+      targetStudents = approvedStudents.filter(s => isStudentActive(s, targetEvaluationDate));
+    }
+
+    targetStudents.forEach(s => {
+      const sLvl = normalizeLevel(s.level);
+      if (counts[sLvl] !== undefined) counts[sLvl] += 1;
+      else counts['Beginner'] += 1;
+
+      const guests = getStudentGuestsDetails(s) || [];
+      guests.forEach(g => {
+        const gLvl = normalizeLevel(g.level);
+        if (counts[gLvl] !== undefined) counts[gLvl] += 1;
+        else counts['Beginner'] += 1;
+      });
+    });
+    return counts;
+  }, [approvedStudents, activeStatFilter, dateRange.preset, targetEvaluationDate]);
+
   const stats = [
     {
       value: totalPeopleCount,
@@ -1100,10 +1193,11 @@ const StudentsManagement = () => {
       color: '#0284C7',
       active: activeStatFilter === 'UPCOMING'
     },
-    { value: approvedStudents.filter(s => s.level === 'Beginner').length, label: 'BEGINNER', shortLabel: 'BEGINNER', color: '#F59E0B', active: activeStatFilter === 'BEGINNER' },
-    { value: approvedStudents.filter(s => s.level === 'Intermediate').length, label: 'INTERMEDIATE', shortLabel: 'INTERMED', color: '#0D9488', active: activeStatFilter === 'INTERMEDIATE' },
-    { value: approvedStudents.filter(s => s.level === 'Advanced').length, label: 'ADVANCED', shortLabel: 'ADVANCED', color: '#7C3AED', active: activeStatFilter === 'ADVANCED' },
-    { value: approvedStudents.filter(s => s.level === 'Pro' || (s.level || '').toLowerCase().trim() === 'pro').length, label: 'PRO', shortLabel: 'PRO', color: '#E11D48', active: activeStatFilter === 'PRO' },
+    { value: levelCounts['Beginner'] || 0, label: 'BEGINNER', shortLabel: 'BEGINNER', color: '#64748B', active: activeStatFilter === 'BEGINNER' },
+    { value: levelCounts['Advance Beginner'] || 0, label: 'ADV. BEGINNER', shortLabel: 'ADV BEG', color: '#D97706', active: activeStatFilter === 'ADV. BEGINNER' },
+    { value: levelCounts['Intermediate'] || 0, label: 'INTERMEDIATE', shortLabel: 'INTERMED', color: '#0D9488', active: activeStatFilter === 'INTERMEDIATE' },
+    { value: levelCounts['Advance Intermediate'] || 0, label: 'ADV. INTERMEDIATE', shortLabel: 'ADV INT', color: '#2563EB', active: activeStatFilter === 'ADV. INTERMEDIATE' },
+    { value: levelCounts['Pro'] || 0, label: 'PRO', shortLabel: 'PRO', color: '#E11D48', active: activeStatFilter === 'PRO' || activeStatFilter === 'ADVANCED' },
   ];
 
 
@@ -1646,6 +1740,108 @@ const StudentsManagement = () => {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+  };
+
+  const handleExportCSV = () => {
+    const listToExport = (filtered && filtered.length > 0) ? filtered : approvedStudents;
+    if (!listToExport || listToExport.length === 0) {
+      if (typeof showToast === 'function') {
+        showToast('⚠️ No students available to export.');
+      } else {
+        alert('No students available to export.');
+      }
+      return;
+    }
+
+    const headers = [
+      "Full Name",
+      "Email Address",
+      "Phone Number",
+      "Gender",
+      "Age",
+      "Date of Birth",
+      "Swimming Ability",
+      "Surf Level",
+      "Course Duration",
+      "Start Date",
+      "End Date",
+      "Expected Time",
+      "Course Progress",
+      "Status",
+      "Assigned Coach",
+      "School",
+      "Accompanying Guests"
+    ];
+
+    const rows = listToExport.map(s => {
+      const progressInfo = calculateCurrentCourseDay(s);
+      const progressText = progressInfo.status === 'active'
+        ? `Day ${progressInfo.which_day} of ${progressInfo.total_days}`
+        : (progressInfo.status === 'upcoming'
+          ? `Starts ${s.start_date || s.startDate || '-'}`
+          : (progressInfo.status === 'completed' ? `Completed (${progressInfo.total_days} Days)` : '-'));
+
+      const guestList = getStudentGuestsDetails(s) || [];
+      const guestsText = guestList.length > 0
+        ? guestList.map(g => `${g.name || 'Guest'} (${g.level || 'Beginner'}, ${g.swimming_ability || 'Swimmer'})`).join('; ')
+        : 'None';
+
+      const ageVal = (s.age !== undefined && s.age !== null && s.age !== '')
+        ? s.age
+        : (s.dob ? calculateAge(s.dob) : '');
+
+      const genderVal = s.gender || (s.division && /women|girl/i.test(s.division) ? 'Female' : 'Male');
+
+      const statusLabel = progressInfo.status ? (progressInfo.status.charAt(0).toUpperCase() + progressInfo.status.slice(1)) : 'Active';
+
+      return [
+        s.name || '',
+        s.email || '',
+        s.whatsapp_number || s.phone || '',
+        genderVal || '',
+        ageVal || '',
+        s.dob || '',
+        s.swimming_ability || 'Swimmer',
+        s.level || 'Beginner',
+        s.course_duration || (s.days ? `${s.days} Days Course` : '3 Days Course'),
+        s.start_date || s.startDate || '',
+        getStudentEndDate(s) || '',
+        s.session_time || '',
+        progressText,
+        statusLabel,
+        s.instructor_name || s.instructor || '',
+        s.school || s.school_name || activeSchoolName || '',
+        guestsText
+      ];
+    });
+
+    const allData = [headers, ...rows];
+
+    const csvContent = "\uFEFF" + allData.map(row =>
+      row.map(field => {
+        const val = String(field ?? '');
+        if (val.includes(',') || val.includes('"') || val.includes('\n') || val.includes('\r')) {
+          return `"${val.replace(/"/g, '""')}"`;
+        }
+        return val;
+      }).join(",")
+    ).join("\r\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    const filterTag = activeStatFilter ? `_${activeStatFilter.toLowerCase()}` : '';
+    const dateStamp = new Date().toISOString().split('T')[0];
+    link.download = `students_export${filterTag}_${dateStamp}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    if (typeof showToast === 'function') {
+      showToast(`✓ Successfully exported ${listToExport.length} student(s) to CSV!`);
+    }
   };
 
   const [inviteCopied, setInviteCopied] = useState(false);
@@ -2458,7 +2654,7 @@ const StudentsManagement = () => {
               </button>
             )}
             {!isSchoolCoach && (
-              <button className="sm-btn-secondary" onClick={downloadCSVSample}>Export CSV</button>
+              <button className="sm-btn-secondary" onClick={handleExportCSV}>Export CSV</button>
             )}
             {canAddStudent && (
               <button className="sm-btn-primary" onClick={() => { setShowModal(true); setAddMode('single'); }}>+ Add Student</button>
@@ -3075,7 +3271,7 @@ const StudentsManagement = () => {
             preset={dateRange.preset}
             onChange={({ startDate, endDate, preset }) => {
               setDateRange({ startDate, endDate, preset });
-              setDateFilter(startDate === endDate ? (startDate || 'All') : (startDate || 'All'));
+              setDateFilter(startDate === endDate ? (startDate || 'All') : 'All');
               if (preset === 'all' && activeStatFilter === 'ACTIVE') {
                 setActiveStatFilter('TOTAL');
               } else if (preset !== 'all' && activeStatFilter === 'TOTAL') {
@@ -3105,6 +3301,47 @@ const StudentsManagement = () => {
               <option value="All">🏊 All Swimming (Any)</option>
               <option value="Swimmer">🏊 Swimmer Only</option>
               <option value="Non-Swimmer">🤿 Non-Swimmer Only</option>
+            </select>
+          </div>
+
+          {/* 3. Surf Level Filter */}
+          <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
+            <select
+              className="sm-select"
+              value={levelFilter}
+              onChange={e => {
+                const val = e.target.value;
+                setLevelFilter(val);
+                if (val === 'All') {
+                  if (['BEGINNER', 'ADV. BEGINNER', 'INTERMEDIATE', 'ADV. INTERMEDIATE', 'PRO', 'ADVANCED'].includes(activeStatFilter)) {
+                    setActiveStatFilter('ACTIVE');
+                  }
+                } else {
+                  if (val === 'Beginner') setActiveStatFilter('BEGINNER');
+                  else if (val === 'Advance Beginner') setActiveStatFilter('ADV. BEGINNER');
+                  else if (val === 'Intermediate') setActiveStatFilter('INTERMEDIATE');
+                  else if (val === 'Advance Intermediate') setActiveStatFilter('ADV. INTERMEDIATE');
+                  else if (val === 'Pro') setActiveStatFilter('PRO');
+                }
+              }}
+              style={{
+                cursor: 'pointer',
+                fontWeight: levelFilter !== 'All' ? 700 : 500,
+                color: levelFilter !== 'All' ? '#0D9488' : '#334155',
+                borderColor: levelFilter !== 'All' ? '#0D9488' : '#CBD5E1',
+                background: levelFilter !== 'All' ? '#E6F9F5' : '#FFFFFF',
+                borderRadius: '10px',
+                padding: '9px 14px',
+                fontSize: '13px'
+              }}
+              title="Filter by Surf Level"
+            >
+              <option value="All">🏄 All Surf Levels (Any)</option>
+              <option value="Beginner">⚪ Beginner</option>
+              <option value="Advance Beginner">🟡 Advance Beginner</option>
+              <option value="Intermediate">🟢 Intermediate</option>
+              <option value="Advance Intermediate">🔵 Advance Intermediate</option>
+              <option value="Pro">🔴 Pro</option>
             </select>
           </div>
         </div>
@@ -3293,6 +3530,33 @@ const StudentsManagement = () => {
                                   🏊 Swimmer
                                 </span>
                               )}
+                              {(() => {
+                                const normLvl = normalizeLevel(s.level);
+                                const lvlStyles = {
+                                  'Beginner': { bg: '#F8FAFC', color: '#475569', border: '#CBD5E1', icon: '⚪' },
+                                  'Advance Beginner': { bg: '#FEF3C7', color: '#B45309', border: '#F59E0B', icon: '🟡' },
+                                  'Intermediate': { bg: '#D1FAE5', color: '#047857', border: '#10B981', icon: '🟢' },
+                                  'Advance Intermediate': { bg: '#DBEAFE', color: '#1D4ED8', border: '#3B82F6', icon: '🔵' },
+                                  'Pro': { bg: '#FFE4E6', color: '#BE123C', border: '#F43F5E', icon: '🔴' }
+                                };
+                                const st = lvlStyles[normLvl] || lvlStyles['Beginner'];
+                                return (
+                                  <span style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '3px',
+                                    fontSize: '10.5px',
+                                    fontWeight: 700,
+                                    background: st.bg,
+                                    color: st.color,
+                                    border: `1px solid ${st.border}`,
+                                    padding: '1px 6px',
+                                    borderRadius: '5px'
+                                  }} title={`Surf Level: ${normLvl}`}>
+                                    {st.icon} {normLvl}
+                                  </span>
+                                );
+                              })()}
                             </div>
                             {!isSchoolCoach && (
                               <div className="sm-student-email" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '4px', marginTop: '3px' }}>
@@ -4204,8 +4468,8 @@ const StudentsManagement = () => {
                     <div className="sm-field">
                       <label>Surf Level *</label>
                       <select value={form.level} onChange={e => setForm({ ...form, level: e.target.value })}>
-                        <option value="Beginner"> Beginner</option>
-                        <option value="Advance Beginner">Advance Beginner </option>
+                        <option value="Beginner">Beginner</option>
+                        <option value="Advance Beginner">Advance Beginner</option>
                         <option value="Intermediate">Intermediate</option>
                         <option value="Advance Intermediate">Advance Intermediate</option>
                         <option value="Pro">Pro</option>
@@ -7503,10 +7767,23 @@ const StudentsManagement = () => {
         .sm-field label { font-size: 12px; font-weight: 700; color: #0F172A; text-transform: uppercase; letter-spacing: 0.4px; }
         .sm-field input, .sm-field select {
           height: 46px; border: 1.5px solid #E2E8F0; border-radius: 10px;
-          padding: 0 14px; font-size: 14px; color: #0F172A; background: #FFF;
+          padding: 0 14px; font-size: 14px; color: #0F172A !important; background: #FFF !important;
+          caret-color: #0F172A !important;
           outline: none; font-family: 'Instrument Sans', sans-serif; transition: border-color 0.2s;
         }
-        .sm-field input:focus, .sm-field select:focus { border-color: #F43F5E; box-shadow: 0 0 0 3px rgba(244,63,94,0.1); }
+        .sm-field input:focus, .sm-field select:focus {
+          border-color: #F43F5E; box-shadow: 0 0 0 3px rgba(244,63,94,0.1);
+          caret-color: #0F172A !important;
+          background: #FFF !important;
+        }
+        .sm-field input:-webkit-autofill,
+        .sm-field input:-webkit-autofill:hover,
+        .sm-field input:-webkit-autofill:focus,
+        .sm-field input:-webkit-autofill:active {
+          -webkit-box-shadow: 0 0 0 30px #FFFFFF inset !important;
+          -webkit-text-fill-color: #0F172A !important;
+          caret-color: #0F172A !important;
+        }
         .sm-field input::placeholder { color: #94A3B8; }
         .sm-modal-actions { display: flex; gap: 12px; margin-top: 8px; }
         .sm-modal-actions .sm-btn-secondary { flex: 1; text-align: center; justify-content: center; }

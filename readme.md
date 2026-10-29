@@ -872,4 +872,112 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
    - **Removed End-Time Clutter**: Refactored `formatSlotDisplayTime` across `StudentsManagement.jsx` and `AuthPage.jsx` to strip end-time ranges (`- 08:00 AM`) and display only clean start times (e.g. `06:00 AM`, `07:00 AM`, `09:30 AM`).
    - **Unified Display Parity**: Updated the `EXPECTED TIME` table column, student card `Exp:` badges, and onboarding slot selectors to consistently display start time only.
 
+---
+
+### Changes on 23-10-2026
+
+1. **Strict Multi-Tenancy & Cross-School Data Isolation (`backend/main.py`)**:
+   - **Superadmin Bypass Leak Fix**: Removed `"school admin"` from the superadmin bypass list (`["all", "superadmin", "super admin"]`) in `/api/students`, `/api/instructors`, and `/api/sessions`. Non-superadmin users (e.g. School Admins) can now strictly access only records belonging to their authenticated school.
+   - **Student & Coach Endpoint Scoping**: Enforced strict `Student.school == clean_school` and `Instructor.school == clean_school` filters, preventing students from other schools (such as Pro or Advance level students) from leaking into another school's roster or session wizard.
+   - **Session Slot Isolation (`/api/session-slots`)**:
+     - Removed unsafe global fallback queries (`query.order_by().first()`) in `get_session_slots` that returned another school's configuration when a school lacked custom slots.
+     - Scoped `SchoolSlotConfig` lookups and saves strictly by `school_id` and `school_name`. Saving a new slot configuration now creates an isolated row for the school rather than overwriting another school's master configuration.
+   - **Session Model & Endpoint Parity**:
+     - Added `student_name` and `guest_name` fields to `SessionCreate`, `SessionUpdate`, and single `create_session` (`POST /api/sessions`), ensuring 100% attribute parity with `create_sessions_bulk`.
+
+2. **Frontend Multi-Tenancy Protection (`StudentsManagement.jsx`, `Sessions.jsx`, `SessionConfigure.jsx`, `NewSession.jsx`)**:
+   - **Active School Resolution**: Standardized `getActiveSchoolInfo()` across components (`sessionStorage` -> `localStorage` -> `currentUser.school`), ensuring correct `schoolId` and `schoolName` propagation.
+   - **Defense-in-Depth Filtering**:
+     - `StudentsManagement.jsx`: Disabled `school=all` queries for school admins; added client-side post-filtering to purge any record not matching `effectiveSchool`.
+     - `Sessions.jsx`: Scoped session fetching and student lookup strictly to active school; fixed guest rendering to display actual guest names (`guest_name || 'Guest'`) with parent tags.
+     - `SessionConfigure.jsx`: Added clean fallback to `defaultSlots` when a school has no saved slots; added window event listeners (`storage`, `user_updated`) to reload slots immediately on school switch.
+     - `NewSession.jsx`: Updated `normalizeStudentsData` to strictly reject any student not belonging to the active school (`return false` fallback), eliminating foreign Pro-level students from the scheduling pool.
+
+3. **Session Scheduling Wizard Count Parity & Group Safety (`NewSession.jsx`)**:
+   - **Slot Pill Count Mismatch Bug Solved**: Updated `getSlotAllStudentIds` to make `trainingGroups` the single source of truth for Step 3 slot pills. The slot pill count (e.g. `3 Students`) now strictly equals the number of students inside the group card, eliminating ghost count discrepancies (e.g. `10 Students` vs `6 Students`).
+   - **Independent Group Slot Grouping**: Keyed existing database groups by `${slotId}__${sessTime}__${groupName}` to prevent merging sessions across different time slots.
+   - **Protected Published Session Groups**: Protected published groups from accidental deletion in Step 3 — hidden/disabled `✕` button and `Clear All` for already-published groups; updates can only be made via "Update Published Session".
+   - **UI Badge Polish**: Replaced raw database `#ID` badges on student chips/cards with clean `👥 Guest [Index] ([Parent Name])` tags.
+
+4. **End-to-End Scheduling Verification & Automated Testing**:
+   - Automated end-to-end scheduling API verification completed for `Friday, Oct 23, 2026`:
+     - Step 1: Slot capacities (`09:30 AM` [80], `03:00 PM` [80], `07:00 AM` [4]) and custom date configurations.
+     - Step 2: Student pool filtering (7 active students for `rpn tech ac`, 0 Pro / Advanced from other schools).
+     - Step 3: Group creation, coach assignment, coach leave check, and concurrent same-time coach conflict detection.
+     - Step 4 / Backend: Bulk session creation payload persistence, differential updates, and multi-tenancy verification (0 cross-school session leaks).
+   - Validated Python syntax (`python -m py_compile backend/main.py`) and Vite production bundle (`npm run build`) passing with zero errors.
+
+---
+
+### Changes on 24-10-2026
+
+1. **Live AWS RDS Safe Read-Only Backup & Local PostgreSQL Refresh**:
+   - **100% Strict Read-Only Extraction (`safe_backup_and_replace_local.py`)**:
+     - Dispatched AWS Systems Manager (SSM) worker to EC2 instance `i-0c62e04f44a9ea237` to dump live Aurora PostgreSQL cluster (`aisurf-db-cluster`).
+     - Enforced `conn.set_session(readonly=True, autocommit=False)` guaranteeing 0 database writes, 0 table locks, and zero interference with live user activity.
+     - Extracted all 38 public tables into S3 bucket `aisurf-media-uploads-149051628601`.
+   - **Local Hard Backups Generated**:
+     - Generated timestamped JSON backup: `backups/aisurf_live_backup_20261024_132626.json` (43.45 MB) and `live_backup_latest.json`.
+     - Generated full SQL INSERT dump: `backups/aisurf_live_backup_20261024_132626.sql` (44.19 MB) and `live_backup_latest.sql`.
+   - **Local Database (`surfing_db`) Full Mirror Replacement**:
+     - Connected to local PostgreSQL (`surfing_db`) and disabled FK triggers (`SET session_replication_role = 'replica'`).
+     - Truncated stale local tables and cleanly restored all 38 tables with live AWS records (344 users, 310 students, 1,343 sessions, 34 instructors, 5 schools, 8 events, 116 heats, 7,268 scores, 1,114 activity logs).
+     - Auto-reset all primary key serial sequences (`setval`) to max ID values to prevent future insert collision errors.
+
+2. **Calendar & Roster Guest Name Resolution & Chip Design (`Sessions.jsx`)**:
+   - **Accurate Guest Resolution in Calendar Groups**:
+     - Resolved repeating parent student names in the "Surf Sessions Calendar & Roster" drawer cards (e.g. Advait repeating 2x, Chaitanya Chenna repeating 3x, Laveena Kuril repeating 4x).
+     - Connected session rows to `resolveStudentAndGuestDisplay` to dynamically display the actual registered guest names (`Bhaskar Kishor`, `Vinayak`, `Kashish`, `Rohan Mehta`, `Abhishek Shah`, `Tanya Srivastava`, `Namrata Singh`, etc.).
+   - **Refined Chip Visual Aesthetics**:
+     - Removed the loud full-yellow background from guest cards in favor of a clean, uniform `#FFFFFF` background with standard `#CBD5E1` border identical to regular student chips.
+     - Added an elegant, soft amber `Guest` pill tag next to the guest name with a hover tooltip displaying `Guest of [Parent Student Name]`.
+
+3. **Mobile Responsiveness for Day Details Popup Modal (`Sessions.jsx`)**:
+   - **Zero Desktop Regression**: Preserved 100% of existing desktop UI layout, alignment, and spacing on screens `> 640px`.
+   - **Eliminated Mobile Overlapping (`@media (max-width: 640px)`)**:
+     - Fixed issue where the `📞 Call`, `✓ Present`, and `✕ Absent` buttons were colliding and overlapping on top of student names and avatars on small mobile viewports (360px - 410px).
+     - Added `.ses-day-modal-student-row` with mobile stacked layout: top line gives student/guest name, avatar, and level full horizontal breathing room without squishing or truncating.
+     - Added `.ses-day-modal-actions` spanning the bottom line with 3 equal-width, comfortable touch-target buttons separated by a subtle dashed divider.
+     - Adjusted `.ses-day-details-modal-box` to `width: 96vw; max-height: 94vh` with responsive padding and fluid touch interactions.
+
+4. **Landing Page & Auth Page Bottom-Right Branding Badge (`Hero.jsx`, `AuthPage.jsx`, `index.css`)**:
+   - Added sleek glassmorphic branding pill badge in the bottom-right corner of both the Landing Page (`Hero.jsx`) and the Login/Register Page (`AuthPage.jsx`): **"Developed by rpntechworld"**.
+   - Styled the entire pill box as an active link (<a>) to https://rpntechworld.com so clicking anywhere on the badge (text, padding, or border) opens the website in a new tab with hover glow effect (#38BDF8), subtle backdrop blur, and responsive positioning across desktop, tablet, and mobile devices.
+
+5. **Full Landing Page Footer & Dynamic Auto-Updating Year & Version (`Footer.jsx`, `LandingPage.jsx`, `Hero.jsx`, `AuthPage.jsx`, `index.css`)**:
+   - **Landing Page Footer**: Created dedicated [Footer.jsx](file:///d:/surfing/ai/frontend/src/components/Footer.jsx) placed cleanly at the bottom of the Landing Page beneath the features section.
+   - **Dynamic Year Auto-Update**: Implemented `new Date().getFullYear()` so that the copyright year (`© 2026 AthnexLive`) automatically rolls over every year without manual code changes.
+   - **Version Badge**: Added `v1.0.0` version identifier tag styled as a subtle cyan monospace chip.
+   - **Clean Developed by Pill**: Styled `Developed by rpntechworld` as a standalone, clean clickable badge connecting directly to `https://rpntechworld.com` without redundant copyright/bullet clutter.
+   - **Consistent Corner Pill Badges**: Cleaned corner pill badges in `Hero.jsx` and `AuthPage.jsx` to maintain a unified, uncluttered branding badge across pages.
+
+---
+
+### Changes on 28-10-2026
+
+1. **New School Multi-Tenancy & Account Onboarding Fixes (`backend/main.py`, `SchoolRegistration.jsx`, `AuthPage.jsx`)**:
+   - **Backend User-to-School Synchronization (`main.py`)**:
+     - Fixed issue where registering a new school or school admin left `school_name = None` and `school_id = None` in the `users` table.
+     - `auth_signup` now explicitly links `user.name = data.name`, `user.school_name = school_name`, `user.school_id = new_sch.id`, and `user.phone = phone_clean` upon account creation.
+     - `POST /api/schools` (`create_school`) now auto-provisions or links the admin user account, generates authorization token, and returns full user and school metadata.
+     - `make_user_response` equipped with automatic self-healing: if an admin user logs in with missing school attributes, it resolves the school by email/name and persists `school_name` and `school_id` into the database record.
+     - Backfilled all existing database school admin accounts (`togaisurf@gmail.com`, `indicasurfschooldapoli@gmail.com`, etc.) with their authoritative `school_name` and `school_id`.
+   - **Frontend School Detection & Permissions (`InstructorManagement.jsx`, `StudentsManagement.jsx`)**:
+     - Corrected flawed `isSuperAdmin` logic in `InstructorManagement.jsx` that previously evaluated `!currentSchool || currentSchool === 'school admin'` as `true`, causing newly added coaches in new schools to get miscategorized as "Individual / Freelance Coach" and disappear from the school view.
+     - `getActiveSchoolName` safely ignores the fallback label `"school admin"` and resolves directly from `activeSchool`, `user.school_name`, `user.school`, or `user.school_details.name`.
+     - `StudentsManagement.jsx` now reliably scopes newly created students to the active school rather than an empty or dummy string.
+   - **Seamless School Registration Session Initialization (`SchoolRegistration.jsx`)**:
+     - Updated registration submit handler to immediately store the returned session token, user profile, and active school payload in both `sessionStorage` and `localStorage`, allowing newly registered schools to immediately add coaches and students without session loss.
+
+2. **Previous Session Groups Suggestion UI & Reordering (`NewSession.jsx`)**:
+   - **Group Card Alignment**: Upgraded previous group suggestions into full `ns-group-card` cards matching the active session group design, with student chips, level tags, day indicators, and assigned coach chips.
+   - **Along with Coach & Students Only Actions**: Added `⚡ Along with Coach` button to auto-create groups with their historically assigned coach preserved, alongside a `+ Students Only` button.
+   - **Workspace Layout Order Optimization**:
+     - Reordered Column 2 elements so that **🕒 PREVIOUS GROUPS SUGGESTION** is displayed **FIRST** immediately beneath the active session groups.
+     - Placed the **"Want to create another training group?"** (`ns-create-next-group-card`) creation card cleanly **BELOW** the suggestion cards, matching the expected user workflow.
+
+3. **Build & Regression Verification**:
+   - Production Vite build verified with zero errors (`npm run build` exit code 0).
+   - Backend syntax and imports verified clean.
+   - Automated end-to-end database lifecycle simulation passed successfully with 0 errors, validating new school registration, coach creation, student creation, and scoped retrieval while preserving existing schools (`Aquatic Indica Surf School`, `rpn tech ac`, etc.) completely intact.
 

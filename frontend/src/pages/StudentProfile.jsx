@@ -642,17 +642,15 @@ const StudentProfile = () => {
     const emailLower = (isStudentSelf ? (savedUser.email || '') : (matchedRecord?.email || '')).toLowerCase().trim();
     const nameLower = (isStudentSelf ? (savedUser.name || '') : (matchedRecord?.name || '')).toLowerCase().trim();
 
-    const req = matchedRecord || (isStudentSelf ? reqs.find(r => 
-      (emailLower && (r.student_email || r.email || '').toLowerCase().trim() === emailLower) ||
-      (nameLower && (r.student_name || r.name || '').toLowerCase().trim() === nameLower)
+    // Use email as the primary key — never match by name alone (two students can share the same name)
+    const req = matchedRecord || (isStudentSelf && emailLower ? reqs.find(r =>
+      emailLower && (r.student_email || r.email || '').toLowerCase().trim() === emailLower
     ) : null);
-    const acc = matchedRecord || (isStudentSelf ? savedAccs.find(a => 
-      (emailLower && (a.email || '').toLowerCase().trim() === emailLower) ||
-      (nameLower && (a.name || '').toLowerCase().trim() === nameLower)
+    const acc = matchedRecord || (isStudentSelf && emailLower ? savedAccs.find(a =>
+      emailLower && (a.email || '').toLowerCase().trim() === emailLower
     ) : null);
-    const mock = matchedRecord || (isStudentSelf ? mockStudents.find(m => 
-      (emailLower && (m.email || '').toLowerCase().trim() === emailLower) ||
-      (nameLower && (m.name || '').toLowerCase().trim() === nameLower)
+    const mock = matchedRecord || (isStudentSelf && emailLower ? mockStudents.find(m =>
+      emailLower && (m.email || '').toLowerCase().trim() === emailLower
     ) : null);
 
     let isApproved = false;
@@ -719,28 +717,25 @@ const StudentProfile = () => {
       const emailLower = (savedUser.email || '').toLowerCase().trim();
       const nameLower = (savedUser.name || '').toLowerCase().trim();
 
-      // Check local storage approval markers
+      // Check local storage approval markers — use email only (name alone is not unique)
       let isApprovedLocally = false;
       try {
         const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-        const req = reqs.find(r => 
-          (emailLower && (r.student_email || r.email || '').toLowerCase().trim() === emailLower) ||
-          (nameLower && (r.student_name || r.name || '').toLowerCase().trim() === nameLower)
-        );
+        const req = emailLower ? reqs.find(r =>
+          emailLower && (r.student_email || r.email || '').toLowerCase().trim() === emailLower
+        ) : null;
         if (req && req.status === 'approved') isApprovedLocally = true;
 
         const savedAccs = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
-        const acc = savedAccs.find(a => 
-          (emailLower && (a.email || '').toLowerCase().trim() === emailLower) ||
-          (nameLower && (a.name || '').toLowerCase().trim() === nameLower)
-        );
+        const acc = emailLower ? savedAccs.find(a =>
+          emailLower && (a.email || '').toLowerCase().trim() === emailLower
+        ) : null;
         if (acc && acc.approval_status === 'approved') isApprovedLocally = true;
 
         const mockStudents = JSON.parse(localStorage.getItem('mock_students_data') || '[]');
-        const mock = mockStudents.find(m => 
-          (emailLower && (m.email || '').toLowerCase().trim() === emailLower) ||
-          (nameLower && (m.name || '').toLowerCase().trim() === nameLower)
-        );
+        const mock = emailLower ? mockStudents.find(m =>
+          emailLower && (m.email || '').toLowerCase().trim() === emailLower
+        ) : null;
         if (mock && mock.approval_status === 'approved') isApprovedLocally = true;
       } catch (e) {}
 
@@ -791,16 +786,9 @@ const StudentProfile = () => {
             const allSess = await sessRes.json();
             if (Array.isArray(allSess)) {
               const sNameLower = (fallback.name || '').toLowerCase().trim();
-              const mySess = allSess.filter(s => {
-                return (
-                  s.student_id === fallback.id ||
-                  (sNameLower && (
-                    (s.student || '').toLowerCase().trim() === sNameLower ||
-                    (s.student_name || '').toLowerCase().trim() === sNameLower ||
-                    (s.guest_name || '').toLowerCase().trim() === sNameLower
-                  ))
-                );
-              });
+              // Strictly filter by student_id — never by name alone.
+              // Same-name students must not see each other's sessions.
+              const mySess = allSess.filter(s => s.student_id === fallback.id);
               if (mySess.length > 0) {
                 fallback.sessions = mySess;
                 const sortedFallbackSess = sortSessionsDescending(mySess);
@@ -835,9 +823,9 @@ const StudentProfile = () => {
       if (!isApproved) {
         try {
           const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-          const req = reqs.find(r => 
-            (stEmail && (r.student_email || r.email || '').toLowerCase().trim() === stEmail) ||
-            (stName && (r.student_name || r.name || '').toLowerCase().trim() === stName)
+          // Prefer email match — name alone is not a safe unique identifier
+          const req = reqs.find(r =>
+            stEmail && (r.student_email || r.email || '').toLowerCase().trim() === stEmail
           );
           if (req && req.status === 'approved') isApproved = true;
         } catch (e) {}
@@ -869,14 +857,9 @@ const StudentProfile = () => {
         if (sessRes.ok) {
           const allSess = await sessRes.json();
           if (Array.isArray(allSess)) {
-            const mySess = allSess.filter(s => 
-              s.student_id === data.id || 
-              (stName && (
-                (s.student || '').toLowerCase().trim() === stName ||
-                (s.student_name || '').toLowerCase().trim() === stName ||
-                (s.guest_name || '').toLowerCase().trim() === stName
-              ))
-            );
+            // Strictly filter by student_id — never by name alone.
+            // Same-name students must not see each other's sessions.
+            const mySess = allSess.filter(s => s.student_id === data.id);
             if (mySess.length > 0) {
               stSessions = mySess;
               const sortedMySess = sortSessionsDescending(mySess);
@@ -990,12 +973,11 @@ const StudentProfile = () => {
         try {
           let u = JSON.parse(saved);
           const emailLower = (u.email || '').toLowerCase().trim();
-          const nameLower = (u.name || '').toLowerCase().trim();
+          // Match by email only — never by name alone (two students can share the same name)
           const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-          const req = reqs.find(r => 
-            (emailLower && (r.student_email || r.email || '').toLowerCase().trim() === emailLower) ||
-            (nameLower && (r.student_name || r.name || '').toLowerCase().trim() === nameLower)
-          );
+          const req = emailLower ? reqs.find(r =>
+            emailLower && (r.student_email || r.email || '').toLowerCase().trim() === emailLower
+          ) : null;
           if (req && req.status === 'approved' && u.approval_status !== 'approved') {
             u.approval_status = 'approved';
             sessionStorage.setItem('user', JSON.stringify(u));
@@ -1333,18 +1315,17 @@ const StudentProfile = () => {
     try {
       const emailLower = (student?.email || currentUser?.email || '').toLowerCase().trim();
       const nameLower = (student?.name || currentUser?.name || '').toLowerCase().trim();
-      if (emailLower || nameLower) {
+      if (emailLower) {
         const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-        const req = reqs.find(r => 
-          (emailLower && (r.student_email || r.email || '').toLowerCase().trim() === emailLower) ||
-          (nameLower && (r.student_name || r.name || '').toLowerCase().trim() === nameLower)
+        // Match by email first — email is unique per account; name alone is not safe
+        const req = reqs.find(r =>
+          emailLower && (r.student_email || r.email || '').toLowerCase().trim() === emailLower
         );
         if (req && req.status === 'approved') return false;
 
         const savedAccs = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
-        const acc = savedAccs.find(a => 
-          (emailLower && (a.email || '').toLowerCase().trim() === emailLower) ||
-          (nameLower && (a.name || '').toLowerCase().trim() === nameLower)
+        const acc = savedAccs.find(a =>
+          emailLower && (a.email || '').toLowerCase().trim() === emailLower
         );
         if (acc && acc.approval_status === 'approved') return false;
       }

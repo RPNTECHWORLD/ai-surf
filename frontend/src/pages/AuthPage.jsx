@@ -106,7 +106,7 @@ const AuthPage = () => {
   const [schoolSlots, setSchoolSlots] = useState([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
 
-  // 30-Day Account Deletion Retention & Restoration
+  // 7-Day Account Deletion Retention & Restoration
   const [showRestoreModal, setShowRestoreModal] = useState(false);
   const [pendingDeletionData, setPendingDeletionData] = useState(null);
   const [restoreLoading, setRestoreLoading] = useState(false);
@@ -117,6 +117,11 @@ const AuthPage = () => {
     token: null,
     user: null
   });
+
+  // Previous Account Pending Deletion Notification Modal on Signup
+  const [showPreviousAccountModal, setShowPreviousAccountModal] = useState(false);
+  const [previousAccountPendingData, setPreviousAccountPendingData] = useState(null);
+  const [purgeLoading, setPurgeLoading] = useState(false);
 
 
   const [formData, setFormData] = useState({
@@ -410,7 +415,11 @@ const AuthPage = () => {
     const { name, value } = e.target;
     let next = { ...formData, [name]: value };
     if (name === 'dob') next.age = calculateAge(value);
-    if (name === 'phone' || name === 'whatsapp_number') {
+    if (name === 'phone') {
+      next.phone = value;
+      next.whatsapp_number = value;
+    }
+    if (name === 'whatsapp_number') {
       next.phone = value;
       next.whatsapp_number = value;
     }
@@ -571,17 +580,21 @@ const AuthPage = () => {
       return;
     }
 
-    const activeSchoolName = (typeof user.school_name === 'string' ? user.school_name : user.school_name?.name)
+    const userSchName = (typeof user.school_name === 'string' ? user.school_name : user.school_name?.name)
       || (typeof user.school === 'string' ? user.school : user.school?.name)
-      || formData.school
-      || (user.role === 'admin' ? 'School Admin' : user.role === 'coach' ? 'Coach Portal' : (user.school ? user.school : 'No School Selected'));
+      || (user.school_details?.name)
+      || (formData.school && formData.school.trim());
 
-    const activeSchoolLocation = user.school_location || user.location || formData.schoolLocation || '';
+    const activeSchoolName = (userSchName && userSchName.toLowerCase() !== 'school admin')
+      ? userSchName
+      : (formData.school && formData.school.trim() ? formData.school.trim() : (user.role === 'coach' ? 'Coach Portal' : (userSchName || '')));
+
+    const activeSchoolLocation = user.school_location || user.location || user.school_details?.city || formData.schoolLocation || '';
 
     const schoolPayload = {
       name: activeSchoolName,
-      owner: user.name,
-      email: user.email,
+      owner: user.name || formData.name,
+      email: user.email || formData.email,
       city: activeSchoolLocation,
       location: activeSchoolLocation
     };
@@ -635,7 +648,7 @@ const AuthPage = () => {
     } finally { setLoading(false); }
   };
 
-  // ── Account Retention & Restoration (Within 30-Day Window) ───────────────────
+  // ── Account Retention & Restoration (Within 7-Day Window) ───────────────────
   const handleRestoreAccount = async () => {
     if (!pendingDeletionData) return;
     setRestoreLoading(true);
@@ -680,7 +693,7 @@ const AuthPage = () => {
 
 
   // ── Registration OTP ───────────────────────────────────────────────────────
-  const sendOTP = async (isResend = false) => {
+  const sendOTP = async (isResend = false, purgePrevious = false) => {
     setErrorMsg(''); setSuccessMsg('');
     if (activeInviteError) {
       setErrorMsg(activeInviteError);
@@ -692,7 +705,12 @@ const AuthPage = () => {
       const res = await fetch(`${API}/api/auth/send-otp`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: formData.email.trim(), purpose: 'signup', role })
+        body: JSON.stringify({
+          email: formData.email.trim(),
+          purpose: 'signup',
+          role,
+          purge_previous: purgePrevious
+        })
       });
       const data = await safeJson(res);
       if (res.ok) {
@@ -701,6 +719,17 @@ const AuthPage = () => {
         setOtpCode('');
         setSuccessMsg(data.message || `Verification code sent to ${formData.email}. Please check your inbox.`);
       } else {
+        if (res.status === 409 || data.status === 'previous_account_pending_deletion' || data.pending_previous_account) {
+          setPreviousAccountPendingData({
+            email: data.email || formData.email.toLowerCase().trim(),
+            days_remaining: data.days_remaining || 7,
+            deletion_scheduled_at: data.deletion_scheduled_at,
+            message: data.message
+          });
+          setShowPreviousAccountModal(true);
+          setOtpSent(false);
+          return;
+        }
         setOtpSent(false);
         setErrorMsg(data.detail || `Failed to send OTP (${res.status}). Please try again.`);
       }
@@ -727,7 +756,7 @@ const AuthPage = () => {
     } finally { setLoading(false); }
   };
 
-  const completeRegistration = async (e) => {
+  const completeRegistration = async (e, purgePrevious = false) => {
     e && e.preventDefault();
     setErrorMsg(''); setSuccessMsg('');
     if (activeInviteError) {
@@ -807,10 +836,13 @@ const AuthPage = () => {
           // Pass individual invite token or school batch invite code
           ...(inviteToken ? { invite_token: inviteToken } : {}),
           ...(inviteCode ? { invite_code: inviteCode } : {}),
+          purge_previous: purgePrevious,
         })
       });
       const data = await safeJson(res);
       if (res.ok) {
+        setShowPreviousAccountModal(false);
+        setPreviousAccountPendingData(null);
         const chosenSchool = (schoolInviteData?.school) || (formData.school || '').trim();
         const userObj = data.user || {
           id: Date.now(),
@@ -893,7 +925,17 @@ const AuthPage = () => {
 
         handleAuthSuccess(data.token || 'session_token', userObj);
       } else {
-        setErrorMsg(data.detail || 'Registration failed. Please try again.');
+        if (res.status === 409 || data.status === 'previous_account_pending_deletion' || data.pending_previous_account) {
+          setPreviousAccountPendingData({
+            email: data.email || formData.email.toLowerCase().trim(),
+            days_remaining: data.days_remaining || 7,
+            deletion_scheduled_at: data.deletion_scheduled_at,
+            message: data.message
+          });
+          setShowPreviousAccountModal(true);
+          return;
+        }
+        setErrorMsg(data.detail || data.message || 'Registration failed. Please try again.');
       }
     } catch (err) {
       console.warn('Backend offline, completing registration in local store:', err);
@@ -1727,7 +1769,7 @@ const AuthPage = () => {
                           <div className="auth-field">
                             <label>🏄 Surf Level <span style={{ color: '#FF4D6D', fontWeight: 700 }}>*</span></label>
                             <select name="level" value={formData.level || 'Beginner'} onChange={handleChange} required>
-                              <option value="Beginner"> Beginner</option>
+                              <option value="Beginner">Beginner</option>
                               <option value="Advance Beginner">Advance Beginner</option>
                               <option value="Intermediate">Intermediate</option>
                               <option value="Advance Intermediate">Advance Intermediate</option>
@@ -1752,7 +1794,7 @@ const AuthPage = () => {
                               type="tel" 
                               name="whatsapp_number" 
                               placeholder="e.g. 9876543210 (10 digits)"
-                              value={formData.whatsapp_number || formData.phone || ''} 
+                              value={formData.whatsapp_number ?? formData.phone ?? ''} 
                               onChange={handleChange} 
                               required
                             />
@@ -2404,11 +2446,8 @@ const AuthPage = () => {
                             type="tel"
                             name="phone"
                             placeholder="e.g. 9876543210 (10 digits)"
-                            value={formData.phone || formData.whatsapp_number || ''}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setFormData(prev => ({ ...prev, phone: val, whatsapp_number: val }));
-                            }}
+                            value={formData.phone ?? ''}
+                            onChange={handleChange}
                             required
                           />
                         </div>
@@ -2506,11 +2545,8 @@ const AuthPage = () => {
                             type="tel"
                             name="phone"
                             placeholder="e.g. 9876543210 (10 digits)"
-                            value={formData.phone || formData.whatsapp_number || ''}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setFormData(prev => ({ ...prev, phone: val, whatsapp_number: val }));
-                            }}
+                            value={formData.phone ?? ''}
+                            onChange={handleChange}
                             required
                           />
                           <small style={{ color: '#94A3B8', fontSize: '11px', marginTop: '4px', display: 'block' }}>
@@ -2596,7 +2632,7 @@ const AuthPage = () => {
         </div>
       </div>
 
-      {/* ── 30-DAY ACCOUNT RETENTION & RESTORE MODAL ── */}
+      {/* ── 7-DAY ACCOUNT RETENTION & RESTORE MODAL ── */}
       {showRestoreModal && pendingDeletionData && (
 
         <div style={{
@@ -2730,6 +2766,195 @@ const AuthPage = () => {
                 }}
               >
                 Keep Deletion Scheduled (Leave Deactivated)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── NOTIFICATION MODAL: PREVIOUS ACCOUNT PENDING DELETION FOUND ── */}
+      {showPreviousAccountModal && previousAccountPendingData && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 999999,
+          background: 'rgba(5, 11, 26, 0.85)', backdropFilter: 'blur(12px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
+        }}>
+          <div style={{
+            background: '#FFFFFF', color: '#0F172A', borderRadius: '24px',
+            width: '100%', maxWidth: '480px', padding: '28px',
+            boxShadow: '0 25px 60px -15px rgba(0,0,0,0.5)',
+            fontFamily: "'Outfit', 'Inter', -apple-system, sans-serif", position: 'relative'
+          }}>
+            <button
+              type="button"
+              onClick={() => {
+                setShowPreviousAccountModal(false);
+                setPreviousAccountPendingData(null);
+              }}
+              style={{
+                position: 'absolute', top: '18px', right: '18px',
+                width: '32px', height: '32px', borderRadius: '50%',
+                border: 'none', background: '#F1F5F9', color: '#64748B',
+                fontSize: '18px', cursor: 'pointer', display: 'flex',
+                alignItems: 'center', justifyContent: 'center'
+              }}
+            >
+              ×
+            </button>
+
+            <div style={{ textAlign: 'center', marginBottom: '18px' }}>
+              <div style={{
+                width: '58px', height: '58px', borderRadius: '18px',
+                background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.25)',
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: '28px', marginBottom: '12px'
+              }}>
+                ⚠️
+              </div>
+              <h3 style={{ margin: 0, fontSize: '20px', fontWeight: 800, color: '#0F172A' }}>
+                Previous Account Found
+              </h3>
+              <div style={{ marginTop: '6px' }}>
+                <span style={{
+                  display: 'inline-block',
+                  background: '#FEF3C7',
+                  border: '1px solid #FCD34D',
+                  color: '#92400E',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  padding: '3px 10px',
+                  borderRadius: '20px'
+                }}>
+                  ⏳ {previousAccountPendingData.days_remaining} Day(s) Left in 7-Day Retention Period
+                </span>
+              </div>
+            </div>
+
+            <div style={{
+              background: '#F8FAFC', border: '1px solid #E2E8F0',
+              borderRadius: '14px', padding: '16px', marginBottom: '20px'
+            }}>
+              <p style={{ margin: '0 0 10px 0', fontSize: '13px', lineHeight: '1.5', color: '#334155' }}>
+                An account associated with <strong>{previousAccountPendingData.email}</strong> was recently scheduled for deletion and is still within the 7-day data retention window.
+              </p>
+              <div style={{
+                fontSize: '12.5px', color: '#B45309', background: '#FFFBEB',
+                border: '1px solid #FDE68A', padding: '10px 12px', borderRadius: '10px',
+                lineHeight: '1.5'
+              }}>
+                🔔 <strong>Would you like to permanently delete the previous account and its data to create this new account?</strong>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <button
+                type="button"
+                disabled={purgeLoading}
+                onClick={async () => {
+                  setPurgeLoading(true);
+                  try {
+                    const targetEmail = previousAccountPendingData.email;
+                    // Purge the old account from backend
+                    await fetch(`${API}/api/auth/purge-pending-account`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ email: targetEmail })
+                    });
+                    setShowPreviousAccountModal(false);
+                    setPreviousAccountPendingData(null);
+                    // If user is still on initial OTP step, send OTP now!
+                    if (!otpVerified) {
+                      await sendOTP(false, true);
+                    } else {
+                      await completeRegistration(null, true);
+                    }
+                  } catch (e) {
+                    setShowPreviousAccountModal(false);
+                    if (!otpVerified) {
+                      await sendOTP(false, true);
+                    } else {
+                      await completeRegistration(null, true);
+                    }
+                  } finally {
+                    setPurgeLoading(false);
+                  }
+                }}
+                style={{
+                  width: '100%',
+                  padding: '13px 20px',
+                  borderRadius: '12px',
+                  border: 'none',
+                  background: 'linear-gradient(135deg, #EF4444 0%, #DC2626 100%)',
+                  color: '#FFFFFF',
+                  fontSize: '13.5px',
+                  fontWeight: 800,
+                  cursor: purgeLoading ? 'not-allowed' : 'pointer',
+                  boxShadow: '0 4px 14px rgba(239, 68, 68, 0.4)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px'
+                }}
+              >
+                {purgeLoading
+                  ? 'Deleting Old Account...'
+                  : (!otpVerified
+                      ? '🗑️ Yes, Delete Previous Account & Send Verification Code'
+                      : '🗑️ Yes, Delete Previous Account & Create New')}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPreviousAccountModal(false);
+                  setIsLogin(true);
+                  setPendingDeletionData({
+                    email: previousAccountPendingData.email,
+                    days_remaining: previousAccountPendingData.days_remaining,
+                    deletion_scheduled_at: previousAccountPendingData.deletion_scheduled_at,
+                    name: previousAccountPendingData.email,
+                    role: role
+                  });
+                  setShowRestoreModal(true);
+                }}
+                style={{
+                  width: '100%',
+                  padding: '11px 16px',
+                  borderRadius: '12px',
+                  border: '1.5px solid #0284C7',
+                  background: '#F0F9FF',
+                  color: '#0369A1',
+                  fontSize: '13px',
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px'
+                }}
+              >
+                🔄 No, Restore Previous Account Instead
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPreviousAccountModal(false);
+                  setPreviousAccountPendingData(null);
+                }}
+                style={{
+                  width: '100%',
+                  padding: '9px 16px',
+                  borderRadius: '12px',
+                  border: '1px solid #E2E8F0',
+                  background: '#FFFFFF',
+                  color: '#64748B',
+                  fontSize: '12.5px',
+                  fontWeight: 600,
+                  cursor: 'pointer'
+                }}
+              >
+                Cancel
               </button>
             </div>
           </div>
@@ -2956,6 +3181,18 @@ const AuthPage = () => {
           </div>
         </div>
       )}
+
+      {/* Bottom Right Corner Branding */}
+      <a
+        href="https://rpntechworld.com"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="hero-corner-footer"
+        style={{ position: 'fixed', bottom: '22px', right: '28px', zIndex: 999 }}
+      >
+        <span>Developed by</span>
+        <span className="hero-footer-link">rpntechworld</span>
+      </a>
 
       <style>{styles}</style>
     </div>
@@ -3229,7 +3466,14 @@ const styles = `
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 10px; font-size: 14px; color: #FFFFFF;
+  caret-color: #FFFFFF !important;
   outline: none; transition: all 0.2s;
+}
+
+.auth-field input[type="password"] {
+  font-size: 15px;
+  letter-spacing: 3px;
+  caret-color: #FFFFFF !important;
 }
 
 .auth-field input::placeholder { color: #64748B; }
@@ -3241,6 +3485,7 @@ const styles = `
   border-color: #FF4D6D;
   box-shadow: 0 0 0 3px rgba(255, 77, 109, 0.2);
   background: rgba(255, 255, 255, 0.08);
+  caret-color: #FFFFFF !important;
 }
 
 input:-webkit-autofill, input:-webkit-autofill:hover,

@@ -67,7 +67,16 @@ const formatExperience = (exp) => {
   return str;
 };
 
+const formatCoachPhone = (phone) => {
+  if (!phone) return '';
+  const digits = String(phone).replace(/\D/g, '');
+  if (digits.length === 10) return `+91 ${digits.slice(0, 5)} ${digits.slice(5)}`;
+  if (digits.length === 12 && digits.startsWith('91')) return `+91 ${digits.slice(2, 7)} ${digits.slice(7)}`;
+  return String(phone).startsWith('+') ? String(phone) : `+91 ${String(phone)}`;
+};
+
 const calculateAge = (dobString) => {
+
   if (!dobString) return '';
   try {
     const birthDate = new Date(dobString);
@@ -186,7 +195,10 @@ const InstructorManagement = () => {
     try {
       const res = await fetch(`${API}/api/leave-requests/${leaveId}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionStorage.getItem('token') || ''}`
+        },
         body: JSON.stringify({
           status: status,
           admin_notes: adminNotes
@@ -231,6 +243,19 @@ const InstructorManagement = () => {
     setConfirmDialog(prev => ({ ...prev, isOpen: false, onConfirm: null }));
   };
 
+  const currentUser = (() => {
+    try {
+      const saved = sessionStorage.getItem('user') || localStorage.getItem('user');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) {
+      return null;
+    }
+  })();
+  const userRole = (currentUser?.role || '').toLowerCase().trim();
+  const isCoach = userRole === 'coach' || userRole === 'instructor';
+  const isAdminOrSchoolAdmin = currentUser?.role === 'superadmin' || userRole === 'admin' || userRole === 'school' || userRole === 'school_admin' || userRole === 'schooladmin';
+  const canDeleteInstructor = isAdminOrSchoolAdmin && !isCoach;
+
   const getActiveSchoolName = () => {
     try {
       const activeSchool = sessionStorage.getItem('activeSchool') || localStorage.getItem('activeSchool');
@@ -238,19 +263,22 @@ const InstructorManagement = () => {
         const parsed = JSON.parse(activeSchool);
         if (parsed.name) {
           const s = typeof parsed.name === 'string' ? parsed.name : parsed.name?.name;
-          if (s) return s;
+          if (s && s.toLowerCase() !== 'school admin') return s;
         }
       }
       const user = sessionStorage.getItem('user') || localStorage.getItem('user');
       if (user) {
         const parsed = JSON.parse(user);
-        if (parsed.school) {
-          const s = typeof parsed.school === 'string' ? parsed.school : parsed.school?.name;
-          if (s) return s;
-        }
         if (parsed.school_name) {
           const s = typeof parsed.school_name === 'string' ? parsed.school_name : parsed.school_name?.name;
-          if (s) return s;
+          if (s && s.toLowerCase() !== 'school admin') return s;
+        }
+        if (parsed.school) {
+          const s = typeof parsed.school === 'string' ? parsed.school : parsed.school?.name;
+          if (s && s.toLowerCase() !== 'school admin') return s;
+        }
+        if (parsed.school_details?.name && parsed.school_details.name.toLowerCase() !== 'school admin') {
+          return parsed.school_details.name;
         }
       }
     } catch (e) {}
@@ -258,7 +286,7 @@ const InstructorManagement = () => {
   };
 
   const currentSchool = getActiveSchoolName();
-  const isSuperAdmin = !currentSchool || currentSchool.toLowerCase() === 'super admin' || currentSchool.toLowerCase() === 'school admin';
+  const isSuperAdmin = currentUser?.role === 'superadmin' || currentSchool.toLowerCase() === 'super admin';
 
   const [form, setForm] = useState({
     name: '', email: '', phone: '', password: '', dob: '', age: '', gender: 'Male', fitness_level: 'Elite',
@@ -287,19 +315,6 @@ const InstructorManagement = () => {
 
   const effectiveCoachSchool = (!isSuperAdmin && currentSchool) ? currentSchool : (form.school || 'Individual / Freelance Coach');
   const isCoachSchoolAffiliated = Boolean(effectiveCoachSchool) && effectiveCoachSchool !== 'Individual / Freelance Coach';
-
-  const currentUser = (() => {
-    try {
-      const saved = sessionStorage.getItem('user') || localStorage.getItem('user');
-      return saved ? JSON.parse(saved) : null;
-    } catch (e) {
-      return null;
-    }
-  })();
-  const userRole = (currentUser?.role || '').toLowerCase().trim();
-  const isCoach = userRole === 'coach' || userRole === 'instructor';
-  const isAdminOrSchoolAdmin = currentUser?.role === 'superadmin' || userRole === 'admin' || userRole === 'school' || userRole === 'school_admin' || userRole === 'schooladmin';
-  const canDeleteInstructor = isAdminOrSchoolAdmin && !isCoach;
 
   const handleCopyGeneralCoachInvite = () => {
     const baseUrl = window.location.origin;
@@ -592,7 +607,10 @@ const InstructorManagement = () => {
     try {
       const res = await fetch(`${API}/api/instructors/${passwordModalCoach.id}/set-password`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionStorage.getItem('token') || ''}`
+        },
         body: JSON.stringify({
           email: coachEmailInput.trim(),
           password: coachNewPass.trim()
@@ -634,7 +652,10 @@ const InstructorManagement = () => {
 
       const res = await fetch(`${API}/api/instructors`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionStorage.getItem('token') || ''}`
+        },
         body: JSON.stringify({
           name: form.name,
           email: form.email || '',
@@ -665,6 +686,10 @@ const InstructorManagement = () => {
 
   const handleUpdate = async (e) => {
     e.preventDefault();
+    if (!isSuperAdmin) {
+      alert('School admins cannot edit coach details. Only coaches can manage their own profile.');
+      return;
+    }
     if (!selected || uploadingPhoto) return;
     setSaving(true);
     if (selected && selected.is_active !== false && form.school) {
@@ -689,7 +714,10 @@ const InstructorManagement = () => {
 
       const res = await fetch(`${API}/api/instructors/${selected.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionStorage.getItem('token') || ''}`
+        },
         body: JSON.stringify({
           name: form.name,
           email: form.email || '',
@@ -736,7 +764,10 @@ const InstructorManagement = () => {
     try {
       const res = await fetch(`${API}/api/instructors/${instructor.id}/toggle-status`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionStorage.getItem('token') || ''}`
+        },
         body: JSON.stringify({ is_active: nextActive })
       });
       if (res.ok) {
@@ -796,6 +827,10 @@ const InstructorManagement = () => {
   };
 
   const handleOpenEditModal = (instructor) => {
+    if (!isSuperAdmin) {
+      alert('School admins cannot edit coach details. Only coaches can manage their own profile.');
+      return;
+    }
     setSelected(instructor);
     setPhotoPreview(instructor.image || '');
     const certsStr = Array.isArray(instructor.certifications)
@@ -1201,7 +1236,7 @@ const InstructorManagement = () => {
                   <div className="im-empty">No instructors match your search.</div>
                 )}
                 {filtered.map((instructor) => {
-                  const hasValidImage = instructor.image && !instructor.image.startsWith('blob:');
+                  const hasValidImage = instructor.image && !instructor.image.startsWith('blob:') && !instructor.image.includes('unsplash.com') && !instructor.image.includes('1500648767791');
                   const isCoachActive = instructor.is_active !== false;
                   return (
                     <div key={instructor.id} className={`im-card ${!isCoachActive ? 'im-card-inactive' : ''}`}>
@@ -1225,8 +1260,9 @@ const InstructorManagement = () => {
                         </button>
                       </div>
 
-                      {(canDeleteInstructor || isAdminOrSchoolAdmin) && (
+                      {(canDeleteInstructor || isSuperAdmin) && (
                         <div className="im-card-top-actions">
+                          {isSuperAdmin && (
                           <button
                             type="button"
                             className="im-card-top-btn im-btn-top-edit"
@@ -1247,6 +1283,7 @@ const InstructorManagement = () => {
                               <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
                             </svg>
                           </button>
+                          )}
                           {canDeleteInstructor && (
                             <button
                               type="button"
@@ -1314,18 +1351,23 @@ const InstructorManagement = () => {
                         </p>
                         {instructor.phone && (
                           <p style={{ margin: '3px 0 0 0', fontSize: '12px', color: '#0D9488', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                            <span>📞</span> {instructor.phone}
+                            <span>📞</span> {formatCoachPhone(instructor.phone)}
                           </p>
                         )}
                         
                         <div className="im-card-badges">
-                          <span className="im-badge-cert">
+                          <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', alignItems: 'center', width: '100%' }}>
+                          <span className="im-badge-cert" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '140px' }}>
                             {Array.isArray(instructor.certifications) && instructor.certifications[0]
                               ? instructor.certifications[0]
                               : (typeof instructor.certifications === 'string' && instructor.certifications ? instructor.certifications.split(',')[0] : 'ISA Level 1')}
                           </span>
-                          <span className="im-badge-level" style={{ background: instructor.school && instructor.school !== 'Individual / Freelance Coach' ? 'rgba(13, 148, 136, 0.12)' : 'rgba(59, 130, 246, 0.12)', color: instructor.school && instructor.school !== 'Individual / Freelance Coach' ? '#0D9488' : '#2563EB', borderColor: 'transparent' }}>
-                            {instructor.school ? (instructor.school.length > 20 ? instructor.school.slice(0, 18) + '...' : instructor.school) : 'Individual Coach'}
+                          <span className="im-badge-level" style={{ background: instructor.school && instructor.school !== 'Individual / Freelance Coach' ? 'rgba(13, 148, 136, 0.12)' : 'rgba(59, 130, 246, 0.12)', color: instructor.school && instructor.school !== 'Individual / Freelance Coach' ? '#0D9488' : '#2563EB', borderColor: 'transparent', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '140px' }}>
+                            {instructor.school ? (instructor.school.length > 16 ? instructor.school.slice(0, 14) + '...' : instructor.school) : 'Individual Coach'}
+                          </span>
+                          </div>
+                          <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', alignItems: 'center', width: '100%', minHeight: '24px' }}>
+                          <div style={{ display: 'contents' }}><span style={{ display: 'none' }}>
                           </span>
                           {(() => {
                             const rawL = instructor.languages;
@@ -1335,7 +1377,7 @@ const InstructorManagement = () => {
                               try { const p = JSON.parse(rawL); lList = Array.isArray(p) ? p : [rawL]; }
                               catch { lList = rawL.split(',').map(s => s.trim()).filter(Boolean); }
                             }
-                            if (lList.length === 0) return null;
+                            if (lList.length === 0) lList = ['English'];
                             return (
                               <span
                                 className="im-badge-cert"
@@ -1346,6 +1388,7 @@ const InstructorManagement = () => {
                               </span>
                             );
                           })()}
+                          </div>
                           {(() => {
                             const leaves = instructor.approved_leaves || [];
                             let onLeaveInRange = false;
@@ -1382,6 +1425,7 @@ const InstructorManagement = () => {
                               </span>
                             );
                           })()}
+                          </div>
                         </div>
 
                         <div className="im-card-divider" />
@@ -3362,10 +3406,23 @@ const InstructorManagement = () => {
           font-size: 14px;
           font-family: 'Inter', sans-serif;
           outline: none;
-          background: #FFFFFF;
-          color: #0F172A;
+          background: #FFFFFF !important;
+          color: #0F172A !important;
+          caret-color: #0F172A !important;
           box-sizing: border-box;
           transition: all 0.2s;
+        }
+        .form-group input[readOnly] {
+          background: #FFFFFF !important;
+          color: #0F172A !important;
+        }
+        .form-group input:-webkit-autofill,
+        .form-group input:-webkit-autofill:hover,
+        .form-group input:-webkit-autofill:focus,
+        .form-group input:-webkit-autofill:active {
+          -webkit-box-shadow: 0 0 0 30px #FFFFFF inset !important;
+          -webkit-text-fill-color: #0F172A !important;
+          caret-color: #0F172A !important;
         }
         .form-group textarea {
           height: auto;
@@ -3375,6 +3432,8 @@ const InstructorManagement = () => {
         .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
           border-color: #00D1B2;
           box-shadow: 0 0 0 3px rgba(0, 209, 178, 0.1);
+          caret-color: #0F172A !important;
+          background: #FFFFFF !important;
         }
         .form-group input::placeholder, .form-group textarea::placeholder {
           color: #94A3B8;
@@ -3490,6 +3549,7 @@ const InstructorManagement = () => {
           box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
           transition: all 0.22s ease-in-out;
           padding-top: 24px;
+          height: 100%;
         }
         .im-card:hover {
           transform: translateY(-4px);
@@ -3645,6 +3705,8 @@ const InstructorManagement = () => {
           object-fit: cover;
         }
         .im-card-body {
+          flex: 1;
+          justify-content: space-between;
           padding: 16px 20px 20px 20px;
           display: flex;
           flex-direction: column;
@@ -3652,6 +3714,7 @@ const InstructorManagement = () => {
           text-align: center;
         }
         .im-card-name {
+          text-transform: capitalize;
           font-size: 18px;
           font-weight: 750;
           color: #0F172A;
@@ -3665,9 +3728,10 @@ const InstructorManagement = () => {
           text-align: center;
         }
         .im-card-badges {
+          min-height: 56px;
           display: flex;
           gap: 6px;
-          flex-wrap: wrap;
+          flex-direction: column;
           justify-content: center;
         }
         .im-badge-cert {
@@ -3722,7 +3786,7 @@ const InstructorManagement = () => {
           display: flex;
           align-items: center;
           gap: 8px;
-          margin-top: 8px;
+          margin-top: auto;
           width: 100%;
         }
         .im-card-view-profile {

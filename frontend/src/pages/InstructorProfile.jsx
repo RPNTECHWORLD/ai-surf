@@ -665,6 +665,7 @@ const InstructorProfile = () => {
   };
 
   const handleEditClick = () => {
+    if (!canEditProfile) return;
     const rawL = instructor.languages;
     let initLangs = [];
     if (Array.isArray(rawL)) {
@@ -718,6 +719,10 @@ const InstructorProfile = () => {
 
   const handleEditSubmit = async (e) => {
     e.preventDefault();
+    if (!canEditProfile) {
+      alert('School admins cannot edit coach details. Only coaches can manage their own profile.');
+      return;
+    }
     if (uploadingPhoto) return;
     setSaving(true);
     try {
@@ -855,7 +860,8 @@ const InstructorProfile = () => {
   );
 
   // School Admin and Super Admin can edit their school's coaches; coach can edit their own profile
-  const canEditProfile = isCoachThemselves || isSuperAdmin || (
+  const canEditProfile = isCoachThemselves || isSuperAdmin;
+  const _schoolAdminEditDeprecated = false && (
     isSchoolAdmin && (
       !instructor.school ||
       instructor.school === 'Individual / Freelance Coach' ||

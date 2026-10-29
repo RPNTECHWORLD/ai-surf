@@ -151,6 +151,219 @@ h2 {
   visibility: hidden;
 }
 
+.hero-corner-footer {
+  position: absolute;
+  bottom: 22px;
+  right: 28px;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  font-family: 'Outfit', 'Inter', -apple-system, sans-serif;
+  color: rgba(255, 255, 255, 0.8);
+  background: rgba(5, 11, 26, 0.55);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  padding: 6px 14px;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  user-select: none;
+}
+
+.hero-corner-footer:hover {
+  background: rgba(5, 11, 26, 0.85);
+  border-color: rgba(56, 189, 248, 0.45);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  transform: translateY(-1px);
+}
+
+.hero-corner-footer:hover .hero-footer-link {
+  color: #7DD3FC;
+  text-shadow: 0 0 12px rgba(56, 189, 248, 0.7);
+  text-decoration: underline;
+}
+
+.hero-footer-link {
+  color: #38BDF8;
+  font-weight: 700;
+  text-decoration: none;
+  letter-spacing: 0.2px;
+  transition: all 0.2s ease;
+}
+
+.hero-footer-link:hover {
+  color: #7DD3FC;
+  text-shadow: 0 0 12px rgba(56, 189, 248, 0.6);
+  text-decoration: underline;
+}
+
+.hero-footer-divider {
+  opacity: 0.35;
+  margin: 0 2px;
+}
+
+.hero-footer-version {
+  font-size: 11px;
+  color: #94A3B8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.hero-footer-year {
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+/* Landing Page Footer Section */
+.landing-footer {
+  width: 100%;
+  background: #050B1A;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 32px 80px;
+  box-sizing: border-box;
+}
+
+.landing-footer-container {
+  max-width: 1280px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+.landing-footer-left {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.landing-footer-logo {
+  height: 48px;
+  width: auto;
+  object-fit: contain;
+  filter: brightness(0) invert(1);
+}
+
+.landing-footer-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.landing-footer-copy {
+  margin: 0;
+  font-size: 13.5px;
+  color: #94A3B8;
+  font-weight: 500;
+  letter-spacing: 0.1px;
+}
+
+.landing-footer-version-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  font-size: 11.5px;
+  color: #38BDF8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.landing-footer-right {
+  display: flex;
+  align-items: center;
+}
+
+.landing-footer-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-family: 'Outfit', 'Inter', -apple-system, sans-serif;
+  color: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  padding: 8px 16px;
+  border-radius: 9999px;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  user-select: none;
+}
+
+.landing-footer-pill:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(56, 189, 248, 0.5);
+  box-shadow: 0 4px 18px rgba(56, 189, 248, 0.2);
+  transform: translateY(-1.5px);
+}
+
+.landing-footer-devby {
+  font-weight: 500;
+}
+
+.landing-footer-brandlink {
+  color: #38BDF8;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.landing-footer-pill:hover .landing-footer-brandlink {
+  color: #7DD3FC;
+  text-shadow: 0 0 10px rgba(56, 189, 248, 0.7);
+  text-decoration: underline;
+}
+
+.landing-footer-pill-divider {
+  opacity: 0.4;
+  margin: 0 2px;
+}
+
+.landing-footer-pill-year {
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+@media (max-width: 768px) {
+  .landing-footer {
+    padding: 28px 24px;
+  }
+  .landing-footer-container {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 16px;
+  }
+  .landing-footer-left {
+    flex-direction: column;
+    gap: 10px;
+    align-items: center;
+  }
+  .landing-footer-info {
+    justify-content: center;
+  }
+}
+
+@media (max-width: 640px) {
+  .hero-corner-footer {
+    bottom: 12px;
+    right: 12px;
+    font-size: 11px;
+    padding: 5px 10px;
+  }
+}
+
 @media (max-width: 768px) {
   .hero-header {
     padding: 18px 20px;
@@ -843,5 +1056,43 @@ h2 {
   color: #F8FAFC !important;
   border-color: #334155 !important;
   color-scheme: dark;
+}
+
+/* ─── Universal High-Visibility Typing Cursor (Caret) ─── */
+/* Default: Caret dynamically matches the text color (currentColor) so it is always visible */
+input, textarea, [contenteditable="true"] {
+  caret-color: currentColor;
+}
+
+/* Explicit Dark Backgrounds & Dark Mode: Crisp White Caret on dark inputs */
+[data-theme="dark"] input:not([style*="background: #fff"]):not([style*="background: white"]):not(.im-modal input):not(.sm-modal input):not(.form-group input),
+[data-theme="dark"] textarea:not([style*="background: #fff"]):not([style*="background: white"]):not(.im-modal textarea):not(.sm-modal textarea):not(.form-group textarea),
+.dark-mode input:not([style*="background: #fff"]):not([style*="background: white"]):not(.im-modal input):not(.sm-modal input):not(.form-group input),
+.dark-mode textarea:not([style*="background: #fff"]):not([style*="background: white"]):not(.im-modal textarea):not(.sm-modal textarea):not(.form-group textarea) {
+  caret-color: #FFFFFF;
+}
+
+/* Light background inputs & Modals: Crisp Dark Caret so cursor is NEVER transparent or invisible */
+.form-group input,
+.form-group textarea,
+.form-group select,
+.sm-field input,
+.sm-field textarea,
+.sm-field select,
+.im-modal input,
+.im-modal textarea,
+.sm-modal input,
+.sm-modal textarea,
+.modal-content input,
+.modal-content textarea,
+input[style*="background: #fff"],
+input[style*="background: white"],
+input[style*="background-color: #fff"],
+input[style*="background-color: white"] {
+  caret-color: #0F172A !important;
+}
+
+input[type="password"] {
+  letter-spacing: 2px;
 }
 

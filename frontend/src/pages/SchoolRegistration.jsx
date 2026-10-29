@@ -48,11 +48,25 @@ const SchoolRegistration = () => {
         }),
       });
       if (res.ok) {
-        sessionStorage.setItem('activeSchool', JSON.stringify({
+        const resData = await res.json().catch(() => ({}));
+        if (resData.token) {
+          sessionStorage.setItem('token', resData.token);
+          localStorage.setItem('token', resData.token);
+        }
+        if (resData.user) {
+          sessionStorage.setItem('user', JSON.stringify(resData.user));
+          localStorage.setItem('user', JSON.stringify(resData.user));
+        }
+        const schoolPayload = resData.school || {
           name: formData.schoolName,
           owner: formData.ownerName,
           email: formData.email,
-        }));
+          city: formData.city,
+          country: formData.country,
+          location: formData.city,
+        };
+        sessionStorage.setItem('activeSchool', JSON.stringify(schoolPayload));
+        localStorage.setItem('activeSchool', JSON.stringify(schoolPayload));
         setSubmitted(true);
       } else {
         const data = await res.json().catch(() => ({}));

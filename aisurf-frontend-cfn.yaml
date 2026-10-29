@@ -1,0 +1,161 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template to deploy React/Vite Frontend on EC2 with Nginx and API reverse proxy'
+
+Parameters:
+  S3BucketName:
+    Type: String
+    Description: Name of the S3 bucket where aisurf-frontend.zip is stored
+    Default: 'aisurf-media-uploads-149051628601'
+  S3ObjectKey:
+    Type: String
+    Description: Key of the frontend zip file in S3
+    Default: 'aisurf-frontend.zip'
+  InstanceType:
+    Type: String
+    Default: 't3.micro'
+    Description: EC2 instance type
+  BackendUrl:
+    Type: String
+    Default: 'http://54.242.160.238:8000'
+    Description: Backend API base URL for reverse proxying /api/ requests
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.1-x86_64'
+    Description: Automatically fetches the latest Amazon Linux 2023 AMI
+
+Resources:
+  FrontendInstanceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+        - 'arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess'
+
+  FrontendInstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Roles:
+        - !Ref FrontendInstanceRole
+
+  FrontendSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Allow HTTP (80), HTTPS (443), and SSH (22) for Frontend Nginx server'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+  FrontendInstance:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref LatestAmiId
+      IamInstanceProfile: !Ref FrontendInstanceProfile
+      SecurityGroupIds:
+        - !GetAtt FrontendSecurityGroup.GroupId
+      Tags:
+        - Key: Name
+          Value: aisurf-frontend-server
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          # Update and install Nginx + unzip + aws-cli
+          dnf update -y
+          dnf install -y nginx unzip aws-cli
+          
+          mkdir -p /var/www/frontend
+          
+          # Modify main nginx.conf to avoid conflicting default server on port 80
+          sed -i 's/listen       80 default_server;/listen       8080 default_server;/' /etc/nginx/nginx.conf 2>/dev/null || true
+          sed -i 's/listen       \[::\]:80 default_server;/listen       \[::\]:8080 default_server;/' /etc/nginx/nginx.conf 2>/dev/null || true
+          
+          # Create Nginx site configuration
+          cat << 'EOF' > /etc/nginx/conf.d/aisurf.conf
+          server {
+              listen 80 default_server;
+              listen [::]:80 default_server;
+              server_name _;
+              root /var/www/frontend;
+              index index.html;
+              
+              # Allow large video uploads up to 1GB
+              client_max_body_size 1000M;
+              client_body_timeout 300s;
+              
+              # Enable gzip compression
+              gzip on;
+              gzip_vary on;
+              gzip_proxied any;
+              gzip_comp_level 6;
+              gzip_types text/plain text/css text/xml application/json application/javascript application/rss+xml application/atom+xml image/svg+xml;
+              
+              # Cache static assets with long TTL
+              location ~* \.(?:css|js|jpg|jpeg|gif|png|ico|cur|gz|svg|svgz|mp4|ogg|ogv|webm|htc|woff|woff2|ttf)$ {
+                  expires 1y;
+                  access_log off;
+                  add_header Cache-Control "public, max-age=31536000, immutable";
+              }
+              
+              # Proxy API requests directly to backend
+              location /api/ {
+                  proxy_pass ${BackendUrl}/api/;
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection 'upgrade';
+                  proxy_set_header Host $host;
+                  proxy_cache_bypass $http_upgrade;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+                  client_max_body_size 1000M;
+                  proxy_connect_timeout 300s;
+                  proxy_read_timeout 300s;
+              }
+              
+              # SPA routing fallback to index.html
+              location / {
+                  try_files $uri $uri/ /index.html;
+              }
+          }
+          EOF
+          
+          # Download frontend zip if available
+          aws s3 cp s3://${S3BucketName}/${S3ObjectKey} /tmp/frontend.zip || true
+          if [ -f /tmp/frontend.zip ]; then
+              rm -rf /var/www/frontend/*
+              unzip -o /tmp/frontend.zip -d /var/www/frontend
+              chmod -R 755 /var/www/frontend
+          fi
+          
+          # Enable and start Nginx
+          systemctl daemon-reload
+          systemctl enable nginx
+          systemctl restart nginx
+
+Outputs:
+  FrontendInstanceId:
+    Description: 'Instance ID of the Frontend Server'
+    Value: !Ref FrontendInstance
+  FrontendPublicIp:
+    Description: 'Public IP of the Frontend Server'
+    Value: !GetAtt FrontendInstance.PublicIp
+  FrontendUrl:
+    Description: 'HTTP URL of the AI Surf Frontend'
+    Value: !Sub 'http://${FrontendInstance.PublicIp}'

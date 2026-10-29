@@ -120,15 +120,46 @@ const SessionConfigure = () => {
 
   const [loadingMasterSlots, setLoadingMasterSlots] = useState(false);
 
-  // Load School Master Default slots from PostgreSQL Database
+  // Helper to strictly resolve active school ID and name
+  const getActiveSchoolInfo = React.useCallback(() => {
+    let schoolId = null;
+    let schoolName = '';
+
+    try {
+      const savedSchool = sessionStorage.getItem('activeSchool') || localStorage.getItem('activeSchool');
+      if (savedSchool) {
+        const parsed = JSON.parse(savedSchool);
+        if (parsed && typeof parsed === 'object') {
+          if (parsed.id) schoolId = parsed.id;
+          if (parsed.name) schoolName = typeof parsed.name === 'object' ? (parsed.name.name || '') : parsed.name;
+        } else if (typeof parsed === 'string') {
+          schoolName = parsed;
+        }
+      }
+    } catch (e) {}
+
+    if (!schoolName) {
+      try {
+        const rawUser = sessionStorage.getItem('user') || localStorage.getItem('user');
+        const user = rawUser ? JSON.parse(rawUser) : null;
+        if (!schoolId && user?.school_id) schoolId = user.school_id;
+        const rawSchool = user?.school || user?.school_name || '';
+        schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
+      } catch (e) {}
+    }
+
+    if (schoolName && (schoolName.toLowerCase() === 'school admin' || schoolName.toLowerCase() === 'super admin')) {
+      schoolName = '';
+    }
+
+    return { schoolId, schoolName };
+  }, []);
+
+  // Load School Master Default slots strictly for the current active school
   const loadMasterSlots = React.useCallback(() => {
     try {
       setLoadingMasterSlots(true);
-      const rawUser = sessionStorage.getItem('user') || localStorage.getItem('user');
-      const user = rawUser ? JSON.parse(rawUser) : null;
-      const schoolId = user?.school_id || null;
-      const rawSchool = user?.school || user?.school_name || '';
-      const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
+      const { schoolId, schoolName } = getActiveSchoolInfo();
 
       const queryParams = new URLSearchParams();
       if (schoolId) queryParams.set('school_id', schoolId);
@@ -142,29 +173,42 @@ const SessionConfigure = () => {
             if (data.settings && typeof data.settings === 'object' && Object.keys(data.settings).length > 0) {
               setSettings(prev => ({ ...prev, ...data.settings }));
             }
+          } else {
+            // If this school has no custom configuration yet, use standard default slots!
+            // NEVER display another school's slots!
+            setSlots(defaultSlots);
           }
         })
-        .catch(err => console.warn('Could not fetch session slots from server:', err))
+        .catch(err => {
+          console.warn('Could not fetch session slots from server:', err);
+          setSlots(defaultSlots);
+        })
         .finally(() => setLoadingMasterSlots(false));
     } catch (e) {
+      setSlots(defaultSlots);
       setLoadingMasterSlots(false);
     }
-  }, []);
+  }, [getActiveSchoolInfo]);
 
   React.useEffect(() => {
     loadMasterSlots();
+    const handleStorageChange = () => {
+      loadMasterSlots();
+    };
+    window.addEventListener('storage', handleStorageChange);
+    window.addEventListener('user_updated', handleStorageChange);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      window.removeEventListener('user_updated', handleStorageChange);
+    };
   }, [loadMasterSlots]);
 
   const syncToStorageAndDrafts = (updatedSlots, newSettings = null) => {
     try {
       window.dispatchEvent(new CustomEvent('session_slots_updated', { detail: updatedSlots }));
 
-      // Persist Master Default template to central PostgreSQL Database (date = null)
-      const rawUser = sessionStorage.getItem('user') || localStorage.getItem('user');
-      const user = rawUser ? JSON.parse(rawUser) : null;
-      const schoolId = user?.school_id || null;
-      const rawSchool = user?.school || user?.school_name || '';
-      const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
+      // Persist Master Default template strictly for THIS school (date = null)
+      const { schoolId, schoolName } = getActiveSchoolInfo();
 
       fetch(`${API}/api/session-slots`, {
         method: 'POST',
