@@ -25,7 +25,7 @@ from sqlalchemy import (
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, Session as OrmSession
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./aisurf.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:eric%402004@localhost:5432/surfing_db")
 
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
@@ -198,6 +198,8 @@ class User(Base):
     social_id = Column(String, nullable=True)
     approval_status = Column(String, default="approved")
     created_by_school = Column(Boolean, default=False)
+    is_head_coach = Column(Boolean, default=False)
+    guest_role = Column(String, default="main_admin", nullable=True)
     is_active = Column(Boolean, default=True)
     deletion_scheduled_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -249,6 +251,7 @@ class Instructor(Base):
     intro_video = Column(String, default="")
     price = Column(Float, default=100.00)
     school = Column(String, default="Individual / Freelance Coach", nullable=True)
+    is_head_coach = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
 
     user_rel = relationship("User", back_populates="instructor")
@@ -1287,6 +1290,58 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def enforce_view_admin_readonly(request: Request, call_next):
+    # Only intercept mutating HTTP methods
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        # Allow public authentication / registration / recovery endpoints without blocking
+        exempt_paths = (
+            "/api/auth/login",
+            "/api/auth/sso",
+            "/api/auth/signup",
+            "/api/auth/send-otp",
+            "/api/auth/verify-otp",
+            "/api/auth/reset-password",
+            "/api/auth/purge-pending-account",
+            "/api/superadmin/login",
+            "/api/superadmin/reset-password",
+            "/api/users/restore-account"
+        )
+        if not any(request.url.path.startswith(p) for p in exempt_paths):
+            auth_header = request.headers.get("authorization") or request.headers.get("Authorization")
+            if auth_header and auth_header.startswith("Bearer "):
+                token = auth_header.split(" ", 1)[1].strip()
+                payload = verify_token(token)
+                if payload:
+                    is_view_admin = False
+                    if payload.get("role") == "guest_admin" and payload.get("guest_role") == "view_admin":
+                        is_view_admin = True
+                    elif payload.get("role") == "guest_admin":
+                        try:
+                            with SessionLocal() as db_chk:
+                                u_chk = db_chk.query(User).filter(User.id == payload.get("user_id")).first()
+                                if u_chk and u_chk.role == "guest_admin" and getattr(u_chk, "guest_role", None) == "view_admin":
+                                    is_view_admin = True
+                        except Exception:
+                            pass
+
+                    if is_view_admin:
+                        origin = request.headers.get("origin") or "*"
+                        return JSONResponse(
+                            status_code=403,
+                            content={
+                                "detail": "View Admin has read-only access. You do not have permission to add, edit, delete, approve, or perform any actions."
+                            },
+                            headers={
+                                "Access-Control-Allow-Origin": origin,
+                                "Access-Control-Allow-Credentials": "true",
+                                "Access-Control-Allow-Methods": "*",
+                                "Access-Control-Allow-Headers": "*",
+                            }
+                        )
+    response = await call_next(request)
+    return response
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     import traceback
@@ -1696,6 +1751,7 @@ class InstructorUpdate(BaseModel):
     image: Optional[str] = None
     school: Optional[str] = None
     is_active: Optional[bool] = None
+    is_head_coach: Optional[bool] = None
 
 
 class InstructorReviewCreate(BaseModel):
@@ -1882,6 +1938,7 @@ def instructor_to_dict(i: Instructor, target_date: Optional[str] = None):
         "reviews": json.loads(i.reviews) if i.reviews else [],
         "school": i.school or "Individual / Freelance Coach",
         "is_active": True if getattr(i, 'is_active', None) is None else bool(i.is_active),
+        "is_head_coach": bool(getattr(i, 'is_head_coach', False)),
         "user_id": i.user_id,
         "has_password": has_pwd,
         "password_plain": plain_pwd,
@@ -2198,8 +2255,12 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
         "id": user.id,
         "email": user.email,
         "role": user.role,
+        "guest_role": getattr(user, "guest_role", None) or ("main_admin" if user.role == "guest_admin" else None),
+        "is_view_admin": bool(user.role == "guest_admin" and getattr(user, "guest_role", None) == "view_admin"),
+        "is_main_admin": bool(user.role == "guest_admin" and getattr(user, "guest_role", None) != "view_admin"),
         "auth_provider": user.auth_provider,
         "created_by_school": user.created_by_school,
+        "is_head_coach": bool(getattr(user, "is_head_coach", False)),
         "deletion_scheduled_at": user.deletion_scheduled_at.isoformat() if getattr(user, "deletion_scheduled_at", None) else None,
     }
 
@@ -2275,13 +2336,17 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
         res["certifications"] = instructor_obj.certifications
         res["specializations"] = instructor_obj.specializations
         res["is_active"] = instructor_obj.is_active
+        res["is_head_coach"] = bool(getattr(instructor_obj, "is_head_coach", False)) or bool(getattr(user, "is_head_coach", False))
     elif user.role == "guest_admin":
-        res["name"] = getattr(user, "name", None) or "Guest Admin"
+        res["name"] = getattr(user, "name", None) or ("View Admin" if getattr(user, "guest_role", None) == "view_admin" else "Main Admin")
         res["image"] = getattr(user, "image", None) or ""
         res["phone"] = getattr(user, "phone", None) or ""
         res["school"] = getattr(user, "school_name", None) or ""
         res["school_name"] = getattr(user, "school_name", None) or ""
         res["school_id"] = getattr(user, "school_id", None)
+        res["guest_role"] = getattr(user, "guest_role", None) or "main_admin"
+        res["is_view_admin"] = bool(getattr(user, "guest_role", None) == "view_admin")
+        res["is_main_admin"] = bool(getattr(user, "guest_role", None) != "view_admin")
     else:
         res["name"] = getattr(user, "name", None) or "School Admin"
         res["image"] = getattr(user, "image", None) or ""
@@ -2301,6 +2366,8 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
                 sch = session.query(School).filter(School.id == user.school_id).first()
             if not sch and getattr(user, "school_name", None) and user.school_name.strip().lower() != "school admin":
                 sch = session.query(School).filter(func.lower(School.name) == user.school_name.lower().strip()).first()
+            if not sch and instructor_obj and instructor_obj.school and instructor_obj.school.strip().lower() != "individual / freelance coach":
+                sch = session.query(School).filter(func.lower(School.name) == instructor_obj.school.lower().strip()).first()
             if not sch and user.email:
                 sch = session.query(School).filter(func.lower(School.email) == user.email.lower().strip()).first()
             if sch:
@@ -3067,7 +3134,13 @@ def auth_login(data: UserLogin, db: OrmSession = Depends(get_db)):
         if sch and sch.is_active is False:
             raise HTTPException(status_code=403, detail="This school account has been deactivated by Super Admin. Login and actions are disabled.")
 
-    token = generate_token({"user_id": matched_user.id, "email": matched_user.email, "role": matched_user.role})
+    token_payload = {
+        "user_id": matched_user.id,
+        "email": matched_user.email,
+        "role": matched_user.role,
+        "guest_role": getattr(matched_user, "guest_role", None) or ("main_admin" if matched_user.role == "guest_admin" else None)
+    }
+    token = generate_token(token_payload)
     return {
         "token": token,
         "user": make_user_response(matched_user, db)
@@ -3859,6 +3932,7 @@ def get_instructors(school: Optional[str] = None, date: Optional[str] = None, db
         query = query.filter(
             func.lower(Instructor.school) == "individual / freelance coach"
         )
+    query = query.order_by(Instructor.is_head_coach.desc().nullslast(), Instructor.id.asc())
     return [instructor_to_dict(i, target_date=date) for i in query.all()]
 
 
@@ -4240,6 +4314,120 @@ def update_instructor(instructor_id: int, data: InstructorUpdate, request: Reque
     db.commit()
     db.refresh(i)
     return instructor_to_dict(i)
+
+
+class HeadCoachToggleRequest(BaseModel):
+    is_head_coach: Optional[bool] = None
+
+
+@app.post("/api/instructors/{instructor_id}/toggle-head-coach")
+@app.patch("/api/instructors/{instructor_id}/head-coach")
+def toggle_head_coach(
+    instructor_id: int,
+    data: Optional[HeadCoachToggleRequest] = None,
+    authorization: Optional[str] = Header(None),
+    db: OrmSession = Depends(get_db)
+):
+    caller = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.split(" ")[1]
+        payload = verify_token(token)
+        if payload and payload.get("user_id"):
+            caller = db.query(User).filter(User.id == payload.get("user_id")).first()
+
+    if not caller:
+        raise HTTPException(status_code=401, detail="Authentication required to manage roles.")
+
+    caller_role = (caller.role or "").lower().strip()
+    caller_is_admin = caller_role in ["admin", "superadmin", "school_admin", "schooladmin"] or (caller_role == "guest_admin" and getattr(caller, "guest_role", "") != "view_admin") or bool(getattr(caller, "is_head_coach", False))
+    if not caller_is_admin:
+        raise HTTPException(status_code=403, detail="Unauthorized: Only School Admin can assign or remove Head Coach privileges.")
+
+    # Prioritize exact match on instructor ID
+    i = db.query(Instructor).filter(Instructor.id == instructor_id).first()
+    if not i:
+        i = db.query(Instructor).filter(Instructor.user_id == instructor_id).first()
+    if not i:
+        raise HTTPException(status_code=404, detail="Instructor not found")
+
+    current_val = bool(getattr(i, 'is_head_coach', False))
+    if data and data.is_head_coach is not None:
+        new_val = bool(data.is_head_coach)
+    else:
+        new_val = not current_val
+
+    i.is_head_coach = new_val
+
+    # Single Head Coach rule: If promoted, demote any other coaches in the same school!
+    if new_val and i.school and i.school.lower().strip() != "individual / freelance coach":
+        school_norm = i.school.lower().strip()
+        other_coaches = db.query(Instructor).filter(
+            func.lower(Instructor.school) == school_norm,
+            Instructor.id != i.id
+        ).all()
+        for oc in other_coaches:
+            oc.is_head_coach = False
+            if oc.user_rel:
+                oc.user_rel.is_head_coach = False
+            elif oc.user_id:
+                db.query(User).filter(User.id == oc.user_id).update({"is_head_coach": False})
+
+    target_user = None
+    if i.user_rel:
+        target_user = i.user_rel
+    elif i.user_id:
+        target_user = db.query(User).filter(User.id == i.user_id).first()
+    elif i.email:
+        target_user = db.query(User).filter(func.lower(User.email) == i.email.lower().strip()).first()
+        if target_user:
+            i.user_id = target_user.id
+
+    if not target_user and i.email and new_val:
+        sch_id = None
+        if i.school and i.school.lower().strip() != "individual / freelance coach":
+            sch = db.query(School).filter(func.lower(School.name) == i.school.lower().strip()).first()
+            if sch:
+                sch_id = sch.id
+        target_user = User(
+            email=i.email.lower().strip(),
+            name=i.name,
+            role="coach",
+            is_head_coach=True,
+            school_name=i.school,
+            school_id=sch_id,
+            auth_provider="email",
+            approval_status="approved",
+            created_by_school=True
+        )
+        db.add(target_user)
+        db.flush()
+        i.user_id = target_user.id
+
+    if target_user:
+        target_user.is_head_coach = new_val
+        if i.school and i.school.lower().strip() != "individual / freelance coach":
+            sch = db.query(School).filter(func.lower(School.name) == i.school.lower().strip()).first()
+            if sch:
+                target_user.school_id = sch.id
+                target_user.school_name = sch.name
+
+    status_label = "promoted to Head Coach" if new_val else "removed as Head Coach"
+    db.add(ActivityLog(
+        text=f"{i.name} was {status_label} by {caller.name or 'Admin'}",
+        type="individual",
+        school=i.school or (caller.school_name or "")
+    ))
+
+    db.commit()
+    db.refresh(i)
+
+    return {
+        "success": True,
+        "instructor_id": i.id,
+        "is_head_coach": new_val,
+        "message": f"{i.name} is now {'Head Coach' if new_val else 'a regular Coach'}.",
+        "instructor": instructor_to_dict(i)
+    }
 
 
 @app.patch("/api/instructors/{instructor_id}/toggle-status")
@@ -5289,10 +5477,21 @@ def set_instructor_password(instructor_id: int, data: dict, db: OrmSession = Dep
     else:
         instructor.email = email
     
+    is_hc = bool(instructor.is_head_coach)
+    sch_rec = None
+    if instructor.school and instructor.school.lower().strip() != "individual / freelance coach":
+        sch_rec = db.query(School).filter(func.lower(School.name) == instructor.school.lower().strip()).first()
+    sch_id = sch_rec.id if sch_rec else None
+
     if instructor.user_id:
         user = db.query(User).filter(User.id == instructor.user_id).first()
         if user:
             user.email = email
+            user.name = instructor.name
+            user.is_head_coach = is_hc
+            user.school_name = instructor.school or user.school_name
+            if sch_id:
+                user.school_id = sch_id
             user.password_hash = hash_password(password)
             user.password_plain = password
             db.commit()
@@ -5302,6 +5501,11 @@ def set_instructor_password(instructor_id: int, data: dict, db: OrmSession = Dep
     if existing_user:
         instructor.user_id = existing_user.id
         existing_user.role = "coach"
+        existing_user.name = instructor.name
+        existing_user.is_head_coach = is_hc
+        existing_user.school_name = instructor.school or existing_user.school_name
+        if sch_id:
+            existing_user.school_id = sch_id
         existing_user.password_hash = hash_password(password)
         existing_user.password_plain = password
         db.commit()
@@ -5309,9 +5513,13 @@ def set_instructor_password(instructor_id: int, data: dict, db: OrmSession = Dep
     
     user = User(
         email=email.lower(),
+        name=instructor.name,
         password_hash=hash_password(password),
         password_plain=password,
         role="coach",
+        is_head_coach=is_hc,
+        school_name=instructor.school,
+        school_id=sch_id,
         auth_provider="email",
         approval_status="approved",
         created_by_school=True
@@ -7103,6 +7311,7 @@ class GuestAdminCreateRequest(BaseModel):
     name: str
     email: str
     password: str
+    guest_role: Optional[str] = "main_admin"
     school_id: Optional[int] = None
     school_name: Optional[str] = None
 
@@ -7116,12 +7325,16 @@ def create_guest_admin(data: GuestAdminCreateRequest, db: OrmSession = Depends(g
     if existing:
         raise HTTPException(status_code=400, detail="This email / ID is already registered in the system")
 
+    target_guest_role = "view_admin" if (data.guest_role and data.guest_role.strip().lower() == "view_admin") else "main_admin"
+    default_name = "View Admin" if target_guest_role == "view_admin" else "Main Admin"
+
     guest_user = User(
         email=email_clean,
-        name=data.name.strip() or "Guest Admin",
+        name=data.name.strip() or default_name,
         password_hash=hash_password(data.password),
         password_plain=data.password,
         role="guest_admin",
+        guest_role=target_guest_role,
         school_id=data.school_id,
         school_name=data.school_name,
         approval_status="approved",
@@ -7136,6 +7349,7 @@ def create_guest_admin(data: GuestAdminCreateRequest, db: OrmSession = Depends(g
         "name": guest_user.name,
         "email": guest_user.email,
         "role": guest_user.role,
+        "guest_role": guest_user.guest_role or target_guest_role,
         "school_name": guest_user.school_name,
         "school_id": guest_user.school_id,
         "password": guest_user.password_plain or data.password,
@@ -7154,9 +7368,10 @@ def list_guest_admins(school_name: Optional[str] = None, school_id: Optional[int
     admins = query.order_by(User.id.desc()).all()
     return [{
         "id": u.id,
-        "name": u.name or "Guest Admin",
+        "name": u.name or ("View Admin" if getattr(u, "guest_role", None) == "view_admin" else "Main Admin"),
         "email": u.email,
         "role": u.role,
+        "guest_role": getattr(u, "guest_role", None) or "main_admin",
         "school_name": u.school_name,
         "school_id": u.school_id,
         "password": u.password_plain or "",
@@ -7257,7 +7472,13 @@ def restore_my_account(data: RestoreAccountRequest, db: OrmSession = Depends(get
         raise HTTPException(status_code=400, detail="Incorrect email or password")
         
     if not matched_user.deletion_scheduled_at:
-        token = generate_token({"user_id": matched_user.id, "email": matched_user.email, "role": matched_user.role})
+        token_payload = {
+            "user_id": matched_user.id,
+            "email": matched_user.email,
+            "role": matched_user.role,
+            "guest_role": getattr(matched_user, "guest_role", None) or ("main_admin" if matched_user.role == "guest_admin" else None)
+        }
+        token = generate_token(token_payload)
         return {
             "message": "Account is already active.",
             "token": token,
@@ -7288,7 +7509,13 @@ def restore_my_account(data: RestoreAccountRequest, db: OrmSession = Depends(get
     db.commit()
     db.refresh(matched_user)
     
-    token = generate_token({"user_id": matched_user.id, "email": matched_user.email, "role": matched_user.role})
+    token_payload = {
+        "user_id": matched_user.id,
+        "email": matched_user.email,
+        "role": matched_user.role,
+        "guest_role": getattr(matched_user, "guest_role", None) or ("main_admin" if matched_user.role == "guest_admin" else None)
+    }
+    token = generate_token(token_payload)
     return {
         "message": "Welcome back! Your account has been retained and all your data is safely restored.",
         "token": token,

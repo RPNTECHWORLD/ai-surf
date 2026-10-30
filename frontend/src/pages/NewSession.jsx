@@ -378,15 +378,18 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
   const isStudent = currentUser?.role === 'athlete' || currentUser?.role === 'student' || currentUser?.role === 'user';
   const isCoach = currentUser?.role === 'coach' || currentUser?.role === 'instructor';
+  const isHeadCoach = Boolean(currentUser?.is_head_coach || currentUser?.role === 'head_coach');
+  const isViewAdmin = currentUser?.role === 'guest_admin' && (currentUser?.guest_role === 'view_admin' || currentUser?.is_view_admin);
 
-  const isAdminOrSuperAdmin = !isCoach && !isStudent && (
+  const isAdminOrSuperAdmin = !isViewAdmin && (isHeadCoach || (!isCoach && !isStudent && (
     currentUser?.role === 'superadmin' ||
     currentUser?.role === 'admin' ||
+    currentUser?.role === 'guest_admin' ||
     currentUser?.role === 'school_admin' ||
     currentUser?.role === 'schooladmin' ||
     schoolLower === 'super admin' ||
     schoolLower === 'school admin'
-  );
+  )));
 
   // Coach's assigned school
   const coachSchool = resolveSchoolStr(
@@ -396,7 +399,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const coachSchoolLower = coachSchool.toLowerCase();
 
   // If coach belongs to a real school (not individual and not freelance), they are assigned to a school!
-  const isSchoolCoach = isCoach && Boolean(
+  const isSchoolCoach = isCoach && !isHeadCoach && Boolean(
     coachSchool &&
     !coachSchoolLower.includes('individual') &&
     !coachSchoolLower.includes('freelance') &&
@@ -415,9 +418,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     currentUser?.is_individual === true
   );
 
-  // Only School Admins and Freelance Coaches can Schedule sessions
-  // Coaches assigned to a school and students can NEVER schedule sessions
-  const canManageSessions = !isStudent && !isSchoolCoach && Boolean(isAdminOrSuperAdmin || isCoachFreelance || isIndividualSurfer);
+  // Only School Admins, Main Admins and Freelance Coaches can Schedule sessions
+  // Coaches assigned to a school, students and View Admins can NEVER schedule sessions
+  const canManageSessions = !isViewAdmin && !isStudent && (!isSchoolCoach || isHeadCoach) && Boolean(isAdminOrSuperAdmin || isCoachFreelance || isIndividualSurfer || isHeadCoach);
 
   useEffect(() => {
     if (currentUser && !canManageSessions) {

@@ -24,7 +24,7 @@ export default function UserProfileMenu({ user, school, onLogout }) {
   const [guestLoading, setGuestLoading] = useState(false);
   const [guestError, setGuestError] = useState('');
   const [guestSuccess, setGuestSuccess] = useState('');
-  const [guestForm, setGuestForm] = useState({ name: '', email: '', password: '' });
+  const [guestForm, setGuestForm] = useState({ name: '', email: '', password: '', role: 'main_admin' });
   const [copiedPasswordId, setCopiedPasswordId] = useState(null);
   const [revealedPasswords, setRevealedPasswords] = useState({});
 
@@ -339,13 +339,16 @@ export default function UserProfileMenu({ user, school, onLogout }) {
       const schName = typeof school?.name === 'string' ? school.name : (school?.name?.name || user?.school_name || user?.school || '');
       const schId = school?.id || user?.school_id;
 
+      const chosenRole = guestForm.role || 'main_admin';
+      const roleDefaultName = chosenRole === 'view_admin' ? 'View Admin' : 'Main Admin';
       const res = await fetch(`${API}/api/school/guest-admins`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: guestForm.name.trim() || 'Guest Admin',
+          name: guestForm.name.trim() || roleDefaultName,
           email: guestForm.email.trim(),
           password: guestForm.password,
+          guest_role: chosenRole,
           school_name: schName,
           school_id: schId
         })
@@ -356,8 +359,9 @@ export default function UserProfileMenu({ user, school, onLogout }) {
         throw new Error(data.detail || 'Failed to create Guest Admin.');
       }
 
-      setGuestSuccess(`Guest Admin "${data.email}" created successfully! They can now log in and access all pages.`);
-      setGuestForm({ name: '', email: '', password: '' });
+      const roleBadge = chosenRole === 'view_admin' ? 'View Admin (Read-Only)' : 'Main Admin (Full Access)';
+      setGuestSuccess(`Guest Admin "${data.email}" created as ${roleBadge} successfully! They can now log in and access all pages.`);
+      setGuestForm({ name: '', email: '', password: '', role: 'main_admin' });
       fetchGuestAdmins();
     } catch (err) {
       setGuestError(err.message || 'Failed to create Guest Admin.');
@@ -476,9 +480,12 @@ export default function UserProfileMenu({ user, school, onLogout }) {
   const currentRole = effectiveUser?.role || 'admin';
   const currentSchoolName = typeof school?.name === 'string' ? school.name : (school?.name?.name || effectiveUser?.school_name || effectiveUser?.school || '');
 
-  const isSchoolAdmin = currentRole === 'admin' || !user?.role;
+  const isHeadCoachUser = Boolean(effectiveUser?.is_head_coach || currentRole === 'head_coach');
   const isGuestAdmin = currentRole === 'guest_admin';
-  const isCoach = currentRole === 'coach' || currentRole === 'instructor';
+  const isViewAdmin = isGuestAdmin && (effectiveUser?.guest_role === 'view_admin' || effectiveUser?.is_view_admin);
+  const isMainAdmin = isGuestAdmin && !isViewAdmin;
+  const isSchoolAdmin = (currentRole === 'admin' || !user?.role || isHeadCoachUser || isMainAdmin);
+  const isCoach = (currentRole === 'coach' || currentRole === 'instructor') && !isHeadCoachUser;
   const isStudent = currentRole === 'athlete' || currentRole === 'student';
   const isCoachSchoolAffiliated = Boolean(editCoachSchool) && editCoachSchool !== 'Individual / Freelance Coach';
 
@@ -940,15 +947,18 @@ export default function UserProfileMenu({ user, school, onLogout }) {
     setTimeout(() => setSwitchFeedback(''), 2500);
   };
 
+  const isHeadCoach = Boolean(effectiveUser?.is_head_coach || currentRole === 'head_coach');
   const roleDisplayNames = {
     admin: 'School Admin',
-    guest_admin: 'Guest Admin',
+    guest_admin: isViewAdmin ? 'View Admin 👁️' : (isMainAdmin ? 'Main Admin ⚡' : 'Guest Admin'),
     coach: 'Surf Coach',
+    head_coach: 'Head Coach 👑',
     athlete: 'Student',
     student: 'Student',
     guest: 'Guest Viewer',
     superadmin: 'Super Admin'
   };
+  const displayRoleLabel = isHeadCoach ? 'Head Coach 👑' : (isGuestAdmin ? (isViewAdmin ? 'View Admin 👁️' : 'Main Admin ⚡') : (roleDisplayNames[currentRole] || currentRole));
 
   return (
     <div className="db-profile-menu-container" ref={menuRef} style={{ position: 'relative' }}>
@@ -1005,8 +1015,8 @@ export default function UserProfileMenu({ user, school, onLogout }) {
               {currentSchoolName}
             </div>
           )}
-          <div className="db-header-user-role" style={{ fontSize: '10px', fontWeight: 700, color: isGuestAdmin ? '#F59E0B' : '#00D1B2', textTransform: 'capitalize' }}>
-            {roleDisplayNames[currentRole] || currentRole}
+          <div className="db-header-user-role" style={{ fontSize: '10px', fontWeight: 700, color: isViewAdmin ? '#38BDF8' : ((isHeadCoach || isGuestAdmin) ? '#F59E0B' : '#00D1B2'), textTransform: 'capitalize' }}>
+            {displayRoleLabel}
           </div>
         </div>
 
@@ -1018,7 +1028,7 @@ export default function UserProfileMenu({ user, school, onLogout }) {
             backgroundSize: 'cover',
             backgroundPosition: 'center',
             backgroundRepeat: 'no-repeat',
-            backgroundColor: isGuestAdmin ? '#F59E0B' : '#0D9488',
+            backgroundColor: isViewAdmin ? '#0284C7' : (isGuestAdmin ? '#F59E0B' : '#0D9488'),
             boxShadow: isOpen ? '0 0 0 2px #00D1B2' : 'none',
             border: '1.5px solid rgba(255, 255, 255, 0.4)',
             flexShrink: 0,
@@ -1108,14 +1118,14 @@ export default function UserProfileMenu({ user, school, onLogout }) {
                 backgroundSize: 'cover',
                 backgroundPosition: 'center',
                 backgroundRepeat: 'no-repeat',
-                backgroundColor: isGuestAdmin ? '#F59E0B' : '#0D9488',
+                backgroundColor: isViewAdmin ? '#0284C7' : (isGuestAdmin ? '#F59E0B' : '#0D9488'),
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 color: '#FFFFFF',
                 fontWeight: 800,
                 fontSize: '16px',
-                boxShadow: isGuestAdmin ? '0 4px 12px rgba(245, 158, 11, 0.35)' : '0 4px 12px rgba(13, 148, 136, 0.35)',
+                boxShadow: isViewAdmin ? '0 4px 12px rgba(2, 132, 199, 0.35)' : (isGuestAdmin ? '0 4px 12px rgba(245, 158, 11, 0.35)' : '0 4px 12px rgba(13, 148, 136, 0.35)'),
                 flexShrink: 0,
                 overflow: 'hidden',
                 border: '2px solid rgba(255, 255, 255, 0.4)'
@@ -1156,13 +1166,13 @@ export default function UserProfileMenu({ user, school, onLogout }) {
                     fontWeight: 700,
                     padding: '2px 7px',
                     borderRadius: '6px',
-                    background: isGuestAdmin ? '#F59E0B' : '#0D9488',
+                    background: isHeadCoach ? 'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)' : (isViewAdmin ? 'linear-gradient(135deg, #0284C7 0%, #0369A1 100%)' : (isGuestAdmin ? '#F59E0B' : '#0D9488')),
                     color: '#FFFFFF',
                     letterSpacing: '0.3px',
                     textTransform: 'uppercase'
                   }}
                 >
-                  {roleDisplayNames[currentRole] || currentRole}
+                  {displayRoleLabel}
                 </span>
                 {currentSchoolName && (
                   <span
@@ -1284,8 +1294,8 @@ export default function UserProfileMenu({ user, school, onLogout }) {
             </button>
           </div>
 
-          {/* GUEST ADMIN ACTION (Only available for School Admin) */}
-          {isSchoolAdmin && (
+          {/* GUEST ADMIN ACTION (Only available for School Admin / Main Admin, not View Admin) */}
+          {isSchoolAdmin && !isViewAdmin && (
             <div
               style={{
                 padding: '8px 12px',
@@ -1346,46 +1356,48 @@ export default function UserProfileMenu({ user, school, onLogout }) {
 
           {/* 3. DANGER ACTIONS: DELETE ACCOUNT & LOGOUT */}
           <div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            {/* Delete My Account Button */}
-            <button
-              type="button"
-              onClick={() => {
-                setIsOpen(false);
-                setDeleteConfirmText('');
-                setDeletePassword('');
-                setShowDeletePassword(false);
-                setDeleteError('');
-                setShowDeleteAccountModal(true);
-              }}
-              style={{
-                width: '100%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
-                padding: '7px 12px',
-                borderRadius: '8px',
-                border: '1px dashed #FECACA',
-                background: 'transparent',
-                color: '#EF4444',
-                fontSize: '11.5px',
-                fontWeight: 600,
-                cursor: 'pointer',
-                transition: 'all 0.15s ease',
-                fontFamily: "'Outfit', sans-serif"
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = '#FEF2F2';
-                e.currentTarget.style.border = '1px solid #EF4444';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = 'transparent';
-                e.currentTarget.style.border = '1px dashed #FECACA';
-              }}
-            >
-              <span>🗑️</span>
-              <span>Delete My Account</span>
-            </button>
+            {/* Delete My Account Button (Disabled for View Admin) */}
+            {!isViewAdmin && (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsOpen(false);
+                  setDeleteConfirmText('');
+                  setDeletePassword('');
+                  setShowDeletePassword(false);
+                  setDeleteError('');
+                  setShowDeleteAccountModal(true);
+                }}
+                style={{
+                  width: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  padding: '7px 12px',
+                  borderRadius: '8px',
+                  border: '1px dashed #FECACA',
+                  background: 'transparent',
+                  color: '#EF4444',
+                  fontSize: '11.5px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                  fontFamily: "'Outfit', sans-serif"
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = '#FEF2F2';
+                  e.currentTarget.style.border = '1px solid #EF4444';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'transparent';
+                  e.currentTarget.style.border = '1px dashed #FECACA';
+                }}
+              >
+                <span>🗑️</span>
+                <span>Delete My Account</span>
+              </button>
+            )}
 
             {/* Log Out Button */}
             <button
@@ -1593,6 +1605,70 @@ export default function UserProfileMenu({ user, school, onLogout }) {
                   />
                 </div>
 
+                {/* ROLE SELECTION DROPDOWN */}
+                <div style={{ marginBottom: '14px' }}>
+                  <label
+                    style={{
+                      display: 'block',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      color: theme === 'dark' ? '#CBD5E1' : '#334155',
+                      marginBottom: '6px'
+                    }}
+                  >
+                    Select Role *
+                  </label>
+                  <select
+                    value={guestForm.role || 'main_admin'}
+                    onChange={(e) => setGuestForm({ ...guestForm, role: e.target.value })}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      borderRadius: '10px',
+                      border: theme === 'dark' ? '1.5px solid #334155' : '1.5px solid #CBD5E1',
+                      background: theme === 'dark' ? '#0F172A' : '#FFFFFF',
+                      color: theme === 'dark' ? '#F8FAFC' : '#0F172A',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      boxSizing: 'border-box',
+                      outline: 'none',
+                      fontFamily: "'Outfit', sans-serif",
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <option value="main_admin">⚡ Main Admin (Full Access: Add, Edit, Delete, Manage)</option>
+                    <option value="view_admin"> View Admin (Read-Only: View Pages & Data, No Actions)</option>
+                  </select>
+                  <div
+                    style={{
+                      marginTop: '6px',
+                      padding: '8px 10px',
+                      borderRadius: '8px',
+                      fontSize: '11.5px',
+                      lineHeight: '1.4',
+                      background: (guestForm.role || 'main_admin') === 'view_admin'
+                        ? (theme === 'dark' ? 'rgba(2, 132, 199, 0.15)' : '#F0F9FF')
+                        : (theme === 'dark' ? 'rgba(245, 158, 11, 0.15)' : '#FFFBEB'),
+                      color: (guestForm.role || 'main_admin') === 'view_admin'
+                        ? (theme === 'dark' ? '#7DD3FC' : '#0369A1')
+                        : (theme === 'dark' ? '#FCD34D' : '#B45309'),
+                      border: (guestForm.role || 'main_admin') === 'view_admin'
+                        ? '1px solid #BAE6FD'
+                        : '1px solid #FDE68A'
+                    }}
+                  >
+                    {(guestForm.role || 'main_admin') === 'view_admin' ? (
+                      <span>
+                        <strong> View Admin:</strong> Can access and view all school pages and data. Read-only across the entire platform. Cannot Add, Edit, Delete, Approve, Create, or perform any actions.
+                      </span>
+                    ) : (
+                      <span>
+                        <strong>⚡ Main Admin:</strong> Can perform all actions that a School Admin can perform with full access across all school pages and functionalities (Add, Edit, Delete, Approve, Create, and Manage).
+                      </span>
+                    )}
+                  </div>
+                </div>
+
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
                   <div>
                     <label
@@ -1768,17 +1844,25 @@ export default function UserProfileMenu({ user, school, onLogout }) {
                             </span>
                             <span
                               style={{
-                                fontSize: '9.5px',
+                                fontSize: '10px',
                                 fontWeight: 800,
-                                padding: '2px 6px',
-                                borderRadius: '4px',
-                                background: '#F59E0B',
+                                padding: '3px 8px',
+                                borderRadius: '6px',
+                                background: ga.guest_role === 'view_admin'
+                                  ? 'linear-gradient(135deg, #0284C7 0%, #0369A1 100%)'
+                                  : 'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)',
                                 color: '#FFFFFF',
                                 letterSpacing: '0.4px',
-                                textTransform: 'uppercase'
+                                textTransform: 'uppercase',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                boxShadow: ga.guest_role === 'view_admin'
+                                  ? '0 2px 6px rgba(2, 132, 199, 0.3)'
+                                  : '0 2px 6px rgba(245, 158, 11, 0.3)'
                               }}
                             >
-                              Guest Admin
+                              {ga.guest_role === 'view_admin' ? ' View Admin' : '⚡ Main Admin'}
                             </span>
                           </div>
 

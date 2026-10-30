@@ -1171,8 +1171,9 @@ const StudentProfile = () => {
   );
 
   const userRole = (currentUser?.role || '').toLowerCase().trim();
-  const isSchoolAdmin = userRole === 'admin' || userRole === 'superadmin' || userRole === 'school_admin' || userRole === 'schooladmin' || userRole === 'school';
-  const isCoach = userRole === 'coach' || userRole === 'instructor';
+  const isHeadCoach = Boolean(currentUser?.is_head_coach || userRole === 'head_coach');
+  const isSchoolAdmin = userRole === 'admin' || userRole === 'superadmin' || userRole === 'school_admin' || userRole === 'schooladmin' || userRole === 'school' || isHeadCoach;
+  const isCoach = (userRole === 'coach' || userRole === 'instructor') && !isHeadCoach;
   const userSchool = (currentUser?.school || currentUser?.school_name || '').toLowerCase().trim();
   const isCoachFreelance = isCoach && (userSchool === 'individual / freelance coach' || !userSchool);
   const isSchoolCoach = isCoach && !isCoachFreelance;

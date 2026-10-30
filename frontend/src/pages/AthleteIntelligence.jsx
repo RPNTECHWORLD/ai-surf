@@ -95,7 +95,8 @@ const AthleteIntelligence = () => {
   const schoolLower = (activeSchoolName || '').toLowerCase().trim();
   const userRole = (currentUser?.role || '').toLowerCase().trim();
   const isSuperAdmin = userRole === 'superadmin' || schoolLower === 'super admin';
-  const isCoach = userRole === 'coach' || userRole === 'instructor';
+  const isHeadCoach = Boolean(currentUser?.is_head_coach || userRole === 'head_coach');
+  const isCoach = (userRole === 'coach' || userRole === 'instructor') && !isHeadCoach;
   const isStudent = userRole === 'athlete' || userRole === 'student' || userRole === 'user';
   const currentCoachName = currentUser?.name || '';
   const currentCoachId = currentUser?.instructor_id || currentUser?.id || null;

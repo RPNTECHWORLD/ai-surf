@@ -26,21 +26,37 @@ export default function CoachPortal() {
       })
       .then(data => {
         // Automatically establish coach session and direct redirect to coach profile
+        const isHeadCoach = Boolean(data.is_head_coach);
         const coachUser = {
           id: data.id,
           instructor_id: data.id,
           name: data.name,
           role: 'coach',
+          is_head_coach: isHeadCoach,
           image: data.image,
           school: data.school || '',
+          school_name: data.school || '',
           email: data.email || ''
         };
         sessionStorage.setItem('user', JSON.stringify(coachUser));
+        localStorage.setItem('user', JSON.stringify(coachUser));
         sessionStorage.setItem('token', `coach_invite_${data.id}`);
         if (data.school) {
-          sessionStorage.setItem('activeSchool', data.school);
+          const schoolPayload = {
+            name: data.school,
+            owner: data.name,
+            email: data.email || '',
+            city: data.location || '',
+            location: data.location || ''
+          };
+          sessionStorage.setItem('activeSchool', JSON.stringify(schoolPayload));
+          localStorage.setItem('activeSchool', JSON.stringify(schoolPayload));
         }
-        navigate(`/instructors/${data.id}`, { replace: true });
+        if (isHeadCoach) {
+          navigate('/dashboard', { replace: true });
+        } else {
+          navigate(`/instructors/${data.id}`, { replace: true });
+        }
       })
       .catch(err => {
         console.error('Coach portal load error:', err);

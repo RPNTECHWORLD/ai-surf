@@ -468,9 +468,11 @@ const StudentsManagement = () => {
   })();
 
   const schoolLower = (activeSchoolName || '').toLowerCase().trim();
+  const isViewAdmin = userRole === 'guest_admin' && (currentUser?.guest_role === 'view_admin' || currentUser?.is_view_admin);
   const isSuperAdmin = currentUser?.role === 'superadmin' || schoolLower === 'super admin';
-  const isAdminOrSchoolAdmin = isSuperAdmin || userRole === 'admin' || userRole === 'school' || userRole === 'school_admin' || userRole === 'schooladmin';
-  const canManagePendingRequests = isAdminOrSchoolAdmin && !isCoach;
+  const isHeadCoach = Boolean(currentUser?.is_head_coach || userRole === 'head_coach');
+  const isAdminOrSchoolAdmin = !isViewAdmin && (isSuperAdmin || userRole === 'admin' || userRole === 'guest_admin' || userRole === 'school' || userRole === 'school_admin' || userRole === 'schooladmin' || isHeadCoach);
+  const canManagePendingRequests = !isViewAdmin && isAdminOrSchoolAdmin && (!isCoach || isHeadCoach);
 
   const loggedInCoach = useMemo(() => {
     if (!instructors || instructors.length === 0) return null;
@@ -487,18 +489,18 @@ const StudentsManagement = () => {
   );
   // School coach ("schoola assign aagi iruka coach"): cannot see student phone numbers or delete students
   // Individual / Freelance Coach: works just like a school ("oru school mathiri dhan"), can view phone numbers, add & delete students
-  const isSchoolCoach = isCoach && !isCoachFreelance;
+  const isSchoolCoach = isCoach && !isCoachFreelance && !isHeadCoach;
 
   // Both School Admins and Individual / Freelance Coaches can create and share registration invite links
-  const canCreateInviteLink = isAdminOrSchoolAdmin || (isCoach && isCoachFreelance);
+  const canCreateInviteLink = !isViewAdmin && (isAdminOrSchoolAdmin || (isCoach && (isCoachFreelance || isHeadCoach)));
 
   // If coach belongs to a school ("oru schoola irutha"), they cannot add students.
   // Only Admins and Individual / Freelance Coaches can add students.
-  const canAddStudent = isAdminOrSchoolAdmin || (isCoach && isCoachFreelance);
+  const canAddStudent = !isViewAdmin && (isAdminOrSchoolAdmin || (isCoach && (isCoachFreelance || isHeadCoach)));
 
   // If coach belongs to a school ("schoola assion aki iruka coachla dhan athula pana mudiya kudathu"), they cannot delete students.
   // Only Admins and Individual / Freelance Coaches can delete students.
-  const canDeleteStudent = isAdminOrSchoolAdmin || (isCoach && isCoachFreelance);
+  const canDeleteStudent = !isViewAdmin && (isAdminOrSchoolAdmin || (isCoach && (isCoachFreelance || isHeadCoach)));
 
   const resolveUserSchool = () => {
     const raw = currentUser?.school || currentUser?.school_name;
@@ -621,7 +623,7 @@ const StudentsManagement = () => {
     } else {
       url = targetSch ? `${API}/api/students?school=${encodeURIComponent(targetSch)}` : `${API}/api/students?school=none`;
     }
-    if (isCoach && currentCoachId) {
+    if (isCoach && !isHeadCoach && currentCoachId) {
       url += (url.includes('?') ? '&' : '?') + `instructor_id=${encodeURIComponent(currentCoachId)}`;
     }
     fetch(url)
@@ -728,7 +730,7 @@ const StudentsManagement = () => {
     });
 
     // Coach Role Isolation: Only show students assigned to THIS coach (via primary instructor assignment, creator, or sessions)
-    if (isCoach && (currentCoachName || currentCoachId)) {
+    if (isCoach && !isHeadCoach && (currentCoachName || currentCoachId)) {
       const cNameLower = (currentCoachName || '').toLowerCase().trim();
 
       const coachStudentIdsFromSessions = new Set();
@@ -814,7 +816,7 @@ const StudentsManagement = () => {
     }
 
     return valid;
-  }, [students, instructors, allSessions, isCoach, isCoachFreelance, coachAffiliatedSchool, currentCoachName, currentCoachId, loggedInCoach, currentUser, effectiveSchoolLower, isSuperAdmin]);
+  }, [students, instructors, allSessions, isCoach, isHeadCoach, isCoachFreelance, coachAffiliatedSchool, currentCoachName, currentCoachId, loggedInCoach, currentUser, effectiveSchoolLower, isSuperAdmin]);
 
   const handleStatClick = (label) => {
     setActiveStatFilter(label);

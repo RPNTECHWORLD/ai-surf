@@ -587,7 +587,7 @@ const AuthPage = () => {
 
     const activeSchoolName = (userSchName && userSchName.toLowerCase() !== 'school admin')
       ? userSchName
-      : (formData.school && formData.school.trim() ? formData.school.trim() : (user.role === 'coach' ? 'Coach Portal' : (userSchName || '')));
+      : (formData.school && formData.school.trim() ? formData.school.trim() : (user.role === 'coach' && !user.is_head_coach ? 'Coach Portal' : (userSchName || '')));
 
     const activeSchoolLocation = user.school_location || user.location || user.school_details?.city || formData.schoolLocation || '';
 
@@ -601,7 +601,7 @@ const AuthPage = () => {
     sessionStorage.setItem('activeSchool', JSON.stringify(schoolPayload));
     localStorage.setItem('activeSchool', JSON.stringify(schoolPayload));
     if (user.role === 'athlete') navigate(`/students/${user.student_id || user.id || 1}`);
-    else if (user.role === 'coach') navigate(`/instructors/${user.instructor_id || user.id || 1}`);
+    else if (user.role === 'coach' && !user.is_head_coach) navigate(`/instructors/${user.instructor_id || user.id || 1}`);
     else navigate('/dashboard');
   };
 

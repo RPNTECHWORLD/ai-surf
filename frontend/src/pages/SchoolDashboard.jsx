@@ -235,6 +235,8 @@ const SchoolDashboard = () => {
     }
   });
 
+  const isViewAdmin = currentUser?.role === 'guest_admin' && (currentUser?.guest_role === 'view_admin' || currentUser?.is_view_admin);
+
   useEffect(() => {
     let userSchoolName = null;
     if (currentUser) {
@@ -246,7 +248,7 @@ const SchoolDashboard = () => {
       if (currentUser.role === 'athlete') {
         navigate(`/students/${currentUser.student_id || currentUser.id || 1}`);
         return;
-      } else if (currentUser.role === 'coach') {
+      } else if (currentUser.role === 'coach' && !currentUser.is_head_coach) {
         navigate(`/instructors/${currentUser.instructor_id || currentUser.id || 1}`);
         return;
       }
@@ -519,38 +521,78 @@ const SchoolDashboard = () => {
               </div>
             </div>
 
-            {/* Quick Action Cards Grid */}
-            <div className="db-quick-actions">
-              <div className="action-card" onClick={() => navigate('/instructors?action=add', { state: { openAddModal: true } })} style={{ cursor: 'pointer' }}>
-                <div className="action-icon-wrapper" style={{ color: '#0D9488', background: '#CCFBF1' }}>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="8" cy="7" r="4" /><line x1="20" y1="8" x2="20" y2="14" /><line x1="23" y1="11" x2="17" y2="11" /></svg>
+            {/* Quick Action Cards Grid (Shown for Main Admin & School Admin, replaced by View Notice for View Admin) */}
+            {!isViewAdmin ? (
+              <div className="db-quick-actions">
+                <div className="action-card" onClick={() => navigate('/instructors?action=add', { state: { openAddModal: true } })} style={{ cursor: 'pointer' }}>
+                  <div className="action-icon-wrapper" style={{ color: '#0D9488', background: '#CCFBF1' }}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="8" cy="7" r="4" /><line x1="20" y1="8" x2="20" y2="14" /><line x1="23" y1="11" x2="17" y2="11" /></svg>
+                  </div>
+                  <div className="action-text-box">
+                    <span className="action-label">Add Instructor</span>
+                    <span className="action-sublabel">Register coach & profile</span>
+                  </div>
                 </div>
-                <div className="action-text-box">
-                  <span className="action-label">Add Instructor</span>
-                  <span className="action-sublabel">Register coach & profile</span>
-                </div>
-              </div>
 
-              <div className="action-card" onClick={() => navigate('/students?action=add', { state: { openAddModal: true } })} style={{ cursor: 'pointer' }}>
-                <div className="action-icon-wrapper" style={{ color: '#0284C7', background: '#E0F2FE' }}>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="8" cy="7" r="4" /><line x1="20" y1="8" x2="20" y2="14" /><line x1="23" y1="11" x2="17" y2="11" /></svg>
+                <div className="action-card" onClick={() => navigate('/students?action=add', { state: { openAddModal: true } })} style={{ cursor: 'pointer' }}>
+                  <div className="action-icon-wrapper" style={{ color: '#0284C7', background: '#E0F2FE' }}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="8" cy="7" r="4" /><line x1="20" y1="8" x2="20" y2="14" /><line x1="23" y1="11" x2="17" y2="11" /></svg>
+                  </div>
+                  <div className="action-text-box">
+                    <span className="action-label">Add Student</span>
+                    <span className="action-sublabel">Enroll student athlete</span>
+                  </div>
                 </div>
-                <div className="action-text-box">
-                  <span className="action-label">Add Student</span>
-                  <span className="action-sublabel">Enroll student athlete</span>
-                </div>
-              </div>
 
-              <div className="action-card" onClick={() => setShowScheduleModal(true)} style={{ cursor: 'pointer' }}>
-                <div className="action-icon-wrapper" style={{ color: '#10B981', background: '#D1FAE5' }}>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>
-                </div>
-                <div className="action-text-box">
-                  <span className="action-label">Add Session</span>
-                  <span className="action-sublabel">Create new training session</span>
+                <div className="action-card" onClick={() => setShowScheduleModal(true)} style={{ cursor: 'pointer' }}>
+                  <div className="action-icon-wrapper" style={{ color: '#10B981', background: '#D1FAE5' }}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>
+                  </div>
+                  <div className="action-text-box">
+                    <span className="action-label">Add Session</span>
+                    <span className="action-sublabel">Create new training session</span>
+                  </div>
                 </div>
               </div>
-            </div>
+            ) : (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  padding: '14px 18px',
+                  borderRadius: '14px',
+                  background: 'linear-gradient(135deg, rgba(2, 132, 199, 0.08) 0%, rgba(3, 105, 161, 0.04) 100%)',
+                  border: '1px solid rgba(2, 132, 199, 0.25)',
+                  marginBottom: '20px'
+                }}
+              >
+                <div
+                  style={{
+                    width: '36px',
+                    height: '36px',
+                    borderRadius: '10px',
+                    background: '#E0F2FE',
+                    color: '#0284C7',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '18px',
+                    flexShrink: 0
+                  }}
+                >
+                  👁️
+                </div>
+                <div>
+                  <div style={{ fontSize: '13.5px', fontWeight: 800, color: '#0369A1' }}>
+                    View Admin Mode (Read-Only)
+                  </div>
+                  <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>
+                    You have full access to view all academy pages, metrics, coaches, students, and sessions. Adding, editing, and deleting actions are disabled.
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Bottom Content Grid: Left (Sessions) + Right (Activity) */}
             <div className="db-bottom-grid">

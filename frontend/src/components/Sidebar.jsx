@@ -38,6 +38,31 @@ const Sidebar = () => {
             localStorage.setItem('user', JSON.stringify(parsedUser));
           }
           setUser(parsedUser);
+
+          // Real-time server sync for coach Head Coach status
+          if (parsedUser && (parsedUser.role === 'coach' || parsedUser.instructor_id || parsedUser.is_head_coach)) {
+            const instId = parsedUser.instructor_id || parsedUser.id;
+            if (instId) {
+              fetch(`${API}/api/instructors/${instId}`)
+                .then(r => r.json())
+                .then(instData => {
+                  if (instData && typeof instData.is_head_coach === 'boolean') {
+                    const serverIsHeadCoach = Boolean(instData.is_head_coach);
+                    if (Boolean(parsedUser.is_head_coach) !== serverIsHeadCoach) {
+                      const updated = { ...parsedUser, is_head_coach: serverIsHeadCoach };
+                      if (!serverIsHeadCoach && updated.role === 'head_coach') {
+                        updated.role = 'coach';
+                      }
+                      sessionStorage.setItem('user', JSON.stringify(updated));
+                      localStorage.setItem('user', JSON.stringify(updated));
+                      setUser(updated);
+                      window.dispatchEvent(new Event('user_updated'));
+                    }
+                  }
+                })
+                .catch(() => {});
+            }
+          }
         } catch (e) {}
       }
 
@@ -60,14 +85,14 @@ const Sidebar = () => {
       let displayName = '';
       if (parsedUser?.role === 'athlete' || parsedUser?.role === 'student' || parsedUser?.role === 'user') {
         displayName = userSch || '';
-      } else if (parsedUser?.role === 'coach') {
+      } else if (parsedUser?.role === 'coach' && !parsedUser?.is_head_coach) {
         const cName = parsedUser.name || parsedUser.instructor_name;
         displayName = userSch || activeSch || (cName ? `Coach: ${cName}` : 'Individual Surf Coach');
       } else {
         displayName = activeSch || userSch || '';
       }
 
-      const newName = resolveSchoolName(displayName) || (parsedUser?.role === 'admin' ? 'School Admin' : '');
+      const newName = resolveSchoolName(displayName) || (parsedUser?.role === 'admin' || parsedUser?.is_head_coach ? 'School Admin' : '');
       const newOwner = typeof parsedUser?.name === 'string' ? parsedUser.name : (typeof parsedSchool?.owner === 'string' ? parsedSchool.owner : '');
 
       setSchool(prev => {
@@ -110,15 +135,21 @@ const Sidebar = () => {
 
   const getNavItems = () => {
     const role = user?.role || 'admin';
+    const isHeadCoach = Boolean(user?.is_head_coach || role === 'head_coach');
     const items = [];
 
-    if (role === 'admin' || role === 'guest_admin') {
+    if (role === 'admin' || role === 'guest_admin' || isHeadCoach) {
       items.push({ label: 'Dashboard', path: '/dashboard' });
     }
 
     if (role === 'athlete') {
       const athleteId = user?.student_id || user?.id || user?._id || 1;
       items.push({ label: 'My Profile', path: `/students/${athleteId}` });
+    } else if (isHeadCoach) {
+      items.push(
+        { label: 'Instructors', path: '/instructors' },
+        { label: 'Students', path: '/students' }
+      );
     } else if (role === 'coach') {
       const coachId = user?.instructor_id || user?.id || user?._id || 1;
       items.push({ label: 'My Profile', path: `/instructors/${coachId}` });
@@ -130,7 +161,7 @@ const Sidebar = () => {
       );
     }
 
-    const sessionsLabel = (role === 'athlete' || role === 'student' || role === 'coach' || role === 'user') ? 'My Sessions' : 'Sessions';
+    const sessionsLabel = (role === 'athlete' || role === 'student' || (role === 'coach' && !isHeadCoach) || role === 'user') ? 'My Sessions' : 'Sessions';
 
     const isStudentRole = role === 'athlete' || role === 'student' || role === 'user';
 
@@ -207,7 +238,7 @@ const Sidebar = () => {
               </div>
             )}
             <div style={{ fontSize: '11.5px', color: '#64748B', fontWeight: 600, textTransform: 'capitalize', marginTop: '2px' }}>
-              {user?.name || 'User'} • {user ? (user.role === 'admin' ? 'School Admin' : (user.role === 'athlete' ? 'Student' : (user.role === 'coach' ? 'Coach' : user.role))) : 'Student'}
+              {user?.name || 'User'} • {user ? (user.role === 'admin' ? 'School Admin' : (user.is_head_coach ? 'Head Coach 👑' : (user.role === 'guest_admin' ? (user.guest_role === 'view_admin' ? 'View Admin 👁️' : 'Main Admin ⚡') : (user.role === 'athlete' ? 'Student' : (user.role === 'coach' ? 'Coach' : user.role))))) : 'Student'}
             </div>
           </div>
           {navItems.map((item) => {
@@ -236,3 +267,4 @@ const Sidebar = () => {
 };
 
 export default Sidebar;
+// updated: 1793352296.6783102

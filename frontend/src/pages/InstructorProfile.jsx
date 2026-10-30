@@ -836,14 +836,15 @@ const InstructorProfile = () => {
     }
   })()).toLowerCase().trim();
 
-  const isCoach = userRole === 'coach' || userRole === 'instructor';
+  const isHeadCoach = Boolean(currentUser?.is_head_coach || userRole === 'head_coach');
+  const isCoach = (userRole === 'coach' || userRole === 'instructor') && !isHeadCoach;
   const isStudent = userRole === 'athlete' || userRole === 'student' || userRole === 'user';
   const isSuperAdmin = userRole === 'superadmin' || 
                        userRole === 'super_admin' || 
                        activeSchoolStr.toLowerCase().includes('super admin');
 
   // A coach or student is NEVER a school admin. School admin is only when role is school_admin/admin/school without being a coach.
-  const isSchoolAdmin = !isCoach && !isStudent && !isSuperAdmin && (
+  const isSchoolAdmin = isHeadCoach || !isCoach && !isStudent && !isSuperAdmin && (
     userRole === 'school_admin' || 
     userRole === 'school' || 
     userRole === 'admin' ||
@@ -908,9 +909,34 @@ const InstructorProfile = () => {
             {(instructor.name || 'C')[0].toUpperCase()}
           </div>
           <div className="ip-hero-info">
-            <h1 className="ip-hero-name">{instructor.name}</h1>
+            <h1 className="ip-hero-name">
+              {instructor.name}
+              {instructor.is_head_coach && (
+                <span title="Head Coach with Admin Privileges" style={{ marginLeft: '10px', fontSize: '20px' }}>👑</span>
+              )}
+            </h1>
             <p className="ip-hero-sub">Age {instructor.age || '—'} • {instructor.location || 'Not Specified'}</p>
             <div className="ip-hero-badges">
+              {instructor.is_head_coach && (
+                <span
+                  style={{
+                    background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.25) 0%, rgba(217, 119, 6, 0.25) 100%)',
+                    color: '#FBBF24',
+                    border: '1px solid rgba(245, 158, 11, 0.5)',
+                    padding: '4px 12px',
+                    borderRadius: '20px',
+                    fontSize: '11px',
+                    fontWeight: '800',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    letterSpacing: '0.04em'
+                  }}
+                  title="Head Coach with Admin Privileges"
+                >
+                  👑 HEAD COACH
+                </span>
+              )}
               <span className="ip-badge-primary">ISA CERTIFIED</span>
               {(() => {
                 const rawL = instructor.languages;

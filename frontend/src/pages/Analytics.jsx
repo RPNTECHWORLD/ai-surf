@@ -280,7 +280,8 @@ const Analytics = () => {
   })();
 
   const userRole = (currentUser?.role || '').toLowerCase().trim();
-  const isCoach = userRole === 'coach';
+  const isHeadCoach = Boolean(currentUser?.is_head_coach || userRole === 'head_coach');
+  const isCoach = (userRole === 'coach' || userRole === 'instructor') && !isHeadCoach;
   const isStudent = userRole === 'athlete' || userRole === 'student' || userRole === 'user';
   const coachId = currentUser?.instructor_id || currentUser?.id;
   const coachName = currentUser?.name || '';

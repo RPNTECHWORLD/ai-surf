@@ -152,7 +152,40 @@ const InstructorManagement = () => {
 
   // Status Toggle (Active / Inactive) State
   const [togglingStatusId, setTogglingStatusId] = useState(null);
+  const [togglingHeadCoachId, setTogglingHeadCoachId] = useState(null);
   const [statusToast, setStatusToast] = useState({ show: false, text: '', isSuccess: true });
+
+  // Auto-dismiss status notification toast after 4s
+  useEffect(() => {
+    if (statusToast.show) {
+      const timer = setTimeout(() => {
+        setStatusToast(prev => ({ ...prev, show: false }));
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [statusToast.show, statusToast.text]);
+
+  // 3-dot Menu State
+  const [activeMenuId, setActiveMenuId] = useState(null);
+
+  useEffect(() => {
+    const handleOutsideClick = (e) => {
+      if (!e.target.closest('.im-menu-container')) {
+        setActiveMenuId(null);
+      }
+    };
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setActiveMenuId(null);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
 
   // Leave Requests State for School Admin
   const [showLeaveModal, setShowLeaveModal] = useState(false);
@@ -252,9 +285,11 @@ const InstructorManagement = () => {
     }
   })();
   const userRole = (currentUser?.role || '').toLowerCase().trim();
+  const isViewAdmin = userRole === 'guest_admin' && (currentUser?.guest_role === 'view_admin' || currentUser?.is_view_admin);
   const isCoach = userRole === 'coach' || userRole === 'instructor';
-  const isAdminOrSchoolAdmin = currentUser?.role === 'superadmin' || userRole === 'admin' || userRole === 'school' || userRole === 'school_admin' || userRole === 'schooladmin';
-  const canDeleteInstructor = isAdminOrSchoolAdmin && !isCoach;
+  const isAdminOrSchoolAdmin = !isViewAdmin && (currentUser?.role === 'superadmin' || userRole === 'admin' || userRole === 'guest_admin' || userRole === 'school' || userRole === 'school_admin' || userRole === 'schooladmin' || currentUser?.is_head_coach);
+  const canDeleteInstructor = !isViewAdmin && isAdminOrSchoolAdmin && (!isCoach || currentUser?.is_head_coach);
+
 
   const getActiveSchoolName = () => {
     try {
@@ -469,17 +504,31 @@ const InstructorManagement = () => {
       .catch(() => {});
   }, [currentSchool]);
 
-  const filtered = instructors.filter(i => {
-    if (!isSuperAdmin && currentSchool) {
-      const iSchool = (i.school || '').toLowerCase().trim();
-      if (iSchool && iSchool !== currentSchool.toLowerCase().trim()) return false;
-    }
-    return (
-      i.name.toLowerCase().includes(search.toLowerCase()) ||
-      i.fitness_level.toLowerCase().includes(search.toLowerCase()) ||
-      (i.certifications && i.certifications.some(c => c.toLowerCase().includes(search.toLowerCase())))
-    );
-  });
+  const filtered = instructors
+    .filter(i => {
+      if (!isSuperAdmin && currentSchool) {
+        const iSchool = (i.school || '').toLowerCase().trim();
+        if (iSchool && iSchool !== currentSchool.toLowerCase().trim()) return false;
+      }
+      return (
+        i.name.toLowerCase().includes(search.toLowerCase()) ||
+        i.fitness_level.toLowerCase().includes(search.toLowerCase()) ||
+        (i.certifications && i.certifications.some(c => c.toLowerCase().includes(search.toLowerCase())))
+      );
+    })
+    .sort((a, b) => {
+      // Head Coach ALWAYS appears FIRST in the list!
+      const aHead = Boolean(a.is_head_coach);
+      const bHead = Boolean(b.is_head_coach);
+      if (aHead && !bHead) return -1;
+      if (!aHead && bHead) return 1;
+      // Secondary sort: active instructors before inactive, then by id
+      const aActive = a.is_active !== false;
+      const bActive = b.is_active !== false;
+      if (aActive && !bActive) return -1;
+      if (!aActive && bActive) return 1;
+      return (a.id || 0) - (b.id || 0);
+    });
 
   const handlePrevMonth = () => {
     setLeaveMonthDate(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
@@ -826,6 +875,100 @@ const InstructorManagement = () => {
     );
   };
 
+  const handleToggleHeadCoach = (instructor) => {
+    const isCurrentHeadCoach = Boolean(instructor.is_head_coach);
+    showConfirm(
+      isCurrentHeadCoach ? 'Remove Head Coach Privileges' : 'Make as Head Coach',
+      isCurrentHeadCoach
+        ? `Are you sure you want to remove Head Coach privileges from "${instructor.name}"? All elevated admin permissions will be revoked immediately.`
+        : `Are you sure you want to promote "${instructor.name}" to Head Coach? They will receive full Admin permissions to manage school students, sessions, instructors, and attendance.`,
+      async () => {
+        closeConfirm();
+        setTogglingHeadCoachId(instructor.id);
+        try {
+          const token = sessionStorage.getItem('token');
+          const res = await fetch(`${API}/api/instructors/${instructor.id}/toggle-head-coach`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+            },
+            body: JSON.stringify({ is_head_coach: !isCurrentHeadCoach })
+          });
+          const data = await res.json();
+          if (res.ok && data.success) {
+            setInstructors(prev => {
+              const updated = prev.map(inst => {
+                if (inst.id === instructor.id) {
+                  return { ...inst, is_head_coach: data.is_head_coach };
+                }
+                if (data.is_head_coach) {
+                  const s1 = (inst.school || '').toLowerCase().trim();
+                  const s2 = (instructor.school || '').toLowerCase().trim();
+                  if (!s1 || !s2 || s1 === s2) {
+                    return { ...inst, is_head_coach: false };
+                  }
+                }
+                return inst;
+              });
+              return [...updated].sort((a, b) => {
+                const aHead = Boolean(a.is_head_coach);
+                const bHead = Boolean(b.is_head_coach);
+                if (aHead && !bHead) return -1;
+                if (!aHead && bHead) return 1;
+                return (a.id || 0) - (b.id || 0);
+              });
+            });
+            fetchInstructors();
+            setStatusToast({
+              show: true,
+              text: data.is_head_coach
+                ? `${instructor.name} is now Head Coach with full Admin permissions!`
+                : `Head Coach permissions removed from ${instructor.name}.`,
+              isSuccess: true
+            });
+            const savedUserStr = sessionStorage.getItem('user') || localStorage.getItem('user');
+            if (savedUserStr) {
+              try {
+                const curUser = JSON.parse(savedUserStr);
+                const curId = String(curUser.id || '');
+                const curInstId = String(curUser.instructor_id || '');
+                const targetInstId = String(instructor.id || '');
+                const targetUserId = String(instructor.user_id || '');
+                const curEmail = (curUser.email || '').toLowerCase().trim();
+                const targetEmail = (instructor.email || '').toLowerCase().trim();
+
+                const isMatch = 
+                  (curInstId && curInstId === targetInstId) ||
+                  (curId && (curId === targetInstId || (targetUserId && curId === targetUserId))) ||
+                  (curEmail && targetEmail && curEmail === targetEmail);
+
+                if (isMatch) {
+                  curUser.is_head_coach = Boolean(data.is_head_coach);
+                  if (!data.is_head_coach && curUser.role === 'head_coach') {
+                    curUser.role = 'coach';
+                  }
+                  sessionStorage.setItem('user', JSON.stringify(curUser));
+                  localStorage.setItem('user', JSON.stringify(curUser));
+                  window.dispatchEvent(new Event('user_updated'));
+                  window.dispatchEvent(new Event('storage'));
+                }
+              } catch (e) {}
+            }
+          } else {
+            alert(data.detail || 'Failed to update Head Coach status. Please try again.');
+          }
+        } catch (err) {
+          alert('Network error while updating Head Coach status: ' + (err.message || err));
+        } finally {
+          setTogglingHeadCoachId(null);
+        }
+      },
+      isCurrentHeadCoach ? 'Remove Head Coach' : 'Make Head Coach',
+      isCurrentHeadCoach
+    );
+  };
+
   const handleOpenEditModal = (instructor) => {
     if (!isSuperAdmin) {
       alert('School admins cannot edit coach details. Only coaches can manage their own profile.');
@@ -872,6 +1015,8 @@ const InstructorManagement = () => {
         key={leave.id}
         style={{
           background: '#FFFFFF',
+
+              boxShadow: '0 20px 40px -10px rgba(15, 23, 42, 0.22), 0 0 1px 1px rgba(15, 23, 42, 0.05)',
           border: '1px solid',
           borderColor: isPending ? '#FDE68A' : (isApproved ? '#A7F3D0' : '#E2E8F0'),
           borderRadius: '16px',
@@ -1053,6 +1198,8 @@ const InstructorManagement = () => {
                 borderRadius: '8px',
                 border: '1.5px solid #CBD5E1',
                 background: '#FFFFFF',
+
+              boxShadow: '0 20px 40px -10px rgba(15, 23, 42, 0.22), 0 0 1px 1px rgba(15, 23, 42, 0.05)',
                 color: '#334155',
                 fontSize: '12.5px',
                 fontWeight: 700,
@@ -1101,6 +1248,8 @@ const InstructorManagement = () => {
                 borderRadius: '12px',
                 border: '1.5px solid #CBD5E1',
                 background: '#FFFFFF',
+
+              boxShadow: '0 20px 40px -10px rgba(15, 23, 42, 0.22), 0 0 1px 1px rgba(15, 23, 42, 0.05)',
                 color: '#0F172A',
                 fontWeight: 700,
                 fontSize: '13.5px',
@@ -1154,24 +1303,26 @@ const InstructorManagement = () => {
               )}
             </button>
 
-            <button
-              className="im-btn-add-primary"
-              onClick={() => {
-                const currentActiveSchool = getActiveSchoolName();
-                setSelected(null);
-                setPhotoPreview('');
-                setForm({
-                  name: '', email: '', phone: '', password: '', dob: '', age: '', gender: 'Male', fitness_level: 'Elite',
-                  experience: '', certifications: '', languages: '', biography: '', image: '',
-                  school: currentActiveSchool,
-                  location: getSchoolLocation(currentActiveSchool)
-                });
-                setShowAddModal(true);
-              }}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
-              Add Instructor
-            </button>
+            {!isViewAdmin && (
+              <button
+                className="im-btn-add-primary"
+                onClick={() => {
+                  const currentActiveSchool = getActiveSchoolName();
+                  setSelected(null);
+                  setPhotoPreview('');
+                  setForm({
+                    name: '', email: '', phone: '', password: '', dob: '', age: '', gender: 'Male', fitness_level: 'Elite',
+                    experience: '', certifications: '', languages: '', biography: '', image: '',
+                    school: currentActiveSchool,
+                    location: getSchoolLocation(currentActiveSchool)
+                  });
+                  setShowAddModal(true);
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+                Add Instructor
+              </button>
+            )}
           </div>
         </div>
         {/* Search Bar Row */}
@@ -1192,38 +1343,78 @@ const InstructorManagement = () => {
           </div>
         </div>
 
-        {/* Status Toast Alert */}
+        {/* Top-Centered Toast Notification Popup (Matches Sessions.jsx) */}
         {statusToast.show && (
-          <div style={{
-            background: statusToast.isSuccess ? '#F0FDF4' : '#FEF2F2',
-            border: `1px solid ${statusToast.isSuccess ? '#86EFAC' : '#FECACA'}`,
-            color: statusToast.isSuccess ? '#15803D' : '#DC2626',
-            padding: '10px 16px',
-            borderRadius: '12px',
-            marginBottom: '16px',
-            fontSize: '13px',
-            fontWeight: '600',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
-            transition: 'all 0.3s ease'
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span>{statusToast.isSuccess ? '✅' : '⚠️'}</span>
-              <span>{statusToast.text}</span>
+          <div
+            className="im-toast-popup"
+            style={{
+              position: 'fixed',
+              top: '24px',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              zIndex: 10000,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              backgroundColor: '#FFFFFF',
+              border: `1.5px solid ${statusToast.isSuccess ? '#A7F3D0' : '#FECACA'}`,
+              borderRadius: '14px',
+              padding: '12px 20px',
+              boxShadow: '0 12px 30px -4px rgba(0, 0, 0, 0.18)',
+              animation: 'imSlideDown 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
+              maxWidth: '90%',
+              width: 'max-content'
+            }}
+          >
+            <div
+              style={{
+                width: '28px',
+                height: '28px',
+                borderRadius: '50%',
+                backgroundColor: statusToast.isSuccess ? '#D1FAE5' : '#FEE2E2',
+                color: statusToast.isSuccess ? '#059669' : '#EF4444',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '14px',
+                fontWeight: 800,
+                flexShrink: 0
+              }}
+            >
+              {statusToast.isSuccess ? '✓' : '✕'}
             </div>
+            <span style={{ fontSize: '13.5px', fontWeight: 600, color: '#0F172A', whiteSpace: 'nowrap' }}>
+              {statusToast.text}
+            </span>
             <button
               type="button"
               onClick={() => setStatusToast(prev => ({ ...prev, show: false }))}
-              style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'inherit', fontWeight: 700, fontSize: '14px' }}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: '#94A3B8',
+                cursor: 'pointer',
+                padding: '2px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: '6px',
+                marginLeft: '6px',
+                transition: 'color 0.15s ease'
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = '#0F172A'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = '#94A3B8'; }}
+              title="Close notification"
             >
-              ✕
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
             </button>
           </div>
         )}
 
-        {/* Layout: Left Column (List) & Right Column (Add/Edit Sidebar) */}
+        {/* Layout: Left Column        {/* Layout: Left Column (List) & Right Column (Add/Edit Sidebar) */}
         <div className="im-content-layout">
           {/* Left Column - Instructors List */}
           <div className="im-left-column">
@@ -1239,76 +1430,142 @@ const InstructorManagement = () => {
                   const hasValidImage = instructor.image && !instructor.image.startsWith('blob:') && !instructor.image.includes('unsplash.com') && !instructor.image.includes('1500648767791');
                   const isCoachActive = instructor.is_active !== false;
                   return (
-                    <div key={instructor.id} className={`im-card ${!isCoachActive ? 'im-card-inactive' : ''}`}>
-                      {/* Top Left: Active / Inactive Status Toggle */}
+                    <div
+                      key={instructor.id}
+                      className={`im-card ${!isCoachActive ? 'im-card-inactive' : ''}`}
+                      style={activeMenuId === instructor.id ? { zIndex: 30 } : {}}
+                    >
+                      {/* Top Left: Active / Inactive Status Indicator */}
                       <div className="im-card-top-status">
-                        <button
-                          type="button"
-                          className={`im-status-toggle ${isCoachActive ? 'is-active' : 'is-inactive'}`}
-                          disabled={togglingStatusId === instructor.id}
-                          onClick={(e) => handleToggleInstructorStatus(e, instructor)}
-                          title={isCoachActive 
-                            ? `Active: ${instructor.name} is locked to ${instructor.school || 'this school'}. Click to set Inactive.` 
-                            : `Inactive: ${instructor.name} is released / can switch schools. Click to set Active.`}
+                        <span
+                          className={`im-status-badge ${isCoachActive ? 'is-active' : 'is-inactive'}`}
+                          title={`Status: ${isCoachActive ? 'Active' : 'Inactive'}`}
                         >
-                          <span className="im-toggle-track">
-                            <span className="im-toggle-thumb" />
-                          </span>
-                          <span className="im-toggle-text">
-                            {togglingStatusId === instructor.id ? '...' : (isCoachActive ? 'Active' : 'Inactive')}
-                          </span>
-                        </button>
+                          <span className="im-status-dot" />
+                          <span>{isCoachActive ? 'Active' : 'Inactive'}</span>
+                        </span>
                       </div>
 
-                      {(canDeleteInstructor || isSuperAdmin) && (
-                        <div className="im-card-top-actions">
-                          {isSuperAdmin && (
-                          <button
-                            type="button"
-                            className="im-card-top-btn im-btn-top-edit"
-                            title={`Edit ${instructor.name}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleOpenEditModal(instructor);
-                            }}
-                            style={{
-                              border: '1px solid #CCFBF1',
-                              color: '#0D9488',
-                              background: '#F0FDFA',
-                              marginRight: '6px'
-                            }}
+                      {/* Top Right: 3-dot Actions Menu */}
+                      <div className="im-menu-container">
+                        <button
+                          type="button"
+                          className={`im-dots-btn ${activeMenuId === instructor.id ? 'is-open' : ''}`}
+                          title="More options"
+                          aria-label="More options"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveMenuId(prev => prev === instructor.id ? null : instructor.id);
+                          }}
+                        >
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                            <circle cx="12" cy="5" r="2.2" />
+                            <circle cx="12" cy="12" r="2.2" />
+                            <circle cx="12" cy="19" r="2.2" />
+                          </svg>
+                        </button>
+
+                        {activeMenuId === instructor.id && (
+                          <div
+                            className="im-dropdown-menu"
+                            onClick={(e) => e.stopPropagation()}
                           >
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-                              <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-                            </svg>
-                          </button>
-                          )}
-                          {canDeleteInstructor && (
+                            {/* Action 1: Active / Inactive */}
                             <button
                               type="button"
-                              className="im-card-top-btn im-btn-top-delete"
-                              title={`Delete ${instructor.name}`}
-                              disabled={deletingId === instructor.id}
-                              onClick={(e) => handleDelete(e, instructor)}
-                              style={{
-                                border: '1px solid #FECACA',
-                                color: '#EF4444',
-                                background: '#FFF1F2'
+                              className="im-dropdown-item"
+                              disabled={isViewAdmin || (!isAdminOrSchoolAdmin && !isSuperAdmin) || togglingStatusId === instructor.id}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveMenuId(null);
+                                handleToggleInstructorStatus(e, instructor);
                               }}
+                              title={isViewAdmin ? 'Status changes restricted (View Only)' : (isCoachActive ? 'Set Inactive' : 'Set Active')}
                             >
-                              {deletingId === instructor.id ? (
-                                <span style={{ fontSize: '10px', fontWeight: 700 }}>...</span>
+                              {isCoachActive ? (
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#64748B" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                                  <circle cx="12" cy="12" r="10" />
+                                  <line x1="12" y1="8" x2="12" y2="12" />
+                                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                                </svg>
                               ) : (
-                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                  <polyline points="3 6 5 6 21 6" />
-                                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                                  <polyline points="22 4 12 14.01 9 11.01" />
                                 </svg>
                               )}
+                              <span>
+                                {togglingStatusId === instructor.id
+                                  ? 'Updating...'
+                                  : (isCoachActive ? 'Mark as Inactive' : 'Mark as Active')}
+                              </span>
                             </button>
-                          )}
-                        </div>
-                      )}
+
+                            {/* Action 2: Make as Head Coach / Remove as Head Coach */}
+                            <button
+                              type="button"
+                              className="im-dropdown-item"
+                              disabled={isViewAdmin || (!isAdminOrSchoolAdmin && !isSuperAdmin) || togglingHeadCoachId === instructor.id}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveMenuId(null);
+                                handleToggleHeadCoach(instructor);
+                              }}
+                              title={isViewAdmin ? 'Role changes restricted (View Only)' : (instructor.is_head_coach ? 'Revoke Head Coach privileges' : 'Assign Head Coach privileges')}
+                            >
+                              <span style={{ fontSize: '14px', lineHeight: 1 }}>👑</span>
+                              <span style={instructor.is_head_coach ? { color: '#B45309', fontWeight: 600 } : {}}>
+                                {togglingHeadCoachId === instructor.id
+                                  ? 'Updating...'
+                                  : (instructor.is_head_coach ? 'Remove as Head Coach' : 'Make as Head Coach')}
+                              </span>
+                            </button>
+
+                            {/* SuperAdmin Edit if applicable */}
+                            {isSuperAdmin && (
+                              <button
+                                type="button"
+                                className="im-dropdown-item"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActiveMenuId(null);
+                                  handleOpenEditModal(instructor);
+                                }}
+                              >
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#0D9488" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                  <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                </svg>
+                                <span>Edit Profile</span>
+                              </button>
+                            )}
+
+                            {/* Divider before Delete */}
+                            <div className="im-dropdown-divider" />
+
+                            {/* Action 3: Delete Instructor */}
+                            <button
+                              type="button"
+                              className="im-dropdown-item danger"
+                              disabled={isViewAdmin || (!canDeleteInstructor && !isSuperAdmin) || deletingId === instructor.id}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveMenuId(null);
+                                handleDelete(e, instructor);
+                              }}
+                              title={isViewAdmin ? 'Delete restricted (View Only)' : 'Delete instructor'}
+                            >
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="3 6 5 6 21 6" />
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                              </svg>
+                              <span>
+                                {deletingId === instructor.id ? 'Deleting...' : 'Delete Instructor'}
+                              </span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
                       {/* Profile photo avatar only */}
                       <div className="im-avatar-header">
                         <div className="im-avatar-wrapper">
@@ -1345,7 +1602,12 @@ const InstructorManagement = () => {
                       </div>
 
                       <div className="im-card-body">
-                        <h3 className="im-card-name">{instructor.name}</h3>
+                        <h3 className="im-card-name">
+                          {instructor.name}
+                          {instructor.is_head_coach && (
+                            <span title="Head Coach with Admin Privileges" style={{ marginLeft: '6px', fontSize: '15px' }}>👑</span>
+                          )}
+                        </h3>
                         <p className="im-card-details">
                           {instructor.age} years • {instructor.location || 'Oahu, HI'}
                         </p>
@@ -1427,6 +1689,29 @@ const InstructorManagement = () => {
                           })()}
                           </div>
                         </div>
+
+                        {instructor.is_head_coach && (
+                          <div style={{ display: 'flex', justifyContent: 'center', marginTop: '6px' }}>
+                            <span
+                              style={{
+                                background: 'linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%)',
+                                color: '#92400E',
+                                border: '1px solid #F59E0B',
+                                padding: '3px 10px',
+                                borderRadius: '12px',
+                                fontSize: '11px',
+                                fontWeight: 800,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                boxShadow: '0 1px 3px rgba(245, 158, 11, 0.2)'
+                              }}
+                              title="Head Coach with Admin Privileges"
+                            >
+                              👑 Head Coach
+                            </span>
+                          </div>
+                        )}
 
                         <div className="im-card-divider" />
                         <div className="im-card-footer">
@@ -2205,6 +2490,8 @@ const InstructorManagement = () => {
                         borderRadius: '10px',
                         border: '1px solid #CBD5E1',
                         background: '#FFFFFF',
+
+              boxShadow: '0 20px 40px -10px rgba(15, 23, 42, 0.22), 0 0 1px 1px rgba(15, 23, 42, 0.05)',
                         cursor: 'pointer',
                         fontSize: '13px',
                         fontWeight: 600,
@@ -2222,7 +2509,9 @@ const InstructorManagement = () => {
 
                 {/* 2. Month Metric Summary Cards */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '14px' }}>
-                  <div style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: '14px', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ background: '#FFFFFF',
+
+              boxShadow: '0 20px 40px -10px rgba(15, 23, 42, 0.22), 0 0 1px 1px rgba(15, 23, 42, 0.05)', border: '1px solid #E2E8F0', borderRadius: '14px', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '12px' }}>
                     <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'rgba(15, 23, 42, 0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>
                       📋
                     </div>
@@ -2232,7 +2521,9 @@ const InstructorManagement = () => {
                     </div>
                   </div>
 
-                  <div style={{ background: '#FFFFFF', border: '1px solid #FDE68A', borderRadius: '14px', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ background: '#FFFFFF',
+
+              boxShadow: '0 20px 40px -10px rgba(15, 23, 42, 0.22), 0 0 1px 1px rgba(15, 23, 42, 0.05)', border: '1px solid #FDE68A', borderRadius: '14px', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '12px' }}>
                     <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: '#FEF3C7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', color: '#D97706' }}>
                       ⏳
                     </div>
@@ -2242,7 +2533,9 @@ const InstructorManagement = () => {
                     </div>
                   </div>
 
-                  <div style={{ background: '#FFFFFF', border: '1px solid #A7F3D0', borderRadius: '14px', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ background: '#FFFFFF',
+
+              boxShadow: '0 20px 40px -10px rgba(15, 23, 42, 0.22), 0 0 1px 1px rgba(15, 23, 42, 0.05)', border: '1px solid #A7F3D0', borderRadius: '14px', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '12px' }}>
                     <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: '#DCFCE7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', color: '#10B981' }}>
                       ✅
                     </div>
@@ -2252,7 +2545,9 @@ const InstructorManagement = () => {
                     </div>
                   </div>
 
-                  <div style={{ background: '#FFFFFF', border: '1px solid #FECDD3', borderRadius: '14px', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ background: '#FFFFFF',
+
+              boxShadow: '0 20px 40px -10px rgba(15, 23, 42, 0.22), 0 0 1px 1px rgba(15, 23, 42, 0.05)', border: '1px solid #FECDD3', borderRadius: '14px', padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '12px' }}>
                     <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: '#FFE4E6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', color: '#F43F5E' }}>
                       ❌
                     </div>
@@ -2528,6 +2823,8 @@ const InstructorManagement = () => {
                               borderRadius: '8px',
                               border: '1px solid #CBD5E1',
                               background: '#FFFFFF',
+
+              boxShadow: '0 20px 40px -10px rgba(15, 23, 42, 0.22), 0 0 1px 1px rgba(15, 23, 42, 0.05)',
                               color: '#475569',
                               fontSize: '12px',
                               fontWeight: 700,
@@ -2550,7 +2847,9 @@ const InstructorManagement = () => {
                           const dayLeaves = calendarCells.find(c => c.dateStr === selectedCalendarDate)?.leaves || [];
                           if (dayLeaves.length === 0) {
                             return (
-                              <div style={{ background: '#FFFFFF', border: '1px dashed #CBD5E1', borderRadius: '14px', padding: '36px 20px', textAlign: 'center', color: '#64748B' }}>
+                              <div style={{ background: '#FFFFFF',
+
+              boxShadow: '0 20px 40px -10px rgba(15, 23, 42, 0.22), 0 0 1px 1px rgba(15, 23, 42, 0.05)', border: '1px dashed #CBD5E1', borderRadius: '14px', padding: '36px 20px', textAlign: 'center', color: '#64748B' }}>
                                 <div style={{ fontSize: '32px', marginBottom: '8px' }}>🏖️</div>
                                 <h4 style={{ margin: '0 0 4px 0', color: '#0F172A', fontSize: '15px', fontWeight: 700 }}>No Leaves on {selectedCalendarDate}</h4>
                                 <p style={{ margin: 0, fontSize: '13px' }}>All coaches are available on this date.</p>
@@ -2564,7 +2863,9 @@ const InstructorManagement = () => {
                           );
                         })()
                       ) : currentMonthLeaves.length === 0 ? (
-                        <div style={{ background: '#FFFFFF', border: '1px dashed #CBD5E1', borderRadius: '14px', padding: '40px 20px', textAlign: 'center', color: '#64748B' }}>
+                        <div style={{ background: '#FFFFFF',
+
+              boxShadow: '0 20px 40px -10px rgba(15, 23, 42, 0.22), 0 0 1px 1px rgba(15, 23, 42, 0.05)', border: '1px dashed #CBD5E1', borderRadius: '14px', padding: '40px 20px', textAlign: 'center', color: '#64748B' }}>
                           <div style={{ fontSize: '36px', marginBottom: '8px' }}>🏖️</div>
                           <h4 style={{ margin: '0 0 4px 0', color: '#0F172A', fontSize: '16px', fontWeight: 700 }}>No Leaves in {MONTH_NAMES[selectedMonth]} {selectedYear}</h4>
                           <p style={{ margin: 0, fontSize: '13px' }}>No coach leave applications recorded for this month. Use ◀ / ▶ to browse other months.</p>
@@ -2590,6 +2891,8 @@ const InstructorManagement = () => {
                         gap: '14px',
                         flexWrap: 'wrap',
                         background: '#FFFFFF',
+
+              boxShadow: '0 20px 40px -10px rgba(15, 23, 42, 0.22), 0 0 1px 1px rgba(15, 23, 42, 0.05)',
                         padding: '12px 16px',
                         borderRadius: '14px',
                         border: '1px solid #E2E8F0'
@@ -2671,6 +2974,8 @@ const InstructorManagement = () => {
                     ) : filteredLeaves.length === 0 ? (
                       <div style={{
                         background: '#FFFFFF',
+
+              boxShadow: '0 20px 40px -10px rgba(15, 23, 42, 0.22), 0 0 1px 1px rgba(15, 23, 42, 0.05)',
                         border: '1px dashed #CBD5E1',
                         borderRadius: '16px',
                         padding: '40px 20px',
@@ -2729,6 +3034,8 @@ const InstructorManagement = () => {
                 maxWidth: '520px',
                 width: '100%',
                 background: '#FFFFFF',
+
+              boxShadow: '0 20px 40px -10px rgba(15, 23, 42, 0.22), 0 0 1px 1px rgba(15, 23, 42, 0.05)',
                 borderRadius: '20px',
                 padding: '28px',
                 border: '1px solid #E2E8F0',
@@ -3104,6 +3411,8 @@ const InstructorManagement = () => {
                 width: '100%',
                 maxWidth: '440px',
                 background: '#FFFFFF',
+
+              boxShadow: '0 20px 40px -10px rgba(15, 23, 42, 0.22), 0 0 1px 1px rgba(15, 23, 42, 0.05)',
                 borderRadius: '20px',
                 padding: '24px',
                 boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)',
@@ -3545,11 +3854,12 @@ const InstructorManagement = () => {
           border: 1px solid #E2E8F0;
           display: flex;
           flex-direction: column;
-          overflow: hidden;
+          overflow: visible;
           box-shadow: 0 4px 12px rgba(0, 0, 0, 0.02);
-          transition: all 0.22s ease-in-out;
+          transition: transform 0.22s ease-in-out, box-shadow 0.22s ease-in-out, border-color 0.22s ease-in-out;
           padding-top: 24px;
           height: 100%;
+          z-index: 1;
         }
         .im-card:hover {
           transform: translateY(-4px);
@@ -3681,6 +3991,151 @@ const InstructorManagement = () => {
           border-color: #F87171;
           transform: scale(1.06);
         }
+        /* Status Badge */
+        .im-status-badge {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          padding: 4px 10px;
+          border-radius: 20px;
+          font-family: 'Outfit', sans-serif;
+          font-size: 11.5px;
+          font-weight: 700;
+          letter-spacing: 0.2px;
+          line-height: 1;
+        }
+        .im-status-badge.is-active {
+          background: #F0FDF4;
+          border: 1px solid #BBF7D0;
+          color: #16A34A;
+        }
+        .im-status-badge.is-inactive {
+          background: #F8FAFC;
+          border: 1px solid #E2E8F0;
+          color: #64748B;
+        }
+        .im-status-badge .im-status-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+        }
+        .im-status-badge.is-active .im-status-dot {
+          background: #22C55E;
+          box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.2);
+        }
+        .im-status-badge.is-inactive .im-status-dot {
+          background: #94A3B8;
+        }
+
+        /* 3-Dot Actions Menu Container */
+        .im-menu-container {
+          position: absolute;
+          top: 12px;
+          right: 12px;
+          z-index: 20;
+        }
+        .im-dots-btn {
+          width: 32px;
+          height: 32px;
+          border-radius: 8px;
+          border: 1px solid #E2E8F0;
+          background: #FFFFFF;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          transition: all 0.2s ease;
+          color: #64748B;
+          box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+          padding: 0;
+        }
+        .im-dots-btn:hover, .im-dots-btn.is-open {
+          background: #F1F5F9;
+          color: #0F172A;
+          border-color: #CBD5E1;
+        }
+        .im-dropdown-menu {
+          position: absolute;
+          top: 38px;
+          right: 0;
+          min-width: 215px;
+          background: #FFFFFF;
+          border-radius: 12px;
+          box-shadow: 0 12px 28px rgba(15, 23, 42, 0.15), 0 4px 10px rgba(0, 0, 0, 0.06);
+          border: 1px solid #E2E8F0;
+          padding: 6px;
+          z-index: 100;
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          animation: imDropdownFadeIn 0.15s ease-out;
+        }
+        @keyframes imDropdownFadeIn {
+          from { opacity: 0; transform: translateY(-4px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .im-dropdown-item {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          width: 100%;
+          padding: 8px 12px;
+          border-radius: 8px;
+          border: none;
+          background: transparent;
+          font-family: 'Outfit', sans-serif;
+          font-size: 13px;
+          font-weight: 500;
+          color: #334155;
+          text-align: left;
+          cursor: pointer;
+          transition: background-color 0.15s ease, color 0.15s ease;
+        }
+        .im-dropdown-item:hover:not(:disabled) {
+          background: #F8FAFC;
+          color: #0F172A;
+        }
+        .im-dropdown-item:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+        .im-dropdown-item.danger {
+          color: #DC2626;
+        }
+        .im-dropdown-item.danger:hover:not(:disabled) {
+          background: #FEF2F2;
+          color: #B91C1C;
+        }
+        .im-dropdown-divider {
+          height: 1px;
+          background: #F1F5F9;
+          margin: 4px 6px;
+        }
+        @keyframes imSlideDown {
+          from {
+            opacity: 0;
+            transform: translate(-50%, -14px);
+          }
+          to {
+            opacity: 1;
+            transform: translate(-50%, 0);
+          }
+        }
+          to {
+            opacity: 1;
+            transform: translateX(0) scale(1);
+          }
+        }
+        @media (max-width: 640px) {
+          .im-toast-popup {
+            left: 16px !important;
+            right: 16px !important;
+            top: 16px !important;
+            max-width: none !important;
+          }
+        }
+
+
         .im-avatar-header {
           display: flex;
           justify-content: center;

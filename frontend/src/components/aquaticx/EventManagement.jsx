@@ -195,7 +195,7 @@ const EventManagement = ({ currentUser }) => {
                 }
 
                 // If logged in as a coach, only show sessions assigned to this coach
-                if (userRole === 'coach' && activeUser.name) {
+                if (userRole === 'coach' && !activeUser.is_head_coach && activeUser.name) {
                     const coachName = activeUser.name.toLowerCase();
                     const coachId = activeUser.instructor_id || activeUser.id;
                     sessions = sessions.filter(s => {
