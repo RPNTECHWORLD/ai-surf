@@ -127,6 +127,7 @@ const InstructorManagement = () => {
   }, [location]);
   const [saving, setSaving] = useState(false);
   const fileInputRef = useRef(null);
+  const addFormRef = useRef(null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [photoPreview, setPhotoPreview] = useState('');
   const [deletingId, setDeletingId] = useState(null);
@@ -202,6 +203,8 @@ const InstructorManagement = () => {
   const [leaveSearch, setLeaveSearch] = useState('');
   const [actionLoadingId, setActionLoadingId] = useState(null);
   const [changeApprovalLeave, setChangeApprovalLeave] = useState(null);
+  const [filterPendingOnly, setFilterPendingOnly] = useState(false);
+  const [coachActionLoadingId, setCoachActionLoadingId] = useState(null);
   const [leaveMonthDate, setLeaveMonthDate] = useState(() => new Date()); // Default to current month
   const [leaveViewMode, setLeaveViewMode] = useState('list'); // 'list' (default) | 'calendar'
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(null);
@@ -504,8 +507,15 @@ const InstructorManagement = () => {
       .catch(() => {});
   }, [currentSchool]);
 
+  const pendingCoachesCount = useMemo(() => {
+    return instructors.filter(i => (i.approval_status || '').toLowerCase() === 'pending').length;
+  }, [instructors]);
+
   const filtered = instructors
     .filter(i => {
+      if (filterPendingOnly && (i.approval_status || '').toLowerCase() !== 'pending') {
+        return false;
+      }
       if (!isSuperAdmin && currentSchool) {
         const iSchool = (i.school || '').toLowerCase().trim();
         if (iSchool && iSchool !== currentSchool.toLowerCase().trim()) return false;
@@ -522,6 +532,11 @@ const InstructorManagement = () => {
       const bHead = Boolean(b.is_head_coach);
       if (aHead && !bHead) return -1;
       if (!aHead && bHead) return 1;
+      // Pending coaches next so school admin immediately sees requests requiring approval
+      const aPending = (a.approval_status || '').toLowerCase() === 'pending';
+      const bPending = (b.approval_status || '').toLowerCase() === 'pending';
+      if (aPending && !bPending) return -1;
+      if (!aPending && bPending) return 1;
       // Secondary sort: active instructors before inactive, then by id
       const aActive = a.is_active !== false;
       const bActive = b.is_active !== false;
@@ -841,6 +856,75 @@ const InstructorManagement = () => {
       alert('Network error while toggling status: ' + (err.message || err));
     } finally {
       setTogglingStatusId(null);
+    }
+  };
+
+  const handleApproveCoach = async (instructor) => {
+    if (coachActionLoadingId === instructor.id) return;
+    setCoachActionLoadingId(instructor.id);
+    try {
+      const res = await fetch(`${API}/api/instructors/${instructor.id}/approve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionStorage.getItem('token') || ''}`
+        }
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setInstructors(prev => prev.map(inst => 
+          inst.id === instructor.id 
+            ? { ...inst, approval_status: 'approved', is_active: true }
+            : inst
+        ));
+        setStatusToast({
+          show: true,
+          text: `✓ Coach "${instructor.name}" approved and activated!`,
+          isSuccess: true
+        });
+        setTimeout(() => setStatusToast(prev => ({ ...prev, show: false })), 4000);
+      } else {
+        alert(data.detail || 'Failed to approve coach.');
+      }
+    } catch (err) {
+      alert('Error approving coach: ' + (err.message || err));
+    } finally {
+      setCoachActionLoadingId(null);
+    }
+  };
+
+  const handleRejectCoach = async (instructor) => {
+    if (coachActionLoadingId === instructor.id) return;
+    if (!window.confirm(`Are you sure you want to reject coach "${instructor.name}"?`)) return;
+    setCoachActionLoadingId(instructor.id);
+    try {
+      const res = await fetch(`${API}/api/instructors/${instructor.id}/reject`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionStorage.getItem('token') || ''}`
+        }
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setInstructors(prev => prev.map(inst => 
+          inst.id === instructor.id 
+            ? { ...inst, approval_status: 'rejected', is_active: false }
+            : inst
+        ));
+        setStatusToast({
+          show: true,
+          text: `✕ Coach "${instructor.name}" registration was rejected.`,
+          isSuccess: true
+        });
+        setTimeout(() => setStatusToast(prev => ({ ...prev, show: false })), 4000);
+      } else {
+        alert(data.detail || 'Failed to reject coach.');
+      }
+    } catch (err) {
+      alert('Error rejecting coach: ' + (err.message || err));
+    } finally {
+      setCoachActionLoadingId(null);
     }
   };
 
@@ -1303,6 +1387,75 @@ const InstructorManagement = () => {
               )}
             </button>
 
+            <button
+              type="button"
+              onClick={() => setFilterPendingOnly(prev => !prev)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '11px 18px',
+                borderRadius: '12px',
+                border: filterPendingOnly 
+                  ? '1.5px solid #D97706' 
+                  : (pendingCoachesCount > 0 ? '1.5px solid #FCD34D' : '1.5px solid #CBD5E1'),
+                background: filterPendingOnly 
+                  ? '#F59E0B' 
+                  : (pendingCoachesCount > 0 ? '#FEF3C7' : '#FFFFFF'),
+                color: filterPendingOnly 
+                  ? '#FFFFFF' 
+                  : (pendingCoachesCount > 0 ? '#B45309' : '#0F172A'),
+                fontWeight: 700,
+                fontSize: '13.5px',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                boxShadow: '0 2px 6px rgba(0,0,0,0.03)',
+                boxSizing: 'border-box'
+              }}
+              onMouseEnter={(e) => {
+                if (!filterPendingOnly) {
+                  e.currentTarget.style.borderColor = '#D97706';
+                  e.currentTarget.style.color = '#B45309';
+                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(245, 158, 11, 0.15)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!filterPendingOnly) {
+                  e.currentTarget.style.borderColor = pendingCoachesCount > 0 ? '#FCD34D' : '#CBD5E1';
+                  e.currentTarget.style.color = pendingCoachesCount > 0 ? '#B45309' : '#0F172A';
+                  e.currentTarget.style.boxShadow = '0 2px 6px rgba(0,0,0,0.03)';
+                }
+              }}
+              title={filterPendingOnly ? 'Showing pending coach requests — click to view all' : 'View pending coach requests requiring approval'}
+            >
+              <span style={{ fontSize: '15px', lineHeight: 1 }}>⏳</span>
+              <span>Pending Requests</span>
+              {pendingCoachesCount > 0 ? (
+                <span style={{
+                  background: filterPendingOnly ? '#FFFFFF' : '#EF4444',
+                  color: filterPendingOnly ? '#B45309' : '#FFFFFF',
+                  padding: '2px 8px',
+                  borderRadius: '10px',
+                  fontSize: '11.5px',
+                  fontWeight: 800,
+                  boxShadow: '0 2px 6px rgba(239, 68, 68, 0.3)'
+                }}>
+                  {pendingCoachesCount}
+                </span>
+              ) : (
+                <span style={{
+                  background: '#F1F5F9',
+                  color: '#64748B',
+                  padding: '2px 8px',
+                  borderRadius: '10px',
+                  fontSize: '11px',
+                  fontWeight: 700
+                }}>
+                  0
+                </span>
+              )}
+            </button>
+
             {!isViewAdmin && (
               <button
                 className="im-btn-add-primary"
@@ -1317,6 +1470,11 @@ const InstructorManagement = () => {
                     location: getSchoolLocation(currentActiveSchool)
                   });
                   setShowAddModal(true);
+                  if (typeof window !== 'undefined' && window.innerWidth <= 1100) {
+                    setTimeout(() => {
+                      addFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }, 80);
+                  }
                 }}
               >
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
@@ -1424,26 +1582,47 @@ const InstructorManagement = () => {
             ) : (
               <div className="im-grid">
                 {filtered.length === 0 && (
-                  <div className="im-empty">No instructors match your search.</div>
+                  <div className="im-empty">
+                    {filterPendingOnly
+                      ? 'No pending coach requests at this time. All coaches are approved!'
+                      : 'No instructors match your search.'}
+                  </div>
                 )}
                 {filtered.map((instructor) => {
                   const hasValidImage = instructor.image && !instructor.image.startsWith('blob:') && !instructor.image.includes('unsplash.com') && !instructor.image.includes('1500648767791');
                   const isCoachActive = instructor.is_active !== false;
+                  const isPendingCoach = (instructor.approval_status || '').toLowerCase() === 'pending';
                   return (
                     <div
                       key={instructor.id}
                       className={`im-card ${!isCoachActive ? 'im-card-inactive' : ''}`}
                       style={activeMenuId === instructor.id ? { zIndex: 30 } : {}}
                     >
-                      {/* Top Left: Active / Inactive Status Indicator */}
+                      {/* Top Left: Active / Inactive / Pending Status Indicator */}
                       <div className="im-card-top-status">
-                        <span
-                          className={`im-status-badge ${isCoachActive ? 'is-active' : 'is-inactive'}`}
-                          title={`Status: ${isCoachActive ? 'Active' : 'Inactive'}`}
-                        >
-                          <span className="im-status-dot" />
-                          <span>{isCoachActive ? 'Active' : 'Inactive'}</span>
-                        </span>
+                        {isPendingCoach ? (
+                          <span
+                            className="im-status-badge"
+                            style={{
+                              background: '#FEF3C7',
+                              color: '#B45309',
+                              border: '1px solid #FCD34D',
+                              fontWeight: 700
+                            }}
+                            title="Status: Pending School Admin Approval"
+                          >
+                            <span className="im-status-dot" style={{ background: '#F59E0B' }} />
+                            <span>Pending Approval</span>
+                          </span>
+                        ) : (
+                          <span
+                            className={`im-status-badge ${isCoachActive ? 'is-active' : 'is-inactive'}`}
+                            title={`Status: ${isCoachActive ? 'Active' : 'Inactive'}`}
+                          >
+                            <span className="im-status-dot" />
+                            <span>{isCoachActive ? 'Active' : 'Inactive'}</span>
+                          </span>
+                        )}
                       </div>
 
                       {/* Top Right: 3-dot Actions Menu */}
@@ -1470,6 +1649,46 @@ const InstructorManagement = () => {
                             className="im-dropdown-menu"
                             onClick={(e) => e.stopPropagation()}
                           >
+                            {/* Pending Coach Approval Actions in Dropdown */}
+                            {isPendingCoach && (
+                              <>
+                                <button
+                                  type="button"
+                                  className="im-dropdown-item"
+                                  disabled={isViewAdmin || (!isAdminOrSchoolAdmin && !isSuperAdmin) || coachActionLoadingId === instructor.id}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setActiveMenuId(null);
+                                    handleApproveCoach(instructor);
+                                  }}
+                                  style={{ color: '#059669', fontWeight: 600 }}
+                                >
+                                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                    <polyline points="20 6 9 17 4 12" />
+                                  </svg>
+                                  <span>{coachActionLoadingId === instructor.id ? 'Approving...' : 'Approve Coach'}</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="im-dropdown-item"
+                                  disabled={isViewAdmin || (!isAdminOrSchoolAdmin && !isSuperAdmin) || coachActionLoadingId === instructor.id}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setActiveMenuId(null);
+                                    handleRejectCoach(instructor);
+                                  }}
+                                  style={{ color: '#DC2626', fontWeight: 600 }}
+                                >
+                                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                    <line x1="18" y1="6" x2="6" y2="18" />
+                                    <line x1="6" y1="6" x2="18" y2="18" />
+                                  </svg>
+                                  <span>{coachActionLoadingId === instructor.id ? 'Rejecting...' : 'Reject Application'}</span>
+                                </button>
+                                <div className="im-dropdown-divider" />
+                              </>
+                            )}
+
                             {/* Action 1: Active / Inactive */}
                             <button
                               type="button"
@@ -1604,6 +1823,20 @@ const InstructorManagement = () => {
                       <div className="im-card-body">
                         <h3 className="im-card-name">
                           {instructor.name}
+                          {(() => {
+                            const hasSameNameCoach = instructors.some(i => i.id !== instructor.id && i.name && instructor.name && i.name.toLowerCase().trim() === instructor.name.toLowerCase().trim());
+                            if (hasSameNameCoach) {
+                              return (
+                                <span
+                                  style={{ fontSize: '12px', color: '#64748B', fontWeight: 600, marginLeft: '6px' }}
+                                  title={`Coach ID: ${instructor.id}${instructor.email ? ` • ${instructor.email}` : ''}`}
+                                >
+                                  (#{instructor.id})
+                                </span>
+                              );
+                            }
+                            return null;
+                          })()}
                           {instructor.is_head_coach && (
                             <span title="Head Coach with Admin Privileges" style={{ marginLeft: '6px', fontSize: '15px' }}>👑</span>
                           )}
@@ -1619,11 +1852,26 @@ const InstructorManagement = () => {
                         
                         <div className="im-card-badges">
                           <div style={{ display: 'flex', gap: '6px', justifyContent: 'center', alignItems: 'center', width: '100%' }}>
-                          <span className="im-badge-cert" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '140px' }}>
-                            {Array.isArray(instructor.certifications) && instructor.certifications[0]
-                              ? instructor.certifications[0]
-                              : (typeof instructor.certifications === 'string' && instructor.certifications ? instructor.certifications.split(',')[0] : 'ISA Level 1')}
-                          </span>
+                          {(() => {
+                            let certName = '';
+                            if (Array.isArray(instructor.certifications) && instructor.certifications.length > 0) {
+                              certName = instructor.certifications[0];
+                            } else if (typeof instructor.certifications === 'string' && instructor.certifications.trim()) {
+                              try {
+                                const parsed = JSON.parse(instructor.certifications);
+                                if (Array.isArray(parsed) && parsed.length > 0) certName = parsed[0];
+                                else if (typeof parsed === 'string' && parsed.trim()) certName = parsed;
+                              } catch {
+                                certName = instructor.certifications.split(',')[0].trim();
+                              }
+                            }
+                            if (!certName) return null;
+                            return (
+                              <span className="im-badge-cert" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '140px' }} title={certName}>
+                                {certName}
+                              </span>
+                            );
+                          })()}
                           <span className="im-badge-level" style={{ background: instructor.school && instructor.school !== 'Individual / Freelance Coach' ? 'rgba(13, 148, 136, 0.12)' : 'rgba(59, 130, 246, 0.12)', color: instructor.school && instructor.school !== 'Individual / Freelance Coach' ? '#0D9488' : '#2563EB', borderColor: 'transparent', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '140px' }}>
                             {instructor.school ? (instructor.school.length > 16 ? instructor.school.slice(0, 14) + '...' : instructor.school) : 'Individual Coach'}
                           </span>
@@ -1713,6 +1961,73 @@ const InstructorManagement = () => {
                           </div>
                         )}
 
+                        {isPendingCoach && (
+                          <div style={{
+                            margin: '12px 0 6px 0',
+                            padding: '10px 12px',
+                            background: 'rgba(245, 158, 11, 0.08)',
+                            borderRadius: '12px',
+                            border: '1.5px solid rgba(245, 158, 11, 0.3)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '8px'
+                          }}>
+                            <div style={{ fontSize: '12px', color: '#B45309', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <span>⏳</span> Pending School Approval
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              <button
+                                type="button"
+                                disabled={isViewAdmin || (!isAdminOrSchoolAdmin && !isSuperAdmin) || coachActionLoadingId === instructor.id}
+                                onClick={(e) => { e.stopPropagation(); handleApproveCoach(instructor); }}
+                                style={{
+                                  flex: 1,
+                                  padding: '8px 10px',
+                                  background: '#10B981',
+                                  color: '#FFFFFF',
+                                  border: 'none',
+                                  borderRadius: '8px',
+                                  fontSize: '12px',
+                                  fontWeight: 700,
+                                  cursor: (isViewAdmin || (!isAdminOrSchoolAdmin && !isSuperAdmin) || coachActionLoadingId === instructor.id) ? 'not-allowed' : 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: '5px',
+                                  boxShadow: '0 2px 4px rgba(16, 185, 129, 0.25)'
+                                }}
+                              >
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                                <span>{coachActionLoadingId === instructor.id ? 'Approving...' : 'Approve'}</span>
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isViewAdmin || (!isAdminOrSchoolAdmin && !isSuperAdmin) || coachActionLoadingId === instructor.id}
+                                onClick={(e) => { e.stopPropagation(); handleRejectCoach(instructor); }}
+                                style={{
+                                  flex: 1,
+                                  padding: '8px 10px',
+                                  background: '#EF4444',
+                                  color: '#FFFFFF',
+                                  border: 'none',
+                                  borderRadius: '8px',
+                                  fontSize: '12px',
+                                  fontWeight: 700,
+                                  cursor: (isViewAdmin || (!isAdminOrSchoolAdmin && !isSuperAdmin) || coachActionLoadingId === instructor.id) ? 'not-allowed' : 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: '5px',
+                                  boxShadow: '0 2px 4px rgba(239, 68, 68, 0.25)'
+                                }}
+                              >
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                                <span>{coachActionLoadingId === instructor.id ? 'Rejecting...' : 'Reject'}</span>
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
                         <div className="im-card-divider" />
                         <div className="im-card-footer">
                           <button className="im-card-view-profile" onClick={() => navigate(`/instructors/${instructor.id}`)}>
@@ -1768,7 +2083,7 @@ const InstructorManagement = () => {
 
           {/* Right Column - Add / Edit Sidebar Panel */}
           {showAddModal && (
-            <div className="im-right-column">
+            <div className="im-right-column" ref={addFormRef}>
               <div className="im-form-header">
                 <h2>{selected ? 'Edit Instructor' : 'Add New Instructor'}</h2>
                 <button className="im-form-close" onClick={() => { setShowAddModal(false); setSelected(null); setPhotoPreview(''); }}>
@@ -4301,15 +4616,36 @@ const InstructorManagement = () => {
           border-color: #F87171;
         }
 
-        /* Mobile adjustments */
+        @keyframes imSlideDownForm {
+          from {
+            opacity: 0;
+            transform: translateY(-12px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+
+        /* Mobile adjustments: Form appears on TOP in mobile & tablet */
         @media (max-width: 1100px) {
           .im-content-layout {
+            display: flex;
             flex-direction: column;
+            gap: 20px;
           }
           .im-right-column {
             width: 100%;
             position: static;
             max-height: none;
+            order: -1 !important; /* Put Add / Edit Instructor form on TOP in mobile & tablet */
+            margin-bottom: 8px;
+            box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.08), 0 0 0 1px rgba(13, 148, 136, 0.15);
+            animation: imSlideDownForm 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+          }
+          .im-left-column {
+            width: 100%;
+            order: 2 !important;
           }
         }
 
@@ -4355,7 +4691,9 @@ const InstructorManagement = () => {
           }
           .im-right-column {
             padding: 16px 14px !important;
-            border-radius: 12px !important;
+            border-radius: 14px !important;
+            order: -1 !important;
+            margin-bottom: 8px !important;
           }
           .form-row {
             flex-direction: column !important;

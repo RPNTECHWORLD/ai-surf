@@ -115,61 +115,182 @@ export default function DateRangeFilterBar({
         padding: '3px 4px',
         gap: '5px',
         boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-        flexWrap: 'nowrap',
         boxSizing: 'border-box',
         height: '40px',
         fontFamily: "'Outfit', sans-serif",
         ...style
       }}
     >
-      {/* Yesterday */}
-      <button
-        type="button"
-        style={btnStyle(activePreset === 'yesterday')}
-        onClick={() => handleSelectPreset('yesterday')}
-        title="Filter by yesterday"
-      >
-        Yesterday
-      </button>
+      <style>{`
+        .date-range-filter-container {
+          display: inline-flex;
+          align-items: center;
+          max-width: 100%;
+          box-sizing: border-box;
+        }
+        .drfb-presets-row {
+          display: flex;
+          align-items: center;
+          gap: 5px;
+          flex-shrink: 0;
+        }
+        .drfb-divider {
+          width: 1px;
+          height: 22px;
+          background: #CBD5E1;
+          margin: 0 2px;
+          flex-shrink: 0;
+        }
+        .drfb-custom-box {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          border-radius: 8px;
+          padding: 0 8px;
+          height: 32px;
+          box-sizing: border-box;
+          flex-shrink: 0;
+          transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+        .drfb-date-group {
+          display: flex;
+          align-items: center;
+          gap: 3px;
+          flex-shrink: 0;
+        }
+        .drfb-custom-box input[type="date"] {
+          border-radius: 6px;
+          background: #FFFFFF;
+          font-weight: 700;
+          font-size: 11.5px;
+          padding: 0 5px;
+          width: 114px;
+          height: 24px;
+          box-sizing: border-box;
+          cursor: pointer;
+          outline: none;
+          font-family: 'Outfit', sans-serif;
+          flex-shrink: 0;
+        }
 
-      {/* Today */}
-      <button
-        type="button"
-        style={btnStyle(activePreset === 'today')}
-        onClick={() => handleSelectPreset('today')}
-        title="Filter by today"
-      >
-        Today
-      </button>
+        @media (max-width: 640px) {
+          .date-range-filter-container {
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: stretch !important;
+            width: 100% !important;
+            height: auto !important;
+            padding: 6px !important;
+            gap: 6px !important;
+            overflow-x: hidden !important;
+          }
+          .drfb-presets-row {
+            display: flex !important;
+            width: 100% !important;
+            gap: 4px !important;
+          }
+          .drfb-presets-row > button {
+            flex: 1 1 0 !important;
+            min-width: 0 !important;
+            padding: 0 2px !important;
+            font-size: 11px !important;
+            height: 32px !important;
+            justify-content: center !important;
+            text-align: center !important;
+          }
+          .drfb-divider {
+            display: none !important;
+          }
+          .drfb-separator {
+            display: none !important;
+          }
+          .drfb-custom-box {
+            width: 100% !important;
+            display: flex !important;
+            justify-content: space-between !important;
+            align-items: center !important;
+            gap: 6px !important;
+            padding: 0 6px !important;
+            min-width: 0 !important;
+            height: 34px !important;
+          }
+          .drfb-date-group {
+            display: flex !important;
+            align-items: center !important;
+            gap: 3px !important;
+            flex: 1 1 0 !important;
+            min-width: 0 !important;
+          }
+          .drfb-date-group span {
+            font-size: 10.5px !important;
+            font-weight: 700 !important;
+          }
+          .drfb-custom-box input[type="date"] {
+            width: 100% !important;
+            min-width: 0 !important;
+            font-size: 10.5px !important;
+            padding: 0 3px !important;
+            height: 24px !important;
+          }
+        }
+      `}</style>
 
-      {/* Tomorrow */}
-      <button
-        type="button"
-        style={btnStyle(activePreset === 'tomorrow')}
-        onClick={() => handleSelectPreset('tomorrow')}
-        title="Filter by tomorrow"
-      >
-        Tomorrow
-      </button>
+      {/* Presets Row */}
+      <div className="drfb-presets-row">
+        {/* Yesterday */}
+        <button
+          type="button"
+          style={btnStyle(activePreset === 'yesterday')}
+          onClick={() => handleSelectPreset('yesterday')}
+          title="Filter by yesterday"
+        >
+          Yesterday
+        </button>
+
+        {/* Today */}
+        <button
+          type="button"
+          style={btnStyle(activePreset === 'today')}
+          onClick={() => handleSelectPreset('today')}
+          title="Filter by today"
+        >
+          Today
+        </button>
+
+        {/* Tomorrow */}
+        <button
+          type="button"
+          style={btnStyle(activePreset === 'tomorrow')}
+          onClick={() => handleSelectPreset('tomorrow')}
+          title="Filter by tomorrow"
+        >
+          Tomorrow
+        </button>
+
+        {/* All Option on mobile shares the presets row */}
+        {allowAll && (
+          <button
+            type="button"
+            className="drfb-all-btn"
+            style={btnStyle(activePreset === 'all')}
+            onClick={() => handleSelectPreset('all')}
+            title="Show all records without date restrictions"
+          >
+            All
+          </button>
+        )}
+      </div>
 
       {/* Divider */}
-      <div style={{ width: '1px', height: '22px', background: '#CBD5E1', margin: '0 2px', flexShrink: 0 }} />
+      <div className="drfb-divider" />
 
       {/* Custom Range: Clean From & To Calendar pickers with permanent fixed dimensions */}
       <div
+        className="drfb-custom-box"
         style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: '6px',
           background: isCustomActive ? '#F0FDFA' : '#FFFFFF',
           border: isCustomActive ? '1.5px solid #0D9488' : '1.5px solid #CBD5E1',
-          borderRadius: '8px',
-          padding: '0 8px',
-          height: '32px',
-          boxSizing: 'border-box',
-          boxShadow: isCustomActive ? '0 0 0 2px rgba(13, 148, 136, 0.15)' : 'none',
-          transition: 'background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease',
-          flexShrink: 0
+          boxShadow: isCustomActive ? '0 0 0 2px rgba(13, 148, 136, 0.15)' : 'none'
         }}
         title="Select custom Start Date and End Date"
       >
@@ -192,7 +313,7 @@ export default function DateRangeFilterBar({
         </svg>
 
         {/* From Date Input with visible field */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '3px', flexShrink: 0 }}>
+        <div className="drfb-date-group">
           <span style={{ fontSize: '11px', color: isCustomActive ? '#0D9488' : '#64748B', fontWeight: 700, userSelect: 'none' }}>
             From:
           </span>
@@ -207,27 +328,15 @@ export default function DateRangeFilterBar({
             }}
             style={{
               border: isCustomActive ? '1px solid #99F6E4' : '1px solid #E2E8F0',
-              borderRadius: '6px',
-              background: '#FFFFFF',
-              color: isCustomActive ? '#0F766E' : '#1E293B',
-              fontWeight: 700,
-              fontSize: '11.5px',
-              padding: '0 5px',
-              width: '118px',
-              height: '24px',
-              boxSizing: 'border-box',
-              cursor: 'pointer',
-              outline: 'none',
-              fontFamily: "'Outfit', sans-serif",
-              flexShrink: 0
+              color: isCustomActive ? '#0F766E' : '#1E293B'
             }}
           />
         </div>
 
-        <span style={{ color: '#94A3B8', fontWeight: 700, fontSize: '11px', userSelect: 'none', flexShrink: 0 }}>to</span>
+        <span className="drfb-separator" style={{ color: '#94A3B8', fontWeight: 700, fontSize: '11px', userSelect: 'none', flexShrink: 0 }}>to</span>
 
         {/* To Date Input with visible field */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '3px', flexShrink: 0 }}>
+        <div className="drfb-date-group">
           <span style={{ fontSize: '11px', color: isCustomActive ? '#0D9488' : '#64748B', fontWeight: 700, userSelect: 'none' }}>
             To:
           </span>
@@ -242,24 +351,12 @@ export default function DateRangeFilterBar({
             }}
             style={{
               border: isCustomActive ? '1px solid #99F6E4' : '1px solid #E2E8F0',
-              borderRadius: '6px',
-              background: '#FFFFFF',
-              color: isCustomActive ? '#0F766E' : '#1E293B',
-              fontWeight: 700,
-              fontSize: '11.5px',
-              padding: '0 5px',
-              width: '118px',
-              height: '24px',
-              boxSizing: 'border-box',
-              cursor: 'pointer',
-              outline: 'none',
-              fontFamily: "'Outfit', sans-serif",
-              flexShrink: 0
+              color: isCustomActive ? '#0F766E' : '#1E293B'
             }}
           />
         </div>
 
-        {/* Reset button: ALWAYS occupies fixed 20px slot so the container width NEVER shifts */}
+        {/* Reset button */}
         <button
           type="button"
           onClick={isCustomActive ? handleReset : undefined}
@@ -302,21 +399,6 @@ export default function DateRangeFilterBar({
           ✕
         </button>
       </div>
-
-      {/* Divider */}
-      {allowAll && <div style={{ width: '1px', height: '22px', background: '#CBD5E1', margin: '0 2px', flexShrink: 0 }} />}
-
-      {/* All Option */}
-      {allowAll && (
-        <button
-          type="button"
-          style={btnStyle(activePreset === 'all')}
-          onClick={() => handleSelectPreset('all')}
-          title="Show all records without date restrictions"
-        >
-          All
-        </button>
-      )}
     </div>
   );
 }

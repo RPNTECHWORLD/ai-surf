@@ -86,6 +86,10 @@ try:
                     test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS school_id INTEGER;"))
                     test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_by_school BOOLEAN DEFAULT FALSE;"))
                     test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
+                    test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_head_coach BOOLEAN DEFAULT FALSE;"))
+                    test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS guest_role VARCHAR DEFAULT 'main_admin';"))
+                    test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_head_coach BOOLEAN DEFAULT FALSE;"))
+                    test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS guest_role VARCHAR DEFAULT 'main_admin';"))
                     test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS deletion_scheduled_at TIMESTAMP;"))
                     test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_plain VARCHAR DEFAULT '';"))
                     test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider VARCHAR DEFAULT 'email';"))
@@ -94,6 +98,7 @@ try:
                     test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS image VARCHAR DEFAULT '';"))
                     test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR DEFAULT '';"))
                     test_conn.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS logo VARCHAR DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
                     test_conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS attendance VARCHAR DEFAULT '';"))
                     test_conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS instructor_ids VARCHAR DEFAULT '[]';"))
                     test_conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS group_name VARCHAR DEFAULT '';"))
@@ -101,6 +106,60 @@ try:
                     test_conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS guest_name VARCHAR DEFAULT '';"))
                     test_conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS image_url VARCHAR DEFAULT '';"))
                     test_conn.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
+                    test_conn.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS is_head_coach BOOLEAN DEFAULT FALSE;"))
+                    test_conn.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS approval_status VARCHAR DEFAULT 'approved';"))
+                    test_conn.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS intro_video VARCHAR DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS price DOUBLE PRECISION DEFAULT 100.0;"))
+                    test_conn.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS languages TEXT DEFAULT '[\"English\"]';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS approval_status VARCHAR DEFAULT 'approved';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS invite_token VARCHAR;"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS guests_details TEXT DEFAULT '[]';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS reminder_preference VARCHAR DEFAULT 'WhatsApp Text';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS reminder_sent BOOLEAN DEFAULT FALSE;"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS swimming_ability VARCHAR DEFAULT 'Swimmer';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS staying_at_school VARCHAR DEFAULT 'Yes';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS session_time VARCHAR;"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS start_date VARCHAR;"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS end_date VARCHAR;"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS course_duration VARCHAR DEFAULT '3 Days Course';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS guests_count INTEGER DEFAULT 0;"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS whatsapp_number VARCHAR DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS bio TEXT DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS dob VARCHAR DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS age INTEGER;"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS gender VARCHAR DEFAULT 'Male';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS division VARCHAR DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS stance VARCHAR DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS surf_stats TEXT DEFAULT '{}';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS performance_logs TEXT DEFAULT '[]';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS school VARCHAR DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS is_head_coach BOOLEAN DEFAULT FALSE;"))
+                    test_conn.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS approval_status VARCHAR DEFAULT 'approved';"))
+                    test_conn.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS intro_video VARCHAR DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS price DOUBLE PRECISION DEFAULT 100.0;"))
+                    test_conn.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS languages TEXT DEFAULT '[\"English\"]';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS approval_status VARCHAR DEFAULT 'approved';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS invite_token VARCHAR;"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS guests_details TEXT DEFAULT '[]';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS reminder_preference VARCHAR DEFAULT 'WhatsApp Text';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS reminder_sent BOOLEAN DEFAULT FALSE;"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS swimming_ability VARCHAR DEFAULT 'Swimmer';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS staying_at_school VARCHAR DEFAULT 'Yes';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS session_time VARCHAR;"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS start_date VARCHAR;"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS end_date VARCHAR;"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS course_duration VARCHAR DEFAULT '3 Days Course';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS guests_count INTEGER DEFAULT 0;"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS whatsapp_number VARCHAR DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS bio TEXT DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS dob VARCHAR DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS age INTEGER;"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS gender VARCHAR DEFAULT 'Male';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS division VARCHAR DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS stance VARCHAR DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS surf_stats TEXT DEFAULT '{}';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS performance_logs TEXT DEFAULT '[]';"))
+                    test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS school VARCHAR DEFAULT '';"))
                     test_conn.commit()
                 except Exception as mig_err:
                     print(f"Notice: Non-destructive migration note ({mig_err}).")
@@ -156,11 +215,17 @@ try:
             i_cols = [row[1] for row in _c.execute(text("PRAGMA table_info(instructors)")).fetchall()]
             if "is_active" not in i_cols:
                 _c.execute(text("ALTER TABLE instructors ADD COLUMN is_active BOOLEAN DEFAULT 1;"))
+            if "approval_status" not in i_cols:
+                _c.execute(text("ALTER TABLE instructors ADD COLUMN approval_status VARCHAR DEFAULT 'approved';"))
         else:
             _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS school_name VARCHAR DEFAULT '';"))
             _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS school_id INTEGER;"))
             _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_by_school BOOLEAN DEFAULT FALSE;"))
             _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
+            _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_head_coach BOOLEAN DEFAULT FALSE;"))
+            _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS guest_role VARCHAR DEFAULT 'main_admin';"))
+            _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_head_coach BOOLEAN DEFAULT FALSE;"))
+            _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS guest_role VARCHAR DEFAULT 'main_admin';"))
             _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS deletion_scheduled_at TIMESTAMP;"))
             _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_plain VARCHAR DEFAULT '';"))
             _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider VARCHAR DEFAULT 'email';"))
@@ -169,6 +234,7 @@ try:
             _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS image VARCHAR DEFAULT '';"))
             _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR DEFAULT '';"))
             _c.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS logo VARCHAR DEFAULT '';"))
+            _c.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
             _c.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS attendance VARCHAR DEFAULT '';"))
             _c.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS instructor_ids VARCHAR DEFAULT '[]';"))
             _c.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS group_name VARCHAR DEFAULT '';"))
@@ -176,6 +242,33 @@ try:
             _c.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS guest_name VARCHAR DEFAULT '';"))
             _c.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS image_url VARCHAR DEFAULT '';"))
             _c.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
+            _c.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS is_head_coach BOOLEAN DEFAULT FALSE;"))
+            _c.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS approval_status VARCHAR DEFAULT 'approved';"))
+            _c.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS intro_video VARCHAR DEFAULT '';"))
+            _c.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS price DOUBLE PRECISION DEFAULT 100.0;"))
+            _c.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS languages TEXT DEFAULT '[\"English\"]';"))
+            _c.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS approval_status VARCHAR DEFAULT 'approved';"))
+            _c.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS invite_token VARCHAR;"))
+            _c.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS guests_details TEXT DEFAULT '[]';"))
+            _c.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS reminder_preference VARCHAR DEFAULT 'WhatsApp Text';"))
+            _c.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS reminder_sent BOOLEAN DEFAULT FALSE;"))
+            _c.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS swimming_ability VARCHAR DEFAULT 'Swimmer';"))
+            _c.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS staying_at_school VARCHAR DEFAULT 'Yes';"))
+            _c.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS session_time VARCHAR;"))
+            _c.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS start_date VARCHAR;"))
+            _c.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS end_date VARCHAR;"))
+            _c.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS course_duration VARCHAR DEFAULT '3 Days Course';"))
+            _c.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS guests_count INTEGER DEFAULT 0;"))
+            _c.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS whatsapp_number VARCHAR DEFAULT '';"))
+            _c.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS bio TEXT DEFAULT '';"))
+            _c.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS dob VARCHAR DEFAULT '';"))
+            _c.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS age INTEGER;"))
+            _c.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS gender VARCHAR DEFAULT 'Male';"))
+            _c.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS division VARCHAR DEFAULT '';"))
+            _c.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS stance VARCHAR DEFAULT '';"))
+            _c.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS surf_stats TEXT DEFAULT '{}';"))
+            _c.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS performance_logs TEXT DEFAULT '[]';"))
+            _c.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS school VARCHAR DEFAULT '';"))
         _c.commit()
 except Exception as _e:
     print(f"Notice: Non-destructive DB check ({_e}).")
@@ -253,6 +346,7 @@ class Instructor(Base):
     school = Column(String, default="Individual / Freelance Coach", nullable=True)
     is_head_coach = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
+    approval_status = Column(String, default="approved")
 
     user_rel = relationship("User", back_populates="instructor")
     students = relationship("Student", back_populates="instructor_rel")
@@ -1665,6 +1759,9 @@ class UserSignup(BaseModel):
     location: Optional[str] = ""
     school: Optional[str] = ""
     school_location: Optional[str] = ""
+    certifications: Optional[Union[List[str], str]] = []
+    bio: Optional[str] = ""
+    languages: Optional[Union[List[str], str]] = []
     # Invite token (pre-links to an existing student record created by admin)
     invite_token: Optional[str] = None
     # School batch invite code (locks school and limits total capacity)
@@ -1938,6 +2035,7 @@ def instructor_to_dict(i: Instructor, target_date: Optional[str] = None):
         "reviews": json.loads(i.reviews) if i.reviews else [],
         "school": i.school or "Individual / Freelance Coach",
         "is_active": True if getattr(i, 'is_active', None) is None else bool(i.is_active),
+        "approval_status": getattr(i, 'approval_status', None) or (i.user_rel.approval_status if i.user_rel else "approved"),
         "is_head_coach": bool(getattr(i, 'is_head_coach', False)),
         "user_id": i.user_id,
         "has_password": has_pwd,
@@ -2150,11 +2248,15 @@ def session_to_dict(s: SurfSession, db: Optional[OrmSession] = None):
             pass
 
     # If notes has multiple coach names, look up their instructor IDs in DB
-    if notes_coach_names and db_sess:
+    # ONLY if inst_ids is empty (legacy sessions without explicit instructor_ids) do we match from notes
+    if not inst_ids and notes_coach_names and db_sess:
         try:
             from sqlalchemy import func
             lower_names = [n.lower() for n in notes_coach_names]
-            matched_from_notes = db_sess.query(Instructor).filter(func.lower(Instructor.name).in_(lower_names)).all()
+            q = db_sess.query(Instructor).filter(func.lower(Instructor.name).in_(lower_names))
+            if s.school:
+                q = q.filter(func.lower(Instructor.school) == s.school.lower())
+            matched_from_notes = q.all()
             for mi in matched_from_notes:
                 if mi.id not in inst_ids:
                     inst_ids.append(mi.id)
@@ -2182,6 +2284,16 @@ def session_to_dict(s: SurfSession, db: Optional[OrmSession] = None):
 
     resolved_instructor_name = ", ".join(inst_names) if inst_names else (s.instructor_rel.name if s.instructor_rel else "")
 
+    st_obj = s.student_rel
+    if not st_obj and s.student_id and db_sess:
+        try:
+            st_obj = db_sess.query(Student).filter(Student.id == s.student_id).first()
+        except Exception:
+            pass
+
+    resolved_start_date = getattr(st_obj, 'start_date', '') if st_obj else ''
+    resolved_course_duration = getattr(st_obj, 'course_duration', '') if st_obj else ''
+
     return {
         "id": s.id,
         "date": s.date,
@@ -2194,7 +2306,7 @@ def session_to_dict(s: SurfSession, db: Optional[OrmSession] = None):
         "is_guest": bool(g_name and g_name.strip()),
         "phone": phone,
         "whatsapp_number": whatsapp,
-        "school": s.student_rel.school if (s.student_rel and s.student_rel.school) else (s.instructor_rel.school if (s.instructor_rel and s.instructor_rel.school) else ""),
+        "school": (st_obj.school if st_obj and st_obj.school else (s.instructor_rel.school if (s.instructor_rel and s.instructor_rel.school) else "")),
         "instructor_id": s.instructor_id,
         "instructor_ids": inst_ids if inst_ids else ([s.instructor_id] if s.instructor_id else []),
         "instructor": resolved_instructor_name,
@@ -2207,6 +2319,8 @@ def session_to_dict(s: SurfSession, db: Optional[OrmSession] = None):
         "video_url": s.video_url or "",
         "image_url": getattr(s, 'image_url', '') or "",
         "group_name": getattr(s, 'group_name', '') or "",
+        "start_date": resolved_start_date or "",
+        "course_duration": resolved_course_duration or "",
         "attendance": getattr(s, 'attendance', '') or "",
     }
 
@@ -2261,6 +2375,7 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
         "auth_provider": user.auth_provider,
         "created_by_school": user.created_by_school,
         "is_head_coach": bool(getattr(user, "is_head_coach", False)),
+        "approval_status": getattr(user, "approval_status", "approved") or "approved",
         "deletion_scheduled_at": user.deletion_scheduled_at.isoformat() if getattr(user, "deletion_scheduled_at", None) else None,
     }
 
@@ -2317,6 +2432,7 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
                 inst_name = sess.instructor_rel.name
         res["instructor_id"] = inst_id
         res["instructor"] = inst_name
+        res["approval_status"] = getattr(student_obj, "approval_status", None) or res.get("approval_status", "approved")
     elif instructor_obj:
         res["instructor_id"] = instructor_obj.id
         res["name"] = instructor_obj.name
@@ -2336,6 +2452,7 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
         res["certifications"] = instructor_obj.certifications
         res["specializations"] = instructor_obj.specializations
         res["is_active"] = instructor_obj.is_active
+        res["approval_status"] = getattr(instructor_obj, "approval_status", None) or res.get("approval_status", "approved")
         res["is_head_coach"] = bool(getattr(instructor_obj, "is_head_coach", False)) or bool(getattr(user, "is_head_coach", False))
     elif user.role == "guest_admin":
         res["name"] = getattr(user, "name", None) or ("View Admin" if getattr(user, "guest_role", None) == "view_admin" else "Main Admin")
@@ -2513,7 +2630,12 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
         coach_school = selected_school or "Individual / Freelance Coach"
         if coach_school == "Individual / Freelance Coach" and not (data.location or "").strip():
             raise HTTPException(status_code=400, detail="Location / region is required for individual coaches.")
-    initial_approval = "approved" if (data.invite_token or data.invite_code or role != "athlete" or not selected_school) else "pending"
+        # When a coach registers selecting a school, they MUST NOT be automatically assigned/active!
+        # The school admin must approve them first.
+        is_school_coach = bool(selected_school and selected_school.lower() != "individual / freelance coach")
+        initial_approval = "pending" if is_school_coach else "approved"
+    else:
+        initial_approval = "approved" if (data.invite_token or data.invite_code or not selected_school) else "pending"
 
     # If signup is via school invite link, validate and lock early
     school_invite_record = None
@@ -2554,6 +2676,7 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
         role=role,
         auth_provider="email",
         approval_status=initial_approval,
+        is_active=True,
         name=data.name,
         phone=phone_clean
     )
@@ -2644,6 +2767,26 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
             coach_location = "North Shore, Oahu"
 
         coach_phone = phone_clean
+
+        # Parse coach certifications (do NOT hardcode mock/default certificates)
+        raw_certs = getattr(data, 'certifications', None)
+        saved_certs = []
+        if isinstance(raw_certs, list):
+            saved_certs = [str(c).strip() for c in raw_certs if str(c).strip()]
+        elif isinstance(raw_certs, str) and raw_certs.strip():
+            saved_certs = [c.strip() for c in raw_certs.split(',') if c.strip()]
+
+        # Parse coach languages
+        raw_langs = getattr(data, 'languages', None)
+        saved_langs = []
+        if isinstance(raw_langs, list):
+            saved_langs = [str(l).strip() for l in raw_langs if str(l).strip()]
+        elif isinstance(raw_langs, str) and raw_langs.strip():
+            saved_langs = [l.strip() for l in raw_langs.split(',') if l.strip()]
+
+        # Coach Bio (do NOT hardcode mock text)
+        coach_bio = (getattr(data, 'bio', '') or '').strip()
+
         instructor = Instructor(
             user_id=user.id,
             name=data.name,
@@ -2654,17 +2797,23 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
             gender="Male",
             fitness_level="Advanced",
             experience="3 Years",
-            certifications=json.dumps(["ISA Level 1", "Lifeguard Certified"]),
+            certifications=json.dumps(saved_certs),
+            languages=json.dumps(saved_langs) if saved_langs else json.dumps(["English"]),
             image=data.image or "",
-            bio="Professional surf instructor dedicated to athletic performance.",
+            bio=coach_bio,
             specializations=json.dumps(data.specializations or ["S&C", "Video Analysis"]),
             rates=data.rates or "$75 / hr",
             location=coach_location,
             school=coach_school,
+            approval_status=initial_approval,
+            is_active=False if initial_approval == "pending" else True,
             reviews=json.dumps([])
         )
         db.add(instructor)
-        db.add(ActivityLog(text=f"New coach {data.name} joined the academy", type="individual", school=instructor.school or "Individual / Freelance Coach"))
+        if initial_approval == "pending":
+            db.add(ActivityLog(text=f"New coach {data.name} applied to join {coach_school} (Pending Approval)", type="individual", school=coach_school))
+        else:
+            db.add(ActivityLog(text=f"New coach {data.name} joined the academy", type="individual", school=instructor.school or "Individual / Freelance Coach"))
     elif role == "admin":
         requested_school = (data.school or "").strip()
         requested_location = (getattr(data, "school_location", None) or getattr(data, "location", None) or "").strip()
@@ -3127,7 +3276,15 @@ def auth_login(data: UserLogin, db: OrmSession = Depends(get_db)):
             }
 
     if matched_user.is_active is False:
-        raise HTTPException(status_code=403, detail="Your account has been deactivated by Super Admin. Please contact support.")
+        user_approval = getattr(matched_user, "approval_status", "")
+        if matched_user.role == "coach" and user_approval == "pending":
+            # Allow coach to log in; inside their portal/profile it will show 'Pending School Approval'
+            matched_user.is_active = True
+            db.commit()
+        elif user_approval == "rejected":
+            raise HTTPException(status_code=403, detail="Registration Rejected: Your join request was rejected by the School Admin.")
+        else:
+            raise HTTPException(status_code=403, detail="Your account has been deactivated by Super Admin. Please contact support.")
 
     if matched_user.role == "admin" and matched_user.email:
         sch = db.query(School).filter(func.lower(School.email) == matched_user.email.lower()).first()
@@ -4120,6 +4277,12 @@ def create_instructor(data: InstructorCreate, request: Request, db: OrmSession =
 
         existing_user = db.query(User).filter(func.lower(User.email) == email_clean).first()
         if existing_user:
+            user_already_has_inst = db.query(Instructor).filter(Instructor.user_id == existing_user.id).first()
+            if user_already_has_inst:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"The email '{email_clean}' is already linked to Coach {user_already_has_inst.name}. Please use a unique email for this coach."
+                )
             user_id = existing_user.id
             if data.password and len(data.password.strip()) >= 6:
                 existing_user.password_hash = hash_password(data.password.strip())
@@ -5471,8 +5634,8 @@ def set_instructor_password(instructor_id: int, data: dict, db: OrmSession = Dep
     
     email = (data.get("email") or instructor.email or "").strip().lower()
     if not email:
-        safe_name = "".join(c for c in instructor.name.lower() if c.isalnum()) or f"coach{instructor.id}"
-        email = f"{safe_name}@aisurf.io"
+        safe_name = "".join(c for c in instructor.name.lower() if c.isalnum()) or "coach"
+        email = f"{safe_name}{instructor.id}@aisurf.io"
         instructor.email = email
     else:
         instructor.email = email
@@ -5486,6 +5649,12 @@ def set_instructor_password(instructor_id: int, data: dict, db: OrmSession = Dep
     if instructor.user_id:
         user = db.query(User).filter(User.id == instructor.user_id).first()
         if user:
+            # If changing email, check that the new email isn't already used by another coach
+            clash_user = db.query(User).filter(func.lower(User.email) == email.lower(), User.id != user.id).first()
+            if clash_user:
+                clash_inst = db.query(Instructor).filter(Instructor.user_id == clash_user.id).first()
+                detail_msg = f"Email '{email}' is already in use by Coach {clash_inst.name}." if clash_inst else f"Email '{email}' is already taken."
+                raise HTTPException(status_code=400, detail=detail_msg)
             user.email = email
             user.name = instructor.name
             user.is_head_coach = is_hc
@@ -5499,6 +5668,13 @@ def set_instructor_password(instructor_id: int, data: dict, db: OrmSession = Dep
     
     existing_user = db.query(User).filter(func.lower(User.email) == email.lower()).first()
     if existing_user:
+        # Check if this user account already belongs to a DIFFERENT instructor
+        other_inst = db.query(Instructor).filter(Instructor.user_id == existing_user.id, Instructor.id != instructor.id).first()
+        if other_inst:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Email '{email}' is already linked to Coach {other_inst.name} (ID: {other_inst.id}). Please use a distinct email address."
+            )
         instructor.user_id = existing_user.id
         existing_user.role = "coach"
         existing_user.name = instructor.name
@@ -5816,14 +5992,16 @@ def check_approval(email: str, db: OrmSession = Depends(get_db)):
         
     user = db.query(User).filter(func.lower(User.email) == email_clean).first()
     student = db.query(Student).filter(func.lower(Student.email) == email_clean).first()
+    instructor = db.query(Instructor).filter(func.lower(Instructor.email) == email_clean).first()
 
     u_stat = getattr(user, "approval_status", None) if user else None
     s_stat = getattr(student, "approval_status", None) if student else None
+    i_stat = getattr(instructor, "approval_status", None) if instructor else None
 
-    # If explicitly pending in user or student table
-    if u_stat == "pending" or s_stat == "pending":
+    # If explicitly pending in user, student, or instructor table
+    if u_stat == "pending" or s_stat == "pending" or i_stat == "pending":
         is_approved = False
-    elif u_stat == "approved" or s_stat == "approved":
+    elif u_stat == "approved" or s_stat == "approved" or i_stat == "approved":
         is_approved = True
     else:
         # Default fallback for users created earlier or via direct student list
@@ -5833,8 +6011,53 @@ def check_approval(email: str, db: OrmSession = Depends(get_db)):
         "email": email_clean,
         "status": "approved" if is_approved else "pending",
         "is_approved": is_approved,
-        "student_id": student.id if student else (user.student.id if user and user.student else None)
+        "student_id": student.id if student else (user.student.id if user and user.student else None),
+        "instructor_id": instructor.id if instructor else (user.instructor.id if user and user.instructor else None)
     }
+
+
+@app.post("/api/instructors/{instructor_id}/approve")
+def approve_instructor(instructor_id: int, db: OrmSession = Depends(get_db)):
+    i = db.query(Instructor).filter(Instructor.id == instructor_id).first()
+    if not i:
+        raise HTTPException(status_code=404, detail="Instructor not found")
+    i.approval_status = "approved"
+    i.is_active = True
+    if i.user_rel:
+        i.user_rel.approval_status = "approved"
+        i.user_rel.is_active = True
+    if i.email:
+        u = db.query(User).filter(func.lower(User.email) == i.email.lower()).first()
+        if u:
+            u.approval_status = "approved"
+            u.is_active = True
+    db.commit()
+    db.refresh(i)
+    db.add(ActivityLog(text=f"Coach {i.name} was approved for {i.school or 'school'}", type="individual", school=i.school or ""))
+    db.commit()
+    return {"status": "success", "message": f"Coach {i.name} approved successfully", "instructor": instructor_to_dict(i)}
+
+
+@app.post("/api/instructors/{instructor_id}/reject")
+def reject_instructor(instructor_id: int, db: OrmSession = Depends(get_db)):
+    i = db.query(Instructor).filter(Instructor.id == instructor_id).first()
+    if not i:
+        raise HTTPException(status_code=404, detail="Instructor not found")
+    i.approval_status = "rejected"
+    i.is_active = False
+    if i.user_rel:
+        i.user_rel.approval_status = "rejected"
+        i.user_rel.is_active = False
+    if i.email:
+        u = db.query(User).filter(func.lower(User.email) == i.email.lower()).first()
+        if u:
+            u.approval_status = "rejected"
+            u.is_active = False
+    db.commit()
+    db.refresh(i)
+    db.add(ActivityLog(text=f"Coach {i.name} application was rejected by {i.school or 'school'}", type="individual", school=i.school or ""))
+    db.commit()
+    return {"status": "success", "message": f"Coach {i.name} rejected", "instructor": instructor_to_dict(i)}
 
 
 @app.delete("/api/students/{student_id}")

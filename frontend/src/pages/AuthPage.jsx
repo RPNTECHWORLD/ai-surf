@@ -148,6 +148,9 @@ const AuthPage = () => {
     staying_at_school: '',
     reminder_preference: '',
     guests_count: '',
+    certifications: '',
+    languages: '',
+    bio: '',
   });
 
   const [schoolsList, setSchoolsList] = useState([]);
@@ -463,6 +466,7 @@ const AuthPage = () => {
       // 1. First check remote backend API (server database)
       let isApprovedOnServer = false;
       let serverStudentId = null;
+      let serverInstructorId = null;
 
       try {
         const res = await fetch(`${API}/api/auth/check-approval?email=${encodeURIComponent(studentEmail)}`);
@@ -471,6 +475,7 @@ const AuthPage = () => {
           if (data.is_approved) {
             isApprovedOnServer = true;
             serverStudentId = data.student_id;
+            serverInstructorId = data.instructor_id;
           }
         }
       } catch (err) {
@@ -479,7 +484,7 @@ const AuthPage = () => {
 
       // 2. Check local storage cache fallback
       const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-      const currentReq = savedReqs.find(r => r.student_email?.toLowerCase() === studentEmail);
+      const currentReq = savedReqs.find(r => (r.student_email || r.email)?.toLowerCase() === studentEmail);
       const isApprovedInLocal = currentReq && currentReq.status === 'approved';
 
       const isApproved = isApprovedOnServer || isApprovedInLocal;
@@ -488,16 +493,17 @@ const AuthPage = () => {
         // Sync local storage so subsequent local checks pass
         try {
           const updatedReqs = savedReqs.map(r => 
-            r.student_email?.toLowerCase() === studentEmail ? { ...r, status: 'approved' } : r
+            (r.student_email || r.email)?.toLowerCase() === studentEmail ? { ...r, status: 'approved' } : r
           );
-          if (!savedReqs.some(r => r.student_email?.toLowerCase() === studentEmail)) {
-            updatedReqs.push({ student_email: studentEmail, status: 'approved' });
+          if (!savedReqs.some(r => (r.student_email || r.email)?.toLowerCase() === studentEmail)) {
+            updatedReqs.push({ student_email: studentEmail, email: studentEmail, status: 'approved' });
           }
           localStorage.setItem('school_join_requests', JSON.stringify(updatedReqs));
         } catch (e) {}
 
         const approvedUser = { ...pendingApprovalUser, approval_status: 'approved' };
         if (serverStudentId) approvedUser.student_id = serverStudentId;
+        if (serverInstructorId) approvedUser.instructor_id = serverInstructorId;
 
         const schoolNameStr = typeof approvedUser.school === 'string'
           ? approvedUser.school
@@ -510,7 +516,11 @@ const AuthPage = () => {
           email: approvedUser.email,
         }));
         setPendingApprovalUser(null);
-        navigate(`/students/${serverStudentId || approvedUser.student_id || approvedUser.id || 1}`);
+        if (approvedUser.role === 'coach') {
+          navigate(`/instructors/${serverInstructorId || approvedUser.instructor_id || approvedUser.id || 1}`);
+        } else {
+          navigate(`/students/${serverStudentId || approvedUser.student_id || approvedUser.id || 1}`);
+        }
       } else {
         const pendingSchoolName = typeof pendingApprovalUser.school === 'string'
           ? pendingApprovalUser.school
@@ -562,22 +572,28 @@ const AuthPage = () => {
       }
     } catch (e) {}
 
-    // Check if student approval is pending (only for direct signups without invite link)
-    const isDirectSignup = !inviteToken && !searchParams.get('school');
+    // Check if coach or student approval is pending (only for direct signups without invite link)
     let isApprovedInStorage = false;
     try {
       const savedReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-      const currentReq = savedReqs.find(r => r.student_email?.toLowerCase() === user.email?.toLowerCase());
+      const currentReq = savedReqs.find(r => (r.student_email || r.email)?.toLowerCase() === user.email?.toLowerCase());
       if (currentReq && currentReq.status === 'approved') {
         isApprovedInStorage = true;
       }
     } catch (e) {}
 
-    const isPending = false; // Bypass pending approval
+    // Coaches log in directly; inside their portal/profile it displays 'Pending School Approval'
+    if (user.role !== 'coach') {
+      const isPending = (user.approval_status === 'pending') || (
+        !inviteToken && !inviteCode && (
+          ((user.role === 'athlete' || user.role === 'student' || user.role === 'user') && user.school)
+        ) && !isApprovedInStorage && user.approval_status !== 'approved'
+      );
 
-    if (isPending && !isApprovedInStorage) {
-      setPendingApprovalUser(user);
-      return;
+      if (isPending && user.approval_status !== 'approved' && !isApprovedInStorage) {
+        setPendingApprovalUser(user);
+        return;
+      }
     }
 
     const userSchName = (typeof user.school_name === 'string' ? user.school_name : user.school_name?.name)
@@ -794,8 +810,26 @@ const AuthPage = () => {
       setErrorMsg('Please select your expected session time slot.'); return;
     }
     if (role === 'coach') {
+      if (!formData.school) {
+        setErrorMsg('Please select your affiliation / surf school.'); return;
+      }
+      if (!formData.rates?.trim()) {
+        setErrorMsg('Please enter your hourly rate.'); return;
+      }
       if (!isCoachSchoolAffiliated && !formData.location?.trim()) {
         setErrorMsg('Please enter your coaching location / region.'); return;
+      }
+      if (!formData.specializations || formData.specializations.length === 0) {
+        setErrorMsg('Please select at least one coaching specialization.'); return;
+      }
+      if (!formData.certifications?.trim()) {
+        setErrorMsg('Please enter your coaching certifications.'); return;
+      }
+      if (!formData.languages?.trim()) {
+        setErrorMsg('Please enter or select at least one language spoken.'); return;
+      }
+      if (!formData.bio?.trim()) {
+        setErrorMsg('Please enter your coach bio / background.'); return;
       }
     }
     if (role === 'admin' && !formData.schoolLocation?.trim()) {
@@ -819,6 +853,9 @@ const AuthPage = () => {
           swimming_ability: formData.swimming_ability || 'Swimmer',
           specializations: formData.specializations,
           rates: formData.rates,
+          certifications: formData.certifications ? formData.certifications.split(',').map(c => c.trim()).filter(Boolean) : [],
+          languages: formData.languages ? formData.languages.split(',').map(l => l.trim()).filter(Boolean) : [],
+          bio: (formData.bio || '').trim(),
           location: isCoachSchoolAffiliated
             ? (getSchoolLocation(formData.school) || formData.location)
             : formData.location,
@@ -844,15 +881,19 @@ const AuthPage = () => {
         setShowPreviousAccountModal(false);
         setPreviousAccountPendingData(null);
         const chosenSchool = (schoolInviteData?.school) || (formData.school || '').trim();
+        const isCoachWithSchool = role === 'coach' && chosenSchool && chosenSchool.toLowerCase() !== 'individual / freelance coach';
+        const isStudentWithSchool = (role === 'athlete' || role === 'student' || role === 'user') && chosenSchool;
+        const initialStatus = (inviteToken || inviteCode) ? 'approved' : ((isCoachWithSchool || isStudentWithSchool) ? 'pending' : 'approved');
+
         const userObj = data.user || {
           id: Date.now(),
           name: formData.name.trim(),
           email: formData.email.toLowerCase().trim(),
           role: role,
           school: chosenSchool,
-          approval_status: (inviteToken || inviteCode) ? 'approved' : (chosenSchool ? 'pending' : 'approved')
+          approval_status: initialStatus
         };
-        userObj.approval_status = (inviteToken || inviteCode) ? 'approved' : (chosenSchool ? 'pending' : 'approved');
+        userObj.approval_status = data.user?.approval_status || initialStatus;
 
         // If invited by coach, assign instructor to student immediately
         if (urlCoach || urlCoachId) {
@@ -891,21 +932,25 @@ const AuthPage = () => {
         }
 
         // If direct signup without invite token/code, record pending join request for school admin ONLY if school chosen
-        if (!inviteToken && !inviteCode && (role === 'athlete' || role === 'student' || role === 'user')) {
-          if (chosenSchool) {
+        if (!inviteToken && !inviteCode && ((role === 'athlete' || role === 'student' || role === 'user') || role === 'coach')) {
+          if (chosenSchool && chosenSchool.toLowerCase() !== 'individual / freelance coach') {
             try {
               const existingReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-              const studentEmail = formData.email.toLowerCase().trim();
-              const existingIdx = existingReqs.findIndex(r => (r.student_email || r.email || '').toLowerCase().trim() === studentEmail);
+              const userEmail = formData.email.toLowerCase().trim();
+              const existingIdx = existingReqs.findIndex(r => (r.student_email || r.email || '').toLowerCase().trim() === userEmail);
               const newReq = {
                 id: `req_${Date.now()}`,
                 student_id: userObj.student_id || userObj.id || Date.now(),
+                instructor_id: userObj.instructor_id || userObj.id || Date.now(),
                 student_name: formData.name.trim(),
-                student_email: studentEmail,
+                name: formData.name.trim(),
+                student_email: userEmail,
+                email: userEmail,
+                role: role,
                 school_name: chosenSchool,
                 start_date: formData.start_date || new Date().toISOString().split('T')[0],
                 session_time: formData.session_time || '',
-                whatsapp_number: formData.whatsapp_number || 'N/A',
+                whatsapp_number: formData.whatsapp_number || formData.phone || 'N/A',
                 status: 'pending',
                 request_date: new Date().toLocaleDateString(),
                 time: new Date().toLocaleTimeString()
@@ -940,31 +985,39 @@ const AuthPage = () => {
     } catch (err) {
       console.warn('Backend offline, completing registration in local store:', err);
       const chosenSchool = (schoolInviteData?.school) || (formData.school || '').trim();
+      const isCoachWithSchool = role === 'coach' && chosenSchool && chosenSchool.toLowerCase() !== 'individual / freelance coach';
+      const isStudentWithSchool = (role === 'athlete' || role === 'student' || role === 'user') && chosenSchool;
+      const initialStatus = (inviteToken || inviteCode) ? 'approved' : ((isCoachWithSchool || isStudentWithSchool) ? 'pending' : 'approved');
+
       const userObj = {
         id: Date.now(),
         name: formData.name.trim(),
         email: formData.email.toLowerCase().trim(),
         role: role,
         school: chosenSchool,
-        approval_status: (inviteToken || inviteCode) ? 'approved' : (chosenSchool ? 'pending' : 'approved'),
+        approval_status: initialStatus,
         ...(urlCoach ? { instructor: urlCoach } : {}),
         ...(urlCoachId ? { instructor_id: parseInt(urlCoachId) } : {})
       };
 
-      if (!inviteToken && !inviteCode && chosenSchool && (role === 'athlete' || role === 'student' || role === 'user')) {
+      if (!inviteToken && !inviteCode && ((role === 'athlete' || role === 'student' || role === 'user') || role === 'coach') && chosenSchool && chosenSchool.toLowerCase() !== 'individual / freelance coach') {
         try {
           const existingReqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
-          const studentEmail = formData.email.toLowerCase().trim();
-          const existingIdx = existingReqs.findIndex(r => (r.student_email || r.email || '').toLowerCase().trim() === studentEmail);
+          const userEmail = formData.email.toLowerCase().trim();
+          const existingIdx = existingReqs.findIndex(r => ((r.student_email || r.email || '').toLowerCase().trim() === userEmail));
           const newReq = {
             id: `req_${Date.now()}`,
             student_id: userObj.id,
+            instructor_id: userObj.id,
             student_name: formData.name.trim(),
-            student_email: studentEmail,
+            name: formData.name.trim(),
+            student_email: userEmail,
+            email: userEmail,
+            role: role,
             school_name: chosenSchool,
             start_date: formData.start_date || new Date().toISOString().split('T')[0],
             session_time: formData.session_time || '',
-            whatsapp_number: formData.whatsapp_number || 'N/A',
+            whatsapp_number: formData.whatsapp_number || formData.phone || 'N/A',
             status: 'pending',
             request_date: new Date().toLocaleDateString(),
             time: new Date().toLocaleTimeString()
@@ -1231,7 +1284,7 @@ const AuthPage = () => {
               <div style={{ fontWeight: 800, fontSize: '14px', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <span>🔒</span> Status: Pending School Admin Approval
               </div>
-              The School Admin has been notified of your registration. You will be able to access your student dashboard once approved.
+              The School Admin has been notified of your registration. You will be able to access your {pendingApprovalUser.role === 'coach' ? 'coach' : 'student'} dashboard once approved.
             </div>
 
             {errorMsg && <div className="auth-error" style={{ marginBottom: '16px' }}>{errorMsg}</div>}
@@ -1630,14 +1683,14 @@ const AuthPage = () => {
                     )}
 
                     <div className="auth-field">
-                      <label>Full Name</label>
+                      <label>Full Name <span style={{ color: '#FF4D6D', fontWeight: 700 }}>*</span></label>
                       <input type="text" name="name" placeholder="Your full name"
                         value={formData.name} onChange={handleChange} required />
                     </div>
 
                     <div className="auth-fields-row">
                       <div className="auth-field">
-                        <label>Password</label>
+                        <label>Password <span style={{ color: '#FF4D6D', fontWeight: 700 }}>*</span></label>
                         <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                           <input
                             type={showPassword ? 'text' : 'password'}
@@ -1685,7 +1738,7 @@ const AuthPage = () => {
                       </div>
 
                       <div className="auth-field">
-                        <label>Confirm Password</label>
+                        <label>Confirm Password <span style={{ color: '#FF4D6D', fontWeight: 700 }}>*</span></label>
                         <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                           <input
                             type={showConfirmPassword ? 'text' : 'password'}
@@ -2412,7 +2465,7 @@ const AuthPage = () => {
 
                         <div className="auth-field" style={{ marginBottom: '12px' }}>
                           <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span>🏄 Affiliation / Surf School</span>
+                            <span>🏄 Affiliation / Surf School <span style={{ color: '#FF4D6D', fontWeight: 700 }}>*</span></span>
                           </label>
                           <select
                             name="school"
@@ -2427,6 +2480,7 @@ const AuthPage = () => {
                                 location: isAffiliated ? (loc || prev.location) : ''
                               }));
                             }}
+                            required
                           >
                             <option value="">-- Select Affiliation / Surf School --</option>
                             <option value="Individual / Freelance Coach">👤 Individual / Freelance Coach (Independent)</option>
@@ -2435,13 +2489,13 @@ const AuthPage = () => {
                             ))}
                           </select>
                           <small style={{ color: '#94A3B8', fontSize: '11px', marginTop: '4px', display: 'block' }}>
-                            Select your affiliated surf school, or choose 'Individual / Freelance Coach' if you coach independently.
+                            Select your affiliated surf school, or choose 'Individual / Freelance Coach' if you coach independently. (Required)
                           </small>
                         </div>
 
                         {/* Coach Phone Number */}
                         <div className="auth-field" style={{ marginBottom: '12px' }}>
-                          <label>Phone / WhatsApp Number <span style={{ color: '#EF4444', fontWeight: 700 }}>*</span></label>
+                          <label>Phone / WhatsApp Number <span style={{ color: '#FF4D6D', fontWeight: 700 }}>*</span></label>
                           <input
                             type="tel"
                             name="phone"
@@ -2454,13 +2508,13 @@ const AuthPage = () => {
 
                         <div className="auth-fields-row">
                           <div className="auth-field">
-                            <label>Hourly Rate</label>
-                            <input type="text" name="rates" placeholder="$75 / hr"
-                              value={formData.rates} onChange={handleChange} />
+                            <label>Hourly Rate <span style={{ color: '#FF4D6D', fontWeight: 700 }}>*</span></label>
+                            <input type="text" name="rates" placeholder="e.g. $75 / hr"
+                              value={formData.rates} onChange={handleChange} required />
                           </div>
                           <div className="auth-field">
                             <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                              <span>Location / Region <span style={{ color: '#EF4444', fontWeight: 700 }}>*</span></span>
+                              <span>Location / Region <span style={{ color: '#FF4D6D', fontWeight: 700 }}>*</span></span>
                               {isCoachSchoolAffiliated && (
                                 <span style={{ fontSize: '11px', color: '#0F766E', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
                                   🔒 Locked to School
@@ -2513,7 +2567,7 @@ const AuthPage = () => {
                           </div>
                         </div>
                         <div className="auth-field">
-                          <label>Coaching Specializations</label>
+                          <label>Coaching Specializations <span style={{ color: '#FF4D6D', fontWeight: 700 }}>*</span></label>
                           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
                             {['S&C', 'Nutrition', 'Video Analysis', 'Competition Strategy', 'Water Safety'].map(spec => (
                               <label key={spec} className="checkbox-label">
@@ -2523,6 +2577,105 @@ const AuthPage = () => {
                               </label>
                             ))}
                           </div>
+                        </div>
+
+                        {/* Coach Certifications */}
+                        <div className="auth-field" style={{ marginTop: '12px' }}>
+                          <label>Certifications (comma separated) <span style={{ color: '#FF4D6D', fontWeight: 700 }}>*</span></label>
+                          <input
+                            type="text"
+                            name="certifications"
+                            placeholder="e.g. ISA Level 1, Surf Coach Safety, Lifeguard"
+                            value={formData.certifications || ''}
+                            onChange={handleChange}
+                            required
+                          />
+                          <small style={{ color: '#94A3B8', fontSize: '11px', marginTop: '2px', display: 'block' }}>
+                            Enter your coaching certifications or licenses (e.g. ISA, CPR, Lifeguard). (Required)
+                          </small>
+                        </div>
+
+                        {/* Coach Languages Spoken */}
+                        <div className="auth-field" style={{ marginTop: '12px' }}>
+                          <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span>Languages Spoken <span style={{ color: '#FF4D6D', fontWeight: 700 }}>*</span></span>
+                            <span style={{ fontSize: '11px', color: '#94A3B8', fontWeight: 500 }}>Select tags or type below</span>
+                          </label>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '6px' }}>
+                            {['English', 'Tamil', 'Hindi', 'Malayalam', 'Kannada', 'Telugu', 'French', 'Spanish', 'German'].map(lang => {
+                              const currentList = (formData.languages || '').split(',').map(s => s.trim()).filter(Boolean);
+                              const isSelected = currentList.some(l => l.toLowerCase() === lang.toLowerCase());
+                              return (
+                                <button
+                                  key={lang}
+                                  type="button"
+                                  onClick={() => {
+                                    let updated;
+                                    if (isSelected) {
+                                      updated = currentList.filter(l => l.toLowerCase() !== lang.toLowerCase());
+                                    } else {
+                                      updated = [...currentList, lang];
+                                    }
+                                    setFormData(prev => ({ ...prev, languages: updated.join(', ') }));
+                                  }}
+                                  style={{
+                                    background: isSelected ? 'rgba(13, 148, 136, 0.3)' : 'rgba(255, 255, 255, 0.05)',
+                                    border: `1px solid ${isSelected ? '#0D9488' : 'rgba(255, 255, 255, 0.15)'}`,
+                                    color: isSelected ? '#2DD4BF' : '#CBD5E1',
+                                    borderRadius: '16px',
+                                    padding: '3px 10px',
+                                    fontSize: '11.5px',
+                                    fontWeight: isSelected ? 700 : 500,
+                                    cursor: 'pointer',
+                                    transition: 'all 0.15s ease'
+                                  }}
+                                >
+                                  {isSelected ? `✓ ${lang}` : `+ ${lang}`}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <input
+                            type="text"
+                            name="languages"
+                            placeholder="e.g. English, Tamil, Hindi"
+                            value={formData.languages || ''}
+                            onChange={handleChange}
+                            required
+                          />
+                          <small style={{ color: '#94A3B8', fontSize: '11px', marginTop: '2px', display: 'block' }}>
+                            Languages you speak and coach in. (Required)
+                          </small>
+                        </div>
+
+                        {/* Coach Bio / Background */}
+                        <div className="auth-field" style={{ marginTop: '12px' }}>
+                          <label>Coach Bio / Background <span style={{ color: '#FF4D6D', fontWeight: 700 }}>*</span></label>
+                          <textarea
+                            name="bio"
+                            rows={3}
+                            placeholder="Share your surfing background, coaching philosophy, years of experience, or wave expertise..."
+                            value={formData.bio || ''}
+                            onChange={handleChange}
+                            required
+                            style={{
+                              padding: '10px 14px',
+                              background: 'rgba(255, 255, 255, 0.05)',
+                              border: '1px solid rgba(255, 255, 255, 0.15)',
+                              borderRadius: '10px',
+                              fontSize: '13.5px',
+                              color: '#FFFFFF',
+                              fontFamily: 'inherit',
+                              resize: 'vertical',
+                              minHeight: '75px',
+                              outline: 'none',
+                              width: '100%',
+                              boxSizing: 'border-box'
+                            }}
+                          />
+                          <small style={{ color: '#94A3B8', fontSize: '11px', marginTop: '2px', display: 'block' }}>
+                            Brief biography displayed on your coach profile page and athlete session card. (Required)
+                          </small>
                         </div>
                       </div>
                     )}
@@ -3461,7 +3614,8 @@ const styles = `
 }
 
 .auth-field input,
-.auth-field select {
+.auth-field select,
+.auth-field textarea {
   padding: 10px 14px;
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.15);
@@ -3476,12 +3630,14 @@ const styles = `
   caret-color: #FFFFFF !important;
 }
 
-.auth-field input::placeholder { color: #64748B; }
+.auth-field input::placeholder,
+.auth-field textarea::placeholder { color: #64748B; }
 
 .auth-field select option { background-color: #0D2040; color: #FFFFFF; }
 
 .auth-field input:focus,
-.auth-field select:focus {
+.auth-field select:focus,
+.auth-field textarea:focus {
   border-color: #FF4D6D;
   box-shadow: 0 0 0 3px rgba(255, 77, 109, 0.2);
   background: rgba(255, 255, 255, 0.08);

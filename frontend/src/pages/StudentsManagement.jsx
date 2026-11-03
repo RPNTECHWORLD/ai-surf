@@ -476,10 +476,14 @@ const StudentsManagement = () => {
 
   const loggedInCoach = useMemo(() => {
     if (!instructors || instructors.length === 0) return null;
-    return instructors.find(i =>
-      (currentCoachId && (String(i.id) === String(currentCoachId) || parseInt(i.id) === parseInt(currentCoachId))) ||
-      (currentCoachName && i.name && i.name.toLowerCase().trim() === currentCoachName.toLowerCase().trim())
-    );
+    if (currentCoachId) {
+      const byId = instructors.find(i => String(i.id) === String(currentCoachId) || parseInt(i.id) === parseInt(currentCoachId));
+      if (byId) return byId;
+    }
+    if (currentCoachName) {
+      return instructors.find(i => i.name && i.name.toLowerCase().trim() === currentCoachName.toLowerCase().trim());
+    }
+    return null;
   }, [instructors, currentCoachId, currentCoachName]);
 
   const coachAffiliatedSchool = (loggedInCoach?.school || currentUser?.school || currentUser?.school_name || activeSchoolName || '').trim();
@@ -654,7 +658,11 @@ const StudentsManagement = () => {
       : `${API}/api/instructors`;
     fetch(instUrl)
       .then(r => r.json())
-      .then(data => setInstructors(data))
+      .then(data => {
+        if (Array.isArray(data)) {
+          setInstructors(data.filter(i => i.is_active !== false && (i.approval_status || '').toLowerCase() !== 'pending' && (i.approval_status || '').toLowerCase() !== 'rejected'));
+        }
+      })
       .catch(() => { });
 
     const sessUrl = (targetSch && !isSuperAdmin)
@@ -736,25 +744,6 @@ const StudentsManagement = () => {
       const coachStudentIdsFromSessions = new Set();
       const coachStudentNamesFromSessions = new Set();
 
-      allSessions.forEach(sess => {
-        const sSchool = (sess.school || '').toLowerCase().trim();
-        if (isCoachFreelance) {
-          if (sSchool && sSchool !== 'individual / freelance coach') return;
-        } else if (coachAffiliatedSchool) {
-          if (sSchool && sSchool !== coachAffiliatedSchool.toLowerCase() && sSchool !== effectiveSchoolLower) return;
-        }
-
-        const sInstLower = (sess.instructor || sess.instructor_name || '').toLowerCase().trim();
-        const instMatch =
-          (cNameLower && sInstLower && (sInstLower === cNameLower || sInstLower.includes(cNameLower) || cNameLower.includes(sInstLower))) ||
-          (currentCoachId && (sess.instructor_id === currentCoachId || String(sess.instructor_id) === String(currentCoachId) || parseInt(sess.instructor_id) === parseInt(currentCoachId)));
-
-        if (instMatch) {
-          if (sess.student_id) coachStudentIdsFromSessions.add(String(sess.student_id));
-          if (sess.student) coachStudentNamesFromSessions.add(sess.student.toLowerCase().trim());
-        }
-      });
-
       const coachIds = new Set(
         [
           currentCoachId,
@@ -764,21 +753,48 @@ const StudentsManagement = () => {
         ].filter(Boolean).map(String)
       );
 
+      allSessions.forEach(sess => {
+        const sSchool = (sess.school || '').toLowerCase().trim();
+        if (isCoachFreelance) {
+          if (sSchool && sSchool !== 'individual / freelance coach') return;
+        } else if (coachAffiliatedSchool) {
+          if (sSchool && sSchool !== coachAffiliatedSchool.toLowerCase() && sSchool !== effectiveSchoolLower) return;
+        }
+
+        const sessInstId = sess.instructor_id != null && sess.instructor_id !== '' ? String(sess.instructor_id) : '';
+        const sessInstIds = Array.isArray(sess.instructor_ids) ? sess.instructor_ids.map(String) : [];
+        let instMatch = false;
+
+        // Strict ID check: if session has coach IDs, check ONLY coach IDs
+        if (sessInstId || sessInstIds.length > 0) {
+          instMatch = Array.from(coachIds).some(cId => sessInstId === cId || sessInstIds.includes(cId));
+        } else if (cNameLower) {
+          const sInstLower = (sess.instructor || sess.instructor_name || '').toLowerCase().trim();
+          instMatch = sInstLower === cNameLower;
+        }
+
+        if (instMatch) {
+          if (sess.student_id) coachStudentIdsFromSessions.add(String(sess.student_id));
+          if (!sess.student_id && sess.student) coachStudentNamesFromSessions.add(sess.student.toLowerCase().trim());
+        }
+      });
+
       return valid.filter(s => {
         const studentSchool = (s.school || s.school_name || '').toLowerCase().trim();
 
         // Match 1: Primary Instructor ID Assignment
-        const sInstId = s.instructor_id != null ? String(s.instructor_id) : '';
+        const sInstId = s.instructor_id != null && s.instructor_id !== '' ? String(s.instructor_id) : '';
         const isDirectInstructor = Boolean(sInstId && coachIds.has(sInstId));
 
-        // Match 2: Primary Instructor Name Assignment
+        // If explicitly assigned to a DIFFERENT coach, do NOT show to this coach!
+        if (sInstId && !coachIds.has(sInstId)) {
+          return false;
+        }
+
+        // Match 2: Primary Instructor Name Assignment (ONLY if student has NO instructor_id)
         const sInstNameLower = (s.instructor || s.instructor_name || '').toLowerCase().trim();
         const isInstructorNameMatch = Boolean(
-          cNameLower && sInstNameLower && (
-            sInstNameLower === cNameLower ||
-            sInstNameLower.includes(cNameLower) ||
-            cNameLower.includes(sInstNameLower)
-          )
+          !sInstId && cNameLower && sInstNameLower && (sInstNameLower === cNameLower)
         );
 
         // Match 3: Created by Coach
@@ -786,20 +802,15 @@ const StudentsManagement = () => {
         const isCreatedByCoach = Boolean(sCreatorId && coachIds.has(sCreatorId));
 
         // Match 4: Session Assignment
+        const sIdStr = s.id != null ? String(s.id) : '';
         const sNameLower = (s.name || '').toLowerCase().trim();
-        const sessionMatch = coachStudentIdsFromSessions.has(String(s.id)) || (sNameLower && coachStudentNamesFromSessions.has(sNameLower));
+        const sessionMatch = (sIdStr && coachStudentIdsFromSessions.has(sIdStr)) || (!sIdStr && sNameLower && coachStudentNamesFromSessions.has(sNameLower));
 
         // Affiliation isolation:
         if (isCoachFreelance) {
           // Individual freelance coach: MUST be freelance school or created by this coach
           const isFreelanceStudent = studentSchool === 'individual / freelance coach' || (!studentSchool && (isCreatedByCoach || isDirectInstructor));
           if (!isFreelanceStudent) return false;
-
-          // If explicitly assigned to a DIFFERENT coach, do not show
-          if (sInstId && !coachIds.has(sInstId)) {
-            return false;
-          }
-
           return isDirectInstructor || isInstructorNameMatch || isCreatedByCoach || sessionMatch;
         } else if (coachAffiliatedSchool) {
           // School coach: student MUST belong to this coach's school

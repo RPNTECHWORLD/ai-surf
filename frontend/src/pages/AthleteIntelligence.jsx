@@ -280,29 +280,37 @@ const AthleteIntelligence = () => {
 
     // Step 2: Coach Role Isolation - ONLY show students assigned to THIS coach
     if (isCoach && (currentCoachName || currentCoachId)) {
+      const cIdStr = currentCoachId ? String(currentCoachId) : '';
       const cNameLower = (currentCoachName || '').toLowerCase().trim();
 
       const coachStudentIdsFromSessions = new Set();
       const coachStudentNamesFromSessions = new Set();
 
       allSessions.forEach(sess => {
-        const sInstLower = (sess.instructor || sess.instructor_name || '').toLowerCase().trim();
-        const instMatch =
-          (cNameLower && sInstLower && (sInstLower === cNameLower || sInstLower.includes(cNameLower) || cNameLower.includes(sInstLower))) ||
-          (currentCoachId && (sess.instructor_id === currentCoachId || String(sess.instructor_id) === String(currentCoachId) || parseInt(sess.instructor_id) === parseInt(currentCoachId)));
+        const sessInstId = sess.instructor_id != null && sess.instructor_id !== '' ? String(sess.instructor_id) : '';
+        const sessInstIds = Array.isArray(sess.instructor_ids) ? sess.instructor_ids.map(String) : [];
+        let instMatch = false;
+
+        if (sessInstId || sessInstIds.length > 0) {
+          instMatch = (sessInstId === cIdStr) || sessInstIds.includes(cIdStr);
+        } else if (cNameLower) {
+          const sInstLower = (sess.instructor || sess.instructor_name || '').toLowerCase().trim();
+          instMatch = (sInstLower === cNameLower);
+        }
 
         if (instMatch) {
           if (sess.student_id) coachStudentIdsFromSessions.add(String(sess.student_id));
-          if (sess.student) coachStudentNamesFromSessions.add(sess.student.toLowerCase().trim());
+          if (!sess.student_id && sess.student) coachStudentNamesFromSessions.add(sess.student.toLowerCase().trim());
         }
       });
 
       return list.filter(s => {
+        const sIdStr = s.id ? String(s.id) : '';
         const sNameLower = (s.name || '').toLowerCase().trim();
 
         // Strict Session Assignment: ONLY students assigned in an active session to this coach are shown
         // If a student has no session, or if their session is deleted, they will not be shown
-        const sessionMatch = coachStudentIdsFromSessions.has(String(s.id)) || (sNameLower && coachStudentNamesFromSessions.has(sNameLower));
+        const sessionMatch = (sIdStr && coachStudentIdsFromSessions.has(sIdStr)) || (!sIdStr && sNameLower && coachStudentNamesFromSessions.has(sNameLower));
 
         return sessionMatch;
       });

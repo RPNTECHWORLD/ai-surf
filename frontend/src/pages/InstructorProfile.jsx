@@ -386,16 +386,34 @@ const InstructorProfile = () => {
   const matchesCoach = (item, coachId, coachName) => {
     if (!item) return false;
     const targetId = parseInt(coachId);
-    if (targetId && (item.instructor_id === targetId || String(item.instructor_id) === String(targetId) || parseInt(item.instructor_id) === targetId)) {
-      return true;
+    const hasItemInstId = item.instructor_id != null && item.instructor_id !== '';
+    const hasItemInstIds = Array.isArray(item.instructor_ids) && item.instructor_ids.length > 0;
+
+    // 1. Strict ID Match: If the item has an explicit instructor_id or instructor_ids,
+    // evaluate ONLY by ID. Never fall through to name matching (prevents same-name coach cross-contamination).
+    if (hasItemInstId || hasItemInstIds) {
+      if (targetId && (
+        item.instructor_id === targetId ||
+        String(item.instructor_id) === String(targetId) ||
+        parseInt(item.instructor_id) === targetId
+      )) {
+        return true;
+      }
+      if (hasItemInstIds && targetId && (
+        item.instructor_ids.includes(targetId) ||
+        item.instructor_ids.includes(String(targetId)) ||
+        item.instructor_ids.map(Number).includes(targetId)
+      )) {
+        return true;
+      }
+      return false;
     }
-    if (Array.isArray(item.instructor_ids) && targetId && (item.instructor_ids.includes(targetId) || item.instructor_ids.includes(String(targetId)))) {
-      return true;
-    }
+
+    // 2. Fallback: Only for legacy items with NO instructor ID
     if (coachName) {
       const cNameLower = coachName.toLowerCase().trim();
       const itemInst = (item.instructor || item.instructor_name || item.primary_instructor || '').toLowerCase().trim();
-      if (itemInst && (itemInst === cNameLower || itemInst.includes(cNameLower) || cNameLower.includes(itemInst))) {
+      if (itemInst && itemInst === cNameLower) {
         return true;
       }
     }
@@ -442,7 +460,7 @@ const InstructorProfile = () => {
 
       // 2. Identify students associated with this coach isolated by affiliation
       const sessionStudentIds = new Set(coachSessions.map(sess => String(sess.student_id)).filter(Boolean));
-      const sessionStudentNames = new Set(coachSessions.map(sess => (sess.student || '').toLowerCase().trim()).filter(Boolean));
+      const sessionStudentNames = new Set(coachSessions.filter(sess => !sess.student_id).map(sess => (sess.student || '').toLowerCase().trim()).filter(Boolean));
 
       const matchedStudents = [];
       const seenStudentIds = new Set();
@@ -462,7 +480,7 @@ const InstructorProfile = () => {
         const sNameLower = (s.name || '').toLowerCase().trim();
 
         const isDirect = matchesCoach(s, coachId, coachName);
-        const isInSession = (sIdStr && sessionStudentIds.has(sIdStr)) || (sNameLower && sessionStudentNames.has(sNameLower));
+        const isInSession = sIdStr ? sessionStudentIds.has(sIdStr) : (sNameLower && sessionStudentNames.has(sNameLower));
 
         if (isDirect || isInSession) {
           matchedStudents.push(s);
@@ -551,9 +569,9 @@ const InstructorProfile = () => {
       gender: acc?.gender || saved.gender || 'Male',
       fitness_level: acc?.fitness_level || 'Advanced',
       experience: acc?.experience || '3 Years',
-      certifications: acc?.certifications || ['ISA Level 1', 'Lifeguard Certified'],
+      certifications: Array.isArray(acc?.certifications) ? acc.certifications : (acc?.certifications ? [acc.certifications] : []),
       image: acc?.image || saved.image || '',
-      bio: acc?.bio || saved.bio || `Professional surf coach at ${coachSchool}. Dedicated to student progression and wave mastery.`,
+      bio: acc?.bio || saved.bio || '',
       specializations: acc?.specializations || ['S&C', 'Video Analysis'],
       rates: acc?.rates || '$75 / hr',
       location: acc?.location || saved.location || 'North Shore, Oahu',
@@ -877,6 +895,59 @@ const InstructorProfile = () => {
     <div className="ip-page">
       <Sidebar />
       <main className="ip-main">
+        {/* Pending School Approval Banner */}
+        {instructor.approval_status === 'pending' && (
+          <div style={{
+            background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.12) 0%, rgba(217, 119, 6, 0.08) 100%)',
+            border: '1.5px solid #FCD34D',
+            borderRadius: '14px',
+            padding: '14px 20px',
+            marginBottom: '20px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '14px',
+            boxShadow: '0 4px 14px rgba(245, 158, 11, 0.08)'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{
+                width: '38px',
+                height: '38px',
+                borderRadius: '10px',
+                background: '#FEF3C7',
+                color: '#D97706',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '20px',
+                flexShrink: 0
+              }}>
+                ⏳
+              </div>
+              <div>
+                <div style={{ fontSize: '14px', fontWeight: 800, color: '#B45309', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span>Registration Status: Pending School Approval</span>
+                </div>
+                <div style={{ fontSize: '12.5px', color: '#92400E', marginTop: '3px' }}>
+                  Your join request to <strong>{instructor.school || 'your affiliated surf school'}</strong> is awaiting approval from the School Admin. Once approved, you will be assigned to school sessions and students.
+                </div>
+              </div>
+            </div>
+            <span style={{
+              background: '#FEF3C7',
+              color: '#B45309',
+              border: '1px solid #FCD34D',
+              padding: '6px 14px',
+              borderRadius: '20px',
+              fontSize: '12px',
+              fontWeight: 800,
+              whiteSpace: 'nowrap'
+            }}>
+              ⏳ Pending Approval
+            </span>
+          </div>
+        )}
+
         {/* Hero */}
         <section className="ip-hero">
           {instructor.image && typeof instructor.image === 'string' && instructor.image.trim() !== '' ? (
@@ -917,6 +988,44 @@ const InstructorProfile = () => {
             </h1>
             <p className="ip-hero-sub">Age {instructor.age || '—'} • {instructor.location || 'Not Specified'}</p>
             <div className="ip-hero-badges">
+              {instructor.approval_status === 'pending' ? (
+                <span
+                  style={{
+                    background: '#FEF3C7',
+                    color: '#B45309',
+                    border: '1px solid #FCD34D',
+                    padding: '4px 12px',
+                    borderRadius: '20px',
+                    fontSize: '11px',
+                    fontWeight: '800',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    letterSpacing: '0.04em'
+                  }}
+                  title="Your registration request is pending school approval"
+                >
+                  ⏳ PENDING APPROVAL
+                </span>
+              ) : (
+                <span
+                  style={{
+                    background: 'rgba(16, 185, 129, 0.15)',
+                    color: '#059669',
+                    border: '1px solid rgba(16, 185, 129, 0.4)',
+                    padding: '4px 12px',
+                    borderRadius: '20px',
+                    fontSize: '11px',
+                    fontWeight: '800',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    letterSpacing: '0.04em'
+                  }}
+                >
+                  ✓ ACTIVE COACH
+                </span>
+              )}
               {instructor.is_head_coach && (
                 <span
                   style={{

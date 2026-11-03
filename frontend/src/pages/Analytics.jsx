@@ -444,28 +444,40 @@ const Analytics = () => {
 
       // 2. Coach Filter
       if (isCoach && (coachId || coachName)) {
+        const cIdStr = coachId ? String(coachId) : '';
         const cNameLower = (coachName || '').toLowerCase().trim();
-        const instMatch = (s.instructor_id && (s.instructor_id === coachId || String(s.instructor_id) === String(coachId))) ||
-          ((s.instructor || '').toLowerCase().trim() === cNameLower);
+        const sInstId = s.instructor_id != null && s.instructor_id !== '' ? String(s.instructor_id) : '';
+
+        // Strict ID check: if student has instructor_id, match ONLY by ID
+        let instMatch = false;
+        if (sInstId) {
+          instMatch = (sInstId === cIdStr);
+        } else if (cNameLower) {
+          instMatch = ((s.instructor || '').toLowerCase().trim() === cNameLower);
+        }
         if (instMatch) return true;
 
         const hasSessionWithCoach = allSessionsList.some(sess => {
           const sessStatus = (sess.status || '').toLowerCase().trim();
           if (sessStatus === 'cancelled' || sessStatus === 'canceled') return false;
 
-          const sInstLower = (sess.instructor || sess.instructor_name || '').toLowerCase().trim();
-          const matchCoach = 
-            (cNameLower && sInstLower && (sInstLower === cNameLower || sInstLower.includes(cNameLower) || cNameLower.includes(sInstLower))) ||
-            (coachId && (sess.instructor_id === coachId || String(sess.instructor_id) === String(coachId) || parseInt(sess.instructor_id) === parseInt(coachId)));
+          const sessInstId = sess.instructor_id != null && sess.instructor_id !== '' ? String(sess.instructor_id) : '';
+          const sessInstIds = Array.isArray(sess.instructor_ids) ? sess.instructor_ids.map(String) : [];
+          let matchCoach = false;
+
+          if (sessInstId || sessInstIds.length > 0) {
+            matchCoach = (sessInstId === cIdStr) || sessInstIds.includes(cIdStr);
+          } else if (cNameLower) {
+            const sInstLower = (sess.instructor || sess.instructor_name || '').toLowerCase().trim();
+            matchCoach = (sInstLower === cNameLower);
+          }
 
           if (!matchCoach) return false;
 
           const matchId = s.id && (String(sess.student_id) === String(s.id));
           const sNameLower = (s.name || '').toLowerCase().trim();
-          const matchName = sNameLower && (
-            (sess.student || '').toLowerCase().trim() === sNameLower ||
-            (sess.student_name || '').toLowerCase().trim() === sNameLower
-          );
+          const sessStudentName = (sess.student || sess.student_name || '').toLowerCase().trim();
+          const matchName = !s.id && sNameLower && sessStudentName && (sNameLower === sessStudentName);
 
           return matchId || matchName;
         });

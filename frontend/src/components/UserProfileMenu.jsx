@@ -982,11 +982,15 @@ export default function UserProfileMenu({ user, school, onLogout }) {
             : '0 2px 6px rgba(0, 0, 0, 0.2)',
           display: 'flex',
           alignItems: 'center',
-          gap: '12px',
+          gap: '10px',
           outline: 'none',
           transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
           userSelect: 'none',
-          fontFamily: "'Outfit', 'Inter', sans-serif"
+          fontFamily: "'Outfit', 'Inter', sans-serif",
+          flexShrink: 0,
+          whiteSpace: 'nowrap',
+          minHeight: '40px',
+          boxSizing: 'border-box'
         }}
         onMouseEnter={(e) => {
           if (!isOpen) {
@@ -1006,16 +1010,11 @@ export default function UserProfileMenu({ user, school, onLogout }) {
         }}
         title="Open Profile Menu"
       >
-        <div className="db-header-usertext" style={{ textAlign: 'right' }}>
-          <div className="db-header-user-name" style={{ fontSize: '13px', fontWeight: 800, color: '#FFFFFF' }}>
+        <div className="db-header-usertext" style={{ textAlign: 'right', whiteSpace: 'nowrap', minWidth: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center', gap: '2px' }}>
+          <div className="db-header-user-name" style={{ fontSize: '12.5px', fontWeight: 800, color: '#FFFFFF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '140px', lineHeight: '1.2' }}>
             {userName}
           </div>
-          {currentSchoolName && (
-            <div className="db-header-school-name" style={{ fontSize: '10.5px', color: '#94A3B8', fontWeight: 600, maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {currentSchoolName}
-            </div>
-          )}
-          <div className="db-header-user-role" style={{ fontSize: '10px', fontWeight: 700, color: isViewAdmin ? '#38BDF8' : ((isHeadCoach || isGuestAdmin) ? '#F59E0B' : '#00D1B2'), textTransform: 'capitalize' }}>
+          <div className="db-header-user-role" style={{ fontSize: '10px', fontWeight: 700, color: isViewAdmin ? '#38BDF8' : ((isHeadCoach || isGuestAdmin) ? '#F59E0B' : '#00D1B2'), textTransform: 'capitalize', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '130px', lineHeight: '1.2' }}>
             {displayRoleLabel}
           </div>
         </div>

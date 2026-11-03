@@ -1243,3 +1243,158 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
       - Updated `handleToggleHeadCoach` optimistic state update to sort the list immediately upon action, giving instant visual feedback without waiting for background queries.
     - **Backend Query Ordering (`backend/main.py`)**:
       - Added `query = query.order_by(Instructor.is_head_coach.desc().nullslast(), Instructor.id.asc())` to `/api/instructors` endpoint, guaranteeing all database responses return Head Coach first by default.
+
+
+---
+
+### Changes on 31-10-2026
+
+1. **Top Navigation Header & User Profile Pill Responsive Architecture (`UserProfileMenu.jsx`, `index.css`)**:
+   - **Problem**: On screens between 900px and 1260px (tablets, laptops with Windows display scaling, or split-screen windows), the 7 navigation links crowded into the User Profile card in the top-right corner. This caused the user's name ("Eric Sheldon RS") and role ("School Admin") to wrap vertically across multiple lines, stretching the profile pill beyond the 72px navbar height and overflowing downward into the page body.
+   - **User Profile Pill Flex & Overflow Fixes (`UserProfileMenu.jsx`)**:
+     - Added `flex-shrink: 0`, `white-space: nowrap`, `max-height: 48px`, and `box-sizing: border-box` to `.db-header-profile-btn`.
+     - Added `white-space: nowrap`, `overflow: hidden`, `text-overflow: ellipsis`, and `max-width` limits on `.db-header-user-name` (140px), `.db-header-school-name` (120px), and `.db-header-user-role` (120px), preventing text wrapping or vertical expansion under any viewport width.
+   - **Multi-Tier Responsive Breakpoints (`index.css`)**:
+     - **1360px Breakpoint**: Adjusted header padding (`0 24px`), nav gap (`16px`), font size (`13.5px`), and hid redundant school name from the pill to free up horizontal space.
+     - **1200px Breakpoint**: Tightened nav link spacing (`gap: 10px`), reduced profile button padding, and trimmed text bounds.
+     - **1100px Breakpoint**: Seamlessly transitioned desktop navigation links into the mobile hamburger toggle (`.db-mobile-toggle`) so the 7 links never crowd the user profile card or logo on compact displays.
+     - **768px Mobile Breakpoint**: Simplified the profile pill to show the avatar circle and dropdown chevron only, hiding text labels for an ultra-clean mobile navbar.
+
+---
+
+### Changes on 03-11-2026
+
+1. **Course Day Calculation & Badges System (`Sessions.jsx`, `backend/main.py`)**:
+   - **Student Course Day Resolution (`getStudentSessionDay`)**:
+     - Automatically calculates the exact day index of a student's course based on the session date relative to the student's `start_date` (`diffDays = Math.round((sessionDate - startDate) / 1 day) + 1`).
+     - Supports guest students by resolving their parent student's course start date.
+     - Fallback chronological calculation orders all distinct session dates for students without an explicit start date.
+     - Backend (`main.py` -> `session_to_dict`): Guaranteed `start_date` and `course_duration` are resolved from the `Student` record and attached to every session item returned via `/api/sessions`.
+   - **Multi-Day Badging on Group Header**:
+     - When all students in a group are on the same day (e.g. Day 1), the group card displays `🗓️ Day 1`.
+     - When a group contains students on different days (e.g. some on Day 1, others on Day 2), the group header displays all distinct days simultaneously (e.g. `🗓️ Day 1` and `🗓️ Day 2`) with distinct color codes (Day 1: Blue `#1D4ED8`, Day 2: Purple `#7E22CE`, Day 3: Teal `#0F766E`, Day 4+: Amber `#B45309`).
+   - **Individual Student Day Badges**:
+     - Every enrolled student card in the Day Details Modal now displays their personal `Day X` pill badge next to their name.
+
+2. **Day Details Modal Mobile Responsive Architecture (`Sessions.jsx`)**:
+   - **Viewport Overflow & Top Clipping Fix**:
+     - Removed negative vertical displacement caused by `align-items: center` and padding on the modal overlay when height was `100dvh`.
+     - Added `.ses-day-modal-overlay` with `padding: 0 !important; align-items: stretch !important; justify-content: stretch !important;` on screens `< 900px`, ensuring the modal header begins at `y: 0` without clipping the date title ("Tuesday, Nov 3, 2026").
+   - **Header & Close Button Alignment**:
+     - Fixed close button (✕) wrapping to a second line by setting `flex-direction: row !important; flex-wrap: nowrap !important; justify-content: space-between !important; align-items: flex-start !important;`. Close button is pinned to top-right.
+   - **Action Buttons & Student Cards Layout**:
+     - Action buttons (`Call`, `Present`, `Absent`) use a 3-column equal grid (`display: grid !important; grid-template-columns: 1fr 1fr 1fr !important;`) on mobile, preventing overlap or truncation.
+     - Pinned the modal footer `Close` button to the bottom with 100% width for ergonomic thumb interaction on touchscreens.
+
+3. **Compact Phone UI & Multi-Day Layout Optimization (`Sessions.jsx`)**:
+   - **Group Header Multi-Row Layout**:
+     - Row 1: Group Name (`🏄‍♂️ Group A`) + Status Pill (`• PENDING FOR REVIEW`) aligned in a single flex row without text wrapping.
+     - Row 2: Timing, duration, and beach spot on a single line (`⏰ 07:00 - 08:30 AM (90 mins) • 🌊 Kovalam / Chennai Beach`).
+     - Row 3: Coach name (`Coach: manikandan`).
+     - Row 4: Multi-Day Course Badges (`DAYS: [🗓️ Day 1] [🗓️ Day 7] [🗓️ Day 20]`) laid out horizontally with compact padding and color-coded chips.
+   - **Compact Search & Time Slot Filter**:
+     - Constrained the time slot dropdown `maxWidth: 135px` and made search input `flex: 1` with 32px height and sleek padding, ensuring `Search student...` placeholder is never crushed into `🔍 S` on narrow phone viewports.
+   - **Compact Student Cards**:
+     - Streamlined student row spacing: 28px avatar, single-line student name + `Day X` badge + attendance status.
+     - Subtitle row neatly groups Guest status (`👥 Guest of ...`) and student level (`Beginner`) without vertical stacking.
+     - Call / Present / Absent buttons are proportionally styled with 11px font and 28px height.
+
+4. **Top Header Profile Pill & Navbar Responsiveness (`UserProfileMenu.jsx`, `index.css`)**:
+   - Fixed desktop navbar text collision where user name, role, and school name overlapped due to `maxHeight: '48px'` on `.db-header-profile-btn`.
+   - Replaced fixed maximum height with `minHeight: 40px; box-sizing: border-box;` and vertically centered two-line layout: bold white user name (`12.5px`, line-height `1.2`) on row 1, and colored role label (`10px`, line-height `1.2`) on row 2.
+   - Pinned avatar and dropdown chevron with smooth padding and responsive margins across 1440px, 1200px, and mobile viewports.
+
+5. **Dev Server Zombie Process Cleanup & Vite 500 Resolution**:
+   - Cleared stale background Node process (`PID 7372`) occupying port 5173.
+   - Launched Vite dev server cleanly on `http://localhost:5173/` with proxy to FastAPI backend (`:8000`).
+   - Verified `GET /src/pages/Sessions.jsx`, `/api/features`, and `/api/stats` all return clean `HTTP 200 OK` responses without errors.
+
+6. **Date Range Filter Bar Mobile Responsiveness (`DateRangeFilterBar.jsx`, `Sessions.jsx`)**:
+   - Fixed the `Date Filter` bar overflowing horizontally beyond the filter card container on mobile screens (< 640px).
+   - Separated presets and custom range into a two-tier mobile layout:
+     - **Tier 1 (Presets)**: `Yesterday`, `Today`, `Tomorrow`, and `All` cleanly distributed with `flex: 1` each across the top row.
+     - **Tier 2 (Custom Range)**: `[ 📅 From: (date)  To: (date) ]` custom date range box spanning 100% width with fluid date inputs and a reset button.
+   - Enforced `max-width: 100%; box-sizing: border-box;` preventing any horizontal overflow or border bleed on 360px and narrow smartphone viewports.
+
+7. **Same-Name Coach Data Isolation & Conflict Prevention Architecture**:
+   - **Root Cause Eliminated**:
+     - Previously, when coaches shared identical names (e.g., two coaches named "Kathir"), fallback name-matching logic in `matchesCoach`, `filterSessions`, and student queries caused newly created coaches to inherit and merge with existing coaches' sessions, student rosters, and accounts.
+     - In `set_instructor_password`, fallback email generation generated generic `{safe_name}@aisurf.io` without ID hashing, causing the second coach to hijack the first coach's `User` account record.
+   - **Backend Isolation Fixes (`backend/main.py`)**:
+     - `set_instructor_password`: Auto-generated emails now incorporate the coach's primary key (`f"{safe_name}{instructor.id}@aisurf.io"`), guaranteeing 100% unique emails.
+     - User hijacking prevention: Added validation in both `create_instructor` and `set_instructor_password` ensuring an email cannot be linked to another existing coach account.
+     - `session_to_dict`: Ensured instructor lookup from notes is only executed as a legacy fallback when `inst_ids` is empty, scoped strictly to the session's school.
+   - **Frontend Isolation Fixes**:
+     - `InstructorProfile.jsx`: Updated `matchesCoach` to evaluate **strictly by ID** if `instructor_id` or `instructor_ids` is present; never falls through to name matching.
+     - `Sessions.jsx`: Coach session isolation in `roleScopedSessions` checks strictly by ID if `s.instructor_id` or `s.instructor_ids` exists; legacy name matching is strictly gated to records with no coach IDs. `loggedInCoach` prioritizes `currentCoachId` over name.
+     - `StudentsManagement.jsx`: Session and student isolation checks strictly against `coachIds`. If `s.instructor_id` belongs to another coach, it is immediately rejected.
+     - `Analytics.jsx` & `AthleteIntelligence.jsx`: Enforced strict ID matching for coach session and athlete rosters.
+   - **UI Disambiguation**:
+     - In `InstructorManagement.jsx` cards and `NewSession.jsx` instructor roster, coaches who share duplicate names now display a distinct badge/tag (`(#{inst.id})`) with tooltip, allowing administrators and coordinators to easily distinguish between them.
+
+8. **Coach Registration Custom Certifications, Languages, and Bio Input Integration (`AuthPage.jsx`, `backend/main.py`)**:
+   - **Problem Solved**: Previously, the Coach Registration form in `AuthPage.jsx` had no input fields for **Certifications**, **Languages Spoken**, or **Coach Bio / Background**. When a coach registered, the backend auto-filled fake hardcoded mock values (`certifications: ["ISA Level 1", "Lifeguard Certified"]`, `bio: "Professional surf instructor dedicated to athletic performance."`, and default `'ISA Level 1'` in instructor cards).
+   - **Frontend Inputs Added (`AuthPage.jsx`)**:
+     - **Certifications**: Added text input (`placeholder="e.g. ISA Level 1, Surf Coach Safety, Lifeguard"`) saving custom coach licenses.
+     - **Languages Spoken**: Added interactive quick-select tag pills (`English`, `Tamil`, `Hindi`, `Malayalam`, `Kannada`, `Telugu`, `French`, `Spanish`, `German`) + text input allowing coaches to select or type multiple languages.
+     - **Coach Bio / Background**: Added styled textarea allowing coaches to write their authentic surfing background, experience, and coaching philosophy.
+   - **Backend Custom Value Ingestion (`backend/main.py`)**:
+     - Extended `UserSignup` schema to accept `certifications`, `languages`, and `bio`.
+     - In `auth_signup`, eliminated all hardcoded mock defaults (`"ISA Level 1"`, `"Professional surf instructor..."`), accurately parsing and saving the user's authentic certifications, languages, and biography.
+9. **Coach Registration Approval Workflow (Zero Auto-Assignment to Schools) (`backend/main.py`, `AuthPage.jsx`, `InstructorManagement.jsx`, `NewSession.jsx`, `StudentsManagement.jsx`)**:
+   - **Problem Solved**: Previously, when a coach registered selecting an affiliated surf school, their account was immediately auto-assigned and activated without the school's knowledge or consent, allowing unverified coaches to be assigned to classes and students.
+   - **Database & Backend Schema Updates (`backend/main.py`)**:
+     - Added `approval_status VARCHAR DEFAULT 'approved'` column migration for the `instructors` table in both SQLite and PostgreSQL.
+     - Added `approval_status = Column(String, default="approved")` to `Instructor` ORM model.
+     - In `auth_signup`: When `role == "coach"` and a surf school is selected (not Freelance), `initial_approval = "pending"`, creating both `User` and `Instructor` records with `approval_status="pending"` and `is_active=False`.
+     - Logged pending notification in `ActivityLog`: `"New coach {name} applied to join {school} (Pending Approval)"`.
+     - Added `POST /api/instructors/{instructor_id}/approve` endpoint: activates coach and linked user account (`approval_status="approved"`, `is_active=True`), creating activity log.
+     - Added `POST /api/instructors/{instructor_id}/reject` endpoint: marks `approval_status="rejected"` and keeps `is_active=False`.
+     - Extended `/api/auth/check-approval` to query `Instructor` records as well as `Student` and `User`.
+     - In `auth_login`: If a deactivated/pending coach attempts login, returns a clear `HTTP 403` informing them their join request is pending approval from the School Admin.
+   - **Coach Registration UI Flow (`AuthPage.jsx`)**:
+     - Coaches registering with a school affiliation are routed to the **"Registration Pending"** screen: *"Status: Pending School Admin Approval. The School Admin has been notified of your registration. You will be able to access your coach dashboard once approved."*
+     - Live **"Check Approval Status"** button automatically refreshes status against the backend and redirects the coach to their profile upon school approval.
+   - **School Admin Approval Management (`InstructorManagement.jsx`)**:
+     - **Top Header Badge**: Added `[⏳ Pending Approvals ({count})]` filter toggle button in the top header, highlighting requests requiring review.
+     - **Card Top Badge**: Pending coaches display an amber `⏳ Pending Approval` pill.
+     - **Action Buttons**: Rendered 1-click `[✓ Approve]` and `[✕ Reject]` action buttons directly on the coach card and within the 3-dot dropdown menu.
+     - **Sorting Priority**: Pending coaches are sorted to the top of the instructors roster so administrators can immediately notice and review applications.
+   - **Roster & Session Isolation (`NewSession.jsx`, `StudentsManagement.jsx`)**:
+     - Coaches with pending or rejected status (`approval_status === 'pending' || !is_active`) are strictly filtered out of session coach assignment pools in `NewSession.jsx` and student coach dropdowns in `StudentsManagement.jsx`.
+
+10. **Coach Registration Mandatory Required Fields (`*`) & Approval Fixes (`AuthPage.jsx`, `InstructorManagement.jsx`)**:
+    - **All Fields Marked Mandatory with `*` (`AuthPage.jsx`)**:
+      - Added red required asterisk (`*`) to all Coach Registration fields: `Full Name *`, `Password *`, `Confirm Password *`, `Affiliation / Surf School *`, `Phone / WhatsApp Number *`, `Hourly Rate *`, `Location / Region *`, `Coaching Specializations *`, `Certifications *`, `Languages Spoken *`, `Coach Bio / Background *`.
+      - Added client-side validation in `completeRegistration`: coaches cannot submit without filling hourly rate, choosing specializations, entering certifications, selecting/typing languages, writing a bio, or selecting an affiliation.
+    - **Approval Action Error Resolution (`InstructorManagement.jsx`)**:
+      - Resolved `ReferenceError: safeJson is not defined` when approving coaches by replacing with native safe `res.json().catch(() => ({}))` parsing.
+      - Refactored `[ ⏳ Pending Requests ({count}) ]` to be permanently visible in the header beside `[ Leave Requests ]`, featuring active amber toggle, live pending badge counter (`0` when clear), and matching pill aesthetics.
+
+11. **Coach In-App Access with Internal Pending Review Banner (`AuthPage.jsx`, `InstructorProfile.jsx`, `backend/main.py`)**:
+    - **Unblocked Login for Pending Coaches**: Coaches are no longer halted at the static `/auth` screen with a blocking modal. They can directly register and log into their coach portal (`/instructors/:id`).
+    - **In-App Pending Banner (`InstructorProfile.jsx`)**: When a coach's school affiliation is pending, an amber notification card displays at the top of their profile: *"Registration Status: Pending School Approval. Your join request to [School] is awaiting approval from the School Admin. Once approved, you will be assigned to school sessions and students."*
+    - **Profile Hero Badge**: Displays an amber `⏳ PENDING APPROVAL` tag beside coach certifications until the school admin approves them.
+    - **School & Session Protection Maintained**: Pending coaches remain excluded from school session scheduling (`NewSession.jsx`) and student roster assignments (`StudentsManagement.jsx`) until approved by the school administrator.
+
+
+12. **AWS Cloud Production Schema Synchronization & Zero-Data-Loss Migration (`backend/main.py`, `deploy_to_aws.py`)**:
+    - **PostgreSQL Schema Desync Incident Resolution**:
+      - Diagnosed and resolved the live AWS RDS error: `(psycopg2.errors.UndefinedColumn) column users.is_head_coach does not exist` and `column users.guest_role does not exist` that triggered on user authentication and instructor queries.
+      - Fixed query crash where SQLAlchemy aborted user authentication and instructor list queries, ensuring existing records are rendered without interruption.
+    - **Non-Destructive DDL Auto-Migrations**:
+      - Added comprehensive `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` blocks for PostgreSQL RDS and SQLite on startup across `users`, `instructors`, `students`, `schools`, and `sessions`.
+      - Ensured explicit transaction commits (`test_conn.commit()`, `_c.commit()`) so schema enhancements immediately persist on live database clusters (`aisurf-db-cluster`, `database-2`).
+      - Preserved 100% of all existing records (Schools, Instructors, Students, Sessions, Attendance) with zero data loss, drops, or table wipes.
+    - **Backend Hot-Reload Deployment via AWS SSM**:
+      - Automated packaging, S3 staging (`s3://aisurf-media-uploads-149051628601/deploy/main.py`), and AWS SSM remote execution on EC2 instance `i-0c62e04f44a9ea237`.
+      - Verified `aisurf-backend` systemd service restart, sequence synchronization, and `HTTP 200 OK` on authentication and data endpoints.
+
+13. **Sessions Day Modal Time Slot Sorting Bug Resolution & Frontend Cloud Deployment (`Sessions.jsx`, `deploy_frontend_aws.py`)**:
+    - **ReferenceError Resolution (`Sessions.jsx`)**:
+      - Resolved `Uncaught ReferenceError: timeStringToMinutes is not defined` causing a white-screen crash on `athnexlive.com/sessions` during day modal time slot extraction.
+      - Replaced `timeStringToMinutes` call with `parseTimeToMinutes` and defined an alias `const timeStringToMinutes = parseTimeToMinutes` to prevent any runtime regressions.
+    - **Frontend Automated Build & AWS Cloud Deployment**:
+      - Built production Vite bundle (`npm run build`) cleanly in 1.79s without errors.
+      - Packaged and uploaded `aisurf-frontend.zip` to S3, deployed to EC2 frontend instance `i-02999b6093bc5bfd2` (`98.94.45.107`) via AWS SSM, and hot-reloaded Nginx web server.
+      - Verified `/sessions` page rendering, group multi-day badges, and student rosters loading smoothly without console errors.

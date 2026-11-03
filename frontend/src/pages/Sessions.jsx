@@ -285,6 +285,7 @@ const parseTimeToMinutes = (timeStr) => {
   if (ampm === 'AM' && hours === 12) hours = 0;
   return hours * 60 + mins;
 };
+const timeStringToMinutes = parseTimeToMinutes;
 
 const resolveStudentAndGuestDisplay = (sess, allStudentsList = [], guestOccurrenceIndex = 0) => {
   if (!sess) return { displayName: 'Student', isGuest: false, parentName: null, level: 'Beginner' };
@@ -501,10 +502,14 @@ const Sessions = () => {
 
   const loggedInCoach = useMemo(() => {
     if (!allInstructorsList || allInstructorsList.length === 0) return null;
-    return allInstructorsList.find(i =>
-      (currentCoachId && (String(i.id) === String(currentCoachId) || parseInt(i.id) === parseInt(currentCoachId))) ||
-      (currentCoachName && i.name && i.name.toLowerCase().trim() === currentCoachName.toLowerCase().trim())
-    );
+    if (currentCoachId) {
+      const byId = allInstructorsList.find(i => String(i.id) === String(currentCoachId) || parseInt(i.id) === parseInt(currentCoachId));
+      if (byId) return byId;
+    }
+    if (currentCoachName) {
+      return allInstructorsList.find(i => i.name && i.name.toLowerCase().trim() === currentCoachName.toLowerCase().trim());
+    }
+    return null;
   }, [allInstructorsList, currentCoachId, currentCoachName]);
 
   // Coach's assigned school (strictly from instructor profile or currentUser, NOT from activeSchool switcher!)
@@ -2131,16 +2136,23 @@ const Sessions = () => {
           if (sSchool === 'individual / freelance coach') return false;
         }
 
+        const sInstId = s.instructor_id != null && s.instructor_id !== '' ? String(s.instructor_id) : '';
+        const sInstIds = Array.isArray(s.instructor_ids) ? s.instructor_ids.map(String) : [];
+        const cId = currentCoachId != null && currentCoachId !== '' ? String(currentCoachId) : '';
+
+        // 1. Strict ID Match: If session has instructor_id or instructor_ids, ONLY match by ID.
+        // Never fall through to name matching (prevents same-name coach cross-contamination).
+        if (sInstId || sInstIds.length > 0) {
+          if (cId) {
+            return sInstId === cId || sInstIds.includes(cId) || (parseInt(sInstId) === parseInt(cId));
+          }
+          return false;
+        }
+
+        // 2. Fallback: Only for legacy sessions with NO instructor ID
         const cNameLower = (currentCoachName || '').toLowerCase().trim();
         const sInstLower = (s.instructor || s.instructor_name || '').toLowerCase().trim();
-        const nameMatch = cNameLower && sInstLower && (sInstLower === cNameLower || sInstLower.includes(cNameLower) || cNameLower.includes(sInstLower));
-        const idMatch = currentCoachId && (
-          s.instructor_id === currentCoachId ||
-          String(s.instructor_id) === String(currentCoachId) ||
-          parseInt(s.instructor_id) === parseInt(currentCoachId) ||
-          (Array.isArray(s.instructor_ids) && (s.instructor_ids.includes(currentCoachId) || s.instructor_ids.includes(parseInt(currentCoachId)) || s.instructor_ids.includes(String(currentCoachId))))
-        );
-        return nameMatch || idMatch;
+        return Boolean(cNameLower && sInstLower && sInstLower === cNameLower);
       });
     }
 
@@ -2965,7 +2977,7 @@ const Sessions = () => {
             </div>
 
             {/* Quick Date Range Filter Bar with Presets & From-To Range Picker */}
-            <div className="ses-select-wrap ses-date-quick-wrap" style={{ minWidth: 'auto' }}>
+            <div className="ses-select-wrap ses-date-quick-wrap" style={{ minWidth: 'auto', maxWidth: '100%', boxSizing: 'border-box' }}>
               <label className="ses-select-label">Date Filter</label>
               <DateRangeFilterBar
                 startDate={dateRange.startDate}
@@ -3161,7 +3173,7 @@ const Sessions = () => {
               </button>
             </div>
           </div>
-        )}
+      )}
 
         {/* Metric Cards Row - Placed Between Filters & Table */}
         <div className={`ses-metrics-row ${isStudent ? 'student-view' : ''}`}>
@@ -6651,10 +6663,9 @@ const Sessions = () => {
                                   {formatSessionStatus(grp)}
                                 </span>
                               </div>
-
-                              <div style={{ fontSize: '12px', color: '#64748B', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <span>{grp.instructor?.includes(',') ? 'Coaches:' : 'Coach:'} <strong style={{ color: '#0F172A' }}>{grp.instructor || 'Assigned Coach'}</strong></span>
-                                {grp.location && <span>&bull; 🌊 {grp.location}</span>}
+                              <div style={{ fontSize: '12px', color: '#64748B', marginBottom: '8px' }}>
+                                <span>Coach: {grp.instructor || 'Coach'}</span>
+                                {grp.location && <span> &bull; 🌊 {grp.location}</span>}
                               </div>
 
                               {/* Students list chips */}
@@ -6734,764 +6745,624 @@ const Sessions = () => {
                             </div>
                           ))}
 
-                          {activeDayGroups.ungroupedList.map((sess, uIdx) => (
-                            <div
-                              key={sess.id || uIdx}
-                              className="ses-cal-drawer-item"
-                              style={{ cursor: 'default' }}
-                            >
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                                <div>
-                                  {(() => {
-                                    const isG = Boolean(sess.is_guest || (sess.guest_name && sess.guest_name.trim()));
-                                    const dName = (isG && sess.guest_name) ? sess.guest_name.trim() : sess.student;
-                                    const pName = (isG && sess.student && sess.student !== dName) ? sess.student : null;
-                                    return (
-                                      <h4 style={{ margin: '0 0 2px', fontSize: '14px', color: '#0F172A', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                        <span>{isG ? '👥' : '👤'}</span>
-                                        <span>{dName}</span>
-                                        {isG && (
-                                          <span style={{ fontSize: '10.5px', background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A', borderRadius: '4px', padding: '1px 5px', fontWeight: 700 }}>
-                                            Guest{pName ? ` (${pName})` : ''}
-                                          </span>
-                                        )}
-                                      </h4>
-                                    );
-                                  })()}
-                                  <span style={{ fontSize: '12px', color: '#0D9488', fontWeight: 600 }}>
-                                    ⏰ {sess.time}
+                          {activeDayGroups.ungroupedList.map((sess, uIdx) => {
+                            const isGuest = Boolean(sess.is_guest || (sess.guest_name && sess.guest_name.trim()));
+                            const studentName = isGuest && sess.guest_name ? sess.guest_name.trim() : sess.student;
+                            const parentStudent = isGuest && sess.student && sess.student !== studentName ? sess.student : null;
+
+                            return (
+                              <div
+                                key={sess.id || uIdx}
+                                className="ses-cal-drawer-item"
+                                style={{ cursor: 'default' }}
+                              >
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                                  <div>
+                                    <h4 style={{ margin: '0 0 2px', fontSize: '14px', color: '#0F172A', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                      <span>{isGuest ? '👥' : '👤'}</span>
+                                      <span>{studentName}</span>
+                                      {isGuest && (
+                                        <span style={{ fontSize: '10.5px', background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A', borderRadius: '4px', padding: '1px 5px', fontWeight: 700 }}>
+                                          Guest{parentStudent ? ` (${parentStudent})` : ''}
+                                        </span>
+                                      )}
+                                    </h4>
+                                    <span style={{ fontSize: '12px', color: '#0D9488', fontWeight: 600 }}>
+                                      ⏰ {sess.time}
+                                    </span>
+                                  </div>
+                                  <span
+                                    className="ses-status-pill"
+                                    style={{
+                                      backgroundColor: statusBg(sess),
+                                      color: statusColor(sess),
+                                      fontSize: '11px',
+                                      padding: '2px 8px'
+                                    }}
+                                  >
+                                    {formatSessionStatus(sess)}
                                   </span>
                                 </div>
-                                <span
-                                  className="ses-status-pill"
-                                  style={{
-                                    backgroundColor: statusBg(sess),
-                                    color: statusColor(sess),
-                                    fontSize: '11px',
-                                    padding: '2px 8px'
-                                  }}
-                                >
-                                  {formatSessionStatus(sess)}
-                                </span>
+                                <div style={{ fontSize: '12px', color: '#64748B', marginBottom: '10px' }}>
+                                  <span>{sess.instructor?.includes(',') ? 'Coaches:' : 'Coach:'} <strong style={{ color: '#0F172A' }}>{sess.instructor || 'Assigned Coach'}</strong></span>
+                                  {sess.location && <span> &bull; 🌊 {sess.location}</span>}
+                                </div>
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                  <button
+                                    type="button"
+                                    className="ses-btn-secondary"
+                                    style={{ flex: 1, padding: '6px 10px', fontSize: '11.5px', justifyContent: 'center' }}
+                                    onClick={() => setSelectedSessionDetail(sess)}
+                                  >
+                                    View Details
+                                  </button>
+                                </div>
                               </div>
-
-                              <div style={{ fontSize: '12px', color: '#64748B', marginBottom: '10px' }}>
-                                {sess.instructor?.includes(',') ? 'Coaches:' : 'Coach:'} <strong style={{ color: '#0F172A' }}>{sess.instructor || 'Assigned Coach'}</strong>
-                                {sess.location && <span> &bull; 🌊 {sess.location}</span>}
-                              </div>
-
-                              <div style={{ display: 'flex', gap: '8px' }}>
-                                <button
-                                  type="button"
-                                  className="ses-btn-secondary"
-                                  style={{ flex: 1, padding: '6px 10px', fontSize: '11.5px', justifyContent: 'center' }}
-                                  onClick={() => setSelectedSessionDetail(sess)}
-                                >
-                                  View Details
-                                </button>
-                              </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
                     </div>
                   )}
-
                 </div>
-              </div>
 
-              {/* Day Details Popup Modal (Triggered on date touch/click) */}
-              {selectedDayDetailsModal && (() => {
-                const targetISO = selectedDayDetailsModal;
-                const targetDaySessions = sessionsByISO[targetISO] || roleScopedSessions.filter(s => normalizeToYYYYMMDD(s.date) === targetISO);
-                const { groups: modalGroups, ungrouped: modalUngrouped } = buildSessionGrouping(targetDaySessions);
-                const isPast = targetISO < getTodayYYYYMMDD();
-                const isToday = targetISO === getTodayYYYYMMDD();
+        {/* Pro Day Details Full-Roster Modal */}
+        {selectedDayDetailsModal && (() => {
+          const targetISO = selectedDayDetailsModal;
+          const targetDaySessions = (sessions || []).filter(s => normalizeToYYYYMMDD(s.date) === targetISO);
+          const { groups: modalGroups, ungrouped: modalUngrouped } = buildSessionGrouping(targetDaySessions);
+          const todayISO = getTodayYYYYMMDD();
+          const isPast = targetISO < todayISO;
+          const isToday = targetISO === todayISO;
 
-                // Compute all unique time slots for this day sorted chronologically
-                const dayTimeSlots = Array.from(
-                  new Set([
-                    ...modalGroups.map(g => (g.time || '').trim()).filter(Boolean),
-                    ...modalUngrouped.map(s => (s.time || '').trim()).filter(Boolean)
-                  ])
-                ).sort((a, b) => parseTimeToMinutes(a) - parseTimeToMinutes(b));
+          // Helper to calculate which course day a student is on for this session date
+          const getStudentSessionDay = (sess, currentTargetISO) => {
+            if (!sess) return 1;
+            const stId = sess.student_id;
+            const sClean = (sess.student || sess.student_name || '').toLowerCase().trim();
+            
+            // Match in allStudentsList
+            let st = null;
+            if (Array.isArray(allStudentsList) && allStudentsList.length > 0) {
+              st = allStudentsList.find(s => 
+                (stId != null && (String(s.id) === String(stId) || s.id === parseInt(stId, 10))) ||
+                (sClean && (s.name || '').toLowerCase().trim() === sClean)
+              );
+            }
 
-                // Count groups and students per time slot for accurate badge indicators
-                const slotGroupCounts = {};
-                const slotStudentCounts = {};
-                modalGroups.forEach(grp => {
-                  const t = (grp.time || '').trim();
-                  slotGroupCounts[t] = (slotGroupCounts[t] || 0) + 1;
-                  slotStudentCounts[t] = (slotStudentCounts[t] || 0) + (grp.sessions ? grp.sessions.length : 0);
-                });
-                modalUngrouped.forEach(sess => {
-                  const t = (sess.time || '').trim();
-                  slotStudentCounts[t] = (slotStudentCounts[t] || 0) + 1;
-                });
+            // If guest session without direct start_date, find parent student's start_date
+            let rawStart = sess.start_date || st?.start_date || st?.startDate || '';
+            if (!rawStart && sess.guest_name && sClean) {
+              const parentSt = (allStudentsList || []).find(s => (s.name || '').toLowerCase().trim() === sClean);
+              if (parentSt?.start_date) rawStart = parentSt.start_date;
+            }
 
-                const matchesSlot = (itemTime, filterTime) => {
-                  if (!filterTime || filterTime === 'All') return true;
-                  if (!itemTime) return false;
-                  const t1 = itemTime.trim().toLowerCase();
-                  const t2 = filterTime.trim().toLowerCase();
-                  if (t1 === t2) return true;
-                  if (t1.includes(t2) || t2.includes(t1)) return true;
-                  const start1 = t1.includes(' - ') ? t1.split(' - ')[0].trim() : t1;
-                  const start2 = t2.includes(' - ') ? t2.split(' - ')[0].trim() : t2;
-                  return start1 === start2;
-                };
+            const sessDateISO = currentTargetISO || normalizeToYYYYMMDD(sess.date);
 
-                const query = (dayModalStudentSearch || '').trim().toLowerCase();
-                let filteredGroups = modalGroups;
-                let filteredUngrouped = modalUngrouped;
-
-                // Filter by time slot
-                if (dayModalSlotFilter !== 'All') {
-                  filteredGroups = filteredGroups.filter(grp => matchesSlot(grp.time, dayModalSlotFilter));
-                  filteredUngrouped = filteredUngrouped.filter(sess => matchesSlot(sess.time, dayModalSlotFilter));
-                }
-
-                const matchesNamePrefix = (nameStr, q) => {
-                  if (!nameStr || !q) return false;
-                  const cleanName = String(nameStr).trim().toLowerCase();
-                  const cleanQuery = String(q).trim().toLowerCase();
-                  if (!cleanQuery) return true;
-
-                  // 1. Direct name prefix (e.g. "k an" matches "K Anvesh kumar reddy")
-                  if (cleanName.startsWith(cleanQuery)) return true;
-
-                  // 2. Individual word prefix match (each word must START with the search term, NOT matching inside/middle of words)
-                  const words = cleanName.split(/[\s,._-]+/).filter(Boolean);
-                  if (words.some(w => w.startsWith(cleanQuery))) return true;
-
-                  // 3. Multi-word search terms (e.g. "div red" matches "K Divith Reddy")
-                  const queryParts = cleanQuery.split(/[\s,._-]+/).filter(Boolean);
-                  if (queryParts.length > 1) {
-                    return queryParts.every(qp => words.some(w => w.startsWith(qp)));
+            if (rawStart && sessDateISO) {
+              const startISO = normalizeToYYYYMMDD(rawStart);
+              if (startISO) {
+                const d1 = new Date(startISO + 'T00:00:00');
+                const d2 = new Date(sessDateISO + 'T00:00:00');
+                if (!isNaN(d1.getTime()) && !isNaN(d2.getTime())) {
+                  const diff = Math.round((d2 - d1) / (1000 * 60 * 60 * 24)) + 1;
+                  if (!isNaN(diff) && diff >= 1) {
+                    return diff;
                   }
-
-                  return false;
-                };
-
-                if (query) {
-                  const matchesSession = (sess) =>
-                    matchesNamePrefix(sess.student, query) ||
-                    matchesNamePrefix(sess.guest_name, query);
-
-                  filteredGroups = filteredGroups.map(grp => {
-                    const matchingSessions = grp.sessions.filter(matchesSession);
-                    if (matchingSessions.length > 0) {
-                      return { ...grp, sessions: matchingSessions };
-                    }
-                    return null;
-                  }).filter(Boolean);
-
-                  filteredUngrouped = filteredUngrouped.filter(matchesSession);
                 }
+              }
+            }
 
-                const totalMatchingStudents = filteredGroups.reduce((acc, g) => acc + g.sessions.length, 0) + filteredUngrouped.length;
+            // Fallback: order all distinct session dates for this student chronologically
+            if (stId || sClean) {
+              const studentSessions = (sessions || []).filter(s => 
+                (stId != null && s.student_id != null && (String(s.student_id) === String(stId) || s.student_id === parseInt(stId, 10))) ||
+                (sClean && (s.student || s.student_name || '').toLowerCase().trim() === sClean)
+              );
+              const uniqueDates = Array.from(new Set(studentSessions.map(s => normalizeToYYYYMMDD(s.date)).filter(Boolean))).sort();
+              const idx = uniqueDates.indexOf(sessDateISO);
+              if (idx !== -1) {
+                return idx + 1;
+              }
+            }
 
-                const totalDayPresent = targetDaySessions.filter(s => {
-                  const att = dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '');
-                  return att === 'Present';
-                }).length;
+            return 1;
+          };
 
-                const totalDayAbsent = targetDaySessions.filter(s => {
-                  const att = dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '');
-                  return att === 'Absent';
-                }).length;
+          // Compute all unique time slots for this day sorted chronologically
+          const dayTimeSlots = Array.from(
+            new Set([
+              ...modalGroups.map(g => (g.time || '').trim()).filter(Boolean),
+              ...modalUngrouped.map(s => (s.time || '').trim()).filter(Boolean)
+            ])
+          ).sort((a, b) => parseTimeToMinutes(a) - parseTimeToMinutes(b));
 
-                return (
-                  <div className="ses-modal-overlay" style={{ zIndex: 10002 }} onClick={() => { setSelectedDayDetailsModal(null); setDayModalStudentSearch(''); setDayModalSlotFilter('All'); }}>
-                    <div
-                      className="ses-modal-box ses-day-details-modal-box"
-                      style={{ maxWidth: '640px', width: '92%', maxHeight: '88vh', display: 'flex', flexDirection: 'column', padding: '0', overflow: 'hidden' }}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      {/* Modal Header */}
-                      <div className="ses-day-modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: '1px solid #E2E8F0', background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', color: '#FFFFFF' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          <span style={{ fontSize: '24px' }}>📅</span>
-                          <div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <h3 style={{ margin: 0, fontSize: '17px', color: '#FFFFFF', fontFamily: 'Outfit, sans-serif', fontWeight: 800 }}>
-                                {formatCalendarLongDate(targetISO)}
-                              </h3>
-                              {isToday && (
-                                <span style={{ background: '#2563EB', color: '#FFFFFF', fontSize: '10px', fontWeight: 800, padding: '2px 6px', borderRadius: '4px' }}>
-                                  TODAY
-                                </span>
-                              )}
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '3px' }}>
-                              <span style={{ fontSize: '12px', color: '#94A3B8' }}>
-                                {targetDaySessions.length} total student{targetDaySessions.length === 1 ? '' : 's'} scheduled &bull; {modalGroups.length} group{modalGroups.length === 1 ? '' : 's'}
-                              </span>
-                              <span style={{ color: '#475569', fontSize: '11px' }}>&bull;</span>
-                              <span style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '4px',
-                                fontSize: '11px',
-                                fontWeight: 700,
-                                color: '#4ADE80',
-                                background: 'rgba(74, 222, 128, 0.15)',
-                                border: '1px solid rgba(74, 222, 128, 0.3)',
-                                padding: '1px 7px',
-                                borderRadius: '10px'
-                              }}>
-                                <span>✓</span> {totalDayPresent} Present
-                              </span>
-                              <span style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '4px',
-                                fontSize: '11px',
-                                fontWeight: 700,
-                                color: totalDayAbsent > 0 ? '#F87171' : '#94A3B8',
-                                background: totalDayAbsent > 0 ? 'rgba(248, 113, 113, 0.15)' : 'rgba(255, 255, 255, 0.08)',
-                                border: totalDayAbsent > 0 ? '1px solid rgba(248, 113, 113, 0.3)' : '1px solid rgba(255, 255, 255, 0.12)',
-                                padding: '1px 7px',
-                                borderRadius: '10px'
-                              }}>
-                                <span>✕</span> {totalDayAbsent} Absent
-                              </span>
-                            </div>
-                          </div>
-                        </div>
+          const slotGroupCountMap = {};
+          const slotStudentCountMap = {};
+          modalGroups.forEach(g => {
+            const t = (g.time || '').trim();
+            slotGroupCountMap[t] = (slotGroupCountMap[t] || 0) + 1;
+            slotStudentCountMap[t] = (slotStudentCountMap[t] || 0) + (g.sessions ? g.sessions.length : 0);
+          });
+          modalUngrouped.forEach(s => {
+            const t = (s.time || '').trim();
+            slotStudentCountMap[t] = (slotStudentCountMap[t] || 0) + 1;
+          });
+
+          // Match time slot filter helper
+          const matchTimeSlot = (itemTime, filterTime) => {
+            if (!filterTime || filterTime === 'All') return true;
+            if (!itemTime) return false;
+            const normItem = itemTime.trim().toLowerCase();
+            const normFilter = filterTime.trim().toLowerCase();
+            if (normItem === normFilter || normItem.includes(normFilter) || normFilter.includes(normItem)) return true;
+            const itemStart = normItem.includes(' - ') ? normItem.split(' - ')[0].trim() : normItem;
+            const filterStart = normFilter.includes(' - ') ? normFilter.split(' - ')[0].trim() : normFilter;
+            return itemStart === filterStart;
+          };
+
+          const query = (dayModalStudentSearch || '').trim().toLowerCase();
+
+          let filteredGroups = modalGroups;
+          let filteredUngrouped = modalUngrouped;
+
+          // Apply Slot Filter
+          if (dayModalSlotFilter !== 'All') {
+            filteredGroups = filteredGroups.filter(grp => matchTimeSlot(grp.time, dayModalSlotFilter));
+            filteredUngrouped = filteredUngrouped.filter(sess => matchTimeSlot(sess.time, dayModalSlotFilter));
+          }
+
+          // Student prefix / name fuzzy match helper
+          const matchesStudent = (studentName, q) => {
+            if (!studentName || !q) return false;
+            const s = String(studentName).trim().toLowerCase();
+            const cleanQuery = String(q).trim().toLowerCase();
+            if (!cleanQuery) return true;
+            if (s.startsWith(cleanQuery)) return true;
+            const words = s.split(/[s,._-]+/).filter(Boolean);
+            if (words.some(w => w.startsWith(cleanQuery))) return true;
+            const queryParts = cleanQuery.split(/[s,._-]+/).filter(Boolean);
+            if (queryParts.length > 1) {
+              return queryParts.every(qp => words.some(w => w.startsWith(qp)));
+            }
+            return false;
+          };
+
+          // Apply Student Search Filter
+          if (query) {
+            const sessionMatches = (s) => matchesStudent(s.student, query) || matchesStudent(s.guest_name, query);
+            filteredGroups = filteredGroups
+              .map(grp => {
+                const matchedSessions = grp.sessions.filter(sessionMatches);
+                return matchedSessions.length > 0 ? { ...grp, sessions: matchedSessions } : null;
+              })
+              .filter(Boolean);
+            filteredUngrouped = filteredUngrouped.filter(sessionMatches);
+          }
+
+          const totalMatchingStudents = filteredGroups.reduce((acc, g) => acc + g.sessions.length, 0) + filteredUngrouped.length;
+
+          const totalDayPresent = targetDaySessions.filter(s => {
+            const att = dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '');
+            return att === 'Present';
+          }).length;
+
+          const totalDayAbsent = targetDaySessions.filter(s => {
+            const att = dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '');
+            return att === 'Absent';
+          }).length;
+
+          return (
+            <div className="ses-modal-overlay ses-day-modal-overlay" style={{ zIndex: 10002 }} onClick={() => { setSelectedDayDetailsModal(null); setDayModalStudentSearch(''); setDayModalSlotFilter('All'); }}>
+              <div
+                className="ses-modal-box ses-day-details-modal-box"
+                style={{ maxWidth: '640px', width: '92%', maxHeight: '88vh', display: 'flex', flexDirection: 'column', padding: '0', overflow: 'hidden' }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Modal Header */}
+                <div className="ses-day-modal-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.1)', background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', color: '#FFFFFF', flexShrink: 0, gap: '10px', flexWrap: 'nowrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flex: 1 }}>
+                    <span style={{ fontSize: '20px', flexShrink: 0 }}>📅</span>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                        <h3 style={{ margin: 0, fontSize: '15px', color: '#FFFFFF', fontFamily: 'Outfit, sans-serif', fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {formatCalendarLongDate(targetISO)}
+                        </h3>
+                        {isToday && (
+                          <span style={{ background: '#2563EB', color: '#FFFFFF', fontSize: '9.5px', fontWeight: 800, padding: '1px 5px', borderRadius: '4px', flexShrink: 0 }}>
+                            TODAY
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', marginTop: '2px' }}>
+                        <span style={{ fontSize: '11px', color: '#94A3B8', whiteSpace: 'nowrap' }}>
+                          {targetDaySessions.length} students &bull; {modalGroups.length} group{modalGroups.length === 1 ? '' : 's'}
+                        </span>
+                        <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '3px',
+                          fontSize: '10px',
+                          fontWeight: 700,
+                          color: '#4ADE80',
+                          background: 'rgba(74, 222, 128, 0.15)',
+                          border: '1px solid rgba(74, 222, 128, 0.3)',
+                          padding: '1px 6px',
+                          borderRadius: '8px',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          <span>✓</span> {totalDayPresent} Present
+                        </span>
+                        <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '3px',
+                          fontSize: '10px',
+                          fontWeight: 700,
+                          color: totalDayAbsent > 0 ? '#F87171' : '#94A3B8',
+                          background: totalDayAbsent > 0 ? 'rgba(248, 113, 113, 0.15)' : 'rgba(255, 255, 255, 0.08)',
+                          border: totalDayAbsent > 0 ? '1px solid rgba(248, 113, 113, 0.3)' : '1px solid rgba(255, 255, 255, 0.12)',
+                          padding: '1px 6px',
+                          borderRadius: '8px',
+                          whiteSpace: 'nowrap'
+                        }}>
+                          <span>✕</span> {totalDayAbsent} Absent
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="ses-modal-close"
+                    style={{ width: '28px', height: '28px', fontSize: '13px', color: '#FFFFFF', background: 'rgba(255,255,255,0.14)', border: 'none', borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0 }}
+                    onClick={() => { setSelectedDayDetailsModal(null); setDayModalStudentSearch(''); setDayModalSlotFilter('All'); }}
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {/* Search & Time Slot Filter Bar */}
+                {targetDaySessions.length > 0 && (
+                  <div
+                    className="ses-day-filter-bar"
+                    style={{
+                      padding: '8px 14px',
+                      background: '#FFFFFF',
+                      borderBottom: '1px solid #E2E8F0',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}>
+                    {/* Student Search */}
+                    <div style={{ position: 'relative', flex: 1, minWidth: 0, display: 'flex', alignItems: 'center' }}>
+                      <span style={{ position: 'absolute', left: '8px', fontSize: '12px', color: '#64748B', pointerEvents: 'none' }}>
+                        🔍
+                      </span>
+                      <input
+                        type="text"
+                        placeholder="Search student..."
+                        value={dayModalStudentSearch}
+                        onChange={e => setDayModalStudentSearch(e.target.value)}
+                        style={{
+                          width: '100%',
+                          padding: '5px 22px 5px 26px',
+                          borderRadius: '7px',
+                          border: dayModalStudentSearch.trim() ? '1.5px solid #0D9488' : '1px solid #CBD5E1',
+                          background: dayModalStudentSearch.trim() ? '#F0FDFA' : '#F8FAFC',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          color: '#0F172A',
+                          outline: 'none',
+                          boxSizing: 'border-box',
+                          height: '32px'
+                        }}
+                      />
+                      {dayModalStudentSearch && (
                         <button
-                          className="ses-modal-close"
-                          style={{ width: '28px', height: '28px', fontSize: '12px', color: '#FFFFFF', background: 'rgba(255,255,255,0.1)' }}
-                          onClick={() => { setSelectedDayDetailsModal(null); setDayModalStudentSearch(''); setDayModalSlotFilter('All'); }}
+                          type="button"
+                          onClick={() => setDayModalStudentSearch('')}
+                          style={{
+                            position: 'absolute',
+                            right: '6px',
+                            background: '#E2E8F0',
+                            border: 'none',
+                            color: '#475569',
+                            borderRadius: '50%',
+                            width: '16px',
+                            height: '16px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '9px',
+                            fontWeight: 800,
+                            cursor: 'pointer'
+                          }}
+                          title="Clear search"
                         >
                           ✕
                         </button>
-                      </div>
+                      )}
+                    </div>
 
-                      {/* Search & Time Slot Filter Bar */}
-                      {targetDaySessions.length > 0 && (
-                        <div style={{
-                          padding: '10px 18px',
-                          background: '#FFFFFF',
-                          borderBottom: '1px solid #E2E8F0',
+                    {/* Search count badge */}
+                    {dayModalStudentSearch.trim() && (
+                      <span style={{
+                        fontSize: '11px',
+                        fontWeight: 700,
+                        color: totalMatchingStudents > 0 ? '#0D9488' : '#DC2626',
+                        background: totalMatchingStudents > 0 ? '#F0FDFA' : '#FEF2F2',
+                        border: totalMatchingStudents > 0 ? '1px solid #99F6E4' : '1px solid #FECACA',
+                        padding: '2px 6px',
+                        borderRadius: '5px',
+                        whiteSpace: 'nowrap',
+                        flexShrink: 0
+                      }}>
+                        {totalMatchingStudents}
+                      </span>
+                    )}
+
+                    {/* Compact Time Slot Select Dropdown Filter */}
+                    {dayTimeSlots.length > 0 && (
+                      <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
+                        <span style={{ position: 'absolute', left: '7px', fontSize: '11px', pointerEvents: 'none' }}>
+                          ⏰
+                        </span>
+                        <select
+                          value={dayModalSlotFilter}
+                          onChange={e => setDayModalSlotFilter(e.target.value)}
+                          style={{
+                            padding: '4px 18px 4px 22px',
+                            borderRadius: '7px',
+                            border: dayModalSlotFilter !== 'All' ? '1.5px solid #0D9488' : '1px solid #CBD5E1',
+                            background: dayModalSlotFilter !== 'All' ? '#F0FDFA' : '#F8FAFC',
+                            color: dayModalSlotFilter !== 'All' ? '#0D9488' : '#0F172A',
+                            fontWeight: dayModalSlotFilter !== 'All' ? 700 : 600,
+                            fontSize: '11.5px',
+                            cursor: 'pointer',
+                            outline: 'none',
+                            height: '32px',
+                            maxWidth: '135px',
+                            textOverflow: 'ellipsis',
+                            appearance: 'none',
+                            WebkitAppearance: 'none',
+                            MozAppearance: 'none',
+                            boxSizing: 'border-box'
+                          }}
+                          title="Filter by Time Slot"
+                        >
+                          <option value="All">All Slots ({modalGroups.length > 0 ? modalGroups.length : targetDaySessions.length})</option>
+                          {dayTimeSlots.map(slotTime => (
+                            <option key={slotTime} value={slotTime}>
+                              {slotTime}
+                            </option>
+                          ))}
+                        </select>
+                        <span style={{ position: 'absolute', right: '6px', fontSize: '8px', color: dayModalSlotFilter !== 'All' ? '#0D9488' : '#64748B', pointerEvents: 'none' }}>
+                          ▼
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Clear Button for Slot Filter */}
+                    {dayModalSlotFilter !== 'All' && (
+                      <button
+                        type="button"
+                        onClick={() => setDayModalSlotFilter('All')}
+                        style={{
+                          background: '#F1F5F9',
+                          border: '1px solid #CBD5E1',
+                          color: '#475569',
+                          cursor: 'pointer',
+                          fontSize: '11px',
+                          width: '24px',
+                          height: '24px',
+                          borderRadius: '50%',
                           display: 'flex',
                           alignItems: 'center',
-                          gap: '8px'
-                        }}>
-                          {/* Student Search */}
-                          <div style={{ position: 'relative', flex: 1, minWidth: 0, display: 'flex', alignItems: 'center' }}>
-                            <span style={{ position: 'absolute', left: '10px', fontSize: '13px', color: '#64748B', pointerEvents: 'none' }}>
-                              🔍
-                            </span>
-                            <input
-                              type="text"
-                              placeholder="Search student..."
-                              value={dayModalStudentSearch}
-                              onChange={e => setDayModalStudentSearch(e.target.value)}
-                              style={{
-                                width: '100%',
-                                padding: '6px 26px 6px 28px',
-                                borderRadius: '7px',
-                                border: dayModalStudentSearch.trim() ? '1.5px solid #0D9488' : '1px solid #CBD5E1',
-                                background: dayModalStudentSearch.trim() ? '#F0FDFA' : '#F8FAFC',
-                                fontSize: '12.5px',
-                                fontWeight: 600,
-                                color: '#0F172A',
-                                outline: 'none',
-                                boxSizing: 'border-box',
-                                height: '33px'
-                              }}
-                            />
-                            {dayModalStudentSearch && (
-                              <button
-                                type="button"
-                                onClick={() => setDayModalStudentSearch('')}
-                                style={{
-                                  position: 'absolute',
-                                  right: '7px',
-                                  background: '#E2E8F0',
-                                  border: 'none',
-                                  color: '#475569',
-                                  borderRadius: '50%',
-                                  width: '16px',
-                                  height: '16px',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  fontSize: '9px',
-                                  fontWeight: 800,
-                                  cursor: 'pointer'
-                                }}
-                                title="Clear search"
-                              >
-                                ✕
-                              </button>
-                            )}
-                          </div>
+                          justifyContent: 'center',
+                          padding: 0,
+                          flexShrink: 0
+                        }}
+                        title="Reset time slot"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                )}
 
-                          {/* Search count badge */}
-                          {dayModalStudentSearch.trim() && (
-                            <span style={{
-                              fontSize: '11px',
-                              fontWeight: 700,
-                              color: totalMatchingStudents > 0 ? '#0D9488' : '#DC2626',
-                              background: totalMatchingStudents > 0 ? '#F0FDFA' : '#FEF2F2',
-                              border: totalMatchingStudents > 0 ? '1px solid #99F6E4' : '1px solid #FECACA',
-                              padding: '3px 7px',
-                              borderRadius: '5px',
-                              whiteSpace: 'nowrap',
-                              flexShrink: 0
-                            }}>
-                              {totalMatchingStudents}
-                            </span>
-                          )}
-
-                          {/* Compact Time Slot Select Dropdown Filter */}
-                          {dayTimeSlots.length > 0 && (
-                            <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>
-                              <span style={{ position: 'absolute', left: '8px', fontSize: '11.5px', pointerEvents: 'none' }}>
-                                ⏰
-                              </span>
-                              <select
-                                value={dayModalSlotFilter}
-                                onChange={e => setDayModalSlotFilter(e.target.value)}
-                                style={{
-                                  padding: '4px 22px 4px 25px',
-                                  borderRadius: '7px',
-                                  border: dayModalSlotFilter !== 'All' ? '1.5px solid #0D9488' : '1px solid #CBD5E1',
-                                  background: dayModalSlotFilter !== 'All' ? '#F0FDFA' : '#F8FAFC',
-                                  color: dayModalSlotFilter !== 'All' ? '#0D9488' : '#0F172A',
-                                  fontWeight: dayModalSlotFilter !== 'All' ? 700 : 600,
-                                  fontSize: '12px',
-                                  cursor: 'pointer',
-                                  outline: 'none',
-                                  height: '33px',
-                                  maxWidth: '175px',
-                                  textOverflow: 'ellipsis',
-                                  appearance: 'none',
-                                  WebkitAppearance: 'none',
-                                  MozAppearance: 'none',
-                                  boxSizing: 'border-box'
-                                }}
-                                title="Filter by Time Slot"
-                              >
-                                <option value="All">All Slots ({modalGroups.length > 0 ? modalGroups.length : targetDaySessions.length})</option>
-                                {dayTimeSlots.map(slotTime => (
-                                  <option key={slotTime} value={slotTime}>
-                                    {slotTime}
-                                  </option>
-                                ))}
-                              </select>
-                              <span style={{ position: 'absolute', right: '7px', fontSize: '8px', color: dayModalSlotFilter !== 'All' ? '#0D9488' : '#64748B', pointerEvents: 'none' }}>
-                                ▼
-                              </span>
-                            </div>
-                          )}
-
-                          {/* Tiny Clear Button for Slot Filter */}
-                          {dayModalSlotFilter !== 'All' && (
-                            <button
-                              type="button"
-                              onClick={() => setDayModalSlotFilter('All')}
-                              style={{
-                                background: '#FEE2E2',
-                                border: '1px solid #FECACA',
-                                color: '#DC2626',
-                                fontSize: '10px',
-                                fontWeight: 800,
-                                cursor: 'pointer',
-                                width: '24px',
-                                height: '24px',
-                                borderRadius: '50%',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                padding: 0,
-                                flexShrink: 0
-                              }}
-                              title="Reset time slot"
-                            >
-                              ✕
-                            </button>
-                          )}
-                        </div>
+                {/* Modal Body */}
+                <div className="ses-day-details-content" style={{ padding: '14px 16px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px', background: '#F8FAFC', flex: 1 }}>
+                  {targetDaySessions.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '36px 16px', background: '#FFFFFF', borderRadius: '12px', border: '1.5px dashed #CBD5E1' }}>
+                      <div style={{ fontSize: '36px', marginBottom: '8px' }}>🏖️</div>
+                      <h4 style={{ margin: '0 0 6px', color: '#0F172A', fontSize: '16px', fontWeight: 700 }}>
+                        No Sessions Scheduled
+                      </h4>
+                      <p style={{ margin: '0 0 16px', color: '#64748B', fontSize: '13px' }}>
+                        No surf coaching sessions are scheduled for {formatCalendarLongDate(targetISO)}.
+                      </p>
+                      {canManageSessions && !isPast && (
+                        <button
+                          type="button"
+                          className="ses-btn-primary"
+                          style={{ margin: '0 auto' }}
+                          onClick={() => {
+                            setScheduleModalInitialDate(targetISO);
+                            setShowScheduleModal(true);
+                            setSelectedDayDetailsModal(null);
+                            setDayModalStudentSearch('');
+                            setDayModalSlotFilter('All');
+                          }}
+                        >
+                          + Schedule Session for this Date
+                        </button>
                       )}
+                    </div>
+                  ) : (filteredGroups.length === 0 && filteredUngrouped.length === 0) ? (
+                    <div style={{ textAlign: 'center', padding: '36px 16px', background: '#FFFFFF', borderRadius: '12px', border: '1.5px dashed #CBD5E1' }}>
+                      <div style={{ fontSize: '32px', marginBottom: '8px' }}>{query ? '🔍' : '⏰'}</div>
+                      <h4 style={{ margin: '0 0 6px', color: '#0F172A', fontSize: '15px', fontWeight: 700 }}>
+                        {query ? 'No Students Found' : 'No Sessions in this Time Slot'}
+                      </h4>
+                      <p style={{ margin: '0 0 14px', color: '#64748B', fontSize: '13px' }}>
+                        {query && dayModalSlotFilter !== 'All' ? (
+                          <>No student matching &ldquo;<strong>{dayModalStudentSearch}</strong>&rdquo; was found in slot <strong>{dayModalSlotFilter}</strong>.</>
+                        ) : query ? (
+                          <>No student matching &ldquo;<strong>{dayModalStudentSearch}</strong>&rdquo; was found in this day&rsquo;s sessions.</>
+                        ) : (
+                          <>No sessions scheduled for time slot <strong>{dayModalSlotFilter}</strong>.</>
+                        )}
+                      </p>
+                      <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        {query && (
+                          <button
+                            type="button"
+                            onClick={() => setDayModalStudentSearch('')}
+                            style={{
+                              background: '#0D9488',
+                              color: '#FFFFFF',
+                              border: 'none',
+                              borderRadius: '8px',
+                              padding: '7px 16px',
+                              fontSize: '12.5px',
+                              fontWeight: 700,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            Clear Search
+                          </button>
+                        )}
+                        {dayModalSlotFilter !== 'All' && (
+                          <button
+                            type="button"
+                            onClick={() => setDayModalSlotFilter('All')}
+                            style={{
+                              background: '#F1F5F9',
+                              color: '#334155',
+                              border: '1px solid #CBD5E1',
+                              borderRadius: '8px',
+                              padding: '7px 16px',
+                              fontSize: '12.5px',
+                              fontWeight: 700,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            ★ Show All Slots
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Groups list */}
+                      {filteredGroups.map(grp => {
+                        const statusColorCode = statusColor(grp);
+                        const statusBgCode = statusBg(grp);
+                        const grpPresentCount = grp.sessions.filter(s => {
+                          const att = dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '');
+                          return att === 'Present';
+                        }).length;
+                        const grpAbsentCount = grp.sessions.filter(s => {
+                          const att = dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '');
+                          return att === 'Absent';
+                        }).length;
 
-                      {/* Modal Body */}
-                      <div className="ses-day-details-content" style={{ padding: '18px 20px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '14px', background: '#F8FAFC', flex: 1 }}>
-                        {targetDaySessions.length === 0 ? (
-                          <div style={{ textAlign: 'center', padding: '36px 16px', background: '#FFFFFF', borderRadius: '12px', border: '1.5px dashed #CBD5E1' }}>
-                            <div style={{ fontSize: '36px', marginBottom: '8px' }}>🏖️</div>
-                            <h4 style={{ margin: '0 0 6px', color: '#0F172A', fontSize: '16px', fontWeight: 700 }}>
-                              No Sessions Scheduled
-                            </h4>
-                            <p style={{ margin: '0 0 16px', color: '#64748B', fontSize: '13px' }}>
-                              No surf coaching sessions are scheduled for {formatCalendarLongDate(targetISO)}.
-                            </p>
-                            {canManageSessions && !isPast && (
-                              <button
-                                type="button"
-                                className="ses-btn-primary"
-                                style={{ margin: '0 auto' }}
-                                onClick={() => {
-                                  setScheduleModalInitialDate(targetISO);
-                                  setShowScheduleModal(true);
-                                  setSelectedDayDetailsModal(null);
-                                  setDayModalStudentSearch('');
-                                  setDayModalSlotFilter('All');
+                        return (
+                          <div
+                            key={grp.key || grp.groupName}
+                            className="ses-group-card"
+                            style={{
+                              background: '#FFFFFF',
+                              border: '1.5px solid #E2E8F0',
+                              borderRadius: '12px',
+                              padding: '14px',
+                              boxShadow: '0 2px 6px rgba(0,0,0,0.02)'
+                            }}
+                          >
+                            {/* Row 1: Group Name & Status Pill */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', gap: '8px', flexWrap: 'nowrap' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
+                                <span style={{ fontSize: '15px' }}>🏄‍♂️</span>
+                                <h4 style={{ margin: 0, fontSize: '15px', color: '#0F172A', fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                  {grp.groupName}
+                                </h4>
+                              </div>
+                              <span
+                                className="ses-status-pill"
+                                style={{
+                                  backgroundColor: statusBgCode,
+                                  color: statusColorCode,
+                                  whiteSpace: 'nowrap',
+                                  fontSize: '10.5px',
+                                  padding: '2px 8px',
+                                  flexShrink: 0
                                 }}
                               >
-                                + Schedule Session for this Date
-                              </button>
-                            )}
-                          </div>
-                        ) : (filteredGroups.length === 0 && filteredUngrouped.length === 0) ? (
-                          <div style={{ textAlign: 'center', padding: '36px 16px', background: '#FFFFFF', borderRadius: '12px', border: '1.5px dashed #CBD5E1' }}>
-                            <div style={{ fontSize: '32px', marginBottom: '8px' }}>{query ? '🔍' : '⏰'}</div>
-                            <h4 style={{ margin: '0 0 6px', color: '#0F172A', fontSize: '15px', fontWeight: 700 }}>
-                              {query ? 'No Students Found' : 'No Sessions in this Time Slot'}
-                            </h4>
-                            <p style={{ margin: '0 0 14px', color: '#64748B', fontSize: '13px' }}>
-                              {query && dayModalSlotFilter !== 'All' ? (
-                                <>No student matching &ldquo;<strong>{dayModalStudentSearch}</strong>&rdquo; was found in slot <strong>{dayModalSlotFilter}</strong>.</>
-                              ) : query ? (
-                                <>No student matching &ldquo;<strong>{dayModalStudentSearch}</strong>&rdquo; was found in this day&rsquo;s sessions.</>
-                              ) : (
-                                <>No sessions scheduled for time slot <strong>{dayModalSlotFilter}</strong>.</>
-                              )}
-                            </p>
-                            <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                              {query && (
-                                <button
-                                  type="button"
-                                  onClick={() => setDayModalStudentSearch('')}
-                                  style={{
-                                    background: '#0D9488',
-                                    color: '#FFFFFF',
-                                    border: 'none',
-                                    borderRadius: '8px',
-                                    padding: '7px 16px',
-                                    fontSize: '12.5px',
-                                    fontWeight: 700,
-                                    cursor: 'pointer'
-                                  }}
-                                >
-                                  ✕ Clear Student Search
-                                </button>
-                              )}
-                              {dayModalSlotFilter !== 'All' && (
-                                <button
-                                  type="button"
-                                  onClick={() => setDayModalSlotFilter('All')}
-                                  style={{
-                                    background: '#F1F5F9',
-                                    color: '#334155',
-                                    border: '1px solid #CBD5E1',
-                                    borderRadius: '8px',
-                                    padding: '7px 16px',
-                                    fontSize: '12.5px',
-                                    fontWeight: 700,
-                                    cursor: 'pointer'
-                                  }}
-                                >
-                                  ★ Show All Slots
-                                </button>
-                              )}
+                                <span className="ses-status-dot" style={{ backgroundColor: statusColorCode }}></span>
+                                {formatSessionStatus(grp)}
+                              </span>
                             </div>
-                          </div>
-                        ) : (
-                          <>
-                            {/* Groups list */}
-                            {filteredGroups.map(grp => {
-                              const statusColorCode = statusColor(grp);
-                              const statusBgCode = statusBg(grp);
-                              const grpPresentCount = grp.sessions.filter(s => {
-                                const att = dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '');
-                                return att === 'Present';
-                              }).length;
-                              const grpAbsentCount = grp.sessions.filter(s => {
-                                const att = dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '');
-                                return att === 'Absent';
-                              }).length;
 
+                            {/* Row 2: Time Slot & Spot */}
+                            <div style={{ fontSize: '12px', color: '#0D9488', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap', marginBottom: '4px' }}>
+                              <span>⏰ {grp.time || '08:30 AM'}</span>
+                              {grp.duration_mins && <span style={{ color: '#64748B', fontWeight: 600 }}>({grp.duration_mins} mins)</span>}
+                              {grp.location && <span style={{ color: '#64748B', fontWeight: 500 }}>&bull; 🌊 {grp.location}</span>}
+                            </div>
+
+                            {/* Row 3: Coach Name */}
+                            <div style={{ fontSize: '12px', color: '#475569', marginBottom: '6px' }}>
+                              <span>Coach: <strong style={{ color: '#0F172A' }}>{grp.instructor || 'Assigned Coach'}</strong></span>
+                            </div>
+
+                            {/* Row 4: Course Day Badges (Horizontal Row) */}
+                            {(() => {
+                              const groupDays = Array.from(new Set((grp.sessions || []).map(s => getStudentSessionDay(s, targetISO)))).sort((a, b) => a - b);
+                              if (groupDays.length === 0) return null;
                               return (
-                                <div
-                                  key={grp.key || grp.groupName}
-                                  style={{
-                                    background: '#FFFFFF',
-                                    border: '1.5px solid #E2E8F0',
-                                    borderRadius: '12px',
-                                    padding: '16px',
-                                    boxShadow: '0 2px 6px rgba(0,0,0,0.02)'
-                                  }}
-                                >
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                                    <div>
-                                      <h4 style={{ margin: '0 0 4px', fontSize: '16px', color: '#0F172A', fontWeight: 800 }}>
-                                        🏄‍♂️ {grp.groupName}
-                                      </h4>
-                                      <div style={{ fontSize: '13px', color: '#0D9488', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                        <span>⏰ {grp.time || '08:30 AM'}</span>
-                                        {grp.duration_mins && <span>({grp.duration_mins} mins)</span>}
-                                      </div>
-                                    </div>
-                                    <span
-                                      className="ses-status-pill"
-                                      style={{
-                                        backgroundColor: statusBgCode,
-                                        color: statusColorCode,
-                                        whiteSpace: 'nowrap',
-                                        fontSize: '11px',
-                                        padding: '3px 9px'
-                                      }}
-                                    >
-                                      <span className="ses-status-dot" style={{ backgroundColor: statusColorCode }}></span>
-                                      {formatSessionStatus(grp)}
-                                    </span>
-                                  </div>
-
-                                  <div style={{ fontSize: '13px', color: '#475569', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                                    <span>Coach: <strong style={{ color: '#0F172A' }}>{grp.instructor || 'Assigned Coach'}</strong></span>
-                                    {grp.location && <span>&bull; 🌊 Spot: <strong style={{ color: '#0F172A' }}>{grp.location}</strong></span>}
-                                  </div>
-
-                                  {/* Enrolled Students */}
-                                  <div style={{ background: '#F8FAFC', padding: '10px 12px', borderRadius: '10px', border: '1px solid #E2E8F0', marginBottom: '12px' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '6px' }}>
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                                        <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
-                                          Enrolled Students ({grp.sessions.length}):
-                                        </span>
-                                        <span style={{
-                                          display: 'inline-flex',
-                                          alignItems: 'center',
-                                          gap: '3px',
-                                          fontSize: '10.5px',
-                                          fontWeight: 700,
-                                          color: '#15803D',
-                                          background: '#DCFCE7',
-                                          border: '1px solid #86EFAC',
-                                          padding: '1px 6px',
-                                          borderRadius: '8px'
-                                        }}>
-                                          <span>✓</span> {grpPresentCount} Present
-                                        </span>
-                                        <span style={{
-                                          display: 'inline-flex',
-                                          alignItems: 'center',
-                                          gap: '3px',
-                                          fontSize: '10.5px',
-                                          fontWeight: 700,
-                                          color: grpAbsentCount > 0 ? '#B91C1C' : '#64748B',
-                                          background: grpAbsentCount > 0 ? '#FEE2E2' : '#F1F5F9',
-                                          border: grpAbsentCount > 0 ? '1px solid #FCA5A5' : '1px solid #E2E8F0',
-                                          padding: '1px 6px',
-                                          borderRadius: '8px'
-                                        }}>
-                                          <span>✕</span> {grpAbsentCount} Absent
-                                        </span>
-                                      </div>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleMarkGroupAllPresent(grp.sessions)}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                                  <span style={{ fontSize: '10px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.3px', marginRight: '2px' }}>
+                                    Days:
+                                  </span>
+                                  {groupDays.map(dayNum => {
+                                    const isD1 = dayNum === 1;
+                                    const isD2 = dayNum === 2;
+                                    const isD3 = dayNum === 3;
+                                    const pillColor = isD1 ? '#0369A1' : isD2 ? '#6B21A8' : isD3 ? '#0F766E' : '#B45309';
+                                    const pillBg = isD1 ? '#E0F2FE' : isD2 ? '#F3E8FF' : isD3 ? '#CCFBF1' : '#FEF3C7';
+                                    const pillBorder = isD1 ? '#7DD3FC' : isD2 ? '#D8B4FE' : isD3 ? '#5EEAD4' : '#FCD34D';
+                                    return (
+                                      <span
+                                        key={dayNum}
                                         style={{
-                                          background: '#F0FDF4',
-                                          color: '#15803D',
-                                          border: '1px solid #BBF7D0',
-                                          borderRadius: '6px',
-                                          padding: '2px 9px',
-                                          fontSize: '11px',
-                                          fontWeight: 700,
-                                          cursor: 'pointer',
+                                          fontSize: '10.5px',
+                                          fontWeight: 800,
+                                          color: pillColor,
+                                          background: pillBg,
+                                          border: `1px solid ${pillBorder}`,
+                                          borderRadius: '4px',
+                                          padding: '1px 6px',
                                           display: 'inline-flex',
                                           alignItems: 'center',
-                                          gap: '4px',
-                                          transition: 'all 0.15s ease'
+                                          gap: '3px'
                                         }}
-                                        title="Mark all students in this group as Present"
+                                        title={`Group contains students on Day ${dayNum}`}
                                       >
-                                        <span>✓</span>
-                                        <span>Mark All Present</span>
-                                      </button>
-                                    </div>
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                                      {grp.sessions.map((sess, sIdx) => {
-                                        const currentAtt = dayAttendanceMap[sess.id] !== undefined
-                                          ? dayAttendanceMap[sess.id]
-                                          : (sess.attendance || '');
-                                        const isPresent = currentAtt === 'Present';
-                                        const isAbsent = currentAtt === 'Absent';
-                                        const isLoadingThis = Boolean(sess.id && attendanceLoadingIds[sess.id]);
-
-                                        return (
-                                          <div
-                                            key={sess.id || sIdx}
-                                            className="ses-day-modal-student-row"
-                                            style={{
-                                              display: 'flex',
-                                              alignItems: 'center',
-                                              justifyContent: 'space-between',
-                                              background: isPresent ? '#F0FDF4' : isAbsent ? '#FEF2F2' : '#FFFFFF',
-                                              border: isPresent ? '1.5px solid #86EFAC' : isAbsent ? '1.5px solid #FECACA' : '1px solid #E2E8F0',
-                                              borderRadius: '8px',
-                                              padding: '6px 10px',
-                                              gap: '8px',
-                                              transition: 'all 0.15s ease'
-                                            }}
-                                          >
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flex: 1 }}>
-                                              <UserAvatar src={sess.image || ''} name={sess.student} size={26} />
-                                              <div style={{ minWidth: 0 }}>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                                  <span style={{ fontWeight: 700, color: '#0F172A', fontSize: '13px' }}>
-                                                    {sess.guest_name ? sess.guest_name : sess.student}
-                                                  </span>
-                                                  {sess.guest_name && (
-                                                    <span style={{ fontSize: '10px', background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A', borderRadius: '4px', padding: '1px 5px', fontWeight: 700 }}>
-                                                      👥 Guest ({sess.student})
-                                                    </span>
-                                                  )}
-                                                  {isPresent && (
-                                                    <span style={{ fontSize: '10px', fontWeight: 800, color: '#15803D', background: '#DCFCE7', padding: '1px 6px', borderRadius: '10px', border: '1px solid #86EFAC' }}>
-                                                      ✓ PRESENT
-                                                    </span>
-                                                  )}
-                                                  {isAbsent && (
-                                                    <span style={{ fontSize: '10px', fontWeight: 800, color: '#B91C1C', background: '#FEE2E2', padding: '1px 6px', borderRadius: '10px', border: '1px solid #FCA5A5' }}>
-                                                      ✕ ABSENT
-                                                    </span>
-                                                  )}
-                                                </div>
-                                                <span style={{ fontSize: '11px', color: '#64748B' }}>
-                                                  &bull; {sess.type || 'General'}
-                                                </span>
-                                              </div>
-                                            </div>
-
-                                            {/* Present / Absent Action Buttons */}
-                                            <div className="ses-day-modal-actions" style={{ display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0 }}>
-                                              {!isCoach && (() => {
-                                                const phone = resolveStudentPhone(sess);
-                                                const cleanDigits = phone ? phone.replace(/[^\d+]/g, '') : '';
-                                                const finalTel = cleanDigits
-                                                  ? (cleanDigits.startsWith('+') ? cleanDigits : (cleanDigits.length === 10 ? `+91${cleanDigits}` : cleanDigits))
-                                                  : '';
-
-                                                return (
-                                                  <a
-                                                    href={finalTel ? `tel:${finalTel}` : undefined}
-                                                    onClick={(e) => {
-                                                      e.stopPropagation();
-                                                      if (!finalTel) {
-                                                        e.preventDefault();
-                                                        showToast(`No phone number available for ${sess.guest_name ? `${sess.guest_name} (Guest of ${sess.student})` : (sess.student || 'student')}`, 'info');
-                                                      }
-                                                    }}
-                                                    title={phone ? `Call ${sess.guest_name ? `${sess.guest_name} (Guest of ${sess.student})` : sess.student}: ${phone}` : `No phone number for ${sess.guest_name ? sess.guest_name : sess.student}`}
-                                                    style={{
-                                                      display: 'inline-flex',
-                                                      alignItems: 'center',
-                                                      gap: '4px',
-                                                      padding: '4px 9px',
-                                                      borderRadius: '6px',
-                                                      fontSize: '11px',
-                                                      fontWeight: 700,
-                                                      textDecoration: 'none',
-                                                      cursor: finalTel ? 'pointer' : 'not-allowed',
-                                                      transition: 'all 0.15s ease',
-                                                      border: finalTel ? '1px solid #0284C7' : '1px solid #E2E8F0',
-                                                      background: finalTel ? '#F0F9FF' : '#F8FAFC',
-                                                      color: finalTel ? '#0284C7' : '#94A3B8',
-                                                      boxShadow: finalTel ? '0 1px 2px rgba(2, 132, 199, 0.1)' : 'none'
-                                                    }}
-                                                  >
-                                                    <span style={{ fontSize: '11px' }}>📞</span>
-                                                    <span>Call</span>
-                                                  </a>
-                                                );
-                                              })()}
-
-                                              <button
-                                                type="button"
-                                                disabled={isLoadingThis}
-                                                onClick={() => handleToggleAttendance(sess, 'Present')}
-                                                title={isPresent ? "Click to clear attendance" : "Mark as Present"}
-                                                style={{
-                                                  display: 'inline-flex',
-                                                  alignItems: 'center',
-                                                  gap: '4px',
-                                                  padding: '4px 10px',
-                                                  borderRadius: '6px',
-                                                  fontSize: '11px',
-                                                  fontWeight: 700,
-                                                  cursor: isLoadingThis ? 'wait' : 'pointer',
-                                                  transition: 'all 0.15s ease',
-                                                  border: isPresent ? '1.5px solid #16A34A' : '1px solid #CBD5E1',
-                                                  background: isPresent ? '#16A34A' : '#FFFFFF',
-                                                  color: isPresent ? '#FFFFFF' : '#475569',
-                                                  boxShadow: isPresent ? '0 2px 4px rgba(22, 163, 74, 0.25)' : 'none'
-                                                }}
-                                              >
-                                                <span>✓</span>
-                                                <span>Present</span>
-                                              </button>
-
-                                              <button
-                                                type="button"
-                                                disabled={isLoadingThis}
-                                                onClick={() => handleToggleAttendance(sess, 'Absent')}
-                                                title={isAbsent ? "Click to clear attendance" : "Mark as Absent"}
-                                                style={{
-                                                  display: 'inline-flex',
-                                                  alignItems: 'center',
-                                                  gap: '4px',
-                                                  padding: '4px 10px',
-                                                  borderRadius: '6px',
-                                                  fontSize: '11px',
-                                                  fontWeight: 700,
-                                                  cursor: isLoadingThis ? 'wait' : 'pointer',
-                                                  transition: 'all 0.15s ease',
-                                                  border: isAbsent ? '1.5px solid #DC2626' : '1px solid #CBD5E1',
-                                                  background: isAbsent ? '#DC2626' : '#FFFFFF',
-                                                  color: isAbsent ? '#FFFFFF' : '#475569',
-                                                  boxShadow: isAbsent ? '0 2px 4px rgba(220, 38, 38, 0.25)' : 'none'
-                                                }}
-                                              >
-                                                <span>✕</span>
-                                                <span>Absent</span>
-                                              </button>
-                                            </div>
-                                          </div>
-                                        );
-                                      })}
-                                    </div>
-                                  </div>
-
-                                  {/* Group Action Buttons */}
-                                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                                    <button
-                                      type="button"
-                                      className="ses-btn-secondary"
-                                      style={{ flex: 1, padding: '8px 14px', fontSize: '12.5px', fontWeight: 600, justifyContent: 'center' }}
-                                      onClick={() => {
-                                        setDateFilter(targetISO);
-                                        setShowCalendarModal(false);
-                                        setSelectedDayDetailsModal(null);
-                                      }}
-                                    >
-                                      View in Sessions Table →
-                                    </button>
-                                  </div>
+                                        🗓️ Day {dayNum}
+                                      </span>
+                                    );
+                                  })}
                                 </div>
                               );
-                            })}
+                            })()}
 
-                            {/* Ungrouped sessions */}
-                            {filteredUngrouped.length > 0 && (
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '14px 0 8px', flexWrap: 'wrap', gap: '6px' }}>
+                            {/* Enrolled Students */}
+                            <div className="ses-enrolled-box" style={{ background: '#F8FAFC', padding: '10px 12px', borderRadius: '10px', border: '1px solid #E2E8F0', marginBottom: '10px' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '6px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                                   <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
-                                    Individual Sessions ({filteredUngrouped.length}):
+                                    Enrolled Students ({grp.sessions.length}):
                                   </span>
                                   <span style={{
                                     display: 'inline-flex',
@@ -7505,7 +7376,7 @@ const Sessions = () => {
                                     padding: '1px 6px',
                                     borderRadius: '8px'
                                   }}>
-                                    <span>✓</span> {filteredUngrouped.filter(s => (dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '')) === 'Present').length} Present
+                                    <span>✓</span> {grpPresentCount} Present
                                   </span>
                                   <span style={{
                                     display: 'inline-flex',
@@ -7513,187 +7384,484 @@ const Sessions = () => {
                                     gap: '3px',
                                     fontSize: '10.5px',
                                     fontWeight: 700,
-                                    color: filteredUngrouped.filter(s => (dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '')) === 'Absent').length > 0 ? '#B91C1C' : '#64748B',
-                                    background: filteredUngrouped.filter(s => (dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '')) === 'Absent').length > 0 ? '#FEE2E2' : '#F1F5F9',
-                                    border: filteredUngrouped.filter(s => (dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '')) === 'Absent').length > 0 ? '1px solid #FCA5A5' : '1px solid #E2E8F0',
+                                    color: grpAbsentCount > 0 ? '#B91C1C' : '#64748B',
+                                    background: grpAbsentCount > 0 ? '#FEE2E2' : '#F1F5F9',
+                                    border: grpAbsentCount > 0 ? '1px solid #FCA5A5' : '1px solid #E2E8F0',
                                     padding: '1px 6px',
                                     borderRadius: '8px'
                                   }}>
-                                    <span>✕</span> {filteredUngrouped.filter(s => (dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '')) === 'Absent').length} Absent
+                                    <span>✕</span> {grpAbsentCount} Absent
                                   </span>
                                 </div>
-                              </div>
-                            )}
-
-                            {filteredUngrouped.map((sess, uIdx) => {
-                              const currentAtt = dayAttendanceMap[sess.id] !== undefined
-                                ? dayAttendanceMap[sess.id]
-                                : (sess.attendance || '');
-                              const isPresent = currentAtt === 'Present';
-                              const isAbsent = currentAtt === 'Absent';
-                              const isLoadingThis = Boolean(sess.id && attendanceLoadingIds[sess.id]);
-
-                              return (
-                                <div
-                                  key={sess.id || uIdx}
-                                  className="ses-day-modal-student-row"
+                                <button
+                                  type="button"
+                                  onClick={() => handleMarkGroupAllPresent(grp.sessions)}
                                   style={{
-                                    background: isPresent ? '#F0FDF4' : isAbsent ? '#FEF2F2' : '#FFFFFF',
-                                    border: isPresent ? '1.5px solid #86EFAC' : isAbsent ? '1.5px solid #FECACA' : '1px solid #E2E8F0',
-                                    borderRadius: '12px',
-                                    padding: '12px 16px',
-                                    display: 'flex',
-                                    justifyContent: 'space-between',
+                                    background: '#F0FDF4',
+                                    color: '#15803D',
+                                    border: '1px solid #BBF7D0',
+                                    borderRadius: '6px',
+                                    padding: '2px 8px',
+                                    fontSize: '10.5px',
+                                    fontWeight: 700,
+                                    cursor: 'pointer',
+                                    display: 'inline-flex',
                                     alignItems: 'center',
-                                    gap: '12px',
+                                    gap: '4px',
                                     transition: 'all 0.15s ease'
                                   }}
+                                  title="Mark all students in this group as Present"
                                 >
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1 }}>
-                                    <UserAvatar src={sess.image || ''} name={sess.student} size={32} />
-                                    <div style={{ minWidth: 0 }}>
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                        <h4 style={{ margin: 0, fontSize: '14.5px', color: '#0F172A', fontWeight: 700 }}>
-                                          {sess.guest_name ? sess.guest_name : sess.student}
-                                        </h4>
-                                        {sess.guest_name && (
-                                          <span style={{ fontSize: '10px', background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A', borderRadius: '4px', padding: '1px 5px', fontWeight: 700 }}>
-                                            👥 Guest ({sess.student})
-                                          </span>
-                                        )}
-                                        {isPresent && (
-                                          <span style={{ fontSize: '10px', fontWeight: 800, color: '#15803D', background: '#DCFCE7', padding: '1px 6px', borderRadius: '10px', border: '1px solid #86EFAC' }}>
-                                            ✓ PRESENT
-                                          </span>
-                                        )}
-                                        {isAbsent && (
-                                          <span style={{ fontSize: '10px', fontWeight: 800, color: '#B91C1C', background: '#FEE2E2', padding: '1px 6px', borderRadius: '10px', border: '1px solid #FCA5A5' }}>
-                                            ✕ ABSENT
-                                          </span>
-                                        )}
+                                  <span>✓</span>
+                                  <span>Mark All Present</span>
+                                </button>
+                              </div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                                {grp.sessions.map((sess, sIdx) => {
+                                  const currentAtt = dayAttendanceMap[sess.id] !== undefined
+                                    ? dayAttendanceMap[sess.id]
+                                    : (sess.attendance || '');
+                                  const isPresent = currentAtt === 'Present';
+                                  const isAbsent = currentAtt === 'Absent';
+                                  const isLoadingThis = Boolean(sess.id && attendanceLoadingIds[sess.id]);
+
+                                  return (
+                                    <div
+                                      key={sess.id || sIdx}
+                                      className="ses-day-modal-student-row"
+                                      style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'space-between',
+                                        background: isPresent ? '#F0FDF4' : isAbsent ? '#FEF2F2' : '#FFFFFF',
+                                        border: isPresent ? '1.5px solid #86EFAC' : isAbsent ? '1.5px solid #FECACA' : '1px solid #E2E8F0',
+                                        borderRadius: '8px',
+                                        padding: '7px 10px',
+                                        gap: '8px',
+                                        transition: 'all 0.15s ease'
+                                      }}
+                                    >
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flex: 1 }}>
+                                        <UserAvatar src={sess.image || ''} name={sess.student} size={28} />
+                                        <div style={{ minWidth: 0, flex: 1 }}>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
+                                            <span style={{ fontWeight: 700, color: '#0F172A', fontSize: '13px' }}>
+                                              {sess.guest_name ? sess.guest_name : sess.student}
+                                            </span>
+                                            {(() => {
+                                              const studentDay = getStudentSessionDay(sess, targetISO);
+                                              if (!studentDay) return null;
+                                              const isD1 = studentDay === 1;
+                                              const isD2 = studentDay === 2;
+                                              const isD3 = studentDay === 3;
+                                              const pillColor = isD1 ? '#0369A1' : isD2 ? '#6B21A8' : isD3 ? '#0F766E' : '#B45309';
+                                              const pillBg = isD1 ? '#E0F2FE' : isD2 ? '#F3E8FF' : isD3 ? '#CCFBF1' : '#FEF3C7';
+                                              const pillBorder = isD1 ? '#7DD3FC' : isD2 ? '#D8B4FE' : isD3 ? '#5EEAD4' : '#FCD34D';
+                                              return (
+                                                <span
+                                                  style={{
+                                                    fontSize: '10.5px',
+                                                    fontWeight: 800,
+                                                    color: pillColor,
+                                                    background: pillBg,
+                                                    border: `1px solid ${pillBorder}`,
+                                                    borderRadius: '4px',
+                                                    padding: '1px 5px',
+                                                    display: 'inline-flex',
+                                                    alignItems: 'center',
+                                                    gap: '2px'
+                                                  }}
+                                                  title={`Student is attending Day ${studentDay}`}
+                                                >
+                                                  Day {studentDay}
+                                                </span>
+                                              );
+                                            })()}
+                                            {isPresent && (
+                                              <span style={{ fontSize: '9.5px', fontWeight: 800, color: '#15803D', background: '#DCFCE7', padding: '1px 5px', borderRadius: '8px', border: '1px solid #86EFAC' }}>
+                                                ✓ PRESENT
+                                              </span>
+                                            )}
+                                            {isAbsent && (
+                                              <span style={{ fontSize: '9.5px', fontWeight: 800, color: '#B91C1C', background: '#FEE2E2', padding: '1px 5px', borderRadius: '8px', border: '1px solid #FCA5A5' }}>
+                                                ✕ ABSENT
+                                              </span>
+                                            )}
+                                          </div>
+                                          <div style={{ fontSize: '11px', color: '#64748B', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                                            {sess.guest_name ? (
+                                              <span style={{ fontSize: '10px', background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A', borderRadius: '4px', padding: '0px 4px', fontWeight: 700 }}>
+                                                👥 Guest ({sess.student})
+                                              </span>
+                                            ) : null}
+                                            <span>&bull; {sess.level || sess.type || 'General'}</span>
+                                          </div>
+                                        </div>
                                       </div>
-                                      <span style={{ fontSize: '12px', color: '#64748B' }}>
-                                        ⏰ {sess.time} &bull; Coach: {sess.instructor || 'Coach'}
-                                      </span>
-                                    </div>
-                                  </div>
 
-                                  <div className="ses-day-modal-actions" style={{ display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0 }}>
-                                    {!isCoach && (() => {
-                                      const phone = resolveStudentPhone(sess);
-                                      const cleanDigits = phone ? phone.replace(/[^\d+]/g, '') : '';
-                                      const finalTel = cleanDigits
-                                        ? (cleanDigits.startsWith('+') ? cleanDigits : (cleanDigits.length === 10 ? `+91${cleanDigits}` : cleanDigits))
-                                        : '';
+                                      {/* Present / Absent Action Buttons */}
+                                      <div className="ses-day-modal-actions" style={{ display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0 }}>
+                                        {!isCoach && (() => {
+                                          const phone = resolveStudentPhone(sess);
+                                          const cleanDigits = phone ? phone.replace(/[^\d+]/g, '') : '';
+                                          const finalTel = cleanDigits
+                                            ? (cleanDigits.startsWith('+') ? cleanDigits : (cleanDigits.length === 10 ? `+91${cleanDigits}` : cleanDigits))
+                                            : '';
 
-                                      return (
-                                        <a
-                                          href={finalTel ? `tel:${finalTel}` : undefined}
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            if (!finalTel) {
-                                              e.preventDefault();
-                                              showToast(`No phone number available for ${sess.guest_name ? `${sess.guest_name} (Guest of ${sess.student})` : (sess.student || 'student')}`, 'info');
-                                            }
-                                          }}
-                                          title={phone ? `Call ${sess.guest_name ? `${sess.guest_name} (Guest of ${sess.student})` : sess.student}: ${phone}` : `No phone number for ${sess.guest_name ? sess.guest_name : sess.student}`}
+                                          return (
+                                            <a
+                                              href={finalTel ? `tel:${finalTel}` : undefined}
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                if (!finalTel) {
+                                                  e.preventDefault();
+                                                  showToast(`No phone number available for ${sess.guest_name ? `${sess.guest_name} (Guest of ${sess.student})` : (sess.student || 'student')}`, 'info');
+                                                }
+                                              }}
+                                              title={phone ? `Call ${sess.guest_name ? `${sess.guest_name} (Guest of ${sess.student})` : sess.student}: ${phone}` : `No phone number for ${sess.guest_name ? sess.guest_name : sess.student}`}
+                                              style={{
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '4px',
+                                                padding: '4px 9px',
+                                                borderRadius: '6px',
+                                                fontSize: '11px',
+                                                fontWeight: 700,
+                                                textDecoration: 'none',
+                                                cursor: finalTel ? 'pointer' : 'not-allowed',
+                                                transition: 'all 0.15s ease',
+                                                border: finalTel ? '1px solid #0284C7' : '1px solid #E2E8F0',
+                                                background: finalTel ? '#F0F9FF' : '#F8FAFC',
+                                                color: finalTel ? '#0284C7' : '#94A3B8',
+                                                boxShadow: finalTel ? '0 1px 2px rgba(2, 132, 199, 0.1)' : 'none'
+                                              }}
+                                            >
+                                              <span style={{ fontSize: '11px' }}>📞</span>
+                                              <span>Call</span>
+                                            </a>
+                                          );
+                                        })()}
+
+                                        <button
+                                          type="button"
+                                          disabled={isLoadingThis}
+                                          onClick={() => handleToggleAttendance(sess, 'Present')}
+                                          title={isPresent ? "Click to clear attendance" : "Mark as Present"}
                                           style={{
                                             display: 'inline-flex',
                                             alignItems: 'center',
                                             gap: '4px',
-                                            padding: '5px 10px',
+                                            padding: '4px 10px',
                                             borderRadius: '6px',
                                             fontSize: '11px',
                                             fontWeight: 700,
-                                            textDecoration: 'none',
-                                            cursor: finalTel ? 'pointer' : 'not-allowed',
+                                            cursor: isLoadingThis ? 'wait' : 'pointer',
                                             transition: 'all 0.15s ease',
-                                            border: finalTel ? '1px solid #0284C7' : '1px solid #E2E8F0',
-                                            background: finalTel ? '#F0F9FF' : '#F8FAFC',
-                                            color: finalTel ? '#0284C7' : '#94A3B8',
-                                            boxShadow: finalTel ? '0 1px 2px rgba(2, 132, 199, 0.1)' : 'none'
+                                            border: isPresent ? '1.5px solid #16A34A' : '1px solid #CBD5E1',
+                                            background: isPresent ? '#16A34A' : '#FFFFFF',
+                                            color: isPresent ? '#FFFFFF' : '#475569',
+                                            boxShadow: isPresent ? '0 2px 4px rgba(22, 163, 74, 0.25)' : 'none'
                                           }}
                                         >
-                                          <span style={{ fontSize: '11px' }}>📞</span>
-                                          <span>Call</span>
-                                        </a>
-                                      );
-                                    })()}
+                                          <span>✓</span>
+                                          <span>Present</span>
+                                        </button>
 
-                                    <button
-                                      type="button"
-                                      disabled={isLoadingThis}
-                                      onClick={() => handleToggleAttendance(sess, 'Present')}
-                                      title={isPresent ? "Click to clear attendance" : "Mark as Present"}
-                                      style={{
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: '4px',
-                                        padding: '5px 12px',
-                                        borderRadius: '6px',
-                                        fontSize: '11px',
-                                        fontWeight: 700,
-                                        cursor: isLoadingThis ? 'wait' : 'pointer',
-                                        transition: 'all 0.15s ease',
-                                        border: isPresent ? '1.5px solid #16A34A' : '1px solid #CBD5E1',
-                                        background: isPresent ? '#16A34A' : '#FFFFFF',
-                                        color: isPresent ? '#FFFFFF' : '#475569',
-                                        boxShadow: isPresent ? '0 2px 4px rgba(22, 163, 74, 0.25)' : 'none'
-                                      }}
-                                    >
-                                      <span>✓</span>
-                                      <span>Present</span>
-                                    </button>
+                                        <button
+                                          type="button"
+                                          disabled={isLoadingThis}
+                                          onClick={() => handleToggleAttendance(sess, 'Absent')}
+                                          title={isAbsent ? "Click to clear attendance" : "Mark as Absent"}
+                                          style={{
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '4px',
+                                            padding: '4px 10px',
+                                            borderRadius: '6px',
+                                            fontSize: '11px',
+                                            fontWeight: 700,
+                                            cursor: isLoadingThis ? 'wait' : 'pointer',
+                                            transition: 'all 0.15s ease',
+                                            border: isAbsent ? '1.5px solid #DC2626' : '1px solid #CBD5E1',
+                                            background: isAbsent ? '#DC2626' : '#FFFFFF',
+                                            color: isAbsent ? '#FFFFFF' : '#475569',
+                                            boxShadow: isAbsent ? '0 2px 4px rgba(220, 38, 38, 0.25)' : 'none'
+                                          }}
+                                        >
+                                          <span>✕</span>
+                                          <span>Absent</span>
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
 
-                                    <button
-                                      type="button"
-                                      disabled={isLoadingThis}
-                                      onClick={() => handleToggleAttendance(sess, 'Absent')}
-                                      title={isAbsent ? "Click to clear attendance" : "Mark as Absent"}
-                                      style={{
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        gap: '4px',
-                                        padding: '5px 12px',
-                                        borderRadius: '6px',
-                                        fontSize: '11px',
-                                        fontWeight: 700,
-                                        cursor: isLoadingThis ? 'wait' : 'pointer',
-                                        transition: 'all 0.15s ease',
-                                        border: isAbsent ? '1.5px solid #DC2626' : '1px solid #CBD5E1',
-                                        background: isAbsent ? '#DC2626' : '#FFFFFF',
-                                        color: isAbsent ? '#FFFFFF' : '#475569',
-                                        boxShadow: isAbsent ? '0 2px 4px rgba(220, 38, 38, 0.25)' : 'none'
-                                      }}
-                                    >
-                                      <span>✕</span>
-                                      <span>Absent</span>
-                                    </button>
-                                  </div>
+                            {/* Group Action Buttons */}
+                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                              <button
+                                type="button"
+                                className="ses-btn-secondary"
+                                style={{ flex: 1, padding: '7px 12px', fontSize: '12px', fontWeight: 600, justifyContent: 'center' }}
+                                onClick={() => {
+                                  setDateFilter(targetISO);
+                                  setShowCalendarModal(false);
+                                  setSelectedDayDetailsModal(null);
+                                }}
+                              >
+                                View in Sessions Table →
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {/* Ungrouped sessions */}
+                      {filteredUngrouped.length > 0 && (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '14px 0 8px', flexWrap: 'wrap', gap: '6px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                              Individual Sessions ({filteredUngrouped.length}):
+                            </span>
+                            <span style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '3px',
+                              fontSize: '10.5px',
+                              fontWeight: 700,
+                              color: '#15803D',
+                              background: '#DCFCE7',
+                              border: '1px solid #86EFAC',
+                              padding: '1px 6px',
+                              borderRadius: '8px'
+                            }}>
+                              <span>✓</span> {filteredUngrouped.filter(s => (dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '')) === 'Present').length} Present
+                            </span>
+                            <span style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '3px',
+                              fontSize: '10.5px',
+                              fontWeight: 700,
+                              color: filteredUngrouped.filter(s => (dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '')) === 'Absent').length > 0 ? '#B91C1C' : '#64748B',
+                              background: filteredUngrouped.filter(s => (dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '')) === 'Absent').length > 0 ? '#FEE2E2' : '#F1F5F9',
+                              border: filteredUngrouped.filter(s => (dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '')) === 'Absent').length > 0 ? '1px solid #FCA5A5' : '1px solid #E2E8F0',
+                              padding: '1px 6px',
+                              borderRadius: '8px'
+                            }}>
+                              <span>✕</span> {filteredUngrouped.filter(s => (dayAttendanceMap[s.id] !== undefined ? dayAttendanceMap[s.id] : (s.attendance || '')) === 'Absent').length} Absent
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      {filteredUngrouped.map((sess, uIdx) => {
+                        const currentAtt = dayAttendanceMap[sess.id] !== undefined
+                          ? dayAttendanceMap[sess.id]
+                          : (sess.attendance || '');
+                        const isPresent = currentAtt === 'Present';
+                        const isAbsent = currentAtt === 'Absent';
+                        const isLoadingThis = Boolean(sess.id && attendanceLoadingIds[sess.id]);
+
+                        return (
+                          <div
+                            key={sess.id || uIdx}
+                            className="ses-day-modal-student-row"
+                            style={{
+                              background: isPresent ? '#F0FDF4' : isAbsent ? '#FEF2F2' : '#FFFFFF',
+                              border: isPresent ? '1.5px solid #86EFAC' : isAbsent ? '1.5px solid #FECACA' : '1px solid #E2E8F0',
+                              borderRadius: '10px',
+                              padding: '10px 12px',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              gap: '10px',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flex: 1 }}>
+                              <UserAvatar src={sess.image || ''} name={sess.student} size={28} />
+                              <div style={{ minWidth: 0, flex: 1 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
+                                  <h4 style={{ margin: 0, fontSize: '13.5px', color: '#0F172A', fontWeight: 700 }}>
+                                    {sess.guest_name ? sess.guest_name : sess.student}
+                                  </h4>
+                                  {(() => {
+                                    const studentDay = getStudentSessionDay(sess, targetISO);
+                                    if (!studentDay) return null;
+                                    const isD1 = studentDay === 1;
+                                    const isD2 = studentDay === 2;
+                                    const isD3 = studentDay === 3;
+                                    const pillColor = isD1 ? '#0369A1' : isD2 ? '#6B21A8' : isD3 ? '#0F766E' : '#B45309';
+                                    const pillBg = isD1 ? '#E0F2FE' : isD2 ? '#F3E8FF' : isD3 ? '#CCFBF1' : '#FEF3C7';
+                                    const pillBorder = isD1 ? '#7DD3FC' : isD2 ? '#D8B4FE' : isD3 ? '#5EEAD4' : '#FCD34D';
+                                    return (
+                                      <span
+                                        style={{
+                                          fontSize: '10.5px',
+                                          fontWeight: 800,
+                                          color: pillColor,
+                                          background: pillBg,
+                                          border: `1px solid ${pillBorder}`,
+                                          borderRadius: '4px',
+                                          padding: '1px 5px',
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '2px'
+                                        }}
+                                        title={`Student is attending Day ${studentDay}`}
+                                      >
+                                        Day {studentDay}
+                                      </span>
+                                    );
+                                  })()}
+                                  {isPresent && (
+                                    <span style={{ fontSize: '9.5px', fontWeight: 800, color: '#15803D', background: '#DCFCE7', padding: '1px 5px', borderRadius: '8px', border: '1px solid #86EFAC' }}>
+                                      ✓ PRESENT
+                                    </span>
+                                  )}
+                                  {isAbsent && (
+                                    <span style={{ fontSize: '9.5px', fontWeight: 800, color: '#B91C1C', background: '#FEE2E2', padding: '1px 5px', borderRadius: '8px', border: '1px solid #FCA5A5' }}>
+                                      ✕ ABSENT
+                                    </span>
+                                  )}
                                 </div>
-                              );
-                            })}
-                          </>
-                        )}
-                      </div>
+                                <div style={{ fontSize: '11px', color: '#64748B', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
+                                  {sess.guest_name ? (
+                                    <span style={{ fontSize: '10px', background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A', borderRadius: '4px', padding: '0px 4px', fontWeight: 700 }}>
+                                      👥 Guest ({sess.student})
+                                    </span>
+                                  ) : null}
+                                  <span>⏰ {sess.time} &bull; Coach: {sess.instructor || 'Coach'}</span>
+                                </div>
+                              </div>
+                            </div>
 
-                      {/* Modal Footer */}
-                      <div style={{ padding: '12px 20px', borderTop: '1px solid #E2E8F0', display: 'flex', justifyContent: 'flex-end', alignItems: 'center', background: '#FFFFFF' }}>
-                        <button
-                          type="button"
-                          className="ses-btn-secondary"
-                          style={{ fontSize: '12px', padding: '6px 14px' }}
-                          onClick={() => { setSelectedDayDetailsModal(null); setDayModalStudentSearch(''); setDayModalSlotFilter('All'); }}
-                        >
-                          Close
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
+                            <div className="ses-day-modal-actions" style={{ display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0 }}>
+                              {!isCoach && (() => {
+                                const phone = resolveStudentPhone(sess);
+                                const cleanDigits = phone ? phone.replace(/[^\d+]/g, '') : '';
+                                const finalTel = cleanDigits
+                                  ? (cleanDigits.startsWith('+') ? cleanDigits : (cleanDigits.length === 10 ? `+91${cleanDigits}` : cleanDigits))
+                                  : '';
 
-              {/* Single Session Detail Popup (When clicked) */}
+                                return (
+                                  <a
+                                    href={finalTel ? `tel:${finalTel}` : undefined}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      if (!finalTel) {
+                                        e.preventDefault();
+                                        showToast(`No phone number available for ${sess.guest_name ? `${sess.guest_name} (Guest of ${sess.student})` : (sess.student || 'student')}`, 'info');
+                                      }
+                                    }}
+                                    title={phone ? `Call ${sess.guest_name ? `${sess.guest_name} (Guest of ${sess.student})` : sess.student}: ${phone}` : `No phone number for ${sess.guest_name ? sess.guest_name : sess.student}`}
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      padding: '4px 9px',
+                                      borderRadius: '6px',
+                                      fontSize: '11px',
+                                      fontWeight: 700,
+                                      textDecoration: 'none',
+                                      cursor: finalTel ? 'pointer' : 'not-allowed',
+                                      transition: 'all 0.15s ease',
+                                      border: finalTel ? '1px solid #0284C7' : '1px solid #E2E8F0',
+                                      background: finalTel ? '#F0F9FF' : '#F8FAFC',
+                                      color: finalTel ? '#0284C7' : '#94A3B8',
+                                      boxShadow: finalTel ? '0 1px 2px rgba(2, 132, 199, 0.1)' : 'none'
+                                    }}
+                                  >
+                                    <span style={{ fontSize: '11px' }}>📞</span>
+                                    <span>Call</span>
+                                  </a>
+                                );
+                              })()}
+
+                              <button
+                                type="button"
+                                disabled={isLoadingThis}
+                                onClick={() => handleToggleAttendance(sess, 'Present')}
+                                title={isPresent ? "Click to clear attendance" : "Mark as Present"}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  padding: '4px 10px',
+                                  borderRadius: '6px',
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  cursor: isLoadingThis ? 'wait' : 'pointer',
+                                  transition: 'all 0.15s ease',
+                                  border: isPresent ? '1.5px solid #16A34A' : '1px solid #CBD5E1',
+                                  background: isPresent ? '#16A34A' : '#FFFFFF',
+                                  color: isPresent ? '#FFFFFF' : '#475569',
+                                  boxShadow: isPresent ? '0 2px 4px rgba(22, 163, 74, 0.25)' : 'none'
+                                }}
+                              >
+                                <span>✓</span>
+                                <span>Present</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                disabled={isLoadingThis}
+                                onClick={() => handleToggleAttendance(sess, 'Absent')}
+                                title={isAbsent ? "Click to clear attendance" : "Mark as Absent"}
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  padding: '4px 10px',
+                                  borderRadius: '6px',
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  cursor: isLoadingThis ? 'wait' : 'pointer',
+                                  transition: 'all 0.15s ease',
+                                  border: isAbsent ? '1.5px solid #DC2626' : '1px solid #CBD5E1',
+                                  background: isAbsent ? '#DC2626' : '#FFFFFF',
+                                  color: isAbsent ? '#FFFFFF' : '#475569',
+                                  boxShadow: isAbsent ? '0 2px 4px rgba(220, 38, 38, 0.25)' : 'none'
+                                }}
+                              >
+                                <span>✕</span>
+                                <span>Absent</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </>
+                  )}
+                </div>
+
+                {/* Modal Footer */}
+                <div
+                  className="ses-day-modal-footer"
+                  style={{
+                    padding: '10px 18px',
+                    borderTop: '1px solid #E2E8F0',
+                    display: 'flex',
+                    justifyContent: 'flex-end',
+                    background: '#FFFFFF'
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="ses-btn-secondary"
+                    style={{ fontSize: '12px', padding: '6px 14px' }}
+                    onClick={() => { setSelectedDayDetailsModal(null); setDayModalStudentSearch(''); setDayModalSlotFilter('All'); }}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+{/* Single Session Detail Popup (When clicked) */}
               {selectedSessionDetail && (
                 <div className="ses-detail-popup-overlay" onClick={() => setSelectedSessionDetail(null)}>
                   <div className="ses-detail-popup" onClick={(e) => e.stopPropagation()}>
@@ -7777,6 +7945,7 @@ const Sessions = () => {
 
             </div>
           </div>
+            </div>
         )}
 
         {/* ─── SCHEDULE SESSION POPUP MODAL (STEP 1, 2, 3 WIZARD) ─── */}
@@ -9096,6 +9265,8 @@ const Sessions = () => {
           .ses-select-wrap {
             width: 100% !important;
             min-width: 0 !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
           }
           .ses-select {
             width: 100% !important;
@@ -9165,39 +9336,109 @@ const Sessions = () => {
           .ses-cal-drawer-cards {
             grid-template-columns: 1fr !important;
           }
+          .ses-day-modal-overlay {
+            padding: 0 !important;
+            align-items: stretch !important;
+            justify-content: stretch !important;
+            display: flex !important;
+            background: rgba(15, 23, 42, 0.75) !important;
+          }
           .ses-day-details-modal-box {
-            width: 96% !important;
-            max-width: 96vw !important;
-            max-height: 94vh !important;
-            border-radius: 14px !important;
+            width: 100% !important;
+            max-width: 100vw !important;
+            max-height: 100dvh !important;
+            height: 100dvh !important;
+            border-radius: 0 !important;
+            margin: 0 !important;
+            display: flex !important;
+            flex-direction: column !important;
+            box-shadow: none !important;
           }
           .ses-day-modal-header {
-            padding: 12px 14px !important;
+            padding: 10px 14px !important;
+            display: flex !important;
+            flex-direction: row !important;
+            flex-wrap: nowrap !important;
+            justify-content: space-between !important;
+            align-items: center !important;
+            flex-shrink: 0 !important;
+            gap: 8px !important;
+          }
+          .ses-day-modal-header > div:first-child {
+            flex: 1 !important;
+            min-width: 0 !important;
+          }
+          .ses-day-modal-header .ses-modal-close {
+            flex-shrink: 0 !important;
+            margin: 0 !important;
+            width: 28px !important;
+            height: 28px !important;
           }
           .ses-day-details-content {
             padding: 12px 10px !important;
             gap: 10px !important;
+            flex: 1 !important;
+            overflow-y: auto !important;
+            -webkit-overflow-scrolling: touch !important;
           }
+
+          /* Compact mobile modal styles */
+          .ses-day-filter-bar {
+            padding: 8px 10px !important;
+            gap: 6px !important;
+            display: flex !important;
+            align-items: center !important;
+          }
+          .ses-day-filter-bar input {
+            height: 32px !important;
+            font-size: 11.5px !important;
+            padding: 4px 20px 4px 24px !important;
+          }
+          .ses-day-filter-bar select {
+            height: 32px !important;
+            font-size: 11px !important;
+            padding: 4px 18px 4px 22px !important;
+            max-width: 125px !important;
+          }
+
           .ses-day-modal-student-row {
             flex-direction: column !important;
             align-items: stretch !important;
-            gap: 8px !important;
-            padding: 10px !important;
+            gap: 6px !important;
+            padding: 8px 10px !important;
           }
+
           .ses-day-modal-actions {
             width: 100% !important;
-            display: flex !important;
-            gap: 6px !important;
+            display: grid !important;
+            grid-template-columns: repeat(3, 1fr) !important;
+            gap: 5px !important;
             border-top: 1px dashed #E2E8F0 !important;
-            padding-top: 8px !important;
+            padding-top: 6px !important;
             margin-top: 2px !important;
           }
           .ses-day-modal-actions > * {
-            flex: 1 !important;
+            width: 100% !important;
             justify-content: center !important;
             text-align: center !important;
-            padding: 6px 4px !important;
-            font-size: 11.5px !important;
+            padding: 6px 2px !important;
+            font-size: 11px !important;
+            font-weight: 700 !important;
+            border-radius: 6px !important;
+            box-sizing: border-box !important;
+            min-height: 28px !important;
+          }
+
+          .ses-day-modal-footer {
+            padding: 8px 12px !important;
+            flex-shrink: 0 !important;
+          }
+          .ses-day-modal-footer .ses-btn-secondary {
+            width: 100% !important;
+            justify-content: center !important;
+            padding: 8px !important;
+            font-size: 13px !important;
+            font-weight: 700 !important;
           }
         }
       `}</style>

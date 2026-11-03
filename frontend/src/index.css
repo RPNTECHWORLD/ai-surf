@@ -336,6 +336,31 @@ h2 {
 }
 
 @media (max-width: 768px) {
+  .db-header-usertext {
+    display: none !important;
+  }
+  .db-header-profile-btn {
+    padding: 4px 6px !important;
+    gap: 4px !important;
+  }
+  .db-header-avatar {
+    width: 32px !important;
+    height: 32px !important;
+    font-size: 11px !important;
+  }
+  .db-top-header {
+    height: 60px !important;
+    padding: 0 12px !important;
+  }
+  .db-logo img {
+    height: 38px !important;
+  }
+  .db-mobile-menu {
+    top: 60px !important;
+  }
+  .db-main, .im-main, .sm-main, .ses-main, .an-main, .cmp-main, .va-main, .ip-main, .sp-main, .ns-main, .ns-container, .cr-main, .ai-main {
+    margin-top: 60px !important;
+  }
   .landing-footer {
     padding: 28px 24px;
   }
@@ -604,25 +629,43 @@ h2 {
   align-items: center;
   gap: 12px;
 }
+.db-header-profile-btn {
+  flex-shrink: 0 !important;
+  white-space: nowrap !important;
+  min-height: 40px !important;
+  max-height: none !important;
+  box-sizing: border-box !important;
+}
 .db-header-usertext {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   text-align: right;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  min-width: 0 !important;
 }
 .db-header-user-name {
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 800;
   color: #FFFFFF;
   line-height: 1.25;
   letter-spacing: -0.2px;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  max-width: 140px;
 }
 .db-header-school-name {
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 600;
   color: #94A3B8;
   line-height: 1.25;
   margin-top: 1px;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  max-width: 120px;
 }
 .db-header-user-role {
   font-size: 10px;
@@ -631,6 +674,10 @@ h2 {
   line-height: 1.25;
   letter-spacing: 0.3px;
   text-transform: uppercase;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  max-width: 120px;
 }
 .db-header-avatar {
   width: 38px;
@@ -887,6 +934,83 @@ h2 {
 }
 
 /* Responsive Overrides */
+@media (max-width: 1360px) {
+  .db-top-header {
+    padding: 0 24px !important;
+  }
+  .db-header-nav {
+    gap: 16px !important;
+  }
+  .db-header-nav-item {
+    font-size: 13.5px !important;
+  }
+  .db-header-school-name {
+    display: none !important;
+  }
+  .db-header-user-name {
+    max-width: 110px !important;
+  }
+}
+
+@media (max-width: 1200px) {
+  .db-top-header {
+    padding: 0 16px !important;
+  }
+  .db-header-nav {
+    gap: 10px !important;
+  }
+  .db-header-nav-item {
+    font-size: 13px !important;
+  }
+  .db-header-right {
+    gap: 10px !important;
+  }
+  .db-header-profile-btn {
+    padding: 4px 8px !important;
+    gap: 6px !important;
+  }
+  .db-header-user-name {
+    max-width: 90px !important;
+    font-size: 12px !important;
+  }
+  .db-header-user-role {
+    font-size: 9px !important;
+  }
+}
+
+/* Switch navigation to mobile menu at 1100px so 7 links never crowd */
+@media (max-width: 1100px) {
+  .db-top-header {
+    padding: 0 16px !important;
+    height: 64px !important;
+  }
+  .db-header-nav {
+    display: none !important;
+  }
+  .db-header-school-name {
+    display: none !important;
+  }
+  .db-header-right {
+    gap: 10px !important;
+  }
+  .db-header-userinfo {
+    gap: 8px !important;
+  }
+  .db-mobile-toggle {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    color: #FFFFFF !important;
+    padding: 6px !important;
+  }
+  .db-mobile-menu {
+    top: 64px !important;
+  }
+  .db-main, .im-main, .sm-main, .ses-main, .an-main, .cmp-main, .va-main, .ip-main, .sp-main, .ns-main, .ns-container, .cr-main, .ai-main {
+    margin-top: 64px !important;
+  }
+}
+
 @media (max-width: 900px) {
   .db-top-header {
     padding: 0 16px !important;

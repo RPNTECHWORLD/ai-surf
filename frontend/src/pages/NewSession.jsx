@@ -2043,7 +2043,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       .then(r => r.json())
       .then(data => {
         if (Array.isArray(data)) {
-          const mapped = data.map((i, idx) => {
+          // Only coaches who are approved and active can be assigned to sessions!
+          const activeApprovedData = data.filter(i => i.is_active !== false && (i.approval_status || '').toLowerCase() !== 'pending' && (i.approval_status || '').toLowerCase() !== 'rejected');
+          const mapped = activeApprovedData.map((i, idx) => {
             let roleStr = 'Instructor';
             if (i.specializations) {
               if (Array.isArray(i.specializations) && i.specializations.length > 0) {
@@ -10103,7 +10105,16 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                             <span className="ns-drag-grip" style={{ color: isOnLeave ? '#CBD5E1' : '#0D9488', fontSize: '13px' }}>⠿</span>
                             <UserAvatar src={inst.avatar} name={inst.name} size={36} className="ns-inst-avatar" />
                             <div className="ns-inst-info">
-                              <h4 className="ns-inst-name">{inst.name}</h4>
+                              <h4 className="ns-inst-name">
+                                {inst.name}
+                                {(() => {
+                                  const hasSameName = allInstructors.some(other => String(other.id) !== String(inst.id) && other.name && inst.name && other.name.toLowerCase().trim() === inst.name.toLowerCase().trim());
+                                  if (hasSameName) {
+                                    return <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 500, marginLeft: '4px' }} title={`Coach ID: ${inst.id}${inst.email ? ` • ${inst.email}` : ''}`}>(#{inst.id})</span>;
+                                  }
+                                  return null;
+                                })()}
+                              </h4>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                                 <span className="ns-inst-role">
                                   {inst.role || 'Instructor'}
