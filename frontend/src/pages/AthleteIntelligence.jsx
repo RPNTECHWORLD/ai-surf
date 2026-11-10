@@ -191,8 +191,14 @@ const AthleteIntelligence = () => {
   };
 
   const fetchStudents = () => {
-    const schoolParam = (!isSuperAdmin && effectiveSchool) ? `?school=${encodeURIComponent(effectiveSchool)}` : '';
-    fetch(`${API}/api/students${schoolParam}`)
+    let url = `${API}/api/students`;
+    if (!isSuperAdmin && effectiveSchool) {
+      url += `?school=${encodeURIComponent(effectiveSchool)}`;
+      if (currentCoachId) {
+        url += `&instructor_id=${encodeURIComponent(currentCoachId)}`;
+      }
+    }
+    fetch(url)
       .then(res => res.json())
       .then(data => {
         const list = Array.isArray(data) ? data : [];
@@ -272,13 +278,25 @@ const AthleteIntelligence = () => {
         const sSchool = s.school || s.school_name || '';
         const sNorm = sSchool.toLowerCase().replace(/[^a-z0-9]/g, '');
         if (isCoachFreelance) {
-          return sNorm === 'individualfreelancecoach' || (!sSchool && String(s.created_by_user_id) === String(currentCoachId));
+          return (
+            sNorm === 'individualfreelancecoach' ||
+            sNorm.includes('individual') ||
+            sNorm.includes('freelance') ||
+            (!sSchool && String(s.created_by_user_id) === String(currentCoachId)) ||
+            (String(s.created_by_user_id) === String(currentCoachId)) ||
+            (String(s.instructor_id) === String(currentCoachId))
+          );
         }
         return sNorm === targetNorm || sNorm.includes(targetNorm) || targetNorm.includes(sNorm);
       });
     }
 
-    // Step 2: Coach Role Isolation - ONLY show students assigned to THIS coach
+    // Step 2: Coach Role Isolation
+    // Individual / Freelance Coach manages all students in their workspace (standalone coach roster)
+    if (isCoachFreelance) {
+      return list;
+    }
+
     if (isCoach && (currentCoachName || currentCoachId)) {
       const cIdStr = currentCoachId ? String(currentCoachId) : '';
       const cNameLower = (currentCoachName || '').toLowerCase().trim();
@@ -307,12 +325,17 @@ const AthleteIntelligence = () => {
       return list.filter(s => {
         const sIdStr = s.id ? String(s.id) : '';
         const sNameLower = (s.name || '').toLowerCase().trim();
+        const sInstId = s.instructor_id != null && s.instructor_id !== '' ? String(s.instructor_id) : '';
+        const sInstNameLower = (s.instructor || s.instructor_name || '').toLowerCase().trim();
+        const sCreatorId = s.created_by_user_id != null ? String(s.created_by_user_id) : '';
 
-        // Strict Session Assignment: ONLY students assigned in an active session to this coach are shown
-        // If a student has no session, or if their session is deleted, they will not be shown
+        // Match if direct instructor, instructor name match, created by coach, or in assigned session
+        const isDirectInstructor = Boolean(sInstId && sInstId === cIdStr);
+        const isInstructorNameMatch = Boolean(!sInstId && cNameLower && sInstNameLower && (sInstNameLower === cNameLower));
+        const isCreatedByCoach = Boolean(sCreatorId && sCreatorId === cIdStr);
         const sessionMatch = (sIdStr && coachStudentIdsFromSessions.has(sIdStr)) || (!sIdStr && sNameLower && coachStudentNamesFromSessions.has(sNameLower));
 
-        return sessionMatch;
+        return isDirectInstructor || isInstructorNameMatch || isCreatedByCoach || sessionMatch;
       });
     }
 
@@ -483,14 +506,23 @@ const AthleteIntelligence = () => {
     return allAthletes.find(a => a.key === selectedAthleteKey) || null;
   }, [allAthletes, selectedAthleteKey]);
 
+  const normalizeLevel = (lvl) => {
+    if (!lvl) return 'Beginner';
+    const l = String(lvl).toLowerCase().trim();
+    if (l.includes('adv') && l.includes('beg')) return 'Advance Beginner';
+    if (l.includes('adv') && l.includes('int')) return 'Advance Intermediate';
+    if (l.includes('int')) return 'Intermediate';
+    if (l.includes('pro') || l.includes('adv') || l.includes('master')) return 'Pro';
+    return 'Beginner';
+  };
+
   // Calculate athlete counts per skill level (including accompanying guests)
   const levelCounts = useMemo(() => {
-    const counts = { ALL: allAthletes.length, Beginner: 0, Intermediate: 0, Advanced: 0, Master: 0 };
+    const counts = { ALL: allAthletes.length, Beginner: 0, 'Advance Beginner': 0, Intermediate: 0, 'Advance Intermediate': 0, Pro: 0 };
     allAthletes.forEach(a => {
-      const lvl = (a.level || 'Beginner').trim();
-      const match = ['Beginner', 'Intermediate', 'Advanced', 'Master'].find(k => k.toLowerCase() === lvl.toLowerCase());
-      if (match) {
-        counts[match]++;
+      const norm = normalizeLevel(a.level);
+      if (counts[norm] !== undefined) {
+        counts[norm]++;
       } else {
         counts.Beginner++;
       }
@@ -501,7 +533,7 @@ const AthleteIntelligence = () => {
   // Filter athletes by skill level
   const filteredAthletes = useMemo(() => {
     if (levelFilter === 'ALL') return allAthletes;
-    return allAthletes.filter(a => (a.level || 'Beginner').toLowerCase() === levelFilter.toLowerCase());
+    return allAthletes.filter(a => normalizeLevel(a.level).toLowerCase() === levelFilter.toLowerCase());
   }, [allAthletes, levelFilter]);
 
   // Auto-select athlete/guest when active list changes or filter updates
@@ -526,7 +558,7 @@ const AthleteIntelligence = () => {
     setLevelFilter(lvl);
     const subset = lvl === 'ALL'
       ? allAthletes
-      : allAthletes.filter(a => (a.level || 'Beginner').toLowerCase() === lvl.toLowerCase());
+      : allAthletes.filter(a => normalizeLevel(a.level).toLowerCase() === lvl.toLowerCase());
     
     if (subset.length > 0) {
       const stillInSubset = subset.some(a => a.key === selectedAthleteKey);
@@ -838,10 +870,11 @@ const AthleteIntelligence = () => {
                     style={{ fontWeight: 700 }}
                   >
                     <option value="ALL">All Levels ({allAthletes.length})</option>
-                    <option value="Beginner">Beginner ({levelCounts.Beginner})</option>
-                    <option value="Intermediate">Intermediate ({levelCounts.Intermediate})</option>
-                    <option value="Advanced">Advanced ({levelCounts.Advanced})</option>
-                    <option value="Master">Master ({levelCounts.Master})</option>
+                    <option value="Beginner">Beginner ({levelCounts.Beginner || 0})</option>
+                    <option value="Advance Beginner">Adv. Beginner ({levelCounts['Advance Beginner'] || 0})</option>
+                    <option value="Intermediate">Intermediate ({levelCounts.Intermediate || 0})</option>
+                    <option value="Advance Intermediate">Adv. Intermediate ({levelCounts['Advance Intermediate'] || 0})</option>
+                    <option value="Pro">Pro ({levelCounts.Pro || 0})</option>
                   </select>
                 </div>
 

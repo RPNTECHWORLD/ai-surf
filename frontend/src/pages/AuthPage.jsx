@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
 const API = import.meta.env.VITE_API_URL || '';
@@ -455,6 +455,173 @@ const AuthPage = () => {
     localStorage.setItem('savedAccounts', JSON.stringify(updated));
   };
 
+  // ── OpenStreetMap Location Auto-Suggest ────────────────────────────
+  const POPULAR_LOCATIONS = [
+    'Dapoli, Maharashtra',
+    'Mulki, Karnataka',
+    'Mangalore, Karnataka',
+    'Kovalam, Chennai, Tamil Nadu',
+    'Mahabalipuram, Tamil Nadu',
+    'Varkala, Kerala',
+    'Gokarna, Karnataka',
+    'Goa, India',
+    'Pondicherry, India',
+    'Puri, Odisha',
+    'Visakhapatnam, Andhra Pradesh',
+    'Alappuzha, Kerala',
+    'Kochi, Kerala',
+    'Kozhikode, Kerala',
+    'Kannur, Kerala',
+    'Udupi, Karnataka',
+    'Kanyakumari, Tamil Nadu',
+    'Rameswaram, Tamil Nadu',
+    'Manapad, Tamil Nadu',
+    'Trivandrum, Kerala',
+    'Tiruchirappalli, Tamil Nadu',
+    'Trincomalee, Sri Lanka',
+    'Mumbai, Maharashtra',
+    'Bengaluru, Karnataka',
+    'Chennai, Tamil Nadu',
+    'Andaman and Nicobar Islands',
+    'Lakshadweep'
+  ];
+
+  const formatNominatimItem = (item) => {
+    if (!item) return '';
+    const addr = item.address || {};
+    const city = addr.city || addr.town || addr.village || addr.municipality || addr.suburb || addr.county || item.name;
+    const state = addr.state || addr.region || '';
+    const country = addr.country || '';
+    const parts = [city, state, country].filter(Boolean);
+    if (parts.length >= 2) {
+      return Array.from(new Set(parts)).slice(0, 3).join(', ');
+    }
+    if (item.display_name) {
+      const dParts = item.display_name.split(',').map(s => s.trim()).filter(Boolean);
+      return dParts.slice(0, 3).join(', ');
+    }
+    return item.name || '';
+  };
+
+  const [schoolLocSuggestions, setSchoolLocSuggestions] = useState([]);
+  const [showSchoolLocDropdown, setShowSchoolLocDropdown] = useState(false);
+  const [schoolLocSearching, setSchoolLocSearching] = useState(false);
+  const schoolLocDebounceTimer = useRef(null);
+  const schoolLocContainerRef = useRef(null);
+
+  const [coachLocSuggestions, setCoachLocSuggestions] = useState([]);
+  const [showCoachLocDropdown, setShowCoachLocDropdown] = useState(false);
+  const [coachLocSearching, setCoachLocSearching] = useState(false);
+  const coachLocDebounceTimer = useRef(null);
+  const coachLocContainerRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (schoolLocContainerRef.current && !schoolLocContainerRef.current.contains(e.target)) {
+        setShowSchoolLocDropdown(false);
+      }
+      if (coachLocContainerRef.current && !coachLocContainerRef.current.contains(e.target)) {
+        setShowCoachLocDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleSchoolLocationChange = (val) => {
+    setFormData(prev => ({ ...prev, schoolLocation: val }));
+    if (!val || val.trim().length === 0) {
+      setSchoolLocSuggestions(POPULAR_LOCATIONS.slice(0, 6));
+      setShowSchoolLocDropdown(true);
+      return;
+    }
+
+    const query = val.trim().toLowerCase();
+    const localMatches = POPULAR_LOCATIONS.filter(loc => loc.toLowerCase().includes(query));
+    setSchoolLocSuggestions(localMatches);
+    setShowSchoolLocDropdown(true);
+
+    if (schoolLocDebounceTimer.current) {
+      clearTimeout(schoolLocDebounceTimer.current);
+    }
+
+    if (val.trim().length >= 2) {
+      schoolLocDebounceTimer.current = setTimeout(async () => {
+        try {
+          setSchoolLocSearching(true);
+          const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(val.trim())}&addressdetails=1&limit=8`, {
+            headers: { 'Accept': 'application/json' }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data)) {
+              const apiSuggestions = data.map(formatNominatimItem).filter(Boolean);
+              const combined = Array.from(new Set([...localMatches, ...apiSuggestions]));
+              setSchoolLocSuggestions(combined.slice(0, 8));
+              setShowSchoolLocDropdown(true);
+            }
+          }
+        } catch (err) {
+          // Keep local matches if offline
+        } finally {
+          setSchoolLocSearching(false);
+        }
+      }, 250);
+    }
+  };
+
+  const selectSchoolLocation = (loc) => {
+    setFormData(prev => ({ ...prev, schoolLocation: loc }));
+    setShowSchoolLocDropdown(false);
+  };
+
+  const handleCoachLocationChange = (val) => {
+    setFormData(prev => ({ ...prev, location: val }));
+    if (!val || val.trim().length === 0) {
+      setCoachLocSuggestions(POPULAR_LOCATIONS.slice(0, 6));
+      setShowCoachLocDropdown(true);
+      return;
+    }
+
+    const query = val.trim().toLowerCase();
+    const localMatches = POPULAR_LOCATIONS.filter(loc => loc.toLowerCase().includes(query));
+    setCoachLocSuggestions(localMatches);
+    setShowCoachLocDropdown(true);
+
+    if (coachLocDebounceTimer.current) {
+      clearTimeout(coachLocDebounceTimer.current);
+    }
+
+    if (val.trim().length >= 2) {
+      coachLocDebounceTimer.current = setTimeout(async () => {
+        try {
+          setCoachLocSearching(true);
+          const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(val.trim())}&addressdetails=1&limit=8`, {
+            headers: { 'Accept': 'application/json' }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data)) {
+              const apiSuggestions = data.map(formatNominatimItem).filter(Boolean);
+              const combined = Array.from(new Set([...localMatches, ...apiSuggestions]));
+              setCoachLocSuggestions(combined.slice(0, 8));
+              setShowCoachLocDropdown(true);
+            }
+          }
+        } catch (err) {
+          // Keep local matches if offline
+        } finally {
+          setCoachLocSearching(false);
+        }
+      }, 250);
+    }
+  };
+
+  const selectCoachLocation = (loc) => {
+    setFormData(prev => ({ ...prev, location: loc }));
+    setShowCoachLocDropdown(false);
+  };
+
   const [pendingApprovalUser, setPendingApprovalUser] = useState(null);
 
   const checkApprovalStatus = async () => {
@@ -545,7 +712,7 @@ const AuthPage = () => {
         role: user.role === 'admin' ? 'School Admin' : (user.role || 'athlete'),
         school: user.school || formData.school || '',
         image: user.image || '',
-        approval_status: user.approval_status || (inviteToken ? 'approved' : ((user.school || formData.school) ? 'pending' : 'approved')),
+        approval_status: (user.role === 'admin' || user.role === 'superadmin') ? 'approved' : (user.approval_status || (inviteToken ? 'approved' : ((user.school || formData.school) ? 'pending' : 'approved'))),
         whatsapp_number: formData.whatsapp_number || '',
         start_date: formData.start_date || new Date().toISOString().split('T')[0],
         session_time: formData.session_time || '',
@@ -563,7 +730,7 @@ const AuthPage = () => {
           email: user.email.toLowerCase(),
           role: 'athlete',
           school: user.school || formData.school || '',
-          approval_status: user.approval_status || (inviteToken ? 'approved' : ((user.school || formData.school) ? 'pending' : 'approved')),
+          approval_status: (user.role === 'admin' || user.role === 'superadmin') ? 'approved' : (user.approval_status || (inviteToken ? 'approved' : ((user.school || formData.school) ? 'pending' : 'approved'))),
           whatsapp_number: formData.whatsapp_number || '',
           start_date: formData.start_date || new Date().toISOString().split('T')[0],
           session_time: formData.session_time || '',
@@ -582,19 +749,8 @@ const AuthPage = () => {
       }
     } catch (e) {}
 
-    // Coaches log in directly; inside their portal/profile it displays 'Pending School Approval'
-    if (user.role !== 'coach') {
-      const isPending = (user.approval_status === 'pending') || (
-        !inviteToken && !inviteCode && (
-          ((user.role === 'athlete' || user.role === 'student' || user.role === 'user') && user.school)
-        ) && !isApprovedInStorage && user.approval_status !== 'approved'
-      );
-
-      if (isPending && user.approval_status !== 'approved' && !isApprovedInStorage) {
-        setPendingApprovalUser(user);
-        return;
-      }
-    }
+    // All roles (Athlete, Coach, Admin, Super Admin) navigate directly into their portal/dashboard upon signup & login.
+    // If approval is pending, students and coaches see their pending approval banner inside their profile page.
 
     const userSchName = (typeof user.school_name === 'string' ? user.school_name : user.school_name?.name)
       || (typeof user.school === 'string' ? user.school : user.school?.name)
@@ -883,7 +1039,7 @@ const AuthPage = () => {
         const chosenSchool = (schoolInviteData?.school) || (formData.school || '').trim();
         const isCoachWithSchool = role === 'coach' && chosenSchool && chosenSchool.toLowerCase() !== 'individual / freelance coach';
         const isStudentWithSchool = (role === 'athlete' || role === 'student' || role === 'user') && chosenSchool;
-        const initialStatus = (inviteToken || inviteCode) ? 'approved' : ((isCoachWithSchool || isStudentWithSchool) ? 'pending' : 'approved');
+        const initialStatus = (role === 'admin' || role === 'superadmin') ? 'approved' : ((inviteToken || inviteCode) ? 'approved' : ((isCoachWithSchool || isStudentWithSchool) ? 'pending' : 'approved'));
 
         const userObj = data.user || {
           id: Date.now(),
@@ -893,7 +1049,7 @@ const AuthPage = () => {
           school: chosenSchool,
           approval_status: initialStatus
         };
-        userObj.approval_status = data.user?.approval_status || initialStatus;
+        userObj.approval_status = (role === 'admin' || role === 'superadmin' || userObj.role === 'admin') ? 'approved' : (data.user?.approval_status || initialStatus);
 
         // If invited by coach, assign instructor to student immediately
         if (urlCoach || urlCoachId) {
@@ -987,7 +1143,7 @@ const AuthPage = () => {
       const chosenSchool = (schoolInviteData?.school) || (formData.school || '').trim();
       const isCoachWithSchool = role === 'coach' && chosenSchool && chosenSchool.toLowerCase() !== 'individual / freelance coach';
       const isStudentWithSchool = (role === 'athlete' || role === 'student' || role === 'user') && chosenSchool;
-      const initialStatus = (inviteToken || inviteCode) ? 'approved' : ((isCoachWithSchool || isStudentWithSchool) ? 'pending' : 'approved');
+      const initialStatus = (role === 'admin' || role === 'superadmin') ? 'approved' : ((inviteToken || inviteCode) ? 'approved' : ((isCoachWithSchool || isStudentWithSchool) ? 'pending' : 'approved'));
 
       const userObj = {
         id: Date.now(),
@@ -2512,12 +2668,17 @@ const AuthPage = () => {
                             <input type="text" name="rates" placeholder="e.g. $75 / hr"
                               value={formData.rates} onChange={handleChange} required />
                           </div>
-                          <div className="auth-field">
+                          <div className="auth-field" ref={coachLocContainerRef} style={{ position: 'relative' }}>
                             <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                               <span>Location / Region <span style={{ color: '#FF4D6D', fontWeight: 700 }}>*</span></span>
-                              {isCoachSchoolAffiliated && (
+                              {isCoachSchoolAffiliated ? (
                                 <span style={{ fontSize: '11px', color: '#0F766E', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
                                   🔒 Locked to School
+                                </span>
+                              ) : coachLocSearching && (
+                                <span style={{ fontSize: '11px', color: '#00F2FE', display: 'inline-flex', alignItems: 'center', gap: '5px', fontWeight: 600 }}>
+                                  <span className="auth-spinner" style={{ width: '10px', height: '10px', borderWidth: '1.5px', borderColor: '#00F2FE', borderTopColor: 'transparent' }} />
+                                  Searching OSM...
                                 </span>
                               )}
                             </label>
@@ -2525,12 +2686,28 @@ const AuthPage = () => {
                               <input
                                 type="text"
                                 name="location"
-                                placeholder={isCoachSchoolAffiliated ? 'School location...' : 'e.g. North Shore, Oahu'}
+                                placeholder={isCoachSchoolAffiliated ? 'School location...' : 'e.g. North Shore, Oahu or Kovalam'}
                                 value={isCoachSchoolAffiliated ? (getSchoolLocation(formData.school) || formData.location) : formData.location}
-                                onChange={handleChange}
+                                onChange={(e) => {
+                                  if (!isCoachSchoolAffiliated) {
+                                    handleCoachLocationChange(e.target.value);
+                                  } else {
+                                    handleChange(e);
+                                  }
+                                }}
+                                onFocus={() => {
+                                  if (!isCoachSchoolAffiliated) {
+                                    if (coachLocSuggestions.length > 0) {
+                                      setShowCoachLocDropdown(true);
+                                    } else {
+                                      handleCoachLocationChange(formData.location || '');
+                                    }
+                                  }
+                                }}
                                 readOnly={isCoachSchoolAffiliated}
                                 disabled={isCoachSchoolAffiliated}
                                 required={!isCoachSchoolAffiliated}
+                                autoComplete="off"
                                 style={isCoachSchoolAffiliated ? {
                                   background: '#F1F5F9',
                                   color: '#334155',
@@ -2538,9 +2715,12 @@ const AuthPage = () => {
                                   fontWeight: 600,
                                   cursor: 'not-allowed',
                                   paddingRight: '36px'
-                                } : {}}
+                                } : {
+                                  width: '100%',
+                                  paddingRight: formData.location ? '38px' : '14px'
+                                }}
                               />
-                              {isCoachSchoolAffiliated && (
+                              {isCoachSchoolAffiliated ? (
                                 <span
                                   style={{
                                     position: 'absolute',
@@ -2553,15 +2733,110 @@ const AuthPage = () => {
                                 >
                                   🔒
                                 </span>
+                              ) : formData.location ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setFormData(prev => ({ ...prev, location: '' }));
+                                    setCoachLocSuggestions(POPULAR_LOCATIONS.slice(0, 6));
+                                    setShowCoachLocDropdown(true);
+                                  }}
+                                  style={{
+                                    position: 'absolute',
+                                    right: '10px',
+                                    background: 'transparent',
+                                    border: 'none',
+                                    color: '#94A3B8',
+                                    fontSize: '14px',
+                                    cursor: 'pointer',
+                                    padding: '4px 6px',
+                                    borderRadius: '4px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    transition: 'color 0.15s'
+                                  }}
+                                  onMouseEnter={(e) => e.currentTarget.style.color = '#FFFFFF'}
+                                  onMouseLeave={(e) => e.currentTarget.style.color = '#94A3B8'}
+                                  title="Clear location"
+                                >
+                                  ✕
+                                </button>
+                              ) : (
+                                <span
+                                  style={{
+                                    position: 'absolute',
+                                    right: '12px',
+                                    color: '#64748B',
+                                    fontSize: '15px',
+                                    pointerEvents: 'none'
+                                  }}
+                                >
+                                  📍
+                                </span>
                               )}
                             </div>
+
+                            {!isCoachSchoolAffiliated && showCoachLocDropdown && coachLocSuggestions.length > 0 && (
+                              <div
+                                style={{
+                                  position: 'absolute',
+                                  top: '100%',
+                                  left: 0,
+                                  right: 0,
+                                  marginTop: '4px',
+                                  zIndex: 100,
+                                  background: '#0B192C',
+                                  border: '1.5px solid rgba(0, 242, 254, 0.4)',
+                                  borderRadius: '10px',
+                                  boxShadow: '0 12px 28px rgba(0, 0, 0, 0.8), 0 0 16px rgba(0, 242, 254, 0.15)',
+                                  maxHeight: '220px',
+                                  overflowY: 'auto',
+                                  padding: '6px 0'
+                                }}
+                              >
+                                <div style={{ padding: '6px 14px 4px', fontSize: '10.5px', color: '#64748B', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.07)', marginBottom: '4px' }}>
+                                  <span>📍 Location Suggestions</span>
+                                  <span style={{ color: '#00F2FE', fontSize: '10px', fontWeight: 600 }}>OpenStreetMap</span>
+                                </div>
+                                {coachLocSuggestions.map((loc, idx) => (
+                                  <div
+                                    key={idx}
+                                    onClick={() => selectCoachLocation(loc)}
+                                    style={{
+                                      padding: '9px 14px',
+                                      fontSize: '13px',
+                                      fontWeight: 600,
+                                      color: '#F1F5F9',
+                                      cursor: 'pointer',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '8px',
+                                      transition: 'background 0.15s ease'
+                                    }}
+                                    onMouseEnter={(e) => {
+                                      e.currentTarget.style.background = 'rgba(0, 242, 254, 0.12)';
+                                      e.currentTarget.style.color = '#00F2FE';
+                                    }}
+                                    onMouseLeave={(e) => {
+                                      e.currentTarget.style.background = 'transparent';
+                                      e.currentTarget.style.color = '#F1F5F9';
+                                    }}
+                                  >
+                                    <span style={{ fontSize: '14px', flexShrink: 0 }}>📍</span>
+                                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{loc}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
                             {isCoachSchoolAffiliated ? (
                               <small style={{ color: '#0F766E', fontSize: '11px', marginTop: '4px', display: 'block', fontWeight: 600 }}>
                                 🔒 Location locked to <strong>{formData.school}</strong>'s registered school location.
                               </small>
                             ) : (
                               <small style={{ color: '#94A3B8', fontSize: '11px', marginTop: '4px', display: 'block' }}>
-                                Enter your primary coaching region or beach location. (Required)
+                                Enter your primary coaching region or beach location (auto-suggestions will appear as you type via OpenStreetMap).
                               </small>
                             )}
                           </div>
@@ -2706,37 +2981,136 @@ const AuthPage = () => {
                             Official contact phone number for your surf school.
                           </small>
                         </div>
-                        <div className="auth-field">
-                          <label>School Location <span style={{ color: '#EF4444' }}>*</span></label>
-                          <input
-                            type="text"
-                            name="schoolLocation"
-                            list="auth-school-location-datalist"
-                            placeholder="e.g. Dapoli, Maharashtra or Kovalam, Chennai"
-                            value={formData.schoolLocation || ''}
-                            onChange={handleChange}
-                            autoComplete="off"
-                            required
-                          />
-                          <datalist id="auth-school-location-datalist">
-                            <option value="Dapoli, Maharashtra" />
-                            <option value="Mulki, Karnataka" />
-                            <option value="Mangalore, Karnataka" />
-                            <option value="Kovalam / Chennai, Tamil Nadu" />
-                            <option value="Mahabalipuram, Tamil Nadu" />
-                            <option value="Varkala, Kerala" />
-                            <option value="Gokarna, Karnataka" />
-                            <option value="Goa, India" />
-                            <option value="Pondicherry, India" />
-                            <option value="Puri, Odisha" />
-                            <option value="Visakhapatnam, Andhra Pradesh" />
-                            <option value="Alappuzha, Kerala" />
-                            <option value="Kochi, Kerala" />
-                            <option value="Mumbai, Maharashtra" />
-                            <option value="Bengaluru, Karnataka" />
-                          </datalist>
+                        <div className="auth-field" ref={schoolLocContainerRef} style={{ position: 'relative' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <span>School Location <span style={{ color: '#EF4444' }}>*</span></span>
+                            {schoolLocSearching && (
+                              <span style={{ fontSize: '11px', color: '#00F2FE', display: 'inline-flex', alignItems: 'center', gap: '5px', fontWeight: 600 }}>
+                                <span className="auth-spinner" style={{ width: '10px', height: '10px', borderWidth: '1.5px', borderColor: '#00F2FE', borderTopColor: 'transparent' }} />
+                                Searching OpenStreetMap...
+                              </span>
+                            )}
+                          </label>
+                          <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                            <input
+                              type="text"
+                              name="schoolLocation"
+                              placeholder="e.g. Dapoli, Maharashtra or Kovalam, Chennai"
+                              value={formData.schoolLocation || ''}
+                              onChange={(e) => handleSchoolLocationChange(e.target.value)}
+                              onFocus={() => {
+                                if (schoolLocSuggestions.length > 0) {
+                                  setShowSchoolLocDropdown(true);
+                                } else {
+                                  handleSchoolLocationChange(formData.schoolLocation || '');
+                                }
+                              }}
+                              autoComplete="off"
+                              required
+                              style={{
+                                width: '100%',
+                                paddingRight: '38px'
+                              }}
+                            />
+                            {formData.schoolLocation ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setFormData(prev => ({ ...prev, schoolLocation: '' }));
+                                  setSchoolLocSuggestions(POPULAR_LOCATIONS.slice(0, 6));
+                                  setShowSchoolLocDropdown(true);
+                                }}
+                                style={{
+                                  position: 'absolute',
+                                  right: '10px',
+                                  background: 'transparent',
+                                  border: 'none',
+                                  color: '#94A3B8',
+                                  fontSize: '14px',
+                                  cursor: 'pointer',
+                                  padding: '4px 6px',
+                                  borderRadius: '4px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  transition: 'color 0.15s'
+                                }}
+                                onMouseEnter={(e) => e.currentTarget.style.color = '#FFFFFF'}
+                                onMouseLeave={(e) => e.currentTarget.style.color = '#94A3B8'}
+                                title="Clear location"
+                              >
+                                ✕
+                              </button>
+                            ) : (
+                              <span
+                                style={{
+                                  position: 'absolute',
+                                  right: '12px',
+                                  color: '#64748B',
+                                  fontSize: '15px',
+                                  pointerEvents: 'none'
+                                }}
+                              >
+                                📍
+                              </span>
+                            )}
+                          </div>
+
+                          {showSchoolLocDropdown && schoolLocSuggestions.length > 0 && (
+                            <div
+                              style={{
+                                position: 'absolute',
+                                top: '100%',
+                                left: 0,
+                                right: 0,
+                                marginTop: '4px',
+                                zIndex: 100,
+                                background: '#0B192C',
+                                border: '1.5px solid rgba(0, 242, 254, 0.4)',
+                                borderRadius: '10px',
+                                boxShadow: '0 12px 28px rgba(0, 0, 0, 0.8), 0 0 16px rgba(0, 242, 254, 0.15)',
+                                maxHeight: '220px',
+                                overflowY: 'auto',
+                                padding: '6px 0'
+                              }}
+                            >
+                              <div style={{ padding: '6px 14px 4px', fontSize: '10.5px', color: '#64748B', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.07)', marginBottom: '4px' }}>
+                                <span>📍 Location Suggestions</span>
+                                <span style={{ color: '#00F2FE', fontSize: '10px', fontWeight: 600 }}>OpenStreetMap</span>
+                              </div>
+                              {schoolLocSuggestions.map((loc, idx) => (
+                                <div
+                                  key={idx}
+                                  onClick={() => selectSchoolLocation(loc)}
+                                  style={{
+                                    padding: '9px 14px',
+                                    fontSize: '13px',
+                                    fontWeight: 600,
+                                    color: '#F1F5F9',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    transition: 'background 0.15s ease'
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    e.currentTarget.style.background = 'rgba(0, 242, 254, 0.12)';
+                                    e.currentTarget.style.color = '#00F2FE';
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.currentTarget.style.background = 'transparent';
+                                    e.currentTarget.style.color = '#F1F5F9';
+                                  }}
+                                >
+                                  <span style={{ fontSize: '14px', flexShrink: 0 }}>📍</span>
+                                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{loc}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
                           <small style={{ color: '#94A3B8', fontSize: '11px', marginTop: '4px', display: 'block' }}>
-                            Enter your surf school's city or beach location (auto-suggestions will appear as you type).
+                            Enter your surf school's city or beach location (auto-suggestions will appear as you type via OpenStreetMap).
                           </small>
                         </div>
                       </div>

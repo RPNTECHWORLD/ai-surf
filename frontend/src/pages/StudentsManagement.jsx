@@ -506,6 +506,9 @@ const StudentsManagement = () => {
   // Only Admins and Individual / Freelance Coaches can delete students.
   const canDeleteStudent = !isViewAdmin && (isAdminOrSchoolAdmin || (isCoach && (isCoachFreelance || isHeadCoach)));
 
+  // Both School Admins and Individual / Freelance Coaches (as well as Head Coaches) can edit student Dates & Expected Time
+  const canEditStudentDatesAndTime = !isViewAdmin && (isAdminOrSchoolAdmin || (isCoach && (isCoachFreelance || isHeadCoach)));
+
   const resolveUserSchool = () => {
     const raw = currentUser?.school || currentUser?.school_name;
     if (!raw) return '';
@@ -3293,69 +3296,72 @@ const StudentsManagement = () => {
             }}
           />
 
-          {/* 2. Swimming Ability Filter */}
-          <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
-            <select
-              className="sm-select"
-              value={swimmingFilter}
-              onChange={e => setSwimmingFilter(e.target.value)}
-              style={{
-                cursor: 'pointer',
-                fontWeight: swimmingFilter !== 'All' ? 700 : 500,
-                color: swimmingFilter !== 'All' ? (swimmingFilter === 'Non-Swimmer' ? '#D97706' : '#0D9488') : '#334155',
-                borderColor: swimmingFilter !== 'All' ? (swimmingFilter === 'Non-Swimmer' ? '#F59E0B' : '#0D9488') : '#CBD5E1',
-                background: swimmingFilter !== 'All' ? (swimmingFilter === 'Non-Swimmer' ? '#FFFBEB' : '#E6F9F5') : '#FFFFFF',
-                borderRadius: '10px',
-                padding: '9px 14px',
-                fontSize: '13px'
-              }}
-              title="Filter by Swimmer or Non-Swimmer"
-            >
-              <option value="All">🏊 All Swimming (Any)</option>
-              <option value="Swimmer">🏊 Swimmer Only</option>
-              <option value="Non-Swimmer">🤿 Non-Swimmer Only</option>
-            </select>
-          </div>
+          {/* Dropdown Filters Row */}
+          <div className="sm-dropdowns-row">
+            {/* 2. Swimming Ability Filter */}
+            <div className="sm-select-wrap">
+              <select
+                className="sm-select"
+                value={swimmingFilter}
+                onChange={e => setSwimmingFilter(e.target.value)}
+                style={{
+                  cursor: 'pointer',
+                  fontWeight: swimmingFilter !== 'All' ? 700 : 500,
+                  color: swimmingFilter !== 'All' ? (swimmingFilter === 'Non-Swimmer' ? '#D97706' : '#0D9488') : '#334155',
+                  borderColor: swimmingFilter !== 'All' ? (swimmingFilter === 'Non-Swimmer' ? '#F59E0B' : '#0D9488') : '#CBD5E1',
+                  background: swimmingFilter !== 'All' ? (swimmingFilter === 'Non-Swimmer' ? '#FFFBEB' : '#E6F9F5') : '#FFFFFF',
+                  borderRadius: '10px',
+                  padding: '9px 12px',
+                  fontSize: '12.5px'
+                }}
+                title="Filter by Swimmer or Non-Swimmer"
+              >
+                <option value="All">🏊 All Swimming</option>
+                <option value="Swimmer">🏊 Swimmer Only</option>
+                <option value="Non-Swimmer">🤿 Non-Swimmer Only</option>
+              </select>
+            </div>
 
-          {/* 3. Surf Level Filter */}
-          <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}>
-            <select
-              className="sm-select"
-              value={levelFilter}
-              onChange={e => {
-                const val = e.target.value;
-                setLevelFilter(val);
-                if (val === 'All') {
-                  if (['BEGINNER', 'ADV. BEGINNER', 'INTERMEDIATE', 'ADV. INTERMEDIATE', 'PRO', 'ADVANCED'].includes(activeStatFilter)) {
-                    setActiveStatFilter('ACTIVE');
+            {/* 3. Surf Level Filter */}
+            <div className="sm-select-wrap">
+              <select
+                className="sm-select"
+                value={levelFilter}
+                onChange={e => {
+                  const val = e.target.value;
+                  setLevelFilter(val);
+                  if (val === 'All') {
+                    if (['BEGINNER', 'ADV. BEGINNER', 'INTERMEDIATE', 'ADV. INTERMEDIATE', 'PRO', 'ADVANCED'].includes(activeStatFilter)) {
+                      setActiveStatFilter('ACTIVE');
+                    }
+                  } else {
+                    if (val === 'Beginner') setActiveStatFilter('BEGINNER');
+                    else if (val === 'Advance Beginner') setActiveStatFilter('ADV. BEGINNER');
+                    else if (val === 'Intermediate') setActiveStatFilter('INTERMEDIATE');
+                    else if (val === 'Advance Intermediate') setActiveStatFilter('ADV. INTERMEDIATE');
+                    else if (val === 'Pro') setActiveStatFilter('PRO');
                   }
-                } else {
-                  if (val === 'Beginner') setActiveStatFilter('BEGINNER');
-                  else if (val === 'Advance Beginner') setActiveStatFilter('ADV. BEGINNER');
-                  else if (val === 'Intermediate') setActiveStatFilter('INTERMEDIATE');
-                  else if (val === 'Advance Intermediate') setActiveStatFilter('ADV. INTERMEDIATE');
-                  else if (val === 'Pro') setActiveStatFilter('PRO');
-                }
-              }}
-              style={{
-                cursor: 'pointer',
-                fontWeight: levelFilter !== 'All' ? 700 : 500,
-                color: levelFilter !== 'All' ? '#0D9488' : '#334155',
-                borderColor: levelFilter !== 'All' ? '#0D9488' : '#CBD5E1',
-                background: levelFilter !== 'All' ? '#E6F9F5' : '#FFFFFF',
-                borderRadius: '10px',
-                padding: '9px 14px',
-                fontSize: '13px'
-              }}
-              title="Filter by Surf Level"
-            >
-              <option value="All">🏄 All Surf Levels (Any)</option>
-              <option value="Beginner">⚪ Beginner</option>
-              <option value="Advance Beginner">🟡 Advance Beginner</option>
-              <option value="Intermediate">🟢 Intermediate</option>
-              <option value="Advance Intermediate">🔵 Advance Intermediate</option>
-              <option value="Pro">🔴 Pro</option>
-            </select>
+                }}
+                style={{
+                  cursor: 'pointer',
+                  fontWeight: levelFilter !== 'All' ? 700 : 500,
+                  color: levelFilter !== 'All' ? '#0D9488' : '#334155',
+                  borderColor: levelFilter !== 'All' ? '#0D9488' : '#CBD5E1',
+                  background: levelFilter !== 'All' ? '#E6F9F5' : '#FFFFFF',
+                  borderRadius: '10px',
+                  padding: '9px 12px',
+                  fontSize: '12.5px'
+                }}
+                title="Filter by Surf Level"
+              >
+                <option value="All">🏄 All Surf Levels</option>
+                <option value="Beginner">⚪ Beginner</option>
+                <option value="Advance Beginner">🟡 Adv. Beginner</option>
+                <option value="Intermediate">🟢 Intermediate</option>
+                <option value="Advance Intermediate">🔵 Adv. Intermediate</option>
+                <option value="Pro">🔴 Pro</option>
+              </select>
+            </div>
           </div>
         </div>
 
@@ -3842,9 +3848,9 @@ const StudentsManagement = () => {
                         })()}
                       </td>
                       <td
-                        style={{ cursor: isAdminOrSchoolAdmin ? 'pointer' : 'default' }}
+                        style={{ cursor: canEditStudentDatesAndTime ? 'pointer' : 'default' }}
                         onClick={(e) => {
-                          if (isAdminOrSchoolAdmin) {
+                          if (canEditStudentDatesAndTime) {
                             e.stopPropagation();
                             const currentEnd = getStudentEndDate(s);
                             setEditingStudentDates({
@@ -3856,7 +3862,7 @@ const StudentsManagement = () => {
                             });
                           }
                         }}
-                        title={isAdminOrSchoolAdmin ? "Click to edit Start & End dates (School Admin)" : undefined}
+                        title={canEditStudentDatesAndTime ? "Click to edit Start & End dates" : undefined}
                       >
                         {(() => {
                           const calculatedEndDate = getStudentEndDate(s);
@@ -3866,7 +3872,7 @@ const StudentsManagement = () => {
                                 <span style={{ fontSize: '12px', fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap' }}>
                                   {s.start_date || '—'}
                                 </span>
-                                {isAdminOrSchoolAdmin && (
+                                {canEditStudentDatesAndTime && (
                                   <span
                                     style={{
                                       display: 'inline-flex',
@@ -3899,9 +3905,9 @@ const StudentsManagement = () => {
                         })()}
                       </td>
                       <td
-                        style={{ cursor: isAdminOrSchoolAdmin ? 'pointer' : 'default' }}
+                        style={{ cursor: canEditStudentDatesAndTime ? 'pointer' : 'default' }}
                         onClick={(e) => {
-                          if (isAdminOrSchoolAdmin) {
+                          if (canEditStudentDatesAndTime) {
                             e.stopPropagation();
                             setEditingStudentTime({
                               id: s.id,
@@ -3910,7 +3916,7 @@ const StudentsManagement = () => {
                             });
                           }
                         }}
-                        title={isAdminOrSchoolAdmin ? "Click to edit Expected Time (School Admin)" : undefined}
+                        title={canEditStudentDatesAndTime ? "Click to edit Expected Time" : undefined}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                           {s.session_time ? (
@@ -3933,7 +3939,7 @@ const StudentsManagement = () => {
                               —
                             </span>
                           )}
-                          {isAdminOrSchoolAdmin && (
+                          {canEditStudentDatesAndTime && (
                             <span
                               style={{
                                 display: 'inline-flex',
@@ -4068,8 +4074,8 @@ const StudentsManagement = () => {
         </div>
       </main>
 
-      {/* ── Edit Student Dates Modal (School Admin Only) ── */}
-      {editingStudentDates && isAdminOrSchoolAdmin && (
+      {/* ── Edit Student Dates Modal (School Admin & Individual Coaches) ── */}
+      {editingStudentDates && canEditStudentDatesAndTime && (
         <div className="sm-modal-overlay" onClick={() => setEditingStudentDates(null)}>
           <div className="sm-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '420px', padding: '24px', borderRadius: '18px', background: '#FFFFFF', boxShadow: '0 20px 40px rgba(0,0,0,0.15)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
@@ -4092,7 +4098,7 @@ const StudentsManagement = () => {
 
             <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '10px', padding: '10px 14px', marginBottom: '16px', fontSize: '12px', color: '#475569', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '16px' }}>🛡️</span>
-              <span><strong>School Admin Access:</strong> Modify start and end dates of training for this student.</span>
+              <span><strong>{isCoachFreelance ? 'Coach Access:' : 'School Admin Access:'}</strong> Modify start and end dates of training for this student.</span>
             </div>
 
             <form onSubmit={handleSaveStudentDates} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -4173,8 +4179,8 @@ const StudentsManagement = () => {
         </div>
       )}
 
-      {/* ── Edit Student Expected Time Modal (School Admin Only) ── */}
-      {editingStudentTime && isAdminOrSchoolAdmin && (
+      {/* ── Edit Student Expected Time Modal (School Admin & Individual Coaches) ── */}
+      {editingStudentTime && canEditStudentDatesAndTime && (
         <div className="sm-modal-overlay" onClick={() => setEditingStudentTime(null)}>
           <div className="sm-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '440px', padding: '24px', borderRadius: '18px', background: '#FFFFFF', boxShadow: '0 20px 40px rgba(0,0,0,0.15)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
@@ -4197,7 +4203,7 @@ const StudentsManagement = () => {
 
             <div style={{ background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: '10px', padding: '10px 14px', marginBottom: '16px', fontSize: '12px', color: '#475569', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <span style={{ fontSize: '16px' }}>🛡️</span>
-              <span><strong>School Admin Access:</strong> Modify the expected session time slot for this student.</span>
+              <span><strong>{isCoachFreelance ? 'Coach Access:' : 'School Admin Access:'}</strong> Modify the expected session time slot for this student.</span>
             </div>
 
             <form onSubmit={handleSaveStudentTime} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -7679,12 +7685,14 @@ const StudentsManagement = () => {
         }
         .sm-btn-primary:disabled { opacity: 0.7; cursor: not-allowed; }
 
-        .sm-filters { display: flex; gap: 20px; align-items: center; background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; padding: 16px; }
-        .sm-search-wrap { display: flex; align-items: center; gap: 12px; background: #F8F6F2; border-radius: 8px; padding: 0 16px; height: 44px; flex: 1; }
-        .sm-search-input { border: none; outline: none; background: transparent; font-size: 12px; color: #94A3B8; width: 100%; }
+        .sm-filters { display: flex; gap: 12px; align-items: center; background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 12px; padding: 12px 16px; flex-wrap: wrap; }
+        .sm-search-wrap { display: flex; align-items: center; gap: 10px; background: #F8F6F2; border-radius: 8px; padding: 0 14px; height: 40px; flex: 1 1 200px; min-width: 180px; }
+        .sm-search-input { border: none; outline: none; background: transparent; font-size: 13px; color: #0F172A; width: 100%; }
+        .sm-dropdowns-row { display: flex; gap: 10px; align-items: center; }
+        .sm-select-wrap { position: relative; display: inline-flex; align-items: center; }
         .sm-select {
-          border: 1px solid #E2E8F0; border-radius: 8px; height: 44px; padding: 0 16px; width: 180px;
-          font-size: 12px; color: #0F172A; background: #FFF; outline: none; cursor: pointer;
+          border: 1px solid #CBD5E1; border-radius: 10px; height: 40px; padding: 0 12px;
+          font-size: 13px; color: #0F172A; background: #FFF; outline: none; cursor: pointer;
         }
 
         .sm-stats-grid { display: flex; gap: 20px; }
@@ -8130,36 +8138,56 @@ const StudentsManagement = () => {
           }
           .sm-filters {
             display: flex !important;
-            flex-direction: row !important;
-            align-items: center !important;
+            flex-direction: column !important;
+            align-items: stretch !important;
             gap: 8px !important;
-            padding: 8px !important;
-            border-radius: 10px !important;
+            padding: 10px !important;
+            border-radius: 12px !important;
             background: #FFFFFF !important;
+            border: 1px solid #E2E8F0 !important;
             box-sizing: border-box !important;
+            width: 100% !important;
           }
           .sm-search-wrap {
-            flex: 1 !important;
+            width: 100% !important;
             height: 38px !important;
-            padding: 0 10px !important;
-            gap: 6px !important;
+            padding: 0 12px !important;
+            gap: 8px !important;
             background: #F8FAFC !important;
-            border: 1px solid #E2E8F0 !important;
+            border: 1px solid #CBD5E1 !important;
             border-radius: 8px !important;
             box-sizing: border-box !important;
+            flex: none !important;
           }
           .sm-search-input {
-            font-size: 12px !important;
+            font-size: 12.5px !important;
+            color: #0F172A !important;
+          }
+          .sm-dropdowns-row {
+            display: flex !important;
+            flex-direction: row !important;
+            gap: 8px !important;
+            width: 100% !important;
+            box-sizing: border-box !important;
+          }
+          .sm-select-wrap {
+            flex: 1 1 0 !important;
+            min-width: 0 !important;
+            width: 50% !important;
+            display: flex !important;
+            box-sizing: border-box !important;
           }
           .sm-select {
-            width: 120px !important;
-            height: 38px !important;
+            width: 100% !important;
+            height: 36px !important;
             padding: 0 8px !important;
             font-size: 11.5px !important;
             border-radius: 8px !important;
-            border: 1px solid #E2E8F0 !important;
-            background: #F8FAFC !important;
+            border: 1.5px solid #CBD5E1 !important;
             box-sizing: border-box !important;
+            text-overflow: ellipsis !important;
+            white-space: nowrap !important;
+            overflow: hidden !important;
           }
           .sm-stats-grid {
             display: grid !important;

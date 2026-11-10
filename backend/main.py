@@ -7,6 +7,8 @@ from fastapi.staticfiles import StaticFiles
 import os
 import re
 import uuid
+import shutil
+import subprocess
 # pyrefly: ignore [missing-import]
 from pydantic import BaseModel
 from typing import Optional, List, Union, Any, Dict
@@ -87,9 +89,10 @@ try:
                     test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_by_school BOOLEAN DEFAULT FALSE;"))
                     test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
                     test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_head_coach BOOLEAN DEFAULT FALSE;"))
-                    test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS guest_role VARCHAR DEFAULT 'main_admin';"))
-                    test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_head_coach BOOLEAN DEFAULT FALSE;"))
-                    test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS guest_role VARCHAR DEFAULT 'main_admin';"))
+                    test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS guest_role VARCHAR;"))
+                    test_conn.execute(text("ALTER TABLE users ALTER COLUMN guest_role DROP DEFAULT;"))
+                    test_conn.execute(text("UPDATE users SET guest_role = NULL WHERE role != 'guest_admin';"))
+                    test_conn.execute(text("UPDATE users SET approval_status = 'approved' WHERE role IN ('admin', 'superadmin');"))
                     test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS deletion_scheduled_at TIMESTAMP;"))
                     test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_plain VARCHAR DEFAULT '';"))
                     test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider VARCHAR DEFAULT 'email';"))
@@ -160,6 +163,8 @@ try:
                     test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS surf_stats TEXT DEFAULT '{}';"))
                     test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS performance_logs TEXT DEFAULT '[]';"))
                     test_conn.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS school VARCHAR DEFAULT '';"))
+                    test_conn.execute(text("UPDATE users SET is_head_coach = FALSE WHERE role IN ('athlete', 'student', 'user') OR role NOT IN ('coach', 'head_coach');"))
+                    test_conn.execute(text("UPDATE sessions SET type = 'Beginner' WHERE LOWER(type) = 'general' OR type IS NULL OR type = '';"))
                     test_conn.commit()
                 except Exception as mig_err:
                     print(f"Notice: Non-destructive migration note ({mig_err}).")
@@ -223,9 +228,10 @@ try:
             _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_by_school BOOLEAN DEFAULT FALSE;"))
             _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
             _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_head_coach BOOLEAN DEFAULT FALSE;"))
-            _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS guest_role VARCHAR DEFAULT 'main_admin';"))
-            _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_head_coach BOOLEAN DEFAULT FALSE;"))
-            _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS guest_role VARCHAR DEFAULT 'main_admin';"))
+            _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS guest_role VARCHAR;"))
+            _c.execute(text("ALTER TABLE users ALTER COLUMN guest_role DROP DEFAULT;"))
+            _c.execute(text("UPDATE users SET guest_role = NULL WHERE role != 'guest_admin';"))
+            _c.execute(text("UPDATE users SET approval_status = 'approved' WHERE role IN ('admin', 'superadmin');"))
             _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS deletion_scheduled_at TIMESTAMP;"))
             _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_plain VARCHAR DEFAULT '';"))
             _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider VARCHAR DEFAULT 'email';"))
@@ -269,6 +275,8 @@ try:
             _c.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS surf_stats TEXT DEFAULT '{}';"))
             _c.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS performance_logs TEXT DEFAULT '[]';"))
             _c.execute(text("ALTER TABLE students ADD COLUMN IF NOT EXISTS school VARCHAR DEFAULT '';"))
+            _c.execute(text("UPDATE users SET is_head_coach = FALSE WHERE role IN ('athlete', 'student', 'user') OR role NOT IN ('coach', 'head_coach');"))
+            _c.execute(text("UPDATE sessions SET type = 'Beginner' WHERE LOWER(type) = 'general' OR type IS NULL OR type = '';"))
         _c.commit()
 except Exception as _e:
     print(f"Notice: Non-destructive DB check ({_e}).")
@@ -292,7 +300,7 @@ class User(Base):
     approval_status = Column(String, default="approved")
     created_by_school = Column(Boolean, default=False)
     is_head_coach = Column(Boolean, default=False)
-    guest_role = Column(String, default="main_admin", nullable=True)
+    guest_role = Column(String, default=None, nullable=True)
     is_active = Column(Boolean, default=True)
     deletion_scheduled_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -2369,13 +2377,13 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
         "id": user.id,
         "email": user.email,
         "role": user.role,
-        "guest_role": getattr(user, "guest_role", None) or ("main_admin" if user.role == "guest_admin" else None),
+        "guest_role": getattr(user, "guest_role", None) if user.role == "guest_admin" else None,
         "is_view_admin": bool(user.role == "guest_admin" and getattr(user, "guest_role", None) == "view_admin"),
         "is_main_admin": bool(user.role == "guest_admin" and getattr(user, "guest_role", None) != "view_admin"),
         "auth_provider": user.auth_provider,
         "created_by_school": user.created_by_school,
-        "is_head_coach": bool(getattr(user, "is_head_coach", False)),
-        "approval_status": getattr(user, "approval_status", "approved") or "approved",
+        "is_head_coach": bool(user.role in ["coach", "head_coach"] and getattr(user, "is_head_coach", False)),
+        "approval_status": "approved" if user.role in ["admin", "superadmin"] else (getattr(user, "approval_status", "approved") or "approved"),
         "deletion_scheduled_at": user.deletion_scheduled_at.isoformat() if getattr(user, "deletion_scheduled_at", None) else None,
     }
 
@@ -2411,8 +2419,11 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
                 session.rollback()
 
     instructor_obj = user.instructor
-    if not instructor_obj and user.role == "coach" and user.email and session:
-        instructor_obj = session.query(Instructor).filter(func.lower(Instructor.email) == user.email.lower().strip()).first()
+    if not instructor_obj and session:
+        if user.id:
+            instructor_obj = session.query(Instructor).filter(Instructor.user_id == user.id).first()
+        if not instructor_obj and user.email:
+            instructor_obj = session.query(Instructor).filter(func.lower(Instructor.email) == user.email.lower().strip()).first()
 
     if student_obj:
         res["student_id"] = student_obj.id
@@ -2433,10 +2444,32 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
         res["instructor_id"] = inst_id
         res["instructor"] = inst_name
         res["approval_status"] = getattr(student_obj, "approval_status", None) or res.get("approval_status", "approved")
+        res["is_head_coach"] = False
+        if getattr(user, "is_head_coach", False):
+            user.is_head_coach = False
+            if session:
+                try:
+                    session.commit()
+                except Exception:
+                    session.rollback()
+        # Auto-sync user.name in database if student has specific name
+        if student_obj.name and getattr(user, "name", None) != student_obj.name and session:
+            user.name = student_obj.name
+            try:
+                session.commit()
+            except Exception:
+                session.rollback()
     elif instructor_obj:
         res["instructor_id"] = instructor_obj.id
         res["name"] = instructor_obj.name
         res["image"] = instructor_obj.image or getattr(user, "image", None) or ""
+        # Auto-sync user.name in database if instructor has specific name
+        if instructor_obj.name and getattr(user, "name", None) != instructor_obj.name and session:
+            user.name = instructor_obj.name
+            try:
+                session.commit()
+            except Exception:
+                session.rollback()
         res["phone"] = instructor_obj.phone or getattr(user, "phone", None) or ""
         res["whatsapp_number"] = instructor_obj.phone or getattr(user, "phone", None) or ""
         res["school"] = instructor_obj.school or "Individual / Freelance Coach"
@@ -2468,6 +2501,9 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
         res["name"] = getattr(user, "name", None) or "School Admin"
         res["image"] = getattr(user, "image", None) or ""
         res["phone"] = getattr(user, "phone", None) or ""
+        res["guest_role"] = None
+        res["is_view_admin"] = False
+        res["is_main_admin"] = False
 
     # Check matching school by school_id, school_name, or email
     try:
@@ -2532,10 +2568,13 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
     except Exception as e:
         pass
     # approval status fallback
-    user_st = getattr(user, "approval_status", None)
-    if not user_st and user.student:
-        user_st = getattr(user.student, "approval_status", None)
-    res["approval_status"] = user_st or "approved"
+    if user.role in ["admin", "superadmin"]:
+        res["approval_status"] = "approved"
+    else:
+        user_st = getattr(user, "approval_status", None)
+        if not user_st and user.student:
+            user_st = getattr(user.student, "approval_status", None)
+        res["approval_status"] = user_st or "approved"
 
     return res
 
@@ -2634,6 +2673,8 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
         # The school admin must approve them first.
         is_school_coach = bool(selected_school and selected_school.lower() != "individual / freelance coach")
         initial_approval = "pending" if is_school_coach else "approved"
+    elif role in ["admin", "superadmin"]:
+        initial_approval = "approved"
     else:
         initial_approval = "approved" if (data.invite_token or data.invite_code or not selected_school) else "pending"
 
@@ -3295,7 +3336,7 @@ def auth_login(data: UserLogin, db: OrmSession = Depends(get_db)):
         "user_id": matched_user.id,
         "email": matched_user.email,
         "role": matched_user.role,
-        "guest_role": getattr(matched_user, "guest_role", None) or ("main_admin" if matched_user.role == "guest_admin" else None)
+        "guest_role": getattr(matched_user, "guest_role", None) if matched_user.role == "guest_admin" else None
     }
     token = generate_token(token_payload)
     return {
@@ -3925,13 +3966,55 @@ def get_student_mock_heats(student_id: int, db: OrmSession = Depends(get_db)):
     return result
 
 
+def transcode_video_variants(local_master_path: str, unique_id: str, ext: str):
+    """Background task: transcode uploaded surf video into web-optimized multi-resolution streams (720p, 480p, 360p) with faststart."""
+    ffmpeg_bin = shutil.which("ffmpeg")
+    if not ffmpeg_bin:
+        for candidate in ["/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg", "C:\\ffmpeg\\bin\\ffmpeg.exe"]:
+            if os.path.exists(candidate):
+                ffmpeg_bin = candidate
+                break
+    if not ffmpeg_bin:
+        return
+
+    variants = [
+        ("720p", "-vf scale=-2:720 -c:v libx264 -crf 24 -preset veryfast -c:a aac -b:a 128k"),
+        ("480p", "-vf scale=-2:480 -c:v libx264 -crf 26 -preset veryfast -c:a aac -b:a 96k"),
+        ("360p", "-vf scale=-2:360 -c:v libx264 -crf 28 -preset veryfast -c:a aac -b:a 64k"),
+    ]
+    for tag, flags in variants:
+        out_filename = f"{unique_id}_{tag}{ext}"
+        out_path = os.path.join(UPLOAD_DIR, out_filename)
+        cmd = f'"{ffmpeg_bin}" -y -i "{local_master_path}" {flags} -movflags +faststart "{out_path}"'
+        try:
+            subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=240)
+            if os.path.exists(out_path) and os.path.getsize(out_path) > 0 and S3_BUCKET_NAME:
+                try:
+                    s3_client.upload_file(
+                        out_path,
+                        S3_BUCKET_NAME,
+                        out_filename,
+                        ExtraArgs={"ContentType": "video/mp4"}
+                    )
+                except Exception as s3_err:
+                    print(f"Failed uploading {tag} variant to S3: {s3_err}")
+        except Exception as e:
+            print(f"Transcoding error for {tag}: {e}")
+
+
 @app.post("/api/upload-video")
-def upload_video(file: UploadFile = File(...)):
+def upload_video(file: UploadFile = File(...), background_tasks: BackgroundTasks = None):
     file_ext = os.path.splitext(file.filename)[1] or ".mp4"
-    unique_filename = f"{uuid.uuid4()}{file_ext}"
+    unique_id = str(uuid.uuid4())
+    unique_filename = f"{unique_id}{file_ext}"
     content_type = file.content_type or "video/mp4"
     contents = file.file.read()
-    
+
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    file_path = os.path.join(UPLOAD_DIR, unique_filename)
+    with open(file_path, "wb") as f:
+        f.write(contents)
+
     if S3_BUCKET_NAME:
         try:
             s3_client.put_object(
@@ -3940,18 +4023,30 @@ def upload_video(file: UploadFile = File(...)):
                 Body=contents,
                 ContentType=content_type
             )
-            video_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{unique_filename}"
-            return {"video_url": video_url, "url": video_url}
+            base_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com"
+            video_url = f"{base_url}/{unique_filename}"
+            qualities = {
+                "1080p": video_url,
+                "720p": f"{base_url}/{unique_id}_720p{file_ext}",
+                "480p": f"{base_url}/{unique_id}_480p{file_ext}",
+                "360p": f"{base_url}/{unique_id}_360p{file_ext}",
+            }
+            if background_tasks:
+                background_tasks.add_task(transcode_video_variants, file_path, unique_id, file_ext)
+            return {"video_url": video_url, "url": video_url, "qualities": qualities}
         except Exception as e:
             print(f"S3 video upload error: {e}")
-            
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-    file_path = os.path.join(UPLOAD_DIR, unique_filename)
-    with open(file_path, "wb") as f:
-        f.write(contents)
-        
+
     video_url = f"/uploads/{unique_filename}"
-    return {"video_url": video_url, "url": video_url}
+    qualities = {
+        "1080p": video_url,
+        "720p": f"/uploads/{unique_id}_720p{file_ext}",
+        "480p": f"/uploads/{unique_id}_480p{file_ext}",
+        "360p": f"/uploads/{unique_id}_360p{file_ext}",
+    }
+    if background_tasks:
+        background_tasks.add_task(transcode_video_variants, file_path, unique_id, file_ext)
+    return {"video_url": video_url, "url": video_url, "qualities": qualities}
 
 
 @app.post("/api/upload-image")
@@ -4415,7 +4510,14 @@ def update_instructor(instructor_id: int, data: InstructorUpdate, request: Reque
         raise HTTPException(status_code=404, detail="Instructor not found")
 
     if data.name is not None:
-        i.name = data.name.strip()
+        clean_name = data.name.strip()
+        i.name = clean_name
+        if i.user_rel:
+            i.user_rel.name = clean_name
+        elif i.email:
+            linked_user = db.query(User).filter(func.lower(User.email) == i.email.lower().strip()).first()
+            if linked_user:
+                linked_user.name = clean_name
     if data.email is not None:
         i.email = data.email.strip().lower()
         if i.user_rel:
@@ -4502,7 +4604,7 @@ def toggle_head_coach(
         raise HTTPException(status_code=401, detail="Authentication required to manage roles.")
 
     caller_role = (caller.role or "").lower().strip()
-    caller_is_admin = caller_role in ["admin", "superadmin", "school_admin", "schooladmin"] or (caller_role == "guest_admin" and getattr(caller, "guest_role", "") != "view_admin") or bool(getattr(caller, "is_head_coach", False))
+    caller_is_admin = caller_role in ["admin", "superadmin", "school_admin", "schooladmin"] or (caller_role == "guest_admin" and getattr(caller, "guest_role", "") != "view_admin") or (caller_role in ["coach", "head_coach"] and bool(getattr(caller, "is_head_coach", False)))
     if not caller_is_admin:
         raise HTTPException(status_code=403, detail="Unauthorized: Only School Admin can assign or remove Head Coach privileges.")
 
@@ -7537,9 +7639,13 @@ class GuestAdminCreateRequest(BaseModel):
     guest_role: Optional[str] = "main_admin"
     school_id: Optional[int] = None
     school_name: Optional[str] = None
+    creator_role: Optional[str] = None
 
 @app.post("/api/school/guest-admins")
 def create_guest_admin(data: GuestAdminCreateRequest, db: OrmSession = Depends(get_db)):
+    if data.creator_role and data.creator_role.lower().strip() in ["guest_admin", "view_admin", "main_admin", "coach", "student", "athlete"]:
+        raise HTTPException(status_code=403, detail="Only School Administrator can create Guest Admins")
+
     email_clean = data.email.lower().strip()
     if not email_clean or not data.password.strip():
         raise HTTPException(status_code=400, detail="Email and password are required")
@@ -7699,7 +7805,7 @@ def restore_my_account(data: RestoreAccountRequest, db: OrmSession = Depends(get
             "user_id": matched_user.id,
             "email": matched_user.email,
             "role": matched_user.role,
-            "guest_role": getattr(matched_user, "guest_role", None) or ("main_admin" if matched_user.role == "guest_admin" else None)
+            "guest_role": getattr(matched_user, "guest_role", None) if matched_user.role == "guest_admin" else None
         }
         token = generate_token(token_payload)
         return {
@@ -7736,7 +7842,7 @@ def restore_my_account(data: RestoreAccountRequest, db: OrmSession = Depends(get
         "user_id": matched_user.id,
         "email": matched_user.email,
         "role": matched_user.role,
-        "guest_role": getattr(matched_user, "guest_role", None) or ("main_admin" if matched_user.role == "guest_admin" else None)
+        "guest_role": getattr(matched_user, "guest_role", None) if matched_user.role == "guest_admin" else None
     }
     token = generate_token(token_payload)
     return {

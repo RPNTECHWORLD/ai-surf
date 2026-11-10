@@ -1429,7 +1429,7 @@ const InstructorManagement = () => {
               title={filterPendingOnly ? 'Showing pending coach requests — click to view all' : 'View pending coach requests requiring approval'}
             >
               <span style={{ fontSize: '15px', lineHeight: 1 }}>⏳</span>
-              <span>Pending Requests</span>
+              <span>join Requests</span>
               {pendingCoachesCount > 0 ? (
                 <span style={{
                   background: filterPendingOnly ? '#FFFFFF' : '#EF4444',

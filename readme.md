@@ -1,3 +1,282 @@
+### Changes on 10-11-2026
+
+#### Fix Main Student & Accompanying Guest Selection After "Clear All" in Step 3 (`NewSession.jsx`)
+- **Problem**:
+  - After clicking **"Clear All"** (`clearAllGroups()`) in Step 3 (*Instructor Groups Matching*), the groups were cleared and students returned to the unassigned *Students List*, but users could not select the main students when attempting to create new group cards.
+- **Root Cause**:
+  - `toggleStep3StudentCheck` and `setStep3CheckedStudentIds` were strictly filtering incoming student IDs against an `activeSlotStudentIdSet` using stale closures and restrictive Set checks.
+  - Furthermore, when clicking a main student, `isGuestAllowed` and selection state checks evaluated against `activeSlotStudentIdSet`, which caused main students to be silently rejected or stripped from `step3CheckedStudentIdsBySlot`.
+  - In `clearAllGroups`, while `slotStudentMap` was updated with the cleared IDs, the checked student ID state across all key representations of the active slot was not cleanly synchronized.
+- **Resolution**:
+  - **Removed Artificial Slot ID Set Gates from Selection**: Because students in Step 3 Column 1 are already pre-filtered and rendered strictly from `filteredColumn1Students` for the active slot, clicking on any rendered student row or checkbox is now directly accepted without restrictive set exclusions.
+  - **Clean Main Student & Guest Toggle**:
+    - Clicking a **Main Student** toggles their ID and automatically pulls along any unassigned accompanying guests in that slot. Deselecting removes both the main student and their guests.
+    - Clicking an **Accompanying Guest** directly toggles only that specific guest independently.
+  - **Robust Slot State Synchronization**:
+    - `setStep3CheckedStudentIds` now cleanly sets both number and string keys (`[slotKey]` and `[step3SlotFilter]`).
+    - `clearAllGroups` explicitly resets both key variations of `step3CheckedStudentIdsBySlot` and keeps `slotStudentMap` synchronized across both formats.
+  - **Verified Build**: Re-built the frontend (`npm --prefix frontend run build`) with exit code 0 in 1.61s.
+
+#### Removed Video Analysis Action Buttons from History of Sessions (`MyAchievements.jsx`)
+- **User Request**:
+  - Remove the **"Video Analysis"** button in the header and the **"Video"** button on each session card in the student's *History of Sessions* page (`MyAchievements.jsx`), keeping the interface focused purely on milestone tracking, certificate download, and social sharing.
+- **Changes**:
+  - Removed `<button className="ach-btn-video">Video Analysis</button>` from the top header actions.
+  - Removed `<button className="ach-btn-analysis">Video</button>` from each individual session history card row.
+
+#### Step 3 Student Checkbox Selection Fix After "Clear All" (`NewSession.jsx`)
+- **Problem**:
+  - In `NewSession.jsx` (Step 3: Assign Instructors), after clicking **"Clear All"** to clear training groups in a time slot, students returned to the unassigned *Students List* on the left, but clicking their checkboxes or cards did not select or check them.
+- **Root Cause**:
+  - When `clearAllGroups` was executed, student IDs in `clearedStudentIds` and `slotStudentMap` were transformed into string primitives (`.map(String)`).
+  - In `activeSlotStudentIdSet`, the `Set` contained string IDs (e.g. `Set {"1", "2"}`).
+  - When the user clicked on a student, `toggleStep3StudentCheck(student.id)` received the authentic database ID (an integer, e.g. `1`).
+  - Strict equality in `activeSlotStudentIdSet.has(1)` evaluated to `false` because `"1" !== 1`.
+  - As a result, the function exited immediately at `if (!activeSlotStudentIdSet.has(id)) return;` without selecting or checking the student.
+- **Resolution**:
+  - **Type-Resilient `activeSlotStudentIdSet`**: Updated the Set generator to store both authentic ID values, stringified representations (`String(id)`), and parsed integers (`Number(id)`).
+  - **Flexible Type Checking**: Updated `toggleStep3StudentCheck`, `step3CheckedStudentIds`, and `setStep3CheckedStudentIds` to accept both string and number ID formats (`has(id) || has(String(id)) || has(Number(id))`).
+  - **Checkbox State Resolution**: Updated JSX `isChecked` to use `step3CheckedStudentIds.some(cid => String(cid) === String(student.id))` rather than strict `includes(student.id)`.
+  - **Group Creation Integration**: Updated `handleCreateGroup` to match checked students using string-safe comparisons, ensuring manual group creation from selected students works seamlessly after clearing.
+
+#### 3-Day Course Certificate Download & Celebration Party Popper Confetti (`MyAchievements.jsx`)
+- **User Request**:
+  - Add a **"Download Certificate"** option when a student completes 3 sessions, which downloads an official 3-day course certificate with their name, school, date, wave count, and coach verification.
+  - When clicking the **"Share"** button in My Achievements, trigger an animated party popper confetti celebration (`partyposela parakura mathiri`).
+- **Implemented Features**:
+  - **Dynamic "Download Certificate" Button**:
+    - Automatically unlocks in the page header when the student completes 3 or more sessions (`stats.completed >= 3`).
+    - Styled with a luxurious gold badge gradient (`linear-gradient(135deg, #F59E0B, #D97706)`).
+  - **High-Resolution Certificate Generator (HTML5 Canvas)**:
+    - Generates an A4-landscape (1754 x 1240 px) high-resolution official academy certificate.
+    - Deep oceanic background with subtle watermark of the surfing action photo.
+    - Double gold foil frame with decorative corner diamonds.
+    - Official Athnex Live crest and seal.
+    - Student's name prominently rendered in bold serif typography with cyan gradient underline.
+    - Course title: *"3-Day Surf Training Course"*.
+    - Verified metrics pills: Sessions Completed, Waves Ridden, and Coach Technique Score.
+    - Date of completion and certified coach name attribution (`Certified By: Coach`).
+    - Exports directly to `.png` (`Athnex_Certificate_{studentName}.png`).
+  - **Party Popper Confetti Celebration Animation**:
+    - Dual party-popper confetti cannon blasting 140+ vibrant particles (ribbons, circles, squares) in gold, teal, pink, cyan, and violet from the bottom corners across the screen whenever the Share modal is opened.
+    - Smooth physics simulation with velocity, air resistance, rotation, and gravity.
+
+#### AI-Generated Motivational Surfing Action Card & Story Poster Download (`MyAchievements.jsx`)
+- **User Request**:
+  - The previous plain dark share preview card was replaced with a stunning, AI-generated surfing photograph background and motivational athletic poster aesthetic so students feel inspired and proud when sharing their milestones on social media.
+- **Implemented Upgrades**:
+  - **AI-Generated Surfing Action Artwork**:
+    - Created an 8K cinematic golden-hour surfing action photograph (`frontend/public/surf-milestone-bg.jpg`) featuring a surfer carving on a sun-drenched turquoise wave with golden backlit ocean spray.
+    - Embedded the artwork as the card's backdrop with a dark oceanic gradient overlay (`linear-gradient(180deg, rgba(15, 23, 42, 0.74) 0%, rgba(15, 23, 42, 0.92) 100%)`) ensuring all athlete names and statistics stay crisp and readable.
+  - **Motivational Athletic Poster Styling**:
+    - **Header Slogan**: *"🌊 PUSH YOUR LIMITS • MASTER THE OCEAN"*.
+    - **Gold Verified Athlete Badge**: Glowing gold crest with *"🏆 VERIFIED SURF ATHLETE"*.
+    - **Athletic Quote Banner**: *"“Every wave caught is a boundary pushed.”"*.
+    - **Glassmorphic Stat Cards**: Frosted translucent pills showing completed sessions, waves caught, water training hours, and verified coach technique score.
+  - **1-Click Story Poster Image Download (HTML5 Canvas Export)**:
+    - Added **"📸 Download Story Poster (HD Image)"** button.
+    - Dynamically composites the high-res AI surfing photo, dark vignette layers, golden frames, athlete profile, stat boxes, and motivational quotes onto a high-definition 1080x1350 canvas.
+    - Automatically exports and triggers a `.png` download (`Athnex_Surfing_Milestone_{name}.png`) ready for Instagram Stories, WhatsApp Status, and Snapchat.
+  - **Social Sharing Channels**:
+    - WhatsApp direct link, Native Share Sheet (`navigator.share`), X/Twitter, Facebook, and Copy formatted text.
+
+#### Transformation of 'My Achievements' to Dedicated 'History of Sessions' with Social Media Sharing (`MyAchievements.jsx`)
+- **User Request**:
+  - Completely remove the previous skill badge ladder checklists from `MyAchievements.jsx` and transform the page into a dedicated **History of Sessions** portal for students, equipped with one-click **Social Media Sharing** capabilities.
+- **Implemented Features**:
+  - **Overview Milestone Metrics**: Real-time tally of completed sessions, total waves caught, water training hours, and average verified coach score.
+  - **Chronological Session History Cards**:
+    - Detailed session date, time, duration, and surf spot location badge.
+    - Verified status pills (`✓ Completed` / `⏱ Scheduled`).
+    - Assigned coach attribution (`Coach: anbumani`, etc.).
+    - Wave counts, technique rating (`85/100`), and coach lesson notes/feedback.
+    - Filter tabs (`All Sessions`, `✓ Completed`, `📅 Upcoming`) + live search by spot, date, coach, or level.
+  - **Social Media Share System & Modal**:
+    - **Visual Milestone Card Preview**: Dark gradient card styled with Athnex branding (`athnexlive.com`), verified seal, surfer name, session details, and technique score.
+    - **1-Click WhatsApp Sharing**: Direct integration with `https://wa.me/` sending pre-formatted emoji-rich session milestone text.
+    - **Instagram & Native Mobile Sharing**: Integrated with Web Share API (`navigator.share`) allowing direct sharing to Instagram Stories, DMs, WhatsApp, Messages, etc.
+    - **X / Twitter & Facebook**: One-click sharing with custom hashtags (`#Surfing #AthnexLive`).
+    - **Instant Clipboard Copy**: Formatted shareable milestone copy with "Copied!" feedback.
+
+#### Reactivated 'My Achievements' Portal & Student Navigation (`MyAchievements.jsx`, `App.jsx`, `Sidebar.jsx`, `VideoAnalysis.jsx`)
+- **Action**:
+  - Reactivated the dedicated student **`My Achievements`** portal that had previously been commented out.
+  - **Changes**:
+    - **App Routing (`frontend/src/App.jsx`)**: Uncommented and activated `<Route path="/achievements" element={<PrivateRoute><MyAchievements /></PrivateRoute>} />` and route redirect `/my-achievements -> /achievements`.
+    - **Header Navigation (`frontend/src/components/Sidebar.jsx`)**: Added **`My Achievements`** back to the student navigation tab list (`My Profile | My Sessions | My Achievements | Analytics | Competitions | Athlete Intel`).
+    - **Video Analysis Quick Link (`frontend/src/pages/VideoAnalysis.jsx`)**: Re-enabled the `🏆 My Achievements` pill button in the top action bar so students can seamlessly toggle between video technique review and their badge milestone achievements.
+    - **Theme & Responsiveness**: Clean light theme (`#F8FAFC`), full progression breakdown (White, Yellow, Green, Blue, Red badges), skills checklists, training milestones, and coach accolades.
+
+#### Coach Profile & Header Name Synchronization ("event" vs Coach Name Mismatch Fix)
+- **Problem**:
+  - When coach `anbumani` (`anbu@gmail.com`) logged into their portal and opened their Coach Profile page, the page hero section correctly showed **anbumani**, but the top-right navbar pill and user profile popup displayed **"event"** with avatar initial **"E"**.
+  - **Root Cause**:
+    - The `users` auth table / `sessionStorage` had the name `"event"` stored from an earlier signup/test entry, while the linked `instructors` record had the true coach name `"anbumani"`.
+    - In `frontend/src/components/Sidebar.jsx` and `UserProfileMenu.jsx`, the header rendered `user.name` strictly from `sessionStorage` and only synchronized `is_head_coach` from `/api/instructors/${id}`, never synchronizing `user.name`.
+    - On the backend, `PUT /api/instructors/{id}` only synchronized `user.email` and skipped synchronizing `user.name` in the `users` table.
+- **Resolution**:
+  - **Frontend Automatic Coach Name Synchronization**:
+    - Updated `frontend/src/components/Sidebar.jsx` to fetch the real instructor record by `instId` or email and auto-update `user.name` in `sessionStorage` and `localStorage`, dispatching `user_updated`.
+    - Updated `frontend/src/pages/InstructorProfile.jsx` in `fetchInstructor` to detect when the logged-in coach's stored name differs from the loaded instructor name and immediately sync storage and state.
+    - Updated `frontend/src/components/UserProfileMenu.jsx` with an automatic coach sync effect so the top-right header and popup immediately render the coach's authentic name (`anbumani`) and avatar (`A`).
+  - **Backend Synchronization (`backend/main.py`)**:
+    - In `make_user_response`: when an `Instructor` record is matched to the `User` account, it now automatically ensures `user.name = instructor_obj.name` in the database.
+    - In `update_instructor` (`PUT /api/instructors/{instructor_id}`): updating the instructor's name now cascades to the linked `users` account (`i.user_rel.name` / `linked_user.name`).
+
+#### Assigned Student Level Badge Correction in Coach Profile (Session Type "PRO" Override Fix)
+- **Problem**:
+  - On the Coach Profile page under **"Students (4)"**, students `arunn` and `Leo Muller` were displaying a badge with level **"PRO"**, even though their actual registered student levels were Beginner / Intermediate.
+  - **Root Cause**:
+    - In `frontend/src/pages/InstructorProfile.jsx`, when dynamic students were loaded from surf sessions (`coachSessions.forEach`), the fallback student builder assigned:
+      ```javascript
+      level: sess.type || 'Beginner'
+      ```
+    - The scheduled session had `sess.type = "PRO"` (representing the wave/session training difficulty category, not the student's skill level).
+    - As a result, the session difficulty overwrote the student's actual profile level, displaying them as "PRO".
+- **Resolution (`frontend/src/pages/InstructorProfile.jsx`)**:
+  - In `fetchDynamicData`, updated the student builder to cross-reference `allStudents` by student ID or name to retrieve the student's true registered skill level (`realSt.level`).
+  - Never defaults to `sess.type` for student skill badge levels.
+  - In `enrichedStudents`, added an explicit resolution step ensuring every student badge strictly reflects their real profile level (`profileSt?.level || st.level || 'Beginner'`).
+
+#### Adaptive Video Quality & Network Optimization for Slow Internet
+- **Problem**:
+  - On slow cellular connections (2G, 3G, or high-latency mobile Wi-Fi), high-resolution surf session videos took too long to buffer or repeatedly stalled.
+  - Users needed the player to automatically detect network bandwidth and switch down to a smooth-playing quality without manual intervention, while still offering manual control (1080p, 720p, 480p, 360p).
+- **Resolution**:
+  - **Client-Side Real-Time Network Detection (`frontend/src/pages/VideoAnalysis.jsx`)**:
+    - Connected to the `Network Information API` (`navigator.connection`) to detect effective connection type (`4g`, `3g`, `2g`, `slow-2g`) and downlink bandwidth.
+    - Dynamically listens to connection changes and automatically recommends the best resolution (Fast / 4G -> 720p/1080p, Medium / 3G -> 480p, Slow / 2G -> 360p).
+    - Added real-time stall detection: if 2 buffering stalls happen within 15 seconds, the player automatically steps down resolution (e.g. 1080p -> 720p -> 480p) to keep playback smooth and continuous.
+    - Seamless timestamp preservation: when quality switches, `videoRef.current.currentTime` and playback state are saved and restored on `onLoadedMetadata`, so playback continues uninterrupted without restarting from 00:00.
+  - **Quality Selector UI (⚙️)**:
+    - Added a sleek Quality Selector button in the player control bar displaying the current resolution: `⚙️ Auto (480p)`.
+    - Opens a clean dark popover menu with options:
+      - `Auto (Recommended)` - Automatically adjusts to network speed.
+      - `1080p HD` - High quality for fast connections.
+      - `720p HD` - Balanced HD quality.
+      - `480p SD` - Smooth playback for 3G / mobile networks.
+      - `360p Low` - Ultra Data Saver for 2G / weak signal.
+    - Displays floating notification badge informing the user whenever quality adapts to network conditions.
+  - **Backend Multi-Resolution Transcoding (`backend/main.py`)**:
+    - Added `transcode_video_variants` background task that runs FFmpeg with web-optimized faststart (`-movflags +faststart`) to produce `720p`, `480p`, and `360p` MP4 streams.
+    - `/api/upload-video` returns a `qualities` map (`{"1080p": ..., "720p": ..., "480p": ..., "360p": ...}`) supporting both local storage and Amazon S3.
+
+#### Video Analysis Player Seeking & Infinite Buffering Fix
+- **Root Cause of "Idhar se Aage not playing"**:
+  - In `frontend/src/pages/VideoAnalysis.jsx`, when a user clicked or scrubbed the video timeline forward past the initially buffered chunk, the HTML5 video element fired the `onWaiting` event, setting `isVideoLoading = true`.
+  - An opaque 88% dark overlay with backdrop blur appeared over the video: *"Loading Video... Buffering surf session from cloud"*.
+  - When the video finished jumping to the sought timestamp, the browser fired the standard `seeked` event.
+  - However, the `<video>` element lacked an `onSeeked` handler! As a result, when seeking while paused, `onPlaying` never triggered, and `isVideoLoading` stayed stuck at `true` permanently, trapping the player in an infinite loading screen.
+- **Resolution (`frontend/src/pages/VideoAnalysis.jsx`)**:
+  - Added dedicated `onSeeked`, `onCanPlayThrough`, `onSeeking`, and `onStalled` event handlers.
+  - Implemented automatic safety buffer timeout: whenever buffering is triggered, a 2-second watchdog clears `isVideoLoading` if the video has loaded sufficient frame data (`readyState >= 2`).
+  - Added click-to-resume capability on the buffering overlay.
+  - Reduced overlay opacity during active sessions so video frames remain visible during minor network buffer delays instead of blacking out the screen.
+
+#### Available Instructors Card Layout & Previous Coach Badge Fix
+- **Root Cause**:
+  - In `frontend/src/pages/NewSession.jsx` (Step 3: Assign Instructors), the Available Instructors cards in the right pane were rendering a very long recommendation string when an instructor had coached students across multiple groups (e.g. `🕒 Previous Coach (Group E, Group I, Group M, Group N)`).
+  - In the ~300px sidebar column, this 54-character badge expanded to consume over 70% of the card width and wrapped onto two lines.
+  - Because `.ns-inst-badge` lacked `white-space: nowrap` and `flex-shrink: 0`, flexbox crushed `.ns-inst-info` down to ~30px, causing the instructor's name to be truncated to 2-3 letters (`Vis...`, `In`) and wrapping the role and gender badges into a broken, overlapping layout.
+- **Resolution (`frontend/src/pages/NewSession.jsx`)**:
+  - **Compact Previous Coach Badge Text**:
+    - Single group match: `🕒 Prev Coach (${groupName})` (e.g. `🕒 Prev Coach (Group H)`).
+    - Multiple group matches: `🕒 Prev Coach (${count} Groups)` (e.g. `🕒 Prev Coach (4 Groups)`).
+    - Added full tooltip via `title={`Previous Coach for: ${prevCoachedGroupNames.join(', ')}`}` so users can hover to inspect all groups.
+  - **Flexbox & Card Layout Restoration**:
+    - Gave `.ns-inst-badge` `white-space: nowrap`, `flex-shrink: 0`, and `max-width: 140px` to guarantee it never wraps onto multiple lines or encroaches on the coach's identity.
+    - Set `.ns-inst-info` to `flex: 1 1 0%` with `min-width: 0` and proper column alignment.
+    - Kept the role and gender tag row on a clean single line with `white-space: nowrap` to prevent awkward line breaks.
+    - Full instructor names (e.g. "Vishal", "Instructor", "Jenoy Quadros", etc.) and roles now display legibly without any squishing.
+
+#### OpenStreetMap (Nominatim) Live Location Auto-Suggestions
+- **Root Cause**:
+  - In `frontend/src/pages/AuthPage.jsx`, the School Admin Location input was previously using a static HTML `<datalist id="auth-school-location-datalist">` containing only a handful of hardcoded cities.
+  - When typing custom locations (such as `"tri"` for Trichy, Trivandrum, Trincomalee, etc.), the native `<datalist>` provided zero suggestions and did not query OpenStreetMap.
+- **Resolution (`frontend/src/pages/AuthPage.jsx`)**:
+  - Replaced the static `<datalist>` with live OpenStreetMap (Nominatim API) auto-suggestions.
+  - Added debounced querying to `https://nominatim.openstreetmap.org/search?format=json&q=...&addressdetails=1&limit=8` with clean location formatting (`City, State, Country`).
+  - Added a responsive, dark-themed floating dropdown with custom 📍 icons, active hover states, clear button (✕), outside-click dismiss, and a live "Searching OpenStreetMap..." spinner.
+  - Provided popular surf destinations (including Trivandrum, Kovalam, Mulki, Dapoli, Goa, etc.) for instant matching even before network requests return.
+  - Applied the identical OpenStreetMap auto-suggest component to Freelance Coaches' Location / Region input for complete consistency.
+
+#### Universal Direct Login & In-App Pending Approval Banner (Restored to Intended Flow)
+- **User Intended Behavior**:
+  - Anyone registering or logging in—regardless of role (Student/Athlete, Coach, School Admin, Super Admin)—must immediately enter their dedicated account portal/page directly.
+  - Users are NEVER blocked outside on the login/signup screen with an overlay.
+  - If a user (e.g. Student or Coach) has a join request pending approval with a school, their pending status is shown **inside** their portal (e.g. `Join Request Pending Approval` in Student Profile, `Pending School Approval` in Coach Profile), with options to change/cancel school.
+- **Frontend Restoration (`frontend/src/pages/AuthPage.jsx`)**:
+  - Removed the blocker check that invoked `setPendingApprovalUser(user)` on the authentication page.
+  - Restored immediate post-auth navigation for all roles:
+    - Athlete/Student -> directly navigates to their student profile `/students/:id`
+    - Coach -> directly navigates to their coach profile `/instructors/:id`
+    - School Admin / Super Admin -> directly navigates to dashboard `/dashboard`
+- **Backend Fixes (`backend/main.py`)**:
+  - Ensured School Admin accounts (`role in ['admin', 'superadmin']`) are automatically assigned `initial_approval = 'approved'` and never get flagged as pending.
+  - Maintained startup database migrations to keep existing school admin records in `approved` status.
+
+---
+
+### Changes on 06-11-2026
+
+#### AWS Production Deployment (athnexlive.com)
+- **Backend Deployment**:
+  - Uploaded `backend/main.py` to S3 (`s3://aisurf-media-uploads-149051628601/deploy/main.py`).
+  - Executed SSM deployment on Backend EC2 (`i-0c62e04f44a9ea237`), updated `/home/ec2-user/backend/main.py`, and restarted `aisurf-backend` systemd service (verified active).
+- **Frontend Deployment**:
+  - Built production bundle with Vite (`dist/assets/index-2Olw62zC.js`).
+  - Uploaded archive `aisurf-frontend.zip` to S3.
+  - Deployed to Frontend EC2 (`i-02999b6093bc5bfd2`), deployed onto `/var/www/frontend`, and reloaded Nginx (verified HTTP 200 on `https://athnexlive.com`).
+
+#### Mobile Responsive Students Filter Bar Redesign
+- **Root Cause**:
+  - In `StudentsManagement.jsx`, the `.sm-filters` bar on mobile (`@media (max-width: 768px)`) was styled with `flex-direction: row !important` without wrapping, crushing the Search input, `DateRangeFilterBar` (with 4 preset buttons + date pickers), and both dropdown selects into a single cramped 360px row, causing text overlap and collapsed buttons.
+- **Resolution**:
+  - **`StudentsManagement.jsx`**: Converted `.sm-filters` on mobile into a clean vertical flex column:
+    - **Row 1**: Search input at 100% width (height 38px, legible placeholder).
+    - **Row 2**: `DateRangeFilterBar` at 100% width with organized presets row and date range picker.
+    - **Row 3**: `sm-dropdowns-row` displaying Swimming filter and Surf Level filter neatly side-by-side (50% each) with clean text clipping.
+  - **`DateRangeFilterBar.jsx`**: Extended responsive styling to `@media (max-width: 768px)`, ensuring preset buttons (`Yesterday`, `Today`, `Tomorrow`, `All`) and custom date pickers scale cleanly on all mobile screens without layout shifts.
+
+#### Athlete Intelligence Full Student Roster & Level Synchronization
+- **Root Cause**:
+  - In `AthleteIntelligence.jsx`, `schoolStudents` was strictly filtering coaches by `sessionMatch` in `allSessions`. Because only 2 students had sessions created with the coach, the other 4 registered students were filtered out from the roster.
+  - An Individual / Freelance Coach manages all students in their workspace (independent roster) and needs to log vitals, S&C, nutrition, technical notes, and mental diagnostics for all their students regardless of whether a surf session was already scheduled.
+  - The level filter dropdown in Athlete Intel was previously hardcoded with legacy labels (`Advanced`, `Master`) instead of matching the application's actual skill tiers (`Beginner`, `Adv. Beginner`, `Intermediate`, `Adv. Intermediate`, `Pro`).
+- **Resolution (`frontend/src/pages/AthleteIntelligence.jsx`)**:
+  - Updated `fetchStudents` to pass `instructor_id` when fetching students for scoped coaches.
+  - Allowed Individual / Freelance Coaches (`isCoachFreelance`) to retain all students in their roster without blocking students who do not yet have an active session.
+  - Added support for direct instructor assignment (`isDirectInstructor`), name match, and coach creation alongside session matches.
+  - Added `normalizeLevel` mapping and synchronized the level filter dropdown to display `Beginner`, `Adv. Beginner`, `Intermediate`, `Adv. Intermediate`, and `Pro`, showing the full roster count `All Levels (6)`.
+
+#### Individual / Freelance Coach Student Date & Expected Time Editing
+- **Root Cause**:
+  - In `StudentsManagement.jsx`, the table columns for **Date** (`start_date`, `end_date`) and **Expected Time** (`session_time`), as well as the popup edit modals (`editingStudentDates`, `editingStudentTime`), were guarded strictly by `isAdminOrSchoolAdmin`.
+  - While Individual / Freelance Coaches had permissions to add students, delete students, and generate invite links, they were locked out from inline editing students' dates and expected session times.
+- **Resolution (`frontend/src/pages/StudentsManagement.jsx`)**:
+  - Introduced `canEditStudentDatesAndTime = !isViewAdmin && (isAdminOrSchoolAdmin || (isCoach && (isCoachFreelance || isHeadCoach)))`.
+  - Enabled click-to-edit interactions and "Edit" badges on both Date and Expected Time columns for Individual / Freelance Coaches.
+  - Enabled the Dates modal and Expected Time modal triggers and context banners for Individual Coaches.
+
+---
+
+### Changes on 05-11-2026
+
+#### School Admin Role Badge & Guest Admin Role Restoration
+- **Root Cause Resolution**:
+  - The PostgreSQL `guest_role` column had previously defaulted to `'main_admin'` during schema migration, backfilling existing school accounts with `guest_role = 'main_admin'`.
+  - In `UserProfileMenu.jsx`, `isGuestAdmin` had evaluated `effectiveUser?.guest_role`, causing genuine School Admins (`role === 'admin'`) to falsely display the orange `MAIN ADMIN ⚡` badge instead of `School Admin`.
+- **Backend Schema & Response Fix (`backend/main.py`)**:
+  - Modified startup migration to remove default from `guest_role` column and run `UPDATE users SET guest_role = NULL WHERE role != 'guest_admin';`.
+  - Updated `make_user_response` and authentication endpoints so `guest_role`, `is_view_admin`, and `is_main_admin` are strictly `None`/`False` for standard School Admin accounts (`role === 'admin'`).
+- **Frontend Role Display Fix (`UserProfileMenu.jsx`)**:
+  - Strictly restricted `isGuestAdmin` to accounts whose role is explicitly `'guest_admin'` (`currentRole === 'guest_admin' && effectiveUser?.role !== 'admin' && effectiveUser?.role !== 'superadmin'`).
+  - Added proactive cleanup to purge any stale `guest_role` or `is_main_admin` properties from `localStorage` / `sessionStorage` for School Admins.
+  - Ensured `displayRoleLabel` correctly outputs `School Admin` in the top header and user profile dropdown for authentic school owners.
+  - Retained `Guest Admin Access: Create` button exclusively for original School Admins.
+
+---
+
 ### Changes on 03-08-2026
 
 #### 1. User Management & Authentication (RBAC)
@@ -1398,3 +1677,356 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
       - Built production Vite bundle (`npm run build`) cleanly in 1.79s without errors.
       - Packaged and uploaded `aisurf-frontend.zip` to S3, deployed to EC2 frontend instance `i-02999b6093bc5bfd2` (`98.94.45.107`) via AWS SSM, and hot-reloaded Nginx web server.
       - Verified `/sessions` page rendering, group multi-day badges, and student rosters loading smoothly without console errors.
+  
+
+14. **Date Filter Reset Behavior & Complete State Synchronization (`Sessions.jsx`, `DateRangeFilterBar.jsx`)**:
+    - **Problem Solved**:
+      - Previously, when changing the Date Filter (e.g. to "Tomorrow", "Yesterday", "All", or a custom From-To range), clicking `Reset` or `Clear Filters` only updated `dateFilter` and failed to reset `dateRange`.
+      - As a result, the date filter remained stuck on the selected preset/custom date instead of resetting back to today's schedule.
+      - Furthermore, `hasActiveFilters` did not monitor `dateRange` state changes, meaning the top `Reset` button and empty-state `Clear Filters` button failed to display when only the date range was altered.
+    - **Fixes Applied**:
+      - **Complete State Reset (`resetFilters`)**: Updated `resetFilters()` to reset both `dateFilter` and `dateRange` back to today (`startDate: today`, `endDate: today`, `preset: 'today'`), restoring all session tables and group views directly to Today's live schedule.
+      - **Active Filter Detection (`hasActiveFilters`)**: Expanded `hasActiveFilters` to track if `dateRange.preset !== 'today'` or if dates deviate from today's ISO date, properly surfacing the `Reset` action button and the empty state `Clear Filters` trigger.
+      - **Date Picker Reset Trigger (`DateRangeFilterBar.jsx`)**: Enabled the inline `✕` reset icon button whenever the active date range deviates from today (`isNotToday`), allowing 1-click restoration to Today from within the picker.
+      - **Calendar Modal Synchronization**: Ensured table-filtering triggers from the Interactive Calendar modal set both `dateFilter` and `dateRange` in lockstep so subsequent resets return reliably to Today.
+
+15. **Pending for Review Stat Card & Status Auto-Switch to All Dates (`Sessions.jsx`)**:
+    - **Problem Solved**:
+      - Sessions with `Pending for Review` status frequently belong to past dates whose scheduled hours have elapsed.
+      - Previously, clicking the `PENDING FOR REVIEW` stat card or selecting `Pending for Review` in the Status dropdown left the Date Filter restricted to `Today`. As a result, the table showed `0 of 3 sessions` ("No sessions match your filter criteria") even though 3 sessions were awaiting review.
+    - **Fixes Applied**:
+      - **Automatic Date Filter Expansion**: Clicking the `PENDING FOR REVIEW` stat card or selecting it in the Status dropdown now automatically transitions the Date Filter to `All` (`dateRange: { startDate: '', endDate: '', preset: 'all' }`, `dateFilter: ''`) and resets `slotFilter` to `All`.
+      - **Instant Visibility**: All pending review sessions across all dates are displayed immediately in the sessions roster and table.
+      - **Ergonomic Toggle-Off**: Clicking the `PENDING FOR REVIEW` card again toggles the status filter off back to `All Statuses` and restores the Date Filter to `Today`.
+
+16. **AI Video Analysis Tagged Surfers Deduplication & Guest Resolution (`VideoAnalysis.jsx`, `Sessions.jsx`)**:
+    - **Problem Solved**:
+      - In group sessions where a student enrolled with accompanying guests (e.g. `dhairya trivedi` + 2 guests: `Dev Bensiani` and `Rudraksh pandey`), all 3 booking records shared `s.student = "dhairya trivedi"`.
+      - When navigating from Sessions or Media Hub to AI Video Analysis (`/analysis`), the routing code extracted only `s.student` instead of resolving the actual guest names via `resolveStudentAndGuestDisplay` / `s.guest_name`.
+      - Consequently, `/analysis` received `["dhairya trivedi", "dhairya trivedi", "dhairya trivedi", "Dhrumil Popat"]`, generating 3 duplicate tag pills with the exact same student name.
+    - **Fixes Applied**:
+      - **Guest Name Resolution in Hub & Group Navigation (`Sessions.jsx`)**: Replaced raw `s.student` mapping with `resolveStudentAndGuestDisplay(s, allStudentsList, guestOcc)` across all group analysis launch triggers. Properly extracts `s.guest_name` so the true names (`dhairya trivedi`, `Dev Bensiani`, `Rudraksh pandey`, `Dhrumil Popat`) are passed.
+      - **Deduplication & Disambiguation (`VideoAnalysis.jsx`)**: Wrapped incoming athlete query params and session fallback mappings with `Array.from(new Set(...))` and an automated disambiguation counter (`(Guest 1)`, `(Guest 2)`), ensuring no duplicate surfer pills can ever be rendered with identical names.
+
+17. **Bulk Action Status & Delete Counts Group Synchronization (`Sessions.jsx`)**:
+    - **Problem Solved**:
+      - In the Surf Sessions table, 1 group class represents **1 unified session** to administrators, but internally contains multiple student booking rows (e.g. 1 group with 7 enrolled students).
+      - When checking a group session row and clicking "✓ Mark Completed", the bulk handler displayed `Updated 7 session(s) to Completed`, counting individual student database rows instead of the single group session the user actually modified.
+    - **Fixes Applied**:
+      - **Group-Aware Selected Session Calculation (`selectedSessionCount`)**: Implemented a reactive memoized counter that maps `selectedSessionIds` through `buildSessionGrouping`, calculating the true user-facing session count (`groups.length + ungrouped.length`).
+      - **Accurate Toast Notification**: Marking a 7-student group as Completed now cleanly reports: `✓ Updated 1 session to Completed` (or `Updated X sessions to Completed` when multiple distinct sessions are selected).
+      - **Floating Action Bar & Delete Dialog Synchronization**: Updated the bulk selection pill to display `✓ {count} Session(s) Selected` and delete confirmation dialogs to reference the true session count rather than raw database row IDs.
+
+18. **Wave Count Quick-Select Full Number Range (1 to 10) (`Sessions.jsx`)**:
+    - **Problem Solved**:
+      - In the Coach Feedback & Wave Count modal card, quick preset pills previously skipped several numbers (`[1, 2, 3, 5, 8, 10]`), missing quick 1-click selectors for `4`, `6`, `7`, and `9`.
+    - **Fixes Applied**:
+      - Updated the quick-select preset array to include all numbers consecutively: `[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]`.
+      - Enabled flex-wrapping (`flexWrap: 'wrap'`) so all 10 quick pills display cleanly across both mobile and desktop modal views.
+
+19. **Student Navigation & Personalized Video Analysis Vault (`Sidebar.jsx`, `VideoAnalysis.jsx`, `Analytics.jsx`)**:
+    - **Problem Solved**:
+      - For student accounts (`athlete`, `student`, `user`), the top navigation previously displayed an `Analytics` tab pointing to `/analytics` (showing empty school-wide badge progression and retention funnels intended for school administrators).
+      - Students requested a `Video Analysis` tab (starting with "V") tailored specifically to their personal surf footage, coach feedback, technique scoring, and AI wave analysis.
+      - Furthermore, accessing `/analysis` directly without query parameters previously defaulted to hardcoded `Chloe Kim - 12 Jun 2025`.
+    - **Fixes Applied**:
+      - **Student Navbar Transformation (`Sidebar.jsx`)**: For student roles (`isStudentRole = role === 'athlete' || role === 'student' || role === 'user'`), dynamically replaced `Analytics` with `Video Analysis` pointing directly to `/analysis`. Administrators and head coaches continue to see `Analytics`.
+      - **Seamless Analytics Redirect (`Analytics.jsx`)**: Added an automated guard in `Analytics.jsx` so that if a student navigates to or reloads `/analytics`, they are immediately transitioned to `/analysis`.
+      - **Personal Student Identity Detection (`VideoAnalysis.jsx`)**: Removed the hardcoded `Chloe Kim` fallback when accessing from the navbar. Dynamically resolves the logged-in student's real name and ID from `sessionStorage` (`currentUser.name`), ensuring personal athlete attribution.
+      - **Automatic Session Video Vault Loading**: When a student opens Video Analysis without URL parameters, the app queries `/api/sessions`, extracts all recorded sessions belonging to that student with videos (`s.video_url`), and populates their personal session clips playlist (sorted newest first, complete with date, beach location, coach notes, and wave counts).
+      - **Student Welcome & Empty State Banner**: If no coach session videos have been recorded yet, displays a helpful student welcome banner explaining that coach recordings will appear here, while keeping the interactive wave video ready for AI skeleton tracking, scrubbing, frame stepping, and self-uploading practice footage.
+      - **Student Technique Scorecard & Key Moments**: Refined the right analytics column for students into a dedicated **Coach Technique Assessment** with verified skill scores (Take-off, Positioning, Balance, Wave Reading) and clickable coach key-moment timestamp notes.
+
+20. **Student 'My Achievements' Portal & Navigation Integration (`MyAchievements.jsx`, `Sidebar.jsx`, `App.jsx`, `VideoAnalysis.jsx`)**:
+    - **Problem Solved**:
+      - In the student portal, students requested a dedicated **`My Achievements`** area to track their surfing skill levels, earned badges, session milestones, and progress toward upcoming rank targets.
+    - **Fixes Applied**:
+      - **Student Navigation Integration (`Sidebar.jsx`)**: Added **`My Achievements`** directly to the student navbar:
+        `My Profile` | `My Sessions` | `My Achievements` | `Video Analysis` | `Competitions` | `Athlete Intel`.
+      - **Dedicated Athnex Design-Aligned Achievements Page (`MyAchievements.jsx`)**:
+        - **Cohesive Light Dashboard Theme**: Re-engineered page background to `#F8FAFC`, standardizing with `Sessions.jsx`, `StudentProfile.jsx`, and `Analytics.jsx`.
+        - **Fixed Navbar Clearance (`margin-top: 72px`)**: Added explicit clearance so the 72px fixed `Sidebar` top header never obscures page titles, subtitles, or the Video Analysis button across desktop and mobile screens.
+        - **5-Badge Status Overview**: Rendered clean white badge overview cards (`ach-badge-card`) matching the layout of `an-stat-card`.
+        - **Sessions-Matching Milestone Metric Cards**: Styled the 4 milestone indicators (Waves Caught, Sessions Completed, Training Hours, Coach Technique Score) to exactly match `ses-status-metric-card` in pastel blue (`#F0F9FF`), green (`#F0FDF4`), amber (`#FFFBEB`), and purple (`#FAF5FF`).
+        - **Hero Rank & Badge Card**: Displays current rank (White, Yellow, Green, Blue, Red) with 3D glowing accents, level description, and an active progress bar indicating percentage completion toward the next badge rank.
+        - **4-Metric Milestone Counter**: Dynamically tallies Total Waves Caught, Completed Surf Sessions, Water Training Hours, and Coach Technique Scores.
+        - **Skill Badge Progression Journey**: Step-by-step ladder showing requirements, curriculum descriptions, and verified skill checklists for each badge (Beginner, Advance Beginner, Intermediate, Advance Intermediate, Pro).
+        - **Special Honors & Accolades**: Trophies awarded by coaches (e.g. "First Unassisted Pop-Up", "Paddle Powerhouse", "100% Attendance Streak").
+        - **Seamless Video Analysis Linkage**: 1-click button jumping directly to AI Video Analysis to review wave replays and coach video comments.
+      - **Video Analysis Integration (`VideoAnalysis.jsx`)**: Added a quick-access `🏆 My Achievements` pill in the student banner of the Video Analysis page so students can fluidly navigate between video review and achievement milestones.
+      - **Application Routing (`App.jsx`)**: Registered protected route `/achievements` and redirect route `/my-achievements`.
+      - **Original Analytics Restored**: Per user request, restored the original `Analytics` tab in [Sidebar.jsx](file:///d:/surfing/ai/frontend/src/components/Sidebar.jsx) pointing to `/analytics` for all users including students. Removed redirect in [Analytics.jsx](file:///d:/surfing/ai/frontend/src/pages/Analytics.jsx) so the original badge progression & retention funnel analytics page loads as before.
+
+21. **Strict Student Session Isolation & Primary Key Namespace Cross-Contamination Fix (`Sessions.jsx`)**:
+    - **Problem Solved**:
+      - When creating or logging into a new student account (e.g. `arunn`), the "My Sessions" tab (`/sessions`) erroneously displayed another student's session (e.g. `Tuesday, Nov 3, 2026 - Group B - RPNitheesh`).
+      - **Root Cause**:
+        1. In [Sessions.jsx](file:///d:/surfing/ai/frontend/src/pages/Sessions.jsx), `studentCandidateIds` previously included `currentUser.id`, which is the primary key of the `users` table. However, `SurfSession.student_id` is a foreign key to the `students` table! When a newly created user has `users.id = 5`, it collided with student #5 (`RPNitheesh`), matching RPNitheesh's session to `arunn`.
+        2. In `loggedInStudent` resolution, `st.id === parseInt(userStudentId)` incorrectly compared `students.id` against `users.id` when `currentUser.student_id` was unpopulated, causing the app to resolve `loggedInStudent` as `RPNitheesh`.
+        3. `roleScopedSessions` only verified `studentCandidateIds.includes(sid)` without double-checking that the session's student/guest name matched the logged-in user.
+    - **Fixes Applied**:
+      - **Separation of ID Namespaces**: Removed `currentUser.id` (`users` table PK) from `studentCandidateIds`. Only authentic `Student.id` values (`currentUser.student_id`, `loggedInStudent.id`) are now treated as valid session student IDs.
+      - **Fixed Student Profile Resolution**: In `loggedInStudent`, `currentUser.id` is strictly matched against `st.user_id` (the actual foreign key linking students to users), never directly against `st.id`.
+      - **Double-Layer Verification in `roleScopedSessions`**: Even when a numeric ID matches, `roleScopedSessions` verifies that the session's student name or guest name does not belong to an entirely different athlete, guaranteeing 100% strict isolation per student account.
+
+---
+
+### 22. Student Head Coach Role Bleed Fix & Strict Role Boundary Enforcement
+
+- **Root Cause**:
+  1. In `backend/main.py` (`make_user_response`), a student object contains `res["instructor_id"] = inst_id` referencing their assigned instructor (e.g., Instructor 1).
+  2. In `frontend/src/components/Sidebar.jsx`, the coach real-time sync effect previously checked `if (parsedUser && (parsedUser.role === 'coach' || parsedUser.instructor_id || parsedUser.is_head_coach))`. Because the student had `parsedUser.instructor_id = 1`, it called `/api/instructors/1`. If Instructor 1 was a Head Coach, it wrote `is_head_coach: true` into the student's `sessionStorage` and `localStorage`!
+  3. In `frontend/src/components/UserProfileMenu.jsx` and `Sidebar.jsx`, `isHeadCoach` and `isHeadCoachUser` were evaluated as `Boolean(effectiveUser?.is_head_coach || currentRole === 'head_coach')` without verifying `role !== 'athlete'`. As a result, the student was decorated with `HEAD COACH 👑` badge, gained admin privileges ("Guest Admin Access", "Logo & Info"), and had `Dashboard` injected into the top navigation.
+
+- **Fix Applied**:
+  1. **Strict Role Checks in Frontend**:
+     - In [Sidebar.jsx](file:///d:/surfing/ai/frontend/src/components/Sidebar.jsx):
+       - Automatically sanitize any student/athlete account on load: if `role in ['athlete', 'student', 'user']` and `is_head_coach` is truthy, it is immediately reset to `false` in state, `sessionStorage`, and `localStorage`.
+       - Restricted instructor sync strictly to `parsedUser.role === 'coach' || parsedUser.role === 'head_coach'`.
+       - In `getNavItems()`, locked `isHeadCoach` to `!isStudent && (role === 'coach' || role === 'head_coach') && Boolean(user?.is_head_coach || role === 'head_coach')`.
+       - In mobile menu, ensured student role check precedes any head coach badge check.
+     - In [UserProfileMenu.jsx](file:///d:/surfing/ai/frontend/src/components/UserProfileMenu.jsx):
+       - Defined `isStudent = currentRole === 'athlete' || currentRole === 'student' || currentRole === 'user'`.
+       - Locked `isHeadCoachUser` and `isHeadCoach` to `!isStudent && (currentRole === 'coach' || currentRole === 'head_coach') && Boolean(...)`.
+       - Locked `isSchoolAdmin` to `!isStudent && (currentRole === 'admin' || !user?.role || isHeadCoachUser || isMainAdmin)`.
+       - For students, `displayRoleLabel` strictly displays `'Student'` with teal branding, removing "Logo & Info" and "Guest Admin Access".
+  2. **Backend Security & DB Self-Healing**:
+     - In `backend/main.py`:
+       - Startup migration automatically runs `UPDATE users SET is_head_coach = FALSE WHERE role IN ('athlete', 'student', 'user') OR role NOT IN ('coach', 'head_coach')`.
+       - In `make_user_response`, `res["is_head_coach"]` is strictly `False` for any student/athlete, and resets `user.is_head_coach = False` in the database if it was previously corrupted.
+       - In `assign_or_remove_head_coach`, `caller_is_admin` strictly enforces that head coach status only grants admin privileges if `caller_role in ['coach', 'head_coach']`.
+
+---
+
+### 23. Elimination of "General" Session Level & Dynamic Student Skill Badge Resolution
+
+- **Root Cause**:
+  1. In [InstructorProfile.jsx](file:///d:/surfing/ai/frontend/src/pages/InstructorProfile.jsx), the "Recent Session Activity" list displays `<span className="ip-badge-primary">{session.type}</span>` on the right side of each session row to show the session's surfing skill level (e.g. `PRO`, `INTERMEDIATE`, `BEGINNER`).
+  2. In [NewSession.jsx](file:///d:/surfing/ai/frontend/src/pages/NewSession.jsx) (group auto-generation, manual group creation, drag-and-drop coach assignment, and session preload), the fallback level was hardcoded as `'General'` instead of looking up the student's actual level or defaulting to `'Beginner'`.
+  3. Consequently, sessions created or edited under those conditions were saved to the backend with `type = 'General'`. This caused the badge in the instructor profile activity feed to show `GENERAL` instead of authentic surfing ranks (`Beginner`, `Advance Beginner`, `Intermediate`, `Pro`).
+
+- **Fix Applied**:
+  1. **Dynamic Resolution in [InstructorProfile.jsx](file:///d:/surfing/ai/frontend/src/pages/InstructorProfile.jsx)**:
+     - When mapping `coachSessions`, if `s.type` or `s.level` is `'General'`, empty, or missing, it dynamically cross-references `allStudents` by `student_id` or student name. If the student has an assigned level (e.g. `Advance Beginner`, `Beginner`, `Intermediate`, `Pro`), that authentic level is used.
+     - In the activity row renderer, any residual `'General'` tag is safely sanitized to `'Beginner'` or the student's verified level.
+  2. **Replaced Fallback in [NewSession.jsx](file:///d:/surfing/ai/frontend/src/pages/NewSession.jsx) & [Sessions.jsx](file:///d:/surfing/ai/frontend/src/pages/Sessions.jsx)**:
+     - Replaced all 6 instances of `'General'` fallback with `(firstSt?.level && firstSt.level.toLowerCase() !== 'general') ? firstSt.level : 'Beginner'`.
+  3. **Database Migration in [backend/main.py](file:///d:/surfing/ai/backend/main.py)**:
+     - Added automatic startup query: `UPDATE sessions SET type = 'Beginner' WHERE LOWER(type) = 'general' OR type IS NULL OR type = '';`.
+
+---
+
+### 24. Group Session Bulk Selection & Accurate Count Clarity
+
+- **Root Cause**:
+  1. In [Sessions.jsx](file:///d:/surfing/ai/frontend/src/pages/Sessions.jsx), sessions are grouped by explicit group name or slot into parent group rows (e.g. `Group B • 2 Students`).
+  2. Selecting the checkbox for `Group B` checks both student sessions in that group (`groupIds = [id1, id2]`).
+  3. Previously, `selectedSessionCount` attempted to re-run `buildSessionGrouping` on `roleScopedSessions.filter(...)`. Due to key matching nuances on legacy records, it returned 2, leading the floating action bar to show `2 Sessions Selected` and the deletion modal to prompt: `"Are you sure you want to delete 2 selected sessions? Delete (2)"`.
+  4. From the user's perspective, they only checked 1 visible row on screen (`Group B`), leading to understandable confusion about whether another session had been accidentally selected.
+
+- **Fix Applied**:
+  1. **Direct Grouped Data Alignment**:
+     - Updated `selectedSessionInfo` in [Sessions.jsx](file:///d:/surfing/ai/frontend/src/pages/Sessions.jsx) to calculate selected rows directly from active `groupedData.groups` and `groupedData.ungrouped`.
+     - When 1 group row is selected (e.g. `Group B`), `rowCount` is strictly `1`, with `studentSessionCount = 2`.
+  2. **Clear User Messaging**:
+     - Floating selection bar: Displays `✓ 1 Group Selected (Group B • 2 Students)` and button `Delete Selected (Group B)`.
+     - Delete Modal:
+       - Title: `Delete Group B`
+       - Message: `Are you sure you want to delete Group B (2 student sessions)?`
+       - Button: `Delete Group B`
+     - Eliminates any ambiguity, confirming to the user that only the single selected group is being targeted while clearly explaining that it includes the 2 student sessions inside that group.
+
+
+---
+
+### 25. Previous Group Template Card Hover & Opacity Styling
+
+- **User Request**: Reduce default card opacity, use standard dark/black border in normal state, and display green dotted border (`green dots line`) with full opacity when hovering/overlapping over the template card.
+- **Fix Applied**:
+  - In [NewSession.jsx](file:///d:/surfing/ai/frontend/src/pages/NewSession.jsx):
+    - Default state: `opacity: 0.6` and `border: '1.5px solid #0F172A'` (clean dark black border with subtle template watermark opacity).
+    - Hover / Overlap state (`onMouseEnter`): Smoothly transitions to `opacity: 1`, `border: '2px dotted #00D2B4'` (green dotted border line), and soft teal shadow `0 6px 18px rgba(0, 210, 180, 0.22)`.
+    - Mouse leave state (`onMouseLeave`): Returns cleanly to `opacity: 0.6` and `border: '1.5px solid #0F172A'`.
+
+
+---
+
+### 26. Previous Groups Suggestion Header Clean & Opacity Removal
+
+- **User Request**: Remove opacity fade from the "Previous Groups Suggestion" header banner and reduce highlight styling so it blends cleanly without visual clutter.
+- **Fix Applied**:
+  - In [NewSession.jsx](file:///d:/surfing/ai/frontend/src/pages/NewSession.jsx):
+    - Removed `opacity: 0.82` and hover opacity toggling from `#ns-previous-groups-suggestions`, rendering all text with 100% crisp sharpness.
+    - Replaced heavy `1.5px dashed #CBD5E1` border with a subtle, clean `1px solid #E2E8F0` border.
+    - Softened the `🕒 Previous Groups Suggestion` badge from loud styling to a gentle, muted neutral badge (`#F1F5F9`, `#64748B`, `1px solid #E2E8F0`).
+
+
+---
+
+### 27. Previous Session Groups Header Unification & Native Column Style
+
+- **User Request**: Match the "Previous Session Groups" header to the standard column headers (`Assigned Training Groups`), remove the grey bubble wrapper box, and keep lower opacity strictly on the template cards inside.
+- **Fix Applied**:
+  - In [NewSession.jsx](file:///d:/surfing/ai/frontend/src/pages/NewSession.jsx):
+    - Removed the outer `#FAFAFA` grey box and grey border.
+    - Swapped the bubble badge header for standard `ns-col-head` layout:
+      - Title: `Previous Session Groups` (`ns-col-title`, bold `#0F172A`).
+      - Pill Badge: `{count} Suggested` (`ns-col-badge`).
+      - Preserved bulk creation buttons on the right.
+    - Low opacity (`0.6`) and dark/black border are applied strictly to the template card itself, with green dotted border appearing dynamically on hover.
+
+
+---
+
+### 28. Fix JSX Syntax Duplication in NewSession.jsx Modal
+
+- **Issue**: Vite dev server threw `Transform failed with 1 error: Expected ',' or ')' but found '}'` at line 10586 in [NewSession.jsx](file:///d:/surfing/ai/frontend/src/pages/NewSession.jsx).
+- **Cause**: An accidental duplicate ternary icon fragment inside the confirmation modal icon container left an unclosed bracket block (`}} >`).
+- **Fix**: Removed the redundant duplicate fragment, restoring valid JSX structure. Frontend build compiled cleanly without errors.
+
+
+---
+
+### 29. View Admin Restrictions: Disable Media Uploads and Attendance Marking
+
+- **User Request**: `"view adminnala video photola upload panura mathiri iruku athu pana muadiya kudathu absent present podaura mathiri irku athum poda mudiya kudathu"`
+- **Fix Applied**:
+  - **Attendance Modification Blocked**:
+    - In [Sessions.jsx](file:///d:/surfing/ai/frontend/src/pages/Sessions.jsx):
+      - Guarded `handleToggleAttendance` and `handleMarkGroupAllPresent` with `if (isViewAdmin) { showToast('Attendance modification is not allowed for View Admin', 'warning'); return; }`.
+      - In Day Details Modal & Session Attendance Modal:
+        - Hid the `Mark All Present` button for `isViewAdmin`.
+        - Replaced interactive `✓ Present` and `✕ Absent` buttons with static read-only status badges (`✓ Present`, `✕ Absent`, or `Unmarked`) with `cursor: default`. View Admin users can view student attendance without ability to toggle or modify it.
+  - **Video & Photo Uploads / Deletions Blocked**:
+    - In [Sessions.jsx](file:///d:/surfing/ai/frontend/src/pages/Sessions.jsx):
+      - Guarded `handleHubVideoUpload`, `handleDeleteHubVideo`, `handleHubImageUpload`, `handleDeleteHubImage`, and `handleSaveGroupVideo` to reject actions from `isViewAdmin`.
+      - Hid the `+ Video` upload button on session rows for `isViewAdmin`.
+      - In Session Hub (Video Tab):
+        - Empty state displays a view-only message (`No Video Footage Uploaded Yet`) instead of the upload dropzone.
+        - Hid clip delete buttons (`✕`), `+ Add Video` carousel button, `+ Upload More Videos`, and `🗑️ Remove Clip`.
+      - In Session Hub (Photos Tab):
+        - Empty state displays a view-only message (`No Session Photos Uploaded Yet`) instead of the upload dropzone.
+        - Hid `+ Upload More Photos`, `🗑️ Remove Photo`, thumbnail delete buttons (`×`), and `+ Add` thumbnail card.
+    - In [VideoAnalysis.jsx](file:///d:/surfing/ai/frontend/src/pages/VideoAnalysis.jsx):
+      - Guarded upload handlers and hid `Upload Video` button and `+ Upload Video` card for `isViewAdmin`.
+
+
+---
+
+### 30. Restored "PREVIOUS GROUPS SUGGESTION" Header Banner
+
+- **User Request**: `"ithuku mela iruthatha yan remove pana"` (Why did you remove what was above this?)
+- **Fix Applied**:
+  - In [NewSession.jsx](file:///d:/surfing/ai/frontend/src/pages/NewSession.jsx):
+    - Restored the exact top banner container above the card:
+      - `🕒 PREVIOUS GROUPS SUGGESTION` pill badge.
+      - `Found {count} previous group(s) in past sessions` descriptive text.
+      - Outer container wrapper with clean border and spacing.
+    - Low opacity (`0.6`) and dark/black border are maintained strictly on the card template below it, with green dotted border appearing on hover.
+
+
+---
+
+### 31. Fix "Along with Coach" Failing to Assign Coach in Previous Group Creation
+
+- **User Request**: `"ALONG WITH COACH NU DHAN KUDUTHAN ANA STUDENT MATTUM DHAN CRT AKUTHU"` (I clicked Along with Coach, but only students were created!)
+- **Root Cause**:
+  - In past session records, the coach field sometimes only stored generic string values (e.g. `'Instructor'` or `'Coach'`) or had a null `instructor_id`.
+  - When `previousGroupSuggestions` and `handleAutoCreatePreviousGroup` ran, it attempted to look up `suggestion.coachId` and failed to match any authentic instructor in `allInstructors`.
+  - As a result, the group was created with `assignedInstructorIds: []` (0 coaches), leaving the actual verified coach (`manikandan`) unassigned in the suggestion slot with a `+ Assign` button.
+- **Fix Applied**:
+  - In [NewSession.jsx](file:///d:/surfing/ai/frontend/src/pages/NewSession.jsx):
+    - Created `resolveAuthenticCoach` helper that matches candidate coaches by ID, sanitized name, and **deep fallbacks directly to `getPreviousCoachesForGroup` and `getPreviousCoachForStudent`** across the group's enrolled students.
+    - Updated `previousGroupSuggestions`: Resolves the real coach (`manikandan`) immediately for the template card.
+    - Updated `handleAutoCreatePreviousGroup` and `handleAutoCreateAllPreviousGroups`: When `includeCoach = true`, directly retrieves and assigns `validCoach.id` (`manikandan.id`) to `assignedInstructorIds`, so the group is created with the coach fully assigned (`1 Coach : 4 Students`).
+
+
+---
+
+### 32. Auto Group by Previous Coach: Preserve Separate Groups and Auto-Assign Coach
+
+- **User Request**: `"MELA ULA AUTO CRT GROUP KUDUTHALUM COACH VARA MATTUTHU APARO INNORU GROPALA ULAVAGALA SEATHU OREY GROUP AH CRT PANUTHU APADI PANA KUDATHULA"` (Even when clicking Auto Group at the top or in the slot, coach is not coming, and students from different groups are combined into one single group instead of separate groups!)
+- **Root Cause**:
+  1. **Coach Omission**: `autoGroupSlotStudents` previously had a hardcoded `let assignedCoachId = null;` leaving coach assignment disabled (`0 Coach : N Students`).
+  2. **Group Merging**: `autoGroupSlotStudents` grouped students solely by `const coachKey = prevCoach ? String(prevCoach.id) : 'no-coach';`. Since students from both Group A and Group B shared the same coach or unresolved coach key, they were collapsed into a single cluster and placed into one group card.
+  3. **Hoisting Order**: `resolveAuthenticCoach` was declared after `autoGroupSlotStudents`, risking runtime ReferenceError in temporal dead zone.
+- **Fix Applied**:
+  - In [NewSession.jsx](file:///d:/surfing/ai/frontend/src/pages/NewSession.jsx):
+    - Moved `resolveAuthenticCoach` before `autoGroupSlotStudents`.
+    - Rewrote clustering key in `autoGroupSlotStudents` to `prev__${pastDate}__${pastGroupName}__${coachId}`, ensuring students from different past groups (e.g. Group A vs Group B) remain in separate clusters.
+    - Added automatic coach assignment in `autoGroupSlotStudents`: resolves the authentic coach (`resolveAuthenticCoach`), checks for leave and slot time conflicts, and sets `assignedInstructorId` & `assignedInstructorIds: [validCoach.id]`.
+    - Result: `⚡ Auto Group by Previous Coach`, `⚡ Auto Group`, and `⚡ Along with Coach` preserve separate group cards and auto-assign the coach with the green badge (`1 Coach : N Students`).
+
+
+---
+
+### 33. Time Slot Student Count Sync When Moving Groups Between Slots (`NewSession.jsx`)
+
+- **User Request**: `"NAA ORU GROUP AH INNORU SLOTUKU MATHITAN ANALUM MELA NUMBER MARAMA APADIEY IRUKU ATHA CRT AH PARU"` (I moved a group to another slot, but the student count number in the slot pill at the top didn't change and stayed as it was!)
+- **Root Cause**:
+  1. **Stale Time Matching**: `isGroupSlotMatch` in `getSlotAllStudentIds` checked `sStart === grpStart` (slot start time vs group start time). When a group was moved to another slot (e.g. from 06:30 AM to 09:30 AM), `handleMoveGroupToSlot` only updated `grp.slotId` but left `grp.time` and `grp.startTime` as the old slot's time (`06:30 AM`). Consequently, `isGroupSlotMatch` continued to match the group to the old slot as well as the new slot, double-counting the students across both slots.
+  2. **Slot Identification Precedence**: `isGroupSlotMatch` did not prioritize explicit `slotId` matching, allowing groups with an explicit foreign `slotId` to fall back to matching another slot's time string.
+  3. **Group Object Attribute Consistency**: In `handleMoveGroupToSlot`, `grpStudentIds` was only reading `grp.studentIds`, missing groups that stored students in `grp.students`.
+- **Fix Applied**:
+  - In [NewSession.jsx](file:///d:/surfing/ai/frontend/src/pages/NewSession.jsx):
+    - **Updated `handleMoveGroupToSlot`**:
+      - Dynamically resolves the target slot's `time` and `startTime`.
+      - Updates `time: newSlotTime` and `startTime: newSlotStartTime` along with `slotId: newSlotId` on the moved group.
+      - Robustly extracts student IDs from both `grp.studentIds` and `grp.students`.
+      - Accurately strips the students from all other slots in `slotStudentMap` and registers them in the target slot.
+    - **Refactored `getSlotAllStudentIds`**:
+      - Strictly respects `slotId`: If a group has a `slotId` matching another recognized slot, it is immediately rejected from the current slot.
+      - Tracks `assignedInOtherSlots`: Any student who is in a group assigned to another slot is strictly excluded from the current slot, preventing ghost or double counts.
+      - Synchronizes live `trainingGroups` so moved groups immediately decrement the source slot count and increment the target slot count in the top pills.
+
+
+### CHANGES ON 10-11-2026
+
+      1. Fix "Clear All" Removing Students from Students List in Step 3 (`NewSession.jsx`)
+
+- **User Request**: `"inga clr all kudutha studentt listla iruka studetum remove akituraga ana apadi aga kudathu"` (When clicking 'Clear All' here, the students in the students list also get removed, but it should not happen like that!)
+- **Root Cause**:
+  1. In `clearAllGroups`, the logic previously executed `setSlotStudentMap(prev => ({ ...prev, [currentSlotId]: [] }))` (and `setSlotStudentMap({})` when showing all slots). Since the left-hand column ("Students List") filters imported students based on `slotStudentMap[step3SlotFilter]`, wiping `slotStudentMap` caused all students in the time slot to vanish from the Students List entirely (reducing count to 0).
+  2. In addition, `clearAllGroups` was calling `DELETE /api/session-drafts`, wrongly deleting the server draft when the user only wanted to clear the training group cards for that slot.
+- **Fix Applied**:
+  - In [NewSession.jsx](file:///d:/surfing/ai/frontend/src/pages/NewSession.jsx):
+    - **Preserved `slotStudentMap`**: `clearAllGroups` and `deleteGroup` now extract all student IDs from the groups being cleared/deleted and ensure they remain in `slotStudentMap` for that slot.
+    - **Returned to Unassigned Pool**: Because the groups are cleared from `trainingGroups`, all students immediately return to the left "Students List" with status `Unassigned`, allowing the user to re-group, auto-group (`⚡ Auto Group`), or manually assign them into new group cards.
+    - **Draft Integrity**: Removed the erroneous draft deletion call from `clearAllGroups`.
+
+
+---
+
+    2. Restrict Guest Admin Creation Exclusively to Primary School Admin (`UserProfileMenu.jsx` & `main.py`)
+
+- **User Request**: `"admin anala mattum dhan gust admin crt pana mudiyanum"` (Only if someone is an actual Admin should they be able to create guest admin.)
+- **Root Cause**:
+  - `isSchoolAdmin` in [UserProfileMenu.jsx](file:///d:/surfing/ai/frontend/src/components/UserProfileMenu.jsx) previously included `isMainAdmin` (`currentRole === 'guest_admin'` with `guest_role === 'main_admin'`).
+  - As a result, guest admin accounts granted the "Main Admin" role (e.g. `Deepika`) saw the **`🛡️ Guest Admin Access - Create`** button in their profile menu dropdown and could create further guest admin accounts.
+- **Fix Applied**:
+  - **Frontend UI & Permissions ([UserProfileMenu.jsx](file:///d:/surfing/ai/frontend/src/components/UserProfileMenu.jsx))**:
+    - Introduced strict `isPrimaryAdmin` check: `!isGuestAdmin && !isStudent && !isCoach && (currentRole === 'admin' || currentRole === 'superadmin' || !effectiveUser?.role)`.
+    - Protected the **`🛡️ Guest Admin Access - Create`** menu item with `{isPrimaryAdmin && (...) }`, completely hiding it for all Guest Admins (both Main Admin and View Admin), Coaches, and Students.
+    - Guarded the modal dialog `{showGuestAdminModal && isPrimaryAdmin && (...) }`.
+    - Added security validation in `handleCreateGuestAdmin` blocking non-primary admins and transmitting `creator_role`.
+  - **Backend API Protection ([backend/main.py](file:///d:/surfing/ai/backend/main.py))**:
+    - Added `creator_role` validation to `@app.post("/api/school/guest-admins")`.
+    - Returns HTTP 403 Forbidden if a request is made by non-admin roles (`guest_admin`, `main_admin`, `view_admin`, `coach`, `student`).
+
+
+---
+
+     3. Guest Admin Creation Exclusively Locked to Original School Admin (`UserProfileMenu.jsx`)
+
+- **User Request**: `"enaku origin school adminnala mattum dhan gust admin crt pana mudiyanum"` (For me, ONLY the original school admin should be able to create guest admin.)
+- **Refinement Applied**:
+  - In [UserProfileMenu.jsx](file:///d:/surfing/ai/frontend/src/components/UserProfileMenu.jsx):
+    - Replaced generic role checks with comprehensive `isOriginalSchoolAdmin` check:
+      - Strictly verifies that the user is NOT a guest admin (`!isGuestAdmin`).
+      - Confirms absence of any `guest_role` (`!effectiveUser?.guest_role`, `!effectiveUser?.is_view_admin`, `!effectiveUser?.is_main_admin`, `!user?.guest_role`).
+      - Verifies the user was not created by the school as a guest (`!effectiveUser?.created_by_school`).
+      - Excludes coaches and students (`!isHeadCoachUser && !isCoach && !isStudent`).
+      - Strictly confirms original administrative status (`currentRole === 'admin' || currentRole === 'superadmin' || user?.role === 'admin'`).
+    - The menu button **`🛡️ Guest Admin Access - Create`** is rendered **ONLY** when `isOriginalSchoolAdmin` is true.
+    - All associated functions (`fetchGuestAdmins`, `handleCreateGuestAdmin`, `handleDeleteGuestAdmin`) and the modal popup are strictly guarded by `isOriginalSchoolAdmin`.
+    - No Guest Admin (neither Main Admin nor View Admin), Coach, Head Coach, or Student can ever see or invoke Guest Admin creation.

@@ -254,8 +254,25 @@ const VideoAnalysis = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const initialVideoUrl = searchParams.get('video');
-  const studentName = searchParams.get('student') || 'Chloe Kim';
-  const sessionDate = searchParams.get('date') || '12 Jun 2025';
+
+  const loggedUser = useMemo(() => {
+    try {
+      return JSON.parse(sessionStorage.getItem('user') || '{}');
+    } catch (e) {
+      return {};
+    }
+  }, []);
+  const isStudentUser = Boolean(
+    loggedUser?.role === 'athlete' || 
+    loggedUser?.role === 'student' || 
+    loggedUser?.role === 'user'
+  );
+  const isViewAdmin = Boolean(
+    loggedUser?.role === 'guest_admin' && (loggedUser?.guest_role === 'view_admin' || loggedUser?.is_view_admin)
+  );
+
+  const studentName = searchParams.get('student') || (isStudentUser && loggedUser?.name ? loggedUser.name : (loggedUser?.name && loggedUser?.role !== 'admin' ? loggedUser.name : 'Chloe Kim'));
+  const sessionDate = searchParams.get('date') || '';
 
   // Tagged Surfers in this Video (Real Athletes only)
   const [availableSurfers, setAvailableSurfers] = useState([]);
@@ -345,7 +362,22 @@ const VideoAnalysis = () => {
         rawNames = [studentName];
       }
 
-      const profiles = rawNames.map((n, i) => generateAthleteProfile(n, i));
+      // Disambiguate duplicate names or guest instances so every surfer tag has a unique label
+      const nameCounts = {};
+      const uniqueLabeledNames = [];
+      rawNames.forEach(raw => {
+        const trimmed = String(raw || '').trim();
+        if (!trimmed) return;
+        const lower = trimmed.toLowerCase();
+        nameCounts[lower] = (nameCounts[lower] || 0) + 1;
+        if (nameCounts[lower] === 1) {
+          uniqueLabeledNames.push(trimmed);
+        } else {
+          uniqueLabeledNames.push(`${trimmed} (Guest ${nameCounts[lower] - 1})`);
+        }
+      });
+
+      const profiles = uniqueLabeledNames.map((n, i) => generateAthleteProfile(n, i));
       setAvailableSurfers(profiles);
       setTaggedSurfers(profiles);
       setActiveSurferId(profiles[0]?.id || '');
@@ -534,11 +566,150 @@ const VideoAnalysis = () => {
   // Video Player Playback State
   const [isPlaying, setIsPlaying] = useState(false);
   const [isVideoLoading, setIsVideoLoading] = useState(true);
+  const bufferTimeoutRef = useRef(null);
+  const showVideoBuffering = useCallback(() => {
+    setIsVideoLoading(true);
+    if (bufferTimeoutRef.current) clearTimeout(bufferTimeoutRef.current);
+    bufferTimeoutRef.current = setTimeout(() => {
+      if (videoRef.current && videoRef.current.readyState >= 2) {
+        setIsVideoLoading(false);
+      }
+    }, 2000);
+  }, []);
+  const hideVideoBuffering = useCallback(() => {
+    if (bufferTimeoutRef.current) clearTimeout(bufferTimeoutRef.current);
+    setIsVideoLoading(false);
+  }, []);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
   const [volume, setVolume] = useState(1);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
+
+  // Adaptive Video Quality & Network Optimization State
+  const [videoQuality, setVideoQuality] = useState('auto'); // 'auto' | '1080p' | '720p' | '480p' | '360p'
+  const [activeResolution, setActiveResolution] = useState('720p');
+  const [showQualityMenu, setShowQualityMenu] = useState(false);
+  const [networkCondition, setNetworkCondition] = useState({ speed: 'fast', downlink: 10, type: '4g' });
+  const [qualityNotice, setQualityNotice] = useState('');
+  const qualityNoticeTimeoutRef = useRef(null);
+  const qualityMenuRef = useRef(null);
+  const resumeTimeAfterQualitySwitchRef = useRef(null);
+  const recentStallTimesRef = useRef([]);
+
+  const triggerQualityNotice = useCallback((msg) => {
+    setQualityNotice(msg);
+    if (qualityNoticeTimeoutRef.current) clearTimeout(qualityNoticeTimeoutRef.current);
+    qualityNoticeTimeoutRef.current = setTimeout(() => {
+      setQualityNotice('');
+    }, 4500);
+  }, []);
+
+  // Detect network conditions on mount and when connection status changes
+  useEffect(() => {
+    const updateNetworkStatus = () => {
+      const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+      if (conn) {
+        const type = (conn.effectiveType || '4g').toLowerCase();
+        const downlink = typeof conn.downlink === 'number' ? conn.downlink : 10;
+        const isSlow = type === 'slow-2g' || type === '2g' || downlink < 1.0 || conn.saveData;
+        const isMedium = type === '3g' || downlink < 3.0;
+
+        const speed = isSlow ? 'slow' : isMedium ? 'medium' : 'fast';
+        const recommendedRes = isSlow ? '360p' : isMedium ? '480p' : '720p';
+
+        setNetworkCondition({ speed, downlink, type });
+
+        if (videoQuality === 'auto') {
+          setActiveResolution(recommendedRes);
+          if (isSlow || isMedium) {
+            triggerQualityNotice(`Slow network detected (${type.toUpperCase()}) — playing ${recommendedRes}`);
+          }
+        }
+      }
+    };
+
+    updateNetworkStatus();
+
+    const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (conn && conn.addEventListener) {
+      conn.addEventListener('change', updateNetworkStatus);
+      return () => conn.removeEventListener('change', updateNetworkStatus);
+    }
+  }, [videoQuality, triggerQualityNotice]);
+
+  // Click outside quality menu to close
+  useEffect(() => {
+    const handleOutsideClick = (e) => {
+      if (qualityMenuRef.current && !qualityMenuRef.current.contains(e.target)) {
+        setShowQualityMenu(false);
+      }
+    };
+    if (showQualityMenu) {
+      document.addEventListener('mousedown', handleOutsideClick);
+      return () => document.removeEventListener('mousedown', handleOutsideClick);
+    }
+  }, [showQualityMenu]);
+
+  // Resolve optimal stream URL based on active resolution and currentClip
+  const activeStreamUrl = useMemo(() => {
+    if (!currentClip?.url) return '';
+    if (currentClip.qualities && typeof currentClip.qualities === 'object') {
+      if (currentClip.qualities[activeResolution]) {
+        return currentClip.qualities[activeResolution];
+      }
+      const fallbackOrder = ['720p', '480p', '360p', '1080p'];
+      for (const res of fallbackOrder) {
+        if (currentClip.qualities[res]) return currentClip.qualities[res];
+      }
+    }
+    return currentClip.url;
+  }, [currentClip, activeResolution]);
+
+  const handleSelectQuality = useCallback((qualityKey) => {
+    setShowQualityMenu(false);
+    if (qualityKey === videoQuality) return;
+
+    if (videoRef.current) {
+      resumeTimeAfterQualitySwitchRef.current = {
+        time: videoRef.current.currentTime || 0,
+        wasPlaying: !videoRef.current.paused
+      };
+    }
+
+    setVideoQuality(qualityKey);
+
+    if (qualityKey === 'auto') {
+      const rec = networkCondition.speed === 'slow' ? '360p' : networkCondition.speed === 'medium' ? '480p' : '720p';
+      setActiveResolution(rec);
+      triggerQualityNotice(`Quality set to Auto (${rec}) based on connection speed`);
+    } else {
+      setActiveResolution(qualityKey);
+      triggerQualityNotice(`Quality set to ${qualityKey}`);
+    }
+  }, [videoQuality, networkCondition, triggerQualityNotice]);
+
+  const handleAdaptiveStall = useCallback(() => {
+    showVideoBuffering();
+    const now = Date.now();
+    recentStallTimesRef.current = [...recentStallTimesRef.current.filter(t => now - t < 15000), now];
+
+    if (videoQuality === 'auto' && recentStallTimesRef.current.length >= 2) {
+      if (activeResolution === '1080p') {
+        setActiveResolution('720p');
+        triggerQualityNotice('Buffering detected — automatically adapted to 720p');
+        recentStallTimesRef.current = [];
+      } else if (activeResolution === '720p') {
+        setActiveResolution('480p');
+        triggerQualityNotice('Slow network detected — adapted to 480p for smooth video');
+        recentStallTimesRef.current = [];
+      } else if (activeResolution === '480p') {
+        setActiveResolution('360p');
+        triggerQualityNotice('Weak network connection — adapted to 360p data saver');
+        recentStallTimesRef.current = [];
+      }
+    }
+  }, [videoQuality, activeResolution, showVideoBuffering, triggerQualityNotice]);
 
   // Drawing Canvas Annotation State
   const [tool, setTool] = useState('select'); // 'select' | 'pen' | 'eraser'
@@ -727,7 +898,7 @@ const VideoAnalysis = () => {
   };
 
   // Load actual videos into individual clips (1 uploaded video = 1 distinct clip)
-  const loadVideosIntoClips = async (videoInput, label = '') => {
+  const loadVideosIntoClips = async (videoInput, label = '', qualitiesMap = null) => {
     const urls = parseVideoUrls(videoInput);
     const validUrls = urls.filter(u => u && !u.includes('ForBigger') && !u.includes('gtv-videos'));
     const finalUrls = validUrls.length > 0 ? validUrls : ['https://assets.mixkit.co/videos/preview/mixkit-surfer-riding-a-wave-in-the-sea-39828-large.mp4'];
@@ -744,6 +915,7 @@ const VideoAnalysis = () => {
         startTime: 0,
         duration: '0:00',
         url,
+        qualities: qualitiesMap || null,
         bg: cachedThumb,
         isSessionClip: true
       };
@@ -784,19 +956,76 @@ const VideoAnalysis = () => {
         const res = await fetch(`${API}/api/sessions`);
         if (res.ok) {
           const sessions = await res.json();
-          const targetISO = normalizeDateStr(sessionDate);
-          const match = sessions.find(s => {
-            const grp = s.group_name || s.notes || '';
-            const sISO = normalizeDateStr(s.date);
-            const dateMatch = !targetISO || !sISO || sISO === targetISO || s.date === sessionDate || (s.date && sessionDate && (s.date.includes(sessionDate) || sessionDate.includes(s.date)));
-            const nameMatch = (grp && studentName && (grp.toLowerCase().includes(studentName.toLowerCase()) || studentName.toLowerCase().includes(grp.toLowerCase()))) ||
-                              (s.student && studentName && s.student.toLowerCase() === studentName.toLowerCase());
-            return dateMatch && nameMatch && s.video_url && !s.video_url.startsWith('blob:');
+          
+          // 1. If date was specified, try to match date + student first
+          if (sessionDate) {
+            const targetISO = normalizeDateStr(sessionDate);
+            const match = sessions.find(s => {
+              const grp = s.group_name || s.notes || '';
+              const sISO = normalizeDateStr(s.date);
+              const dateMatch = !targetISO || !sISO || sISO === targetISO || s.date === sessionDate || (s.date && sessionDate && (s.date.includes(sessionDate) || sessionDate.includes(s.date)));
+              const nameMatch = (grp && studentName && (grp.toLowerCase().includes(studentName.toLowerCase()) || studentName.toLowerCase().includes(grp.toLowerCase()))) ||
+                                (s.student && studentName && s.student.toLowerCase() === studentName.toLowerCase()) ||
+                                (s.guest_name && studentName && s.guest_name.toLowerCase() === studentName.toLowerCase());
+              return dateMatch && nameMatch && s.video_url && !s.video_url.startsWith('blob:');
+            });
+
+            if (match && match.video_url) {
+              loadVideosIntoClips(match.video_url, `${match.location || match.spot || 'Session'} • ${match.date}`);
+              return;
+            }
+          }
+
+          // 2. Student Portal / General Student Video Vault:
+          // Find all recorded sessions belonging to this student with videos
+          const studentVideos = sessions.filter(s => {
+            const sName = (s.student || s.guest_name || s.student_name || '').toLowerCase();
+            const grp = (s.group_name || '').toLowerCase();
+            const target = studentName.toLowerCase();
+            const idMatch = loggedUser?.id && (String(s.student_id) === String(loggedUser.id) || String(s.user_id) === String(loggedUser.id));
+            const nameMatch = target && (sName === target || sName.includes(target) || target.includes(sName) || grp.includes(target));
+            return (idMatch || nameMatch) && s.video_url && s.video_url.trim() !== '' && !s.video_url.startsWith('blob:');
           });
 
-          if (match && match.video_url) {
-            loadVideosIntoClips(match.video_url);
-            return;
+          if (studentVideos.length > 0) {
+            const studentClips = [];
+            studentVideos.forEach((s, sIdx) => {
+              const urls = parseVideoUrls(s.video_url);
+              urls.forEach((u, uIdx) => {
+                if (u && !u.startsWith('blob:') && !u.includes('ForBigger')) {
+                  studentClips.push({
+                    id: studentClips.length + 1,
+                    name: urls.length > 1 ? `${s.date || 'Session'} Clip ${uIdx + 1}` : (s.date || `Session ${sIdx + 1}`),
+                    waveName: `${s.location || s.spot || 'Wave Session'} • ${s.date || ''}`,
+                    startTime: 0,
+                    duration: '0:00',
+                    url: u,
+                    bg: '',
+                    isSessionClip: true,
+                    sessionData: s
+                  });
+                }
+              });
+            });
+
+            if (studentClips.length > 0) {
+              setClips(studentClips);
+              setCurrentClip(studentClips[0]);
+              setIsVideoLoading(true);
+
+              Promise.all([
+                Promise.all(studentClips.map(c => captureVideoThumbnail(c.url, 1))),
+                Promise.all(studentClips.map(c => getVideoDuration(c.url)))
+              ]).then(([thumbs, durations]) => {
+                setClips(prev => prev.map((c, i) => ({
+                  ...c,
+                  bg: thumbs[i] || c.bg,
+                  duration: durations[i] > 0 ? formatDurationString(durations[i]) : '0:00',
+                  realDuration: durations[i] || 0
+                })));
+              }).catch(() => {});
+              return;
+            }
           }
         }
       } catch (err) {
@@ -809,10 +1038,11 @@ const VideoAnalysis = () => {
     };
 
     initVideo();
-  }, [initialVideoUrl, studentName, sessionDate]);
+  }, [initialVideoUrl, studentName, sessionDate, isStudentUser, loggedUser?.id]);
 
   // Handle uploading video file from local device
   const handleUploadVideoFile = async (e, targetClipId = null) => {
+    if (isViewAdmin) return;
     const file = e.target.files?.[0];
     if (!file) return;
     setIsUploadingClip(true);
@@ -822,6 +1052,7 @@ const VideoAnalysis = () => {
       formData.append('file', file);
 
       let videoUrl = '';
+      let uploadedQualities = null;
       try {
         const res = await fetch(`${API}/api/upload-video`, {
           method: 'POST',
@@ -830,6 +1061,7 @@ const VideoAnalysis = () => {
         if (res.ok) {
           const data = await res.json();
           videoUrl = data.video_url;
+          uploadedQualities = data.qualities || null;
         }
       } catch (err) {
         console.warn('Backend upload skipped, using local URL', err);
@@ -846,10 +1078,10 @@ const VideoAnalysis = () => {
           getVideoDuration(videoUrl)
         ]);
         const formattedDur = actualDur > 0 ? formatDurationString(actualDur) : '0:00';
-        setClips(prev => prev.map(c => c.id === targetClipId ? { ...c, url: videoUrl, bg: thumb || c.bg, duration: formattedDur, realDuration: actualDur } : c));
-        setCurrentClip(prev => prev.id === targetClipId ? { ...prev, url: videoUrl, bg: thumb || prev.bg, duration: formattedDur, realDuration: actualDur } : prev);
+        setClips(prev => prev.map(c => c.id === targetClipId ? { ...c, url: videoUrl, qualities: uploadedQualities, bg: thumb || c.bg, duration: formattedDur, realDuration: actualDur } : c));
+        setCurrentClip(prev => prev.id === targetClipId ? { ...prev, url: videoUrl, qualities: uploadedQualities, bg: thumb || prev.bg, duration: formattedDur, realDuration: actualDur } : prev);
       } else {
-        await loadVideosIntoClips(videoUrl, file.name.replace(/\.[^/.]+$/, ""));
+        await loadVideosIntoClips(videoUrl, file.name.replace(/\.[^/.]+$/, ""), uploadedQualities);
       }
     } catch (err) {
       console.error('Video upload error:', err);
@@ -862,6 +1094,7 @@ const VideoAnalysis = () => {
 
   // Handle adding an entirely new video as a new clip (appending to list)
   const handleAddNewVideoClip = async (e) => {
+    if (isViewAdmin) return;
     const file = e.target.files?.[0];
     if (!file) return;
     setIsUploadingClip(true);
@@ -871,6 +1104,7 @@ const VideoAnalysis = () => {
       formData.append('file', file);
 
       let videoUrl = '';
+      let uploadedQualities = null;
       try {
         const res = await fetch(`${API}/api/upload-video`, {
           method: 'POST',
@@ -879,6 +1113,7 @@ const VideoAnalysis = () => {
         if (res.ok) {
           const data = await res.json();
           videoUrl = data.video_url;
+          uploadedQualities = data.qualities || null;
         }
       } catch (err) {
         console.warn('Backend upload skipped, using local URL', err);
@@ -910,6 +1145,7 @@ const VideoAnalysis = () => {
           duration: formattedDur,
           realDuration: actualDur,
           url: videoUrl,
+          qualities: uploadedQualities,
           bg: thumb || '',
           isSessionClip: false
         };
@@ -926,6 +1162,7 @@ const VideoAnalysis = () => {
           duration: formattedDur,
           realDuration: actualDur,
           url: videoUrl,
+          qualities: uploadedQualities,
           bg: thumb || '',
           isSessionClip: false
         };
@@ -1269,6 +1506,18 @@ const VideoAnalysis = () => {
       setCurrentClip(prev => ({ ...prev, duration: formatted, realDuration: dur }));
     }
 
+    // Seamlessly restore playback time position when switching resolution
+    if (resumeTimeAfterQualitySwitchRef.current && videoRef.current) {
+      const { time, wasPlaying } = resumeTimeAfterQualitySwitchRef.current;
+      resumeTimeAfterQualitySwitchRef.current = null;
+      if (typeof time === 'number' && time >= 0) {
+        videoRef.current.currentTime = time;
+      }
+      if (wasPlaying) {
+        videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+      }
+    }
+
     if (currentClip?.url && (!clips[0]?.bg || !clips[1]?.bg || !clips[2]?.bg)) {
       extractMultiClipThumbnails(currentClip.url).then(([thumb1, thumb2, thumb3]) => {
         setClips(prev => prev.map(c => {
@@ -1557,7 +1806,11 @@ const VideoAnalysis = () => {
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
             </button>
             <div>
-              <h1 className="va-title">AI Video Analysis — {studentName} — {sessionDate}</h1>
+              <h1 className="va-title">
+                {isStudentUser 
+                  ? `Video Analysis Vault — ${studentName}${sessionDate ? ` — ${sessionDate}` : (currentClip?.waveName && currentClip?.isSessionClip && !currentClip?.waveName.includes('Demo') ? ` — ${currentClip.waveName}` : '')}`
+                  : `AI Video Analysis — ${studentName}${sessionDate ? ` — ${sessionDate}` : ''}`}
+              </h1>
               
               {/* Multi-Surfer Tagging Dropdown & Badges */}
               <div className="va-surfer-tag-row">
@@ -1652,6 +1905,87 @@ const VideoAnalysis = () => {
         </header>
 
         {/* Layout */}
+        {isStudentUser && (
+          <div style={{
+            background: 'linear-gradient(135deg, rgba(13, 148, 136, 0.15) 0%, rgba(14, 165, 233, 0.12) 100%)',
+            border: '1px solid rgba(45, 212, 191, 0.3)',
+            borderRadius: '16px',
+            padding: '16px 20px',
+            marginBottom: '20px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '12px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+              <div style={{
+                width: '42px',
+                height: '42px',
+                borderRadius: '12px',
+                background: 'rgba(45, 212, 191, 0.2)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '22px'
+              }}>
+                🏄‍♂️
+              </div>
+              <div>
+                <div style={{ fontSize: '15px', fontWeight: 800, color: '#FFFFFF', letterSpacing: '0.2px' }}>
+                  Welcome to your Video Analysis Vault, {studentName}!
+                </div>
+                <div style={{ fontSize: '12.5px', color: '#94A3B8', marginTop: '2px' }}>
+                  {clips.some(c => c.isSessionClip && c.url && !c.url.includes('mixkit'))
+                    ? 'Here are your recorded surf sessions with AI skeleton pose analysis and coach technique scores.'
+                    : 'Your coach will upload your session wave recordings here. You can explore AI stance analysis on the wave demo below or upload your own practice clip!'}
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={() => navigate('/achievements')}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.95)',
+                  border: '1.5px solid #E2E8F0',
+                  color: '#0F172A',
+                  fontWeight: 700,
+                  fontSize: '12.5px',
+                  padding: '7px 14px',
+                  borderRadius: '10px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.06)'
+                }}
+              >
+                <span>🏆 My Achievements</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => addClipInputRef.current?.click()}
+                style={{
+                  background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
+                  border: 'none',
+                  color: '#FFFFFF',
+                  fontWeight: 700,
+                  fontSize: '12.5px',
+                  padding: '8px 16px',
+                  borderRadius: '10px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                <span>+</span> Upload My Wave Clip
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="va-layout">
           
           {/* Left Column (Player) */}
@@ -1660,33 +1994,77 @@ const VideoAnalysis = () => {
             <div className="va-player-container">
               {currentClip?.url && (
                 <>
+                  {/* Floating Adaptive Quality Notice Badge */}
+                  {qualityNotice && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '16px',
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      zIndex: 35,
+                      backgroundColor: 'rgba(15, 23, 42, 0.92)',
+                      border: '1px solid rgba(45, 212, 191, 0.5)',
+                      color: '#F8FAFC',
+                      padding: '7px 16px',
+                      borderRadius: '24px',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      boxShadow: '0 8px 20px rgba(0,0,0,0.5)',
+                      pointerEvents: 'none',
+                      backdropFilter: 'blur(8px)'
+                    }}>
+                      <span style={{ display: 'inline-block', width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#2DD4BF' }}></span>
+                      <span>{qualityNotice}</span>
+                    </div>
+                  )}
+
                   <video 
-                    key={currentClip.url}
+                    key={activeStreamUrl || currentClip.url}
                     ref={videoRef}
-                    src={currentClip.url} 
+                    src={activeStreamUrl || currentClip.url} 
                     autoPlay
                     loop 
                     muted={isMuted} 
                     playsInline
                     preload="auto"
                     onLoadStart={() => {
-                      setIsVideoLoading(true);
+                      showVideoBuffering();
                     }}
                     onWaiting={() => {
-                      setIsVideoLoading(true);
+                      handleAdaptiveStall();
                     }}
                     onCanPlay={() => {
-                      setIsVideoLoading(false);
+                      hideVideoBuffering();
                       if (videoRef.current && videoRef.current.paused) {
                         videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
                       }
                     }}
+                    onCanPlayThrough={() => {
+                      hideVideoBuffering();
+                    }}
+                    onSeeked={() => {
+                      hideVideoBuffering();
+                      redraw();
+                    }}
+                    onSeeking={() => {
+                      if (videoRef.current && videoRef.current.readyState < 2) {
+                        showVideoBuffering();
+                      }
+                    }}
+                    onStalled={() => {
+                      if (videoRef.current && videoRef.current.readyState >= 2) {
+                        hideVideoBuffering();
+                      }
+                    }}
                     onPlaying={() => {
-                      setIsVideoLoading(false);
+                      hideVideoBuffering();
                       setIsPlaying(true);
                     }}
                     onLoadedData={() => {
-                      setIsVideoLoading(false);
+                      hideVideoBuffering();
                       if (videoRef.current && (!currentClip?.bg || currentClip?.bg.includes('unsplash'))) {
                         setTimeout(() => {
                           try {
@@ -1713,18 +2091,19 @@ const VideoAnalysis = () => {
                     }}
                     onPlay={() => {
                       setIsPlaying(true);
-                      setIsVideoLoading(false);
+                      hideVideoBuffering();
                       const canvas = canvasRef.current;
                       if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
                     }}
                     onPause={() => {
                       setIsPlaying(false);
+                      hideVideoBuffering();
                       redraw();
                     }}
                     onTimeUpdate={handleTimeUpdate}
                     onLoadedMetadata={handleLoadedMetadata}
                     onError={(e) => {
-                      setIsVideoLoading(false);
+                      hideVideoBuffering();
                       console.warn('Video failed to load from primary source, falling back to guaranteed high-res wave clip:', currentClip?.url);
                       const fallbackUrl = 'https://assets.mixkit.co/videos/preview/mixkit-surfer-riding-a-wave-in-the-sea-39828-large.mp4';
                       if (currentClip?.url !== fallbackUrl) {
@@ -1746,20 +2125,27 @@ const VideoAnalysis = () => {
                         width: '100%',
                         height: '100%',
                         zIndex: 5,
-                        backgroundColor: 'rgba(10, 15, 29, 0.88)',
-                        backdropFilter: 'blur(6px)',
+                        backgroundColor: (duration > 0 && currentTime > 0) ? 'rgba(10, 15, 29, 0.55)' : 'rgba(10, 15, 29, 0.88)',
+                        backdropFilter: (duration > 0 && currentTime > 0) ? 'blur(2px)' : 'blur(6px)',
                         display: 'flex',
                         flexDirection: 'column',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        gap: '16px',
-                        pointerEvents: 'none'
+                        gap: '14px',
+                        cursor: 'pointer'
                       }}
+                      onClick={() => {
+                        hideVideoBuffering();
+                        if (videoRef.current) {
+                          videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+                        }
+                      }}
+                      title="Click to resume playback"
                     >
                       <div 
                         style={{
-                          width: '48px',
-                          height: '48px',
+                          width: '44px',
+                          height: '44px',
                           border: '3.5px solid rgba(2, 132, 199, 0.25)',
                           borderTop: '3.5px solid #0284C7',
                           borderRight: '3.5px solid #38BDF8',
@@ -2024,6 +2410,128 @@ const VideoAnalysis = () => {
                           borderRadius: '2px'
                         }}
                       />
+
+                      {/* Video Quality / Adaptive Resolution Selector */}
+                      <div style={{ position: 'relative' }} ref={qualityMenuRef}>
+                        <button
+                          type="button"
+                          onClick={() => setShowQualityMenu(prev => !prev)}
+                          title={`Video Quality: ${videoQuality === 'auto' ? `Auto (${activeResolution})` : videoQuality}`}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '5px',
+                            padding: '4px 8px',
+                            borderRadius: '6px',
+                            background: showQualityMenu ? 'rgba(45, 212, 191, 0.25)' : 'rgba(255, 255, 255, 0.1)',
+                            border: showQualityMenu ? '1px solid #2DD4BF' : '1px solid rgba(255, 255, 255, 0.2)',
+                            fontSize: '11px',
+                            fontWeight: 600,
+                            color: '#FFFFFF',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                          </svg>
+                          <span>{videoQuality === 'auto' ? `Auto (${activeResolution})` : videoQuality}</span>
+                        </button>
+
+                        {/* Dropdown Quality Menu */}
+                        {showQualityMenu && (
+                          <div style={{
+                            position: 'absolute',
+                            bottom: 'calc(100% + 8px)',
+                            right: 0,
+                            backgroundColor: '#0F172A',
+                            border: '1px solid rgba(255,255,255,0.18)',
+                            borderRadius: '10px',
+                            boxShadow: '0 12px 28px rgba(0, 0, 0, 0.75)',
+                            width: '220px',
+                            padding: '6px',
+                            zIndex: 120,
+                            backdropFilter: 'blur(16px)',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '2px'
+                          }}>
+                            <div style={{
+                              padding: '6px 8px',
+                              fontSize: '11px',
+                              fontWeight: 700,
+                              letterSpacing: '0.04em',
+                              color: '#94A3B8',
+                              borderBottom: '1px solid rgba(255,255,255,0.08)',
+                              marginBottom: '4px',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center'
+                            }}>
+                              <span>Video Quality</span>
+                              <span style={{ fontSize: '10px', color: '#2DD4BF', textTransform: 'uppercase' }}>
+                                {networkCondition.type || '4G'} • {networkCondition.speed}
+                              </span>
+                            </div>
+
+                            {[
+                              { key: 'auto', label: 'Auto (Recommended)', desc: `Adapts: ${activeResolution}` },
+                              { key: '1080p', label: '1080p HD', desc: 'Full HD (Requires Fast Net)' },
+                              { key: '720p', label: '720p HD', desc: 'Standard HD Quality' },
+                              { key: '480p', label: '480p SD', desc: 'Smooth on Slow Net / 3G' },
+                              { key: '360p', label: '360p Low', desc: 'Ultra Data Saver / 2G' },
+                            ].map(opt => {
+                              const isSelected = videoQuality === opt.key;
+                              return (
+                                <button
+                                  key={opt.key}
+                                  type="button"
+                                  onClick={() => handleSelectQuality(opt.key)}
+                                  style={{
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    alignItems: 'flex-start',
+                                    width: '100%',
+                                    padding: '7px 8px',
+                                    background: isSelected ? 'rgba(45, 212, 191, 0.16)' : 'transparent',
+                                    border: 'none',
+                                    borderRadius: '6px',
+                                    cursor: 'pointer',
+                                    textAlign: 'left'
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    if (!isSelected) e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)';
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent';
+                                  }}
+                                >
+                                  <div style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    width: '100%',
+                                    color: isSelected ? '#2DD4BF' : '#F1F5F9',
+                                    fontSize: '12px',
+                                    fontWeight: isSelected ? 700 : 500
+                                  }}>
+                                    <span>{opt.label}</span>
+                                    {isSelected && <span>✓</span>}
+                                  </div>
+                                  <span style={{
+                                    fontSize: '10px',
+                                    color: isSelected ? 'rgba(45, 212, 191, 0.8)' : '#64748B',
+                                    marginTop: '1px'
+                                  }}>
+                                    {opt.desc}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2116,30 +2624,32 @@ const VideoAnalysis = () => {
                   </button>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => addClipInputRef.current?.click()}
-                  disabled={isUploadingClip}
-                  style={{
-                    background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
-                    color: '#FFFFFF',
-                    border: 'none',
-                    borderRadius: '8px',
-                    padding: '6px 14px',
-                    fontSize: '12px',
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    boxShadow: '0 4px 10px rgba(13, 148, 136, 0.3)'
-                  }}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <path d="M12 5v14M5 12h14"/>
-                  </svg>
-                  {isUploadingClip ? 'Uploading Video…' : 'Upload Video'}
-                </button>
+                {!isViewAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => addClipInputRef.current?.click()}
+                    disabled={isUploadingClip}
+                    style={{
+                      background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
+                      color: '#FFFFFF',
+                      border: 'none',
+                      borderRadius: '8px',
+                      padding: '6px 14px',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      boxShadow: '0 4px 10px rgba(13, 148, 136, 0.3)'
+                    }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <path d="M12 5v14M5 12h14"/>
+                    </svg>
+                    {isUploadingClip ? 'Uploading Video…' : 'Upload Video'}
+                  </button>
+                )}
               </div>
             </div>
 
@@ -2311,15 +2821,17 @@ const VideoAnalysis = () => {
               })}
 
               {/* Add New Video Slot */}
-              <div
-                className="va-clip-add-card"
-                onClick={() => addClipInputRef.current?.click()}
-                title="Upload another full session video"
-              >
-                <div className="va-clip-add-icon">+</div>
-                <div className="va-clip-add-text">Upload Video</div>
-                <div className="va-clip-add-subtext">Add another full video</div>
-              </div>
+              {!isViewAdmin && (
+                <div
+                  className="va-clip-add-card"
+                  onClick={() => addClipInputRef.current?.click()}
+                  title="Upload another full session video"
+                >
+                  <div className="va-clip-add-icon">+</div>
+                  <div className="va-clip-add-text">Upload Video</div>
+                  <div className="va-clip-add-subtext">Add another full video</div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -2353,10 +2865,10 @@ const VideoAnalysis = () => {
             <div className="va-section">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div className="va-section-title">
-                  PERFORMANCE SCORE {taggedSurfers.length > 1 && `— ${currentActiveSurfer.name.toUpperCase()}`}
+                  {isStudentUser ? 'COACH TECHNIQUE ASSESSMENT' : `PERFORMANCE SCORE ${taggedSurfers.length > 1 ? `— ${currentActiveSurfer.name.toUpperCase()}` : ''}`}
                 </div>
                 <span style={{ fontSize: '11px', color: '#2DD4BF', fontWeight: 700, background: 'rgba(45,212,191,0.15)', padding: '2px 8px', borderRadius: '10px', border: '1px solid rgba(45,212,191,0.3)' }}>
-                  Coach Grading
+                  {isStudentUser ? 'Coach Verified' : 'Coach Grading'}
                 </span>
               </div>
               <div className="va-score-row" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -2387,8 +2899,8 @@ const VideoAnalysis = () => {
             {/* Skill Breakdown - Drag sliders or type to score from 0 */}
             <div className="va-section">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div className="va-section-title">SKILL BREAKDOWN (0 - 100%)</div>
-                <span style={{ fontSize: '10.5px', color: 'rgba(255,255,255,0.45)', fontWeight: 600 }}>Drag sliders to score</span>
+                <div className="va-section-title">{isStudentUser ? 'TECHNIQUE SKILLS BREAKDOWN' : 'SKILL BREAKDOWN (0 - 100%)'}</div>
+                <span style={{ fontSize: '10.5px', color: 'rgba(255,255,255,0.45)', fontWeight: 600 }}>{isStudentUser ? 'Coach Evaluated' : 'Drag sliders to score'}</span>
               </div>
               
               {/* Take-off */}

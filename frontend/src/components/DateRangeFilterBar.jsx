@@ -74,7 +74,12 @@ export default function DateRangeFilterBar({
   };
 
   const handleReset = (e) => {
-    e.stopPropagation();
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    setCustomStart(todayIso);
+    setCustomEnd(todayIso);
     onChange({ startDate: todayIso, endDate: todayIso, preset: 'today' });
   };
 
@@ -102,6 +107,7 @@ export default function DateRangeFilterBar({
   });
 
   const isCustomActive = activePreset === 'custom';
+  const isNotToday = activePreset !== 'today' || (startDate && startDate !== todayIso) || (endDate && endDate !== todayIso);
 
   return (
     <div
@@ -173,30 +179,37 @@ export default function DateRangeFilterBar({
           flex-shrink: 0;
         }
 
-        @media (max-width: 640px) {
+        @media (max-width: 768px) {
           .date-range-filter-container {
             display: flex !important;
             flex-direction: column !important;
             align-items: stretch !important;
             width: 100% !important;
             height: auto !important;
+            min-height: auto !important;
             padding: 6px !important;
             gap: 6px !important;
-            overflow-x: hidden !important;
+            overflow: hidden !important;
+            box-sizing: border-box !important;
+            border-radius: 10px !important;
           }
           .drfb-presets-row {
             display: flex !important;
             width: 100% !important;
             gap: 4px !important;
+            box-sizing: border-box !important;
           }
           .drfb-presets-row > button {
             flex: 1 1 0 !important;
             min-width: 0 !important;
-            padding: 0 2px !important;
+            padding: 0 4px !important;
             font-size: 11px !important;
-            height: 32px !important;
+            height: 30px !important;
             justify-content: center !important;
             text-align: center !important;
+            white-space: nowrap !important;
+            box-sizing: border-box !important;
+            border-radius: 6px !important;
           }
           .drfb-divider {
             display: none !important;
@@ -210,27 +223,33 @@ export default function DateRangeFilterBar({
             justify-content: space-between !important;
             align-items: center !important;
             gap: 6px !important;
-            padding: 0 6px !important;
+            padding: 4px 8px !important;
             min-width: 0 !important;
             height: 34px !important;
+            border-radius: 8px !important;
+            box-sizing: border-box !important;
           }
           .drfb-date-group {
             display: flex !important;
             align-items: center !important;
-            gap: 3px !important;
+            gap: 4px !important;
             flex: 1 1 0 !important;
             min-width: 0 !important;
+            box-sizing: border-box !important;
           }
           .drfb-date-group span {
             font-size: 10.5px !important;
             font-weight: 700 !important;
+            flex-shrink: 0 !important;
           }
           .drfb-custom-box input[type="date"] {
             width: 100% !important;
             min-width: 0 !important;
-            font-size: 10.5px !important;
-            padding: 0 3px !important;
+            font-size: 11px !important;
+            padding: 0 4px !important;
             height: 24px !important;
+            border-radius: 4px !important;
+            box-sizing: border-box !important;
           }
         }
       `}</style>
@@ -359,40 +378,40 @@ export default function DateRangeFilterBar({
         {/* Reset button */}
         <button
           type="button"
-          onClick={isCustomActive ? handleReset : undefined}
-          disabled={!isCustomActive}
-          tabIndex={isCustomActive ? 0 : -1}
+          onClick={isNotToday ? handleReset : undefined}
+          disabled={!isNotToday}
+          tabIndex={isNotToday ? 0 : -1}
           style={{
-            background: '#F1F5F9',
-            border: '1px solid #CBD5E1',
+            background: isNotToday ? '#FEE2E2' : '#F1F5F9',
+            border: isNotToday ? '1px solid #FCA5A5' : '1px solid #CBD5E1',
             borderRadius: '6px',
             width: '20px',
             height: '20px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            cursor: isCustomActive ? 'pointer' : 'default',
-            color: '#64748B',
+            cursor: isNotToday ? 'pointer' : 'default',
+            color: isNotToday ? '#DC2626' : '#64748B',
             fontSize: '11px',
             fontWeight: 800,
             marginLeft: '2px',
             boxSizing: 'border-box',
             flexShrink: 0,
-            visibility: isCustomActive ? 'visible' : 'hidden',
-            opacity: isCustomActive ? 1 : 0,
+            visibility: isNotToday ? 'visible' : 'hidden',
+            opacity: isNotToday ? 1 : 0,
             transition: 'opacity 0.15s ease'
           }}
-          title={isCustomActive ? "Reset date filter back to Today" : ""}
+          title={isNotToday ? "Reset date filter back to Today" : ""}
           onMouseEnter={(e) => {
-            if (isCustomActive) {
-              e.currentTarget.style.background = '#FEE2E2';
-              e.currentTarget.style.color = '#EF4444';
+            if (isNotToday) {
+              e.currentTarget.style.background = '#EF4444';
+              e.currentTarget.style.color = '#FFFFFF';
             }
           }}
           onMouseLeave={(e) => {
-            if (isCustomActive) {
-              e.currentTarget.style.background = '#F1F5F9';
-              e.currentTarget.style.color = '#64748B';
+            if (isNotToday) {
+              e.currentTarget.style.background = '#FEE2E2';
+              e.currentTarget.style.color = '#DC2626';
             }
           }}
         >

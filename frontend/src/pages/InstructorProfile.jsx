@@ -455,6 +455,23 @@ const InstructorProfile = () => {
           return sSchool === coachSchool.toLowerCase();
         }
         return true;
+      }).map(s => {
+        let resolvedType = s.type || s.level;
+        if (!resolvedType || resolvedType.toLowerCase() === 'general') {
+          const st = allStudents.find(student => 
+            (s.student_id && String(student.id) === String(s.student_id)) ||
+            (s.student && (student.name || '').trim().toLowerCase() === (s.student || '').trim().toLowerCase())
+          );
+          if (st && st.level && st.level.toLowerCase() !== 'general') {
+            resolvedType = st.level;
+          } else {
+            resolvedType = 'Beginner';
+          }
+        }
+        return {
+          ...s,
+          type: resolvedType
+        };
       });
       setInstructorSessions(coachSessions);
 
@@ -468,40 +485,45 @@ const InstructorProfile = () => {
 
       // Check allStudents
       allStudents.forEach(s => {
-        const sSchool = (s.school || s.school_name || '').toLowerCase().trim();
-        if (isFreelance) {
-          const isFreelanceSt = sSchool === 'individual / freelance coach' || (!sSchool && String(s.created_by_user_id) === String(coachId));
-          if (!isFreelanceSt) return;
-        } else if (coachSchool) {
-          if (sSchool !== coachSchool.toLowerCase()) return;
-        }
-
         const sIdStr = s.id ? String(s.id) : '';
         const sNameLower = (s.name || '').toLowerCase().trim();
 
         const isDirect = matchesCoach(s, coachId, coachName);
         const isInSession = sIdStr ? sessionStudentIds.has(sIdStr) : (sNameLower && sessionStudentNames.has(sNameLower));
 
-        if (isDirect || isInSession) {
-          matchedStudents.push(s);
-          if (sIdStr) seenStudentIds.add(sIdStr);
-          if (sNameLower) seenStudentNames.add(sNameLower);
+        if (!isDirect && !isInSession) return;
+
+        const sSchool = (s.school || s.school_name || '').toLowerCase().trim();
+        if (isFreelance) {
+          const isFreelanceSt = sSchool === 'individual / freelance coach' || (!sSchool && String(s.created_by_user_id) === String(coachId));
+          if (!isFreelanceSt && !isInSession) return;
+        } else if (coachSchool) {
+          if (sSchool && sSchool !== coachSchool.toLowerCase() && !isInSession) return;
         }
+
+        matchedStudents.push(s);
+        if (sIdStr) seenStudentIds.add(sIdStr);
+        if (sNameLower) seenStudentNames.add(sNameLower);
       });
 
-      // Also ensure any student appearing in coachSessions is included even if not in allStudents
+      // Also ensure any student appearing in coachSessions is included even if not directly linked
       coachSessions.forEach(sess => {
         const sessName = sess.student || '';
         const sessIdStr = sess.student_id ? String(sess.student_id) : '';
         const sessNameLower = sessName.toLowerCase().trim();
 
         if (sessName && !seenStudentNames.has(sessNameLower) && (!sessIdStr || !seenStudentIds.has(sessIdStr))) {
+          // Always look up true student profile from allStudents to get their actual skill level
+          const realSt = allStudents.find(item => 
+            (sessIdStr && String(item.id) === sessIdStr) ||
+            ((item.name || '').toLowerCase().trim() === sessNameLower)
+          );
           matchedStudents.push({
-            id: sess.student_id || `sess_${sess.id}`,
-            name: sessName,
-            level: sess.type || 'Beginner',
+            id: sess.student_id || realSt?.id || `sess_${sess.id}`,
+            name: realSt?.name || sessName,
+            level: realSt?.level || sess.student_level || 'Beginner',
             last_active: sess.date || 'Today',
-            image: sess.image_url || ''
+            image: realSt?.image || sess.image_url || ''
           });
           if (sessIdStr) seenStudentIds.add(sessIdStr);
           seenStudentNames.add(sessNameLower);
@@ -512,6 +534,13 @@ const InstructorProfile = () => {
       const enrichedStudents = matchedStudents.map(st => {
         const sIdStr = st.id ? String(st.id) : '';
         const sNameLower = (st.name || '').toLowerCase().trim();
+
+        // Always resolve accurate student skill level from their real profile
+        const profileSt = allStudents.find(item =>
+          (sIdStr && String(item.id) === sIdStr) ||
+          ((item.name || '').toLowerCase().trim() === sNameLower)
+        );
+        const resolvedLevel = profileSt?.level || st.level || 'Beginner';
 
         const stSessions = coachSessions.filter(sess => {
           const matchId = sess.student_id && String(sess.student_id) === sIdStr;
@@ -533,6 +562,7 @@ const InstructorProfile = () => {
 
         return {
           ...st,
+          level: resolvedLevel,
           isActiveToday: Boolean(todaySession),
           todaySession: todaySession || null,
           latestSessionDate: latestSession?.date || st.last_active || st.start_date || 'Past Session',
@@ -624,6 +654,21 @@ const InstructorProfile = () => {
         setInstructor(data);
         if (data.email) setCoachEmail(data.email);
         if (Array.isArray(data.leaves)) setLeavesList(data.leaves);
+
+        // Auto sync logged-in coach user session if name was outdated
+        if (saved && (
+          (saved.email && data.email && saved.email.toLowerCase().trim() === data.email.toLowerCase().trim()) ||
+          Number(saved.instructor_id) === Number(data.id) ||
+          Number(saved.id) === Number(data.id)
+        )) {
+          if (data.name && saved.name !== data.name) {
+            const updated = { ...saved, name: data.name, instructor_name: data.name };
+            sessionStorage.setItem('user', JSON.stringify(updated));
+            localStorage.setItem('user', JSON.stringify(updated));
+            setCurrentUser(updated);
+            window.dispatchEvent(new Event('user_updated'));
+          }
+        }
         fetchLeaves(data.id || id);
         fetchDynamicData(data);
       } else {
@@ -1671,7 +1716,9 @@ const InstructorProfile = () => {
                           <div className="ip-activity-title">Session with {session.student}</div>
                           <div className="ip-activity-sub">{session.location} • {session.date} at {session.time}</div>
                         </div>
-                        <span className="ip-badge-primary">{session.type}</span>
+                        <span className="ip-badge-primary">
+                          {session.type && session.type.toLowerCase() !== 'general' ? session.type : 'Beginner'}
+                        </span>
                       </div>
                     ))
                   ) : (

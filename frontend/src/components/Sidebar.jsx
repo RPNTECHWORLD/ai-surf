@@ -39,29 +39,59 @@ const Sidebar = () => {
           }
           setUser(parsedUser);
 
-          // Real-time server sync for coach Head Coach status
-          if (parsedUser && (parsedUser.role === 'coach' || parsedUser.instructor_id || parsedUser.is_head_coach)) {
+          // Sanitization: If student/athlete user accidentally has is_head_coach=true, force reset to false immediately
+          if (parsedUser && (parsedUser.role === 'athlete' || parsedUser.role === 'student' || parsedUser.role === 'user')) {
+            if (parsedUser.is_head_coach) {
+              parsedUser.is_head_coach = false;
+              sessionStorage.setItem('user', JSON.stringify(parsedUser));
+              localStorage.setItem('user', JSON.stringify(parsedUser));
+            }
+          }
+
+          // Real-time server sync for coach name & Head Coach status (strictly for coaches)
+          if (parsedUser && (parsedUser.role === 'coach' || parsedUser.role === 'head_coach')) {
             const instId = parsedUser.instructor_id || parsedUser.id;
-            if (instId) {
-              fetch(`${API}/api/instructors/${instId}`)
-                .then(r => r.json())
-                .then(instData => {
-                  if (instData && typeof instData.is_head_coach === 'boolean') {
-                    const serverIsHeadCoach = Boolean(instData.is_head_coach);
+            const coachUrl = instId ? `${API}/api/instructors/${instId}` : `${API}/api/instructors`;
+            fetch(coachUrl)
+              .then(r => r.json())
+              .then(instData => {
+                let actualCoach = instData;
+                if (Array.isArray(instData)) {
+                  actualCoach = instData.find(i => 
+                    (instId && String(i.id) === String(instId)) ||
+                    (parsedUser.email && i.email && i.email.toLowerCase().trim() === parsedUser.email.toLowerCase().trim())
+                  );
+                }
+                if (actualCoach) {
+                  let userNeedsUpdate = false;
+                  const updated = { ...parsedUser };
+
+                  if (actualCoach.name && parsedUser.name !== actualCoach.name) {
+                    updated.name = actualCoach.name;
+                    updated.instructor_name = actualCoach.name;
+                    userNeedsUpdate = true;
+                  }
+
+                  if (typeof actualCoach.is_head_coach === 'boolean') {
+                    const serverIsHeadCoach = Boolean(actualCoach.is_head_coach);
                     if (Boolean(parsedUser.is_head_coach) !== serverIsHeadCoach) {
-                      const updated = { ...parsedUser, is_head_coach: serverIsHeadCoach };
+                      updated.is_head_coach = serverIsHeadCoach;
                       if (!serverIsHeadCoach && updated.role === 'head_coach') {
                         updated.role = 'coach';
                       }
-                      sessionStorage.setItem('user', JSON.stringify(updated));
-                      localStorage.setItem('user', JSON.stringify(updated));
-                      setUser(updated);
-                      window.dispatchEvent(new Event('user_updated'));
+                      userNeedsUpdate = true;
                     }
                   }
-                })
-                .catch(() => {});
-            }
+
+                  if (userNeedsUpdate) {
+                    sessionStorage.setItem('user', JSON.stringify(updated));
+                    localStorage.setItem('user', JSON.stringify(updated));
+                    setUser(updated);
+                    window.dispatchEvent(new Event('user_updated'));
+                  }
+                }
+              })
+              .catch(() => {});
           }
         } catch (e) {}
       }
@@ -135,7 +165,8 @@ const Sidebar = () => {
 
   const getNavItems = () => {
     const role = user?.role || 'admin';
-    const isHeadCoach = Boolean(user?.is_head_coach || role === 'head_coach');
+    const isStudent = role === 'athlete' || role === 'student' || role === 'user';
+    const isHeadCoach = !isStudent && (role === 'coach' || role === 'head_coach') && Boolean(user?.is_head_coach || role === 'head_coach');
     const items = [];
 
     if (role === 'admin' || role === 'guest_admin' || isHeadCoach) {
@@ -163,9 +194,10 @@ const Sidebar = () => {
 
     const sessionsLabel = (role === 'athlete' || role === 'student' || (role === 'coach' && !isHeadCoach) || role === 'user') ? 'My Sessions' : 'Sessions';
 
-    const isStudentRole = role === 'athlete' || role === 'student' || role === 'user';
-
     items.push({ label: sessionsLabel, path: '/sessions' });
+    if (isStudent) {
+      items.push({ label: 'My Achievements', path: '/achievements' });
+    }
     items.push({ label: 'Analytics', path: '/analytics' });
     items.push(
       { label: 'Competitions', path: '/competitions' },
@@ -238,7 +270,7 @@ const Sidebar = () => {
               </div>
             )}
             <div style={{ fontSize: '11.5px', color: '#64748B', fontWeight: 600, textTransform: 'capitalize', marginTop: '2px' }}>
-              {user?.name || 'User'} • {user ? (user.role === 'admin' ? 'School Admin' : (user.is_head_coach ? 'Head Coach 👑' : (user.role === 'guest_admin' ? (user.guest_role === 'view_admin' ? 'View Admin 👁️' : 'Main Admin ⚡') : (user.role === 'athlete' ? 'Student' : (user.role === 'coach' ? 'Coach' : user.role))))) : 'Student'}
+              {user?.name || 'User'} • {user ? (user.role === 'admin' ? 'School Admin' : (user.role === 'athlete' || user.role === 'student' ? 'Student' : (user.role === 'guest_admin' ? (user.guest_role === 'view_admin' ? 'View Admin 👁️' : 'Main Admin ⚡') : ((user.is_head_coach || user.role === 'head_coach') ? 'Head Coach 👑' : (user.role === 'coach' ? 'Coach' : user.role))))) : 'Student'}
             </div>
           </div>
           {navItems.map((item) => {

@@ -396,17 +396,21 @@ const Sessions = () => {
     if (!isStudent) return null;
     const userEmail = (currentUser?.email || '').toLowerCase().trim();
     const userName = (currentUser?.name || currentUser?.student_name || currentUser?.username || '').toLowerCase().trim();
-    const userStudentId = currentUser?.student_id || currentUser?.id;
 
     if (allStudentsList && allStudentsList.length > 0) {
       const match = allStudentsList.find(st => {
-        // Match by student_id first (most authoritative)
+        // 1. Match by explicit student_id if present on currentUser
         if (currentUser?.student_id && (st.id === parseInt(currentUser.student_id) || String(st.id) === String(currentUser.student_id))) return true;
-        // Match by email (unique per account)
+        // 2. Match by unique email
         if (userEmail && (st.email || '').toLowerCase().trim() === userEmail) return true;
-        // Match by user_id link
-        if (userStudentId && (st.id === parseInt(userStudentId) || st.user_id === parseInt(userStudentId))) return true;
-        // NOTE: Do NOT match by name alone — same name can belong to different students with different emails
+        // 3. Match by user_id link (st.user_id is the foreign key to users.id — NEVER match st.id against users.id!)
+        if (currentUser?.id && (st.user_id === parseInt(currentUser.id) || String(st.user_id) === String(currentUser.id))) return true;
+        // 4. Match by exact full name ONLY if email matches or student record has no email
+        if (userName && (st.name || '').toLowerCase().trim() === userName) {
+          if (!st.email || !userEmail || st.email.toLowerCase().trim() === userEmail) {
+            return true;
+          }
+        }
         return false;
       });
       if (match) return match;
@@ -427,21 +431,17 @@ const Sessions = () => {
   const studentCandidateNames = useMemo(() => {
     const names = new Set();
     if (currentUser?.name) names.add(currentUser.name.toLowerCase().trim());
-    if (currentUser?.username) names.add(currentUser.username.toLowerCase().trim());
     if (currentUser?.student_name) names.add(currentUser.student_name.toLowerCase().trim());
-    if (currentUser?.email) {
-      const prefix = currentUser.email.split('@')[0].toLowerCase().trim();
-      if (prefix) names.add(prefix);
-    }
+    if (currentUser?.username) names.add(currentUser.username.toLowerCase().trim());
     if (loggedInStudent?.name) names.add(loggedInStudent.name.toLowerCase().trim());
     return Array.from(names).filter(Boolean);
   }, [currentUser, loggedInStudent]);
 
   const studentCandidateIds = useMemo(() => {
     const ids = new Set();
+    // ONLY include genuine student IDs (from students table), NEVER users.id!
     if (currentUser?.student_id) ids.add(String(currentUser.student_id));
     if (loggedInStudent?.id) ids.add(String(loggedInStudent.id));
-    if (currentUser?.id) ids.add(String(currentUser.id));
     return Array.from(ids).filter(Boolean);
   }, [currentUser, loggedInStudent]);
 
@@ -954,6 +954,10 @@ const Sessions = () => {
   };
 
   const handleSaveGroupVideo = async () => {
+    if (isViewAdmin) {
+      showToast('Video upload is restricted for View Admin', 'warning');
+      return;
+    }
     if (!selectedGroupForVideo) return;
     setIsSavingGroupVideo(true);
     setGroupVideoUploadProgress(1);
@@ -1267,6 +1271,10 @@ const Sessions = () => {
   }, [searchParams, sessions]);
 
   const handleHubVideoUpload = async (files) => {
+    if (isViewAdmin) {
+      showToast('Video upload is restricted for View Admin', 'warning');
+      return;
+    }
     if (!files || files.length === 0) return;
     const fileList = Array.from(files);
     setHubIsUploadingVideo(true);
@@ -1385,6 +1393,10 @@ const Sessions = () => {
   };
 
   const handleDeleteHubVideo = (vidId) => {
+    if (isViewAdmin) {
+      showToast('Deleting videos is restricted for View Admin', 'warning');
+      return;
+    }
     const remaining = hubVideos.filter(v => v.id !== vidId);
     setHubVideos(remaining);
     if (hubActiveVideoId === vidId) {
@@ -1395,6 +1407,10 @@ const Sessions = () => {
   };
 
   const handleHubImageUpload = async (files) => {
+    if (isViewAdmin) {
+      showToast('Photo upload is restricted for View Admin', 'warning');
+      return;
+    }
     if (!files || files.length === 0) return;
     const fileList = Array.from(files);
     setHubIsUploadingImage(true);
@@ -1446,6 +1462,10 @@ const Sessions = () => {
   };
 
   const handleDeleteHubImage = (imgId) => {
+    if (isViewAdmin) {
+      showToast('Deleting photos is restricted for View Admin', 'warning');
+      return;
+    }
     const remaining = hubImages.filter(img => img.id !== imgId);
     setHubImages(remaining);
     if (hubActiveImageId === imgId) {
@@ -1872,6 +1892,10 @@ const Sessions = () => {
   }, [selectedDayDetailsModal, sessions]);
 
   const handleToggleAttendance = async (sess, targetStatus) => {
+    if (isViewAdmin) {
+      showToast('Attendance modification is not allowed for View Admin', 'warning');
+      return;
+    }
     const sessionId = sess.id;
     if (!sessionId) {
       showToast('Session ID not found', 'error');
@@ -1918,6 +1942,10 @@ const Sessions = () => {
   };
 
   const handleMarkGroupAllPresent = async (sessionsInGroup) => {
+    if (isViewAdmin) {
+      showToast('Attendance modification is not allowed for View Admin', 'warning');
+      return;
+    }
     if (!sessionsInGroup || sessionsInGroup.length === 0) {
       showToast('No sessions found in group', 'info');
       return;
@@ -2158,37 +2186,37 @@ const Sessions = () => {
 
     // Student Role: Strictly isolate to ONLY sessions belonging to this specific student
     if (isStudent) {
-      const userEmail = (currentUser?.email || '').toLowerCase().trim();
-      return sessions.filter(s => {
-        // 1. Session has a student_id — ONLY allow if it matches this student's IDs.
-        //    Never fall through to name-match for ID'd sessions (prevents same-name cross-contamination).
-        const sid = s.student_id ? String(s.student_id) : '';
-        if (sid) {
-          return studentCandidateIds.includes(sid);
-        }
+      const myNames = new Set(studentCandidateNames);
+      const validStudentIds = new Set(studentCandidateIds);
 
-        // 2. Legacy session with NO student_id — allow name match only.
-        //    (These are old records without a student_id column value.)
+      return sessions.filter(s => {
+        const sid = s.student_id ? String(s.student_id) : '';
         const sStudent = (s.student || '').toLowerCase().trim();
         const sStudentName = (s.student_name || '').toLowerCase().trim();
         const sGuest = (s.guest_name || '').toLowerCase().trim();
 
-        // If we have a resolved loggedInStudent matched by email/ID, use their name exclusively
-        const strictName = (loggedInStudent?.name || '').toLowerCase().trim();
-        if (strictName) {
-          return (
-            (sStudent && sStudent === strictName) ||
-            (sStudentName && sStudentName === strictName) ||
-            (sGuest && sGuest === strictName)
-          );
+        // 1. If we have verified student IDs for this logged-in student:
+        if (validStudentIds.size > 0 && sid) {
+          if (!validStudentIds.has(sid)) return false;
+          // ID matched — also verify that the session name doesn't belong to a totally different student
+          if (myNames.size > 0 && (sStudent || sStudentName || sGuest)) {
+            return (
+              (sStudent && myNames.has(sStudent)) ||
+              (sStudentName && myNames.has(sStudentName)) ||
+              (sGuest && myNames.has(sGuest))
+            );
+          }
+          return true;
         }
 
-        // No resolved student — use candidate names but require exact match (no partial/includes)
-        for (const cName of studentCandidateNames) {
-          if (!cName) continue;
-          if (sStudent && sStudent === cName) return true;
-          if (sStudentName && sStudentName === cName) return true;
-          if (sGuest && sGuest === cName) return true;
+        // 2. If student ID is not yet assigned or session has no student_id:
+        // Strictly match by the logged-in student's real names
+        if (myNames.size > 0) {
+          return (
+            (sStudent && myNames.has(sStudent)) ||
+            (sStudentName && myNames.has(sStudentName)) ||
+            (sGuest && myNames.has(sGuest))
+          );
         }
 
         return false;
@@ -2581,15 +2609,23 @@ const Sessions = () => {
     return Array.from(names).sort();
   }, [roleScopedSessions]);
 
+  const todayISO = getTodayYYYYMMDD();
   const hasActiveFilters =
-    Boolean(dateFilter && dateFilter !== getTodayYYYYMMDD()) ||
+    Boolean(dateFilter && dateFilter !== todayISO) ||
+    Boolean(dateRange && (dateRange.preset !== 'today' || dateRange.startDate !== todayISO || dateRange.endDate !== todayISO)) ||
     slotFilter !== 'All' ||
     instructorFilter !== 'All' ||
     statusFilter !== 'All' ||
     searchQuery.trim() !== '';
 
   const resetFilters = () => {
-    setDateFilter(getTodayYYYYMMDD());
+    const today = getTodayYYYYMMDD();
+    setDateFilter(today);
+    setDateRange({
+      startDate: today,
+      endDate: today,
+      preset: 'today'
+    });
     setSlotFilter('All');
     setInstructorFilter('All');
     setStatusFilter('All');
@@ -2671,14 +2707,50 @@ const Sessions = () => {
     );
   };
 
+  // Calculate accurate user-facing session count & details from selected IDs (1 group row = 1 session)
+  const selectedSessionInfo = useMemo(() => {
+    if (selectedSessionIds.length === 0) {
+      return { rowCount: 0, studentSessionCount: 0, description: '', isSingleGroup: false, singleGroupName: '' };
+    }
+    const selSet = new Set(selectedSessionIds);
+    // Identify groups from current groupedData where sessions are selected
+    const selectedGroups = (groupedData?.groups || []).filter(g =>
+      g.sessions && g.sessions.some(s => selSet.has(s.id))
+    );
+    // Identify ungrouped individual sessions that are selected
+    const selectedUngrouped = (groupedData?.ungrouped || []).filter(s =>
+      selSet.has(s.id)
+    );
+
+    const rowCount = selectedGroups.length + selectedUngrouped.length;
+    const studentSessionCount = selectedSessionIds.length;
+    const isSingleGroup = selectedGroups.length === 1 && selectedUngrouped.length === 0;
+    const singleGroupName = isSingleGroup ? (selectedGroups[0]?.groupName || 'Group') : '';
+
+    return {
+      rowCount: rowCount || 1,
+      studentSessionCount,
+      isSingleGroup,
+      singleGroupName
+    };
+  }, [selectedSessionIds, groupedData]);
+
+  const selectedSessionCount = selectedSessionInfo.rowCount;
+
   const handleBulkDelete = () => {
     if (selectedSessionIds.length === 0) return;
-    const count = selectedSessionIds.length;
+    const sessionCount = selectedSessionInfo.rowCount || 1;
+    const studentCount = selectedSessionInfo.studentSessionCount;
+    const isSingle = selectedSessionInfo.isSingleGroup;
+    const groupName = selectedSessionInfo.singleGroupName || 'Group';
+
     setConfirmModal({
       isOpen: true,
-      title: 'Delete Selected Sessions',
-      message: `Are you sure you want to delete ${count} selected session${count > 1 ? 's' : ''}?`,
-      confirmText: `Delete (${count})`,
+      title: isSingle ? `Delete ${groupName}` : 'Delete Selected Sessions',
+      message: isSingle
+        ? `Are you sure you want to delete ${groupName} (${studentCount} student session${studentCount > 1 ? 's' : ''})?`
+        : `Are you sure you want to delete ${sessionCount === 1 ? '1 selected session' : `${sessionCount} selected sessions`} (${studentCount} student records)?`,
+      confirmText: isSingle ? `Delete ${groupName}` : `Delete (${sessionCount})`,
       cancelText: 'Cancel',
       isDanger: true,
       onConfirm: async () => {
@@ -2690,7 +2762,12 @@ const Sessions = () => {
           const toDelete = new Set(selectedSessionIds);
           setSessions(prev => prev.filter(s => !toDelete.has(s.id)));
           setSelectedSessionIds([]);
-          showToast(`${count} sessions deleted successfully`, 'success');
+          showToast(
+            isSingle
+              ? `Deleted ${groupName} (${studentCount} student session${studentCount > 1 ? 's' : ''})`
+              : (sessionCount === 1 ? '1 session deleted successfully' : `${sessionCount} sessions deleted successfully`),
+            'success'
+          );
         } catch (err) {
           console.error('Bulk delete error:', err);
           showToast('Failed to delete selected sessions: ' + err.message, 'error');
@@ -2701,6 +2778,7 @@ const Sessions = () => {
 
   const handleBulkStatusChange = async (newStatus) => {
     if (selectedSessionIds.length === 0) return;
+    const sessionCount = selectedSessionCount || 1;
     try {
       await Promise.all(
         selectedSessionIds.map(id =>
@@ -2715,7 +2793,12 @@ const Sessions = () => {
       setSessions(prev =>
         prev.map(s => (targetIds.has(s.id) ? { ...s, status: newStatus } : s))
       );
-      showToast(`Updated ${selectedSessionIds.length} session(s) to ${newStatus}`, 'success');
+      showToast(
+        sessionCount === 1
+          ? `Updated 1 session to ${newStatus}`
+          : `Updated ${sessionCount} sessions to ${newStatus}`,
+        'success'
+      );
       setSelectedSessionIds([]);
     } catch (err) {
       console.error('Bulk status update error:', err);
@@ -3019,7 +3102,15 @@ const Sessions = () => {
               <select
                 className="ses-select"
                 value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setStatusFilter(val);
+                  if (val === 'Pending for Review') {
+                    setDateRange({ startDate: '', endDate: '', preset: 'all' });
+                    setDateFilter('');
+                    setSlotFilter('All');
+                  }
+                }}
                 style={{
                   fontWeight: statusFilter !== 'All' ? 700 : 500,
                   color: statusFilter !== 'All' ? '#0284C7' : '#0F172A',
@@ -3140,7 +3231,9 @@ const Sessions = () => {
           <div className="ses-bulk-bar">
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               <span className="ses-bulk-count-badge">
-                ✓ {selectedSessionIds.length} Selected
+                ✓ {selectedSessionInfo.isSingleGroup
+                  ? `1 Group Selected (${selectedSessionInfo.singleGroupName} • ${selectedSessionInfo.studentSessionCount} Students)`
+                  : `${selectedSessionInfo.rowCount} ${selectedSessionInfo.rowCount === 1 ? 'Session' : 'Sessions'} Selected (${selectedSessionInfo.studentSessionCount} Students)`}
               </span>
               <button
                 type="button"
@@ -3169,7 +3262,7 @@ const Sessions = () => {
                   <polyline points="3 6 5 6 21 6"></polyline>
                   <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
                 </svg>
-                Delete Selected ({selectedSessionIds.length})
+                Delete Selected ({selectedSessionInfo.isSingleGroup ? selectedSessionInfo.singleGroupName : selectedSessionInfo.rowCount})
               </button>
             </div>
           </div>
@@ -3199,9 +3292,21 @@ const Sessions = () => {
 
           <div
             className={`ses-status-metric-card pending-review-card ${statusFilter === 'Pending for Review' ? 'active-filter' : ''}`}
-            onClick={() => setStatusFilter(prev => prev === 'Pending for Review' ? 'All' : 'Pending for Review')}
+            onClick={() => {
+              if (statusFilter === 'Pending for Review') {
+                setStatusFilter('All');
+                const today = getTodayYYYYMMDD();
+                setDateFilter(today);
+                setDateRange({ startDate: today, endDate: today, preset: 'today' });
+              } else {
+                setStatusFilter('Pending for Review');
+                setDateRange({ startDate: '', endDate: '', preset: 'all' });
+                setDateFilter('');
+                setSlotFilter('All');
+              }
+            }}
             style={{ cursor: 'pointer' }}
-            title="Click to filter by Pending for Review sessions (Assigned sessions whose scheduled time has finished)"
+            title="Click to filter by Pending for Review sessions (Automatically switches date filter to All)"
           >
             <div className="ses-smc-label">PENDING FOR REVIEW</div>
             <div className="ses-smc-value">{loading ? '…' : pendingReviewCount}</div>
@@ -3297,7 +3402,18 @@ const Sessions = () => {
                   {/* 1. PARENT GROUP ROWS (Collapsible) */}
                   {groupedData.groups.map((groupObj) => {
                     const isExpanded = Boolean(expandedGroups[groupObj.key]);
-                    const studentNames = groupObj.sessions.map(s => s.student).filter(Boolean);
+                    const studentNames = Array.from(new Set(
+                      groupObj.sessions.map((s, idx) => {
+                        let guestOcc = 0;
+                        for (let j = 0; j < idx; j++) {
+                          if (groupObj.sessions[j].is_guest || (groupObj.sessions[j].guest_name && groupObj.sessions[j].guest_name.trim())) {
+                            guestOcc++;
+                          }
+                        }
+                        const resInfo = resolveStudentAndGuestDisplay(s, allStudentsList, guestOcc);
+                        return resInfo?.displayName || (s.guest_name && s.guest_name.trim()) || s.student;
+                      }).filter(Boolean)
+                    ));
                     const groupIds = groupObj.sessions.map(s => s.id);
                     const allInGroupSelected = groupIds.length > 0 && groupIds.every(id => selectedSessionIds.includes(id));
 
@@ -3676,40 +3792,42 @@ const Sessions = () => {
                                       <span>Video ({clipCount})</span>
                                     </button>
                                   ) : (
-                                    <button
-                                      type="button"
-                                      className="ses-btn-student-video no-video"
-                                      title={`Upload personal video for ${session.student} (Private to this student)`}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        openSessionHub({
-                                          isGroup: false,
-                                          id: session.id,
-                                          groupName: groupObj.groupName,
-                                          date: session.date,
-                                          time: session.time,
-                                          duration_mins: session.duration_mins,
-                                          location: session.location,
-                                          condition: session.condition,
-                                          type: session.type,
-                                          status: session.status,
-                                          student: session.student,
-                                          student_id: session.student_id,
-                                          instructor: session.instructor,
-                                          instructor_id: session.instructor_id,
-                                          sessions: [session],
-                                          video_url: session.video_url || '',
-                                          video_urls: session.video_urls || session.video_url || '',
-                                          image_url: session.image_url || '',
-                                          notes: session.notes || '',
-                                        }, 'video');
-                                      }}
-                                    >
-                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                                        <path d="M12 5v14M5 12h14" />
-                                      </svg>
-                                      <span>+ Video</span>
-                                    </button>
+                                    !isViewAdmin && (
+                                      <button
+                                        type="button"
+                                        className="ses-btn-student-video no-video"
+                                        title={`Upload personal video for ${session.student} (Private to this student)`}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          openSessionHub({
+                                            isGroup: false,
+                                            id: session.id,
+                                            groupName: groupObj.groupName,
+                                            date: session.date,
+                                            time: session.time,
+                                            duration_mins: session.duration_mins,
+                                            location: session.location,
+                                            condition: session.condition,
+                                            type: session.type,
+                                            status: session.status,
+                                            student: session.student,
+                                            student_id: session.student_id,
+                                            instructor: session.instructor,
+                                            instructor_id: session.instructor_id,
+                                            sessions: [session],
+                                            video_url: session.video_url || '',
+                                            video_urls: session.video_urls || session.video_url || '',
+                                            image_url: session.image_url || '',
+                                            notes: session.notes || '',
+                                          }, 'video');
+                                        }}
+                                      >
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                          <path d="M12 5v14M5 12h14" />
+                                        </svg>
+                                        <span>+ Video</span>
+                                      </button>
+                                    )
                                   )}
 
                                   {/* Individual Analysis Button */}
@@ -3917,40 +4035,42 @@ const Sessions = () => {
                                 <span>Video</span>
                               </button>
                             ) : (
-                              <button
-                                type="button"
-                                className="ses-btn-student-video no-video"
-                                title={`Upload personal video for ${session.student}`}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openSessionHub({
-                                    isGroup: false,
-                                    id: session.id,
-                                    groupName: session.group_name || '',
-                                    date: session.date,
-                                    time: session.time,
-                                    duration_mins: session.duration_mins,
-                                    location: session.location,
-                                    condition: session.condition,
-                                    type: session.type,
-                                    status: session.status,
-                                    student: session.student,
-                                    student_id: session.student_id,
-                                    instructor: session.instructor,
-                                    instructor_id: session.instructor_id,
-                                    sessions: [session],
-                                    video_url: session.video_url || '',
-                                    video_urls: session.video_urls || session.video_url || '',
-                                    image_url: session.image_url || '',
-                                    notes: session.notes || '',
-                                  }, 'video');
-                                }}
-                              >
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                                  <path d="M12 5v14M5 12h14" />
-                                </svg>
-                                <span>+ Video</span>
-                              </button>
+                              !isViewAdmin && (
+                                <button
+                                  type="button"
+                                  className="ses-btn-student-video no-video"
+                                  title={`Upload personal video for ${session.student}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openSessionHub({
+                                      isGroup: false,
+                                      id: session.id,
+                                      groupName: session.group_name || '',
+                                      date: session.date,
+                                      time: session.time,
+                                      duration_mins: session.duration_mins,
+                                      location: session.location,
+                                      condition: session.condition,
+                                      type: session.type,
+                                      status: session.status,
+                                      student: session.student,
+                                      student_id: session.student_id,
+                                      instructor: session.instructor,
+                                      instructor_id: session.instructor_id,
+                                      sessions: [session],
+                                      video_url: session.video_url || '',
+                                      video_urls: session.video_urls || session.video_url || '',
+                                      image_url: session.image_url || '',
+                                      notes: session.notes || '',
+                                    }, 'video');
+                                  }}
+                                >
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                    <path d="M12 5v14M5 12h14" />
+                                  </svg>
+                                  <span>+ Video</span>
+                                </button>
+                              )
                             )}
                             <button
                               className={`ses-btn-view-analysis ${hasMedia ? 'ses-btn-analysis-active' : 'ses-btn-analysis-muted'}`}
@@ -4338,37 +4458,39 @@ const Sessions = () => {
                                             Video Attached
                                           </button>
                                         ) : (
-                                          <button
-                                            type="button"
-                                            className="ses-btn-student-video no-video"
-                                            style={{ padding: '4px 10px', fontSize: '11px', flexShrink: 0, whiteSpace: 'nowrap' }}
-                                            title={`Upload private video specifically for ${s.student}`}
-                                            onClick={() => {
-                                              openSessionHub({
-                                                isGroup: false,
-                                                id: s.id,
-                                                groupName: selectedHubSession.groupName,
-                                                date: s.date || selectedHubSession.date,
-                                                time: s.time || selectedHubSession.time,
-                                                duration_mins: s.duration_mins || selectedHubSession.duration_mins,
-                                                location: s.location || selectedHubSession.location,
-                                                condition: s.condition || selectedHubSession.condition,
-                                                type: s.type || selectedHubSession.type,
-                                                status: s.status || selectedHubSession.status,
-                                                student: s.student,
-                                                student_id: s.student_id,
-                                                instructor: s.instructor || selectedHubSession.instructor,
-                                                instructor_id: s.instructor_id || selectedHubSession.instructor_id,
-                                                sessions: [s],
-                                                video_url: s.video_url || '',
-                                                image_url: s.image_url || '',
-                                                notes: s.notes || '',
-                                              }, 'video');
-                                            }}
-                                          >
-                                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 5v14M5 12h14" /></svg>
-                                            + Video
-                                          </button>
+                                          !isViewAdmin && (
+                                            <button
+                                              type="button"
+                                              className="ses-btn-student-video no-video"
+                                              style={{ padding: '4px 10px', fontSize: '11px', flexShrink: 0, whiteSpace: 'nowrap' }}
+                                              title={`Upload private video specifically for ${s.student}`}
+                                              onClick={() => {
+                                                openSessionHub({
+                                                  isGroup: false,
+                                                  id: s.id,
+                                                  groupName: selectedHubSession.groupName,
+                                                  date: s.date || selectedHubSession.date,
+                                                  time: s.time || selectedHubSession.time,
+                                                  duration_mins: s.duration_mins || selectedHubSession.duration_mins,
+                                                  location: s.location || selectedHubSession.location,
+                                                  condition: s.condition || selectedHubSession.condition,
+                                                  type: s.type || selectedHubSession.type,
+                                                  status: s.status || selectedHubSession.status,
+                                                  student: s.student,
+                                                  student_id: s.student_id,
+                                                  instructor: s.instructor || selectedHubSession.instructor,
+                                                  instructor_id: s.instructor_id || selectedHubSession.instructor_id,
+                                                  sessions: [s],
+                                                  video_url: s.video_url || '',
+                                                  image_url: s.image_url || '',
+                                                  notes: s.notes || '',
+                                                }, 'video');
+                                              }}
+                                            >
+                                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M12 5v14M5 12h14" /></svg>
+                                              + Video
+                                            </button>
+                                          )
                                         )
                                       )}
                                       <button
@@ -4500,17 +4622,19 @@ const Sessions = () => {
                                   <span style={{ fontSize: '11px', fontWeight: 700, color: isCurrent ? '#0D9488' : '#64748B', background: isCurrent ? '#CCFBF1' : '#F1F5F9', padding: '1px 6px', borderRadius: '4px' }}>
                                     Clip {idx + 1}
                                   </span>
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleDeleteHubVideo(vid.id);
-                                    }}
-                                    style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: '13px', padding: '2px' }}
-                                    title="Delete this clip"
-                                  >
-                                    ✕
-                                  </button>
+                                  {!isViewAdmin && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDeleteHubVideo(vid.id);
+                                      }}
+                                      style={{ background: 'none', border: 'none', color: '#EF4444', cursor: 'pointer', fontSize: '13px', padding: '2px' }}
+                                      title="Delete this clip"
+                                    >
+                                      ✕
+                                    </button>
+                                  )}
                                 </div>
 
                                 <div style={{ fontWeight: 600, fontSize: '13px', color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -4536,7 +4660,18 @@ const Sessions = () => {
                                     }}
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      const hubStudents = (selectedHubSession.sessions || []).map(s => s.student).filter(Boolean);
+                                      const hubStudents = Array.from(new Set(
+                                        (selectedHubSession.sessions || []).map((s, idx) => {
+                                          let guestOcc = 0;
+                                          for (let j = 0; j < idx; j++) {
+                                            if (selectedHubSession.sessions[j].is_guest || (selectedHubSession.sessions[j].guest_name && selectedHubSession.sessions[j].guest_name.trim())) {
+                                              guestOcc++;
+                                            }
+                                          }
+                                          const resInfo = resolveStudentAndGuestDisplay(s, allStudentsList, guestOcc);
+                                          return resInfo?.displayName || (s.guest_name && s.guest_name.trim()) || s.student;
+                                        }).filter(Boolean)
+                                      ));
                                       if (hubStudents.length === 0 && selectedHubSession.student) hubStudents.push(selectedHubSession.student);
                                       const allHubUrls = hubVideos.map(v => v.url).filter(Boolean);
                                       const activeFirst = [vid.url, ...allHubUrls.filter(u => u !== vid.url)];
@@ -4552,29 +4687,31 @@ const Sessions = () => {
                           })}
 
                           {/* Quick Add More Card in Row */}
-                          <div
-                            onClick={() => hubVideoFileRef.current?.click()}
-                            style={{
-                              minWidth: '130px',
-                              padding: '10px 12px',
-                              borderRadius: '10px',
-                              border: '1.5px dashed #0D9488',
-                              background: '#F0FDFA',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: '6px',
-                              flexShrink: 0,
-                              color: '#0D9488',
-                              fontSize: '12px',
-                              fontWeight: 700
-                            }}
-                          >
-                            <span style={{ fontSize: '20px', lineHeight: 1 }}>+</span>
-                            <span>Add Video</span>
-                          </div>
+                          {!isViewAdmin && (
+                            <div
+                              onClick={() => hubVideoFileRef.current?.click()}
+                              style={{
+                                minWidth: '130px',
+                                padding: '10px 12px',
+                                borderRadius: '10px',
+                                border: '1.5px dashed #0D9488',
+                                background: '#F0FDFA',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '6px',
+                                flexShrink: 0,
+                                color: '#0D9488',
+                                fontSize: '12px',
+                                fontWeight: 700
+                              }}
+                            >
+                              <span style={{ fontSize: '20px', lineHeight: 1 }}>+</span>
+                              <span>Add Video</span>
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}
@@ -4583,6 +4720,40 @@ const Sessions = () => {
                     {(() => {
                       const activeVideo = hubVideos.find(v => v.id === hubActiveVideoId) || hubVideos[0];
                       if (!activeVideo) {
+                        if (isViewAdmin) {
+                          return (
+                            <div style={{
+                              border: '1.5px dashed #CBD5E1',
+                              borderRadius: '16px',
+                              padding: '40px 20px',
+                              textAlign: 'center',
+                              background: '#F8FAFC'
+                            }}>
+                              <div style={{
+                                width: '58px',
+                                height: '58px',
+                                borderRadius: '50%',
+                                background: '#E2E8F0',
+                                color: '#64748B',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                margin: '0 auto 14px'
+                              }}>
+                                <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                  <path d="M23 7l-7 5 7 5V7z" />
+                                  <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+                                </svg>
+                              </div>
+                              <div style={{ fontSize: '16px', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>
+                                No Video Footage Uploaded Yet
+                              </div>
+                              <p style={{ margin: 0, fontSize: '13px', color: '#64748B' }}>
+                                Video recordings uploaded by coaches will appear here.
+                              </p>
+                            </div>
+                          );
+                        }
                         return (
                           /* Clean Dropzone when NO videos uploaded */
                           <div>
@@ -4656,7 +4827,7 @@ const Sessions = () => {
                                 ▶ Playing: {activeVideo.title}
                               </span>
                             </div>
-                            {!isStudent && (
+                            {!isStudent && !isViewAdmin && (
                               <div style={{ display: 'flex', gap: '8px' }}>
                                 <button
                                   type="button"
@@ -4697,7 +4868,18 @@ const Sessions = () => {
                               className="ses-btn-primary"
                               style={{ padding: '9px 18px', fontSize: '13px' }}
                               onClick={() => {
-                                const hubStudents = (selectedHubSession.sessions || []).map(s => s.student).filter(Boolean);
+                                const hubStudents = Array.from(new Set(
+                                  (selectedHubSession.sessions || []).map((s, idx) => {
+                                    let guestOcc = 0;
+                                    for (let j = 0; j < idx; j++) {
+                                      if (selectedHubSession.sessions[j].is_guest || (selectedHubSession.sessions[j].guest_name && selectedHubSession.sessions[j].guest_name.trim())) {
+                                        guestOcc++;
+                                      }
+                                    }
+                                    const resInfo = resolveStudentAndGuestDisplay(s, allStudentsList, guestOcc);
+                                    return resInfo?.displayName || (s.guest_name && s.guest_name.trim()) || s.student;
+                                  }).filter(Boolean)
+                                ));
                                 if (hubStudents.length === 0 && selectedHubSession.student) hubStudents.push(selectedHubSession.student);
                                 const allHubUrls = hubVideos.map(v => v.url).filter(Boolean);
                                 const activeFirst = [activeVideo.url, ...allHubUrls.filter(u => u !== activeVideo.url)];
@@ -4742,7 +4924,7 @@ const Sessions = () => {
                               • Click photo to view fullscreen
                             </span>
                           </div>
-                          {!isStudent && (
+                          {!isStudent && !isViewAdmin && (
                             <div style={{ display: 'flex', gap: '8px' }}>
                               <button
                                 type="button"
@@ -4859,7 +5041,7 @@ const Sessions = () => {
                                         }}
                                       >
                                         <img src={img.url} alt={img.title} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                        {!isStudent && (
+                                        {!isStudent && !isViewAdmin && (
                                           <button
                                             type="button"
                                             onClick={(e) => {
@@ -4894,7 +5076,7 @@ const Sessions = () => {
                                   })}
 
                                   {/* Quick Add Thumbnail Card */}
-                                  {!isStudent && (
+                                  {!isStudent && !isViewAdmin && (
                                     <div
                                       style={{
                                         width: '76px',
@@ -4927,54 +5109,88 @@ const Sessions = () => {
                         })()}
                       </div>
                     ) : (
-                      /* Clean Dropzone for Uploading Multiple Images */
-                      <div>
-                        <div
-                          style={{
-                            border: '2px dashed #0284C7',
-                            borderRadius: '16px',
-                            padding: '36px 20px',
-                            textAlign: 'center',
-                            background: '#F0F9FF',
-                            cursor: 'pointer',
-                            transition: 'all 0.2s ease',
-                            boxShadow: '0 2px 6px rgba(2, 132, 199, 0.05)'
-                          }}
-                          onClick={() => hubImageFileRef.current?.click()}
-                        >
-                          <div
-                            style={{
-                              width: '56px',
-                              height: '56px',
-                              borderRadius: '50%',
-                              background: '#0284C718',
-                              color: '#0284C7',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              margin: '0 auto 14px'
-                            }}
-                          >
+                      isViewAdmin ? (
+                        <div style={{
+                          border: '1.5px dashed #CBD5E1',
+                          borderRadius: '16px',
+                          padding: '36px 20px',
+                          textAlign: 'center',
+                          background: '#F8FAFC'
+                        }}>
+                          <div style={{
+                            width: '56px',
+                            height: '56px',
+                            borderRadius: '50%',
+                            background: '#E2E8F0',
+                            color: '#64748B',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            margin: '0 auto 14px'
+                          }}>
                             <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                               <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
                               <circle cx="8.5" cy="8.5" r="1.5" />
                               <polyline points="21 15 16 10 5 21" />
                             </svg>
                           </div>
-
-                          <div style={{ fontSize: '17px', fontWeight: 700, color: '#0F172A', marginBottom: '6px', fontFamily: 'Outfit, sans-serif' }}>
-                            {hubIsUploadingImage ? 'Uploading Photos…' : 'Click to Upload Multiple Session Photos'}
+                          <div style={{ fontSize: '16px', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>
+                            No Session Photos Uploaded Yet
                           </div>
                           <p style={{ margin: 0, fontSize: '13px', color: '#64748B' }}>
-                            {hubIsUploadingImage ? 'Processing photo files...' : 'Select multiple JPG, PNG, WebP photos taken during the session'}
+                            Photos taken during the session will appear here once uploaded by coaches.
                           </p>
-                          {hubIsUploadingImage && (
-                            <div style={{ marginTop: '12px' }}>
-                              <div className="ses-spinner" style={{ width: '26px', height: '26px', margin: '0 auto' }} />
-                            </div>
-                          )}
                         </div>
-                      </div>
+                      ) : (
+                        /* Clean Dropzone for Uploading Multiple Images */
+                        <div>
+                          <div
+                            style={{
+                              border: '2px dashed #0284C7',
+                              borderRadius: '16px',
+                              padding: '36px 20px',
+                              textAlign: 'center',
+                              background: '#F0F9FF',
+                              cursor: 'pointer',
+                              transition: 'all 0.2s ease',
+                              boxShadow: '0 2px 6px rgba(2, 132, 199, 0.05)'
+                            }}
+                            onClick={() => hubImageFileRef.current?.click()}
+                          >
+                            <div
+                              style={{
+                                width: '56px',
+                                height: '56px',
+                                borderRadius: '50%',
+                                background: '#0284C718',
+                                color: '#0284C7',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                margin: '0 auto 14px'
+                              }}
+                            >
+                              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                                <circle cx="8.5" cy="8.5" r="1.5" />
+                                <polyline points="21 15 16 10 5 21" />
+                              </svg>
+                            </div>
+
+                            <div style={{ fontSize: '17px', fontWeight: 700, color: '#0F172A', marginBottom: '6px', fontFamily: 'Outfit, sans-serif' }}>
+                              {hubIsUploadingImage ? 'Uploading Photos…' : 'Click to Upload Multiple Session Photos'}
+                            </div>
+                            <p style={{ margin: 0, fontSize: '13px', color: '#64748B' }}>
+                              {hubIsUploadingImage ? 'Processing photo files...' : 'Select multiple JPG, PNG, WebP photos taken during the session'}
+                            </p>
+                            {hubIsUploadingImage && (
+                              <div style={{ marginTop: '12px' }}>
+                                <div className="ses-spinner" style={{ width: '26px', height: '26px', margin: '0 auto' }} />
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )
                     )}
                   </div>
                 )}
@@ -5749,8 +5965,8 @@ const Sessions = () => {
                               +
                             </button>
 
-                            <div style={{ display: 'flex', gap: '6px', marginLeft: '6px' }}>
-                              {[1, 2, 3, 5, 8, 10].map(cnt => (
+                            <div style={{ display: 'flex', gap: '6px', marginLeft: '6px', flexWrap: 'wrap' }}>
+                              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(cnt => (
                                 <button
                                   key={cnt}
                                   type="button"
@@ -6607,6 +6823,11 @@ const Sessions = () => {
                             style={{ padding: '6px 10px', fontSize: '12px' }}
                             onClick={() => {
                               setDateFilter(selectedCalendarDate);
+                              setDateRange({
+                                startDate: selectedCalendarDate,
+                                endDate: selectedCalendarDate,
+                                preset: selectedCalendarDate === getTodayYYYYMMDD() ? 'today' : 'custom'
+                              });
                               setShowCalendarModal(false);
                             }}
                           >
@@ -6735,7 +6956,13 @@ const Sessions = () => {
                                   className="ses-btn-secondary"
                                   style={{ flex: 1, padding: '6px 12px', fontSize: '11.5px', justifyContent: 'center' }}
                                   onClick={() => {
-                                    setDateFilter(grp.date || selectedCalendarDate);
+                                    const targetD = grp.date || selectedCalendarDate;
+                                    setDateFilter(targetD);
+                                    setDateRange({
+                                      startDate: targetD,
+                                      endDate: targetD,
+                                      preset: targetD === getTodayYYYYMMDD() ? 'today' : 'custom'
+                                    });
                                     setShowCalendarModal(false);
                                   }}
                                 >
@@ -7393,28 +7620,30 @@ const Sessions = () => {
                                     <span>✕</span> {grpAbsentCount} Absent
                                   </span>
                                 </div>
-                                <button
-                                  type="button"
-                                  onClick={() => handleMarkGroupAllPresent(grp.sessions)}
-                                  style={{
-                                    background: '#F0FDF4',
-                                    color: '#15803D',
-                                    border: '1px solid #BBF7D0',
-                                    borderRadius: '6px',
-                                    padding: '2px 8px',
-                                    fontSize: '10.5px',
-                                    fontWeight: 700,
-                                    cursor: 'pointer',
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '4px',
-                                    transition: 'all 0.15s ease'
-                                  }}
-                                  title="Mark all students in this group as Present"
-                                >
-                                  <span>✓</span>
-                                  <span>Mark All Present</span>
-                                </button>
+                                {!isViewAdmin && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleMarkGroupAllPresent(grp.sessions)}
+                                    style={{
+                                      background: '#F0FDF4',
+                                      color: '#15803D',
+                                      border: '1px solid #BBF7D0',
+                                      borderRadius: '6px',
+                                      padding: '2px 8px',
+                                      fontSize: '10.5px',
+                                      fontWeight: 700,
+                                      cursor: 'pointer',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      transition: 'all 0.15s ease'
+                                    }}
+                                    title="Mark all students in this group as Present"
+                                  >
+                                    <span>✓</span>
+                                    <span>Mark All Present</span>
+                                  </button>
+                                )}
                               </div>
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                                 {grp.sessions.map((sess, sIdx) => {
@@ -7494,7 +7723,7 @@ const Sessions = () => {
                                                 👥 Guest ({sess.student})
                                               </span>
                                             ) : null}
-                                            <span>&bull; {sess.level || sess.type || 'General'}</span>
+                                            <span>&bull; {(sess.level && sess.level.toLowerCase() !== 'general') ? sess.level : ((sess.type && sess.type.toLowerCase() !== 'general') ? sess.type : 'Beginner')}</span>
                                           </div>
                                         </div>
                                       </div>
@@ -7542,55 +7771,126 @@ const Sessions = () => {
                                           );
                                         })()}
 
-                                        <button
-                                          type="button"
-                                          disabled={isLoadingThis}
-                                          onClick={() => handleToggleAttendance(sess, 'Present')}
-                                          title={isPresent ? "Click to clear attendance" : "Mark as Present"}
-                                          style={{
-                                            display: 'inline-flex',
-                                            alignItems: 'center',
-                                            gap: '4px',
-                                            padding: '4px 10px',
-                                            borderRadius: '6px',
-                                            fontSize: '11px',
-                                            fontWeight: 700,
-                                            cursor: isLoadingThis ? 'wait' : 'pointer',
-                                            transition: 'all 0.15s ease',
-                                            border: isPresent ? '1.5px solid #16A34A' : '1px solid #CBD5E1',
-                                            background: isPresent ? '#16A34A' : '#FFFFFF',
-                                            color: isPresent ? '#FFFFFF' : '#475569',
-                                            boxShadow: isPresent ? '0 2px 4px rgba(22, 163, 74, 0.25)' : 'none'
-                                          }}
-                                        >
-                                          <span>✓</span>
-                                          <span>Present</span>
-                                        </button>
+                                        {isViewAdmin ? (
+                                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                            {isPresent && (
+                                              <span
+                                                title="Marked as Present (View Only)"
+                                                style={{
+                                                  display: 'inline-flex',
+                                                  alignItems: 'center',
+                                                  gap: '4px',
+                                                  padding: '4px 10px',
+                                                  borderRadius: '6px',
+                                                  fontSize: '11px',
+                                                  fontWeight: 700,
+                                                  border: '1.5px solid #16A34A',
+                                                  background: '#16A34A',
+                                                  color: '#FFFFFF',
+                                                  boxShadow: '0 2px 4px rgba(22, 163, 74, 0.25)',
+                                                  cursor: 'default'
+                                                }}
+                                              >
+                                                <span>✓</span>
+                                                <span>Present</span>
+                                              </span>
+                                            )}
+                                            {isAbsent && (
+                                              <span
+                                                title="Marked as Absent (View Only)"
+                                                style={{
+                                                  display: 'inline-flex',
+                                                  alignItems: 'center',
+                                                  gap: '4px',
+                                                  padding: '4px 10px',
+                                                  borderRadius: '6px',
+                                                  fontSize: '11px',
+                                                  fontWeight: 700,
+                                                  border: '1.5px solid #DC2626',
+                                                  background: '#DC2626',
+                                                  color: '#FFFFFF',
+                                                  boxShadow: '0 2px 4px rgba(220, 38, 38, 0.25)',
+                                                  cursor: 'default'
+                                                }}
+                                              >
+                                                <span>✕</span>
+                                                <span>Absent</span>
+                                              </span>
+                                            )}
+                                            {!isPresent && !isAbsent && (
+                                              <span
+                                                title="Attendance not marked (View Only)"
+                                                style={{
+                                                  display: 'inline-flex',
+                                                  alignItems: 'center',
+                                                  gap: '4px',
+                                                  padding: '4px 8px',
+                                                  borderRadius: '6px',
+                                                  fontSize: '11px',
+                                                  fontWeight: 600,
+                                                  color: '#94A3B8',
+                                                  background: '#F1F5F9',
+                                                  border: '1px solid #E2E8F0',
+                                                  cursor: 'default'
+                                                }}
+                                              >
+                                                Unmarked
+                                              </span>
+                                            )}
+                                          </div>
+                                        ) : (
+                                          <>
+                                            <button
+                                              type="button"
+                                              disabled={isLoadingThis}
+                                              onClick={() => handleToggleAttendance(sess, 'Present')}
+                                              title={isPresent ? "Click to clear attendance" : "Mark as Present"}
+                                              style={{
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '4px',
+                                                padding: '4px 10px',
+                                                borderRadius: '6px',
+                                                fontSize: '11px',
+                                                fontWeight: 700,
+                                                cursor: isLoadingThis ? 'wait' : 'pointer',
+                                                transition: 'all 0.15s ease',
+                                                border: isPresent ? '1.5px solid #16A34A' : '1px solid #CBD5E1',
+                                                background: isPresent ? '#16A34A' : '#FFFFFF',
+                                                color: isPresent ? '#FFFFFF' : '#475569',
+                                                boxShadow: isPresent ? '0 2px 4px rgba(22, 163, 74, 0.25)' : 'none'
+                                              }}
+                                            >
+                                              <span>✓</span>
+                                              <span>Present</span>
+                                            </button>
 
-                                        <button
-                                          type="button"
-                                          disabled={isLoadingThis}
-                                          onClick={() => handleToggleAttendance(sess, 'Absent')}
-                                          title={isAbsent ? "Click to clear attendance" : "Mark as Absent"}
-                                          style={{
-                                            display: 'inline-flex',
-                                            alignItems: 'center',
-                                            gap: '4px',
-                                            padding: '4px 10px',
-                                            borderRadius: '6px',
-                                            fontSize: '11px',
-                                            fontWeight: 700,
-                                            cursor: isLoadingThis ? 'wait' : 'pointer',
-                                            transition: 'all 0.15s ease',
-                                            border: isAbsent ? '1.5px solid #DC2626' : '1px solid #CBD5E1',
-                                            background: isAbsent ? '#DC2626' : '#FFFFFF',
-                                            color: isAbsent ? '#FFFFFF' : '#475569',
-                                            boxShadow: isAbsent ? '0 2px 4px rgba(220, 38, 38, 0.25)' : 'none'
-                                          }}
-                                        >
-                                          <span>✕</span>
-                                          <span>Absent</span>
-                                        </button>
+                                            <button
+                                              type="button"
+                                              disabled={isLoadingThis}
+                                              onClick={() => handleToggleAttendance(sess, 'Absent')}
+                                              title={isAbsent ? "Click to clear attendance" : "Mark as Absent"}
+                                              style={{
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '4px',
+                                                padding: '4px 10px',
+                                                borderRadius: '6px',
+                                                fontSize: '11px',
+                                                fontWeight: 700,
+                                                cursor: isLoadingThis ? 'wait' : 'pointer',
+                                                transition: 'all 0.15s ease',
+                                                border: isAbsent ? '1.5px solid #DC2626' : '1px solid #CBD5E1',
+                                                background: isAbsent ? '#DC2626' : '#FFFFFF',
+                                                color: isAbsent ? '#FFFFFF' : '#475569',
+                                                boxShadow: isAbsent ? '0 2px 4px rgba(220, 38, 38, 0.25)' : 'none'
+                                              }}
+                                            >
+                                              <span>✕</span>
+                                              <span>Absent</span>
+                                            </button>
+                                          </>
+                                        )}
                                       </div>
                                     </div>
                                   );
@@ -7606,6 +7906,11 @@ const Sessions = () => {
                                 style={{ flex: 1, padding: '7px 12px', fontSize: '12px', fontWeight: 600, justifyContent: 'center' }}
                                 onClick={() => {
                                   setDateFilter(targetISO);
+                                  setDateRange({
+                                    startDate: targetISO,
+                                    endDate: targetISO,
+                                    preset: targetISO === getTodayYYYYMMDD() ? 'today' : 'custom'
+                                  });
                                   setShowCalendarModal(false);
                                   setSelectedDayDetailsModal(null);
                                 }}
@@ -7780,55 +8085,126 @@ const Sessions = () => {
                                 );
                               })()}
 
-                              <button
-                                type="button"
-                                disabled={isLoadingThis}
-                                onClick={() => handleToggleAttendance(sess, 'Present')}
-                                title={isPresent ? "Click to clear attendance" : "Mark as Present"}
-                                style={{
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: '4px',
-                                  padding: '4px 10px',
-                                  borderRadius: '6px',
-                                  fontSize: '11px',
-                                  fontWeight: 700,
-                                  cursor: isLoadingThis ? 'wait' : 'pointer',
-                                  transition: 'all 0.15s ease',
-                                  border: isPresent ? '1.5px solid #16A34A' : '1px solid #CBD5E1',
-                                  background: isPresent ? '#16A34A' : '#FFFFFF',
-                                  color: isPresent ? '#FFFFFF' : '#475569',
-                                  boxShadow: isPresent ? '0 2px 4px rgba(22, 163, 74, 0.25)' : 'none'
-                                }}
-                              >
-                                <span>✓</span>
-                                <span>Present</span>
-                              </button>
+                              {isViewAdmin ? (
+                                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                  {isPresent && (
+                                    <span
+                                      title="Marked as Present (View Only)"
+                                      style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '4px',
+                                        padding: '4px 10px',
+                                        borderRadius: '6px',
+                                        fontSize: '11px',
+                                        fontWeight: 700,
+                                        border: '1.5px solid #16A34A',
+                                        background: '#16A34A',
+                                        color: '#FFFFFF',
+                                        boxShadow: '0 2px 4px rgba(22, 163, 74, 0.25)',
+                                        cursor: 'default'
+                                      }}
+                                    >
+                                      <span>✓</span>
+                                      <span>Present</span>
+                                    </span>
+                                  )}
+                                  {isAbsent && (
+                                    <span
+                                      title="Marked as Absent (View Only)"
+                                      style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '4px',
+                                        padding: '4px 10px',
+                                        borderRadius: '6px',
+                                        fontSize: '11px',
+                                        fontWeight: 700,
+                                        border: '1.5px solid #DC2626',
+                                        background: '#DC2626',
+                                        color: '#FFFFFF',
+                                        boxShadow: '0 2px 4px rgba(220, 38, 38, 0.25)',
+                                        cursor: 'default'
+                                      }}
+                                    >
+                                      <span>✕</span>
+                                      <span>Absent</span>
+                                    </span>
+                                  )}
+                                  {!isPresent && !isAbsent && (
+                                    <span
+                                      title="Attendance not marked (View Only)"
+                                      style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '4px',
+                                        padding: '4px 8px',
+                                        borderRadius: '6px',
+                                        fontSize: '11px',
+                                        fontWeight: 600,
+                                        color: '#94A3B8',
+                                        background: '#F1F5F9',
+                                        border: '1px solid #E2E8F0',
+                                        cursor: 'default'
+                                      }}
+                                    >
+                                      Unmarked
+                                    </span>
+                                  )}
+                                </div>
+                              ) : (
+                                <>
+                                  <button
+                                    type="button"
+                                    disabled={isLoadingThis}
+                                    onClick={() => handleToggleAttendance(sess, 'Present')}
+                                    title={isPresent ? "Click to clear attendance" : "Mark as Present"}
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      padding: '4px 10px',
+                                      borderRadius: '6px',
+                                      fontSize: '11px',
+                                      fontWeight: 700,
+                                      cursor: isLoadingThis ? 'wait' : 'pointer',
+                                      transition: 'all 0.15s ease',
+                                      border: isPresent ? '1.5px solid #16A34A' : '1px solid #CBD5E1',
+                                      background: isPresent ? '#16A34A' : '#FFFFFF',
+                                      color: isPresent ? '#FFFFFF' : '#475569',
+                                      boxShadow: isPresent ? '0 2px 4px rgba(22, 163, 74, 0.25)' : 'none'
+                                    }}
+                                  >
+                                    <span>✓</span>
+                                    <span>Present</span>
+                                  </button>
 
-                              <button
-                                type="button"
-                                disabled={isLoadingThis}
-                                onClick={() => handleToggleAttendance(sess, 'Absent')}
-                                title={isAbsent ? "Click to clear attendance" : "Mark as Absent"}
-                                style={{
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: '4px',
-                                  padding: '4px 10px',
-                                  borderRadius: '6px',
-                                  fontSize: '11px',
-                                  fontWeight: 700,
-                                  cursor: isLoadingThis ? 'wait' : 'pointer',
-                                  transition: 'all 0.15s ease',
-                                  border: isAbsent ? '1.5px solid #DC2626' : '1px solid #CBD5E1',
-                                  background: isAbsent ? '#DC2626' : '#FFFFFF',
-                                  color: isAbsent ? '#FFFFFF' : '#475569',
-                                  boxShadow: isAbsent ? '0 2px 4px rgba(220, 38, 38, 0.25)' : 'none'
-                                }}
-                              >
-                                <span>✕</span>
-                                <span>Absent</span>
-                              </button>
+                                  <button
+                                    type="button"
+                                    disabled={isLoadingThis}
+                                    onClick={() => handleToggleAttendance(sess, 'Absent')}
+                                    title={isAbsent ? "Click to clear attendance" : "Mark as Absent"}
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      padding: '4px 10px',
+                                      borderRadius: '6px',
+                                      fontSize: '11px',
+                                      fontWeight: 700,
+                                      cursor: isLoadingThis ? 'wait' : 'pointer',
+                                      transition: 'all 0.15s ease',
+                                      border: isAbsent ? '1.5px solid #DC2626' : '1px solid #CBD5E1',
+                                      background: isAbsent ? '#DC2626' : '#FFFFFF',
+                                      color: isAbsent ? '#FFFFFF' : '#475569',
+                                      boxShadow: isAbsent ? '0 2px 4px rgba(220, 38, 38, 0.25)' : 'none'
+                                    }}
+                                  >
+                                    <span>✕</span>
+                                    <span>Absent</span>
+                                  </button>
+                                </>
+                              )}
                             </div>
                           </div>
                         );

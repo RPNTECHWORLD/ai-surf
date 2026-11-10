@@ -2497,7 +2497,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           id: 'group-edit-1',
           name: existingGroupName,
           day: 'Day 1',
-          level: 'General',
+          level: 'Beginner',
           slotId: targetSlotId || null,
           studentIds: matchedIds,
           assignedInstructorId: preloadedCoachIds[0] || null,
@@ -2903,60 +2903,75 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     const isGroupSlotMatch = (grp) => {
       if (!grp) return false;
       const grpSlotId = grp.slotId;
-      if (grpSlotId != null && String(grpSlotId) === String(sId)) return true;
+      if (grpSlotId != null) {
+        if (String(grpSlotId) === String(sId)) return true;
+        if (sStart && String(grpSlotId).trim().toLowerCase() === sStart) return true;
+        if (sFull && String(grpSlotId).trim().toLowerCase() === sFull) return true;
+        // If grp has a slotId that belongs to another recognized slot, it CANNOT match this slot!
+        const matchedOtherSlot = slots.find(s => String(s.id) === String(grpSlotId));
+        if (matchedOtherSlot) return false;
+      }
 
+      // Fallback only if grp has NO slotId or unknown slotId:
       const grpTime = (grp.time || '').trim().toLowerCase();
-      const grpSlotStr = typeof grpSlotId === 'string' ? grpSlotId.trim().toLowerCase() : '';
-      const grpStart = (grp.time ? grp.time.split(' - ')[0] : (typeof grp.slotId === 'string' ? grp.slotId.split(' - ')[0] : '')).trim().toLowerCase();
+      const grpStart = (grp.startTime || (grp.time ? grp.time.split(' - ')[0] : '')).trim().toLowerCase();
 
       if (sStart && grpStart && sStart === grpStart) return true;
-      if (sFull && (grpTime === sFull || grpSlotStr === sFull)) return true;
+      if (sFull && grpTime === sFull) return true;
       return false;
     };
 
-    // 1. If active training groups exist in wizard state for this slot, use them as authoritative
-    const matchingGroups = (trainingGroups || []).filter(isGroupSlotMatch);
-    if (matchingGroups.length > 0) {
-      const groupStudentIds = new Set();
-      matchingGroups.forEach(grp => {
-        if (Array.isArray(grp.studentIds)) {
-          grp.studentIds.forEach(id => {
-            if (id != null) groupStudentIds.add(String(id));
-          });
-        }
-        if (Array.isArray(grp.students)) {
-          grp.students.forEach(st => {
-            if (st && st.id != null) groupStudentIds.add(String(st.id));
-          });
-        }
-      });
-      return Array.from(groupStudentIds);
-    }
-
-    // 2. Otherwise (e.g. during Step 2 before groups are created, or in empty slots):
-    // Combine staged selections for this slot and matching existing DB groups
     const studentIdSet = new Set();
-    const fromMap = slotStudentMap[sId] || slotStudentMap[String(sId)] || [];
-    if (Array.isArray(fromMap)) {
-      fromMap.forEach(id => {
-        if (id != null) studentIdSet.add(String(id));
-      });
-    }
 
-    (existingDbGroups || []).forEach(grp => {
-      if (isGroupSlotMatch(grp)) {
+    // 1. Identify all student IDs assigned to groups in OTHER slots
+    // (A student in a group in another slot can NEVER be counted in this slot)
+    const assignedInOtherSlots = new Set();
+    (trainingGroups || []).forEach(grp => {
+      if (!isGroupSlotMatch(grp)) {
         if (Array.isArray(grp.studentIds)) {
-          grp.studentIds.forEach(id => {
-            if (id != null) studentIdSet.add(String(id));
-          });
+          grp.studentIds.forEach(id => { if (id != null) assignedInOtherSlots.add(String(id)); });
         }
         if (Array.isArray(grp.students)) {
-          grp.students.forEach(st => {
-            if (st && st.id != null) studentIdSet.add(String(st.id));
-          });
+          grp.students.forEach(st => { if (st && st.id != null) assignedInOtherSlots.add(String(st.id)); });
         }
       }
     });
+
+    // 2. Add students in groups matching THIS slot
+    (trainingGroups || []).forEach(grp => {
+      if (isGroupSlotMatch(grp)) {
+        if (Array.isArray(grp.studentIds)) {
+          grp.studentIds.forEach(id => { if (id != null) studentIdSet.add(String(id)); });
+        }
+        if (Array.isArray(grp.students)) {
+          grp.students.forEach(st => { if (st && st.id != null) studentIdSet.add(String(st.id)); });
+        }
+      }
+    });
+
+    // 3. Add staged students in slotStudentMap for this slot (who are NOT in a group in another slot)
+    const fromMap = slotStudentMap[sId] || slotStudentMap[String(sId)] || [];
+    if (Array.isArray(fromMap)) {
+      fromMap.forEach(id => {
+        if (id != null && !assignedInOtherSlots.has(String(id))) {
+          studentIdSet.add(String(id));
+        }
+      });
+    }
+
+    // 4. Fallback: only if trainingGroups is completely empty and no slotStudentMap, check existingDbGroups
+    if (studentIdSet.size === 0 && (!trainingGroups || trainingGroups.length === 0)) {
+      (existingDbGroups || []).forEach(grp => {
+        if (isGroupSlotMatch(grp)) {
+          if (Array.isArray(grp.studentIds)) {
+            grp.studentIds.forEach(id => { if (id != null) studentIdSet.add(String(id)); });
+          }
+          if (Array.isArray(grp.students)) {
+            grp.students.forEach(st => { if (st && st.id != null) studentIdSet.add(String(st.id)); });
+          }
+        }
+      });
+    }
 
     return Array.from(studentIdSet);
   }, [slots, slotStudentMap, trainingGroups, existingDbGroups]);
@@ -3913,87 +3928,71 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     };
   }, [importedStudents.length, activeInstructorsCount]);
 
-  // Set of student IDs that belong to the active slot in Step 3
-  const activeSlotStudentIdSet = useMemo(() => {
-    if (editSession || step3SlotFilter === 'ALL') {
-      return new Set(importedStudents.map(s => s.id));
-    }
-    const slotAssignedIds = slotStudentMap[step3SlotFilter] || slotStudentMap[String(step3SlotFilter)] || [];
-    const grpIds = [];
-    trainingGroups.forEach(g => {
-      if (String(g.slotId) === String(step3SlotFilter)) {
-        (g.studentIds || []).forEach(id => grpIds.push(id));
-      }
-    });
-    return new Set([...slotAssignedIds, ...grpIds]);
-  }, [importedStudents, step3SlotFilter, slotStudentMap, trainingGroups, editSession]);
-
   // Checked student IDs strictly scoped to the active slot and unassigned when filter is unassigned
   const step3CheckedStudentIds = useMemo(() => {
-    const slotKey = step3SlotFilter ?? 'default';
-    const list = step3CheckedStudentIdsBySlot[slotKey] || [];
+    const slotKey = String(step3SlotFilter ?? 'default');
+    const list = step3CheckedStudentIdsBySlot[slotKey] || step3CheckedStudentIdsBySlot[step3SlotFilter] || [];
     return list.filter(id => {
-      if (!activeSlotStudentIdSet.has(id)) return false;
-      if (step3StatusFilter === 'unassigned' && trainingGroups.some(g => g.studentIds.includes(id))) {
+      if (step3StatusFilter === 'unassigned' && trainingGroups.some(g => (g.studentIds || []).some(gid => String(gid) === String(id)))) {
         return false;
       }
       return true;
     });
-  }, [step3CheckedStudentIdsBySlot, step3SlotFilter, activeSlotStudentIdSet, step3StatusFilter, trainingGroups]);
+  }, [step3CheckedStudentIdsBySlot, step3SlotFilter, step3StatusFilter, trainingGroups]);
 
   const setStep3CheckedStudentIds = useCallback((valOrFn) => {
-    const slotKey = step3SlotFilter ?? 'default';
+    const slotKey = String(step3SlotFilter ?? 'default');
     setStep3CheckedStudentIdsBySlot(prev => {
-      const prevList = (prev[slotKey] || []).filter(id => activeSlotStudentIdSet.has(id));
+      const prevList = prev[slotKey] || prev[step3SlotFilter] || [];
       const nextList = typeof valOrFn === 'function' ? valOrFn(prevList) : valOrFn;
+      const cleanList = Array.isArray(nextList) ? nextList : [];
       return {
         ...prev,
-        [slotKey]: Array.isArray(nextList) ? nextList.filter(id => activeSlotStudentIdSet.has(id)) : []
+        [slotKey]: cleanList,
+        [step3SlotFilter]: cleanList
       };
     });
-  }, [step3SlotFilter, activeSlotStudentIdSet]);
+  }, [step3SlotFilter]);
 
   // Step 3: Toggle check in Column 1 (Selecting main student auto-selects only UNASSIGNED guests)
   const toggleStep3StudentCheck = (id) => {
-    // Only allow selecting students that actually belong to the currently active slot
-    if (!activeSlotStudentIdSet.has(id) && step3SlotFilter !== 'ALL' && !editSession) {
-      return;
-    }
-
-    const clickedStudent = importedStudents.find(s => String(s.id) === String(id));
+    const idStr = String(id);
+    const clickedStudent = importedStudents.find(s => String(s.id) === idStr) ||
+      allPoolStudents.find(s => String(s.id) === idStr);
 
     // If clicked student is an accompanying GUEST:
     // Allow selecting/deselecting this guest individually without affecting the main student
     if (clickedStudent?.isGuest) {
       setStep3CheckedStudentIds(prev => {
-        const willCheck = !prev.includes(id);
-        if (willCheck) {
+        const isCurrentlyChecked = prev.some(x => String(x) === idStr);
+        if (isCurrentlyChecked) {
+          return prev.filter(x => String(x) !== idStr);
+        } else {
           scrollToCreateGroupSection();
+          return [...prev, id];
         }
-        return willCheck ? [...prev, id] : prev.filter(x => x !== id);
       });
       return;
     }
 
     // If clicked student is a MAIN student:
-    // Find all their UNASSIGNED accompanying guests in the current active slot
+    // Find all their UNASSIGNED accompanying guests in this slot
     const accompanyingGuestIds = importedStudents
-      .filter(s => s.isGuest && String(s.parentStudentId) === String(id))
-      .filter(s => step3SlotFilter === 'ALL' || editSession || activeSlotStudentIdSet.has(s.id))
-      .filter(s => !trainingGroups.some(g => g.studentIds.includes(s.id)))
+      .filter(s => s.isGuest && String(s.parentStudentId) === idStr)
+      .filter(s => !trainingGroups.some(g => (g.studentIds || []).some(gid => String(gid) === String(s.id))))
       .map(s => s.id);
 
     setStep3CheckedStudentIds(prev => {
-      const isMainCurrentlyChecked = prev.includes(id);
+      const isMainCurrentlyChecked = prev.some(x => String(x) === idStr);
       if (isMainCurrentlyChecked) {
         // User clicked to uncheck the main student: also uncheck their accompanying guests
-        const toRemove = new Set([id, ...accompanyingGuestIds]);
-        return prev.filter(x => !toRemove.has(x));
+        const toRemove = new Set([idStr, ...accompanyingGuestIds.map(String)]);
+        return prev.filter(x => !toRemove.has(String(x)));
       } else {
         // User clicked to check the main student: automatically check main student and only unassigned guests
-        const toAdd = [id, ...accompanyingGuestIds.filter(gid => !prev.includes(gid))];
+        const guestsToAdd = accompanyingGuestIds.filter(gid => !prev.some(px => String(px) === String(gid)));
         scrollToCreateGroupSection();
-        return [...prev, ...toAdd];
+        return [...prev, id, ...guestsToAdd];
       }
     });
   };
@@ -4018,24 +4017,39 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const handleMoveGroupToSlot = (groupId, targetSlotId) => {
     const matchedSlot = slots.find(s => String(s.id) === String(targetSlotId));
     const newSlotId = matchedSlot ? matchedSlot.id : targetSlotId;
+    const newSlotTime = matchedSlot ? (matchedSlot.time || matchedSlot.startTime || '') : '';
+    const newSlotStartTime = matchedSlot ? (matchedSlot.startTime || (matchedSlot.time ? matchedSlot.time.split(' - ')[0] : '')) : '';
     const grp = trainingGroups.find(g => g.id === groupId);
     if (!grp) return;
 
+    const grpStudentIds = Array.isArray(grp.studentIds) && grp.studentIds.length > 0
+      ? grp.studentIds.map(String)
+      : (Array.isArray(grp.students) ? grp.students.map(s => s && s.id != null ? String(s.id) : null).filter(Boolean) : []);
+
     setTrainingGroups(prev => {
-      const updated = prev.map(g => g.id === groupId ? { ...g, slotId: newSlotId } : g);
+      const updated = prev.map(g => g.id === groupId ? {
+        ...g,
+        slotId: newSlotId,
+        time: newSlotTime || g.time,
+        startTime: newSlotStartTime || g.startTime
+      } : g);
       return reindexGroups(updated);
     });
+
     setSlotStudentMap(prev => {
       const newMap = { ...prev };
-      const grpStudentIds = (grp.studentIds || []).map(String);
       Object.keys(newMap).forEach(k => {
         if (Array.isArray(newMap[k])) {
           newMap[k] = newMap[k].filter(id => !grpStudentIds.includes(String(id)));
         }
       });
-      newMap[newSlotId] = Array.from(new Set([...(newMap[newSlotId] || []), ...(grp.studentIds || [])]));
+      const currentInTarget = (newMap[newSlotId] || newMap[String(newSlotId)] || []).map(String);
+      const combined = Array.from(new Set([...currentInTarget, ...grpStudentIds]));
+      newMap[newSlotId] = combined;
+      newMap[String(newSlotId)] = combined;
       return newMap;
     });
+
     setSelectedSlotId(newSlotId);
     setStep3SlotFilter(newSlotId);
   };
@@ -4066,8 +4080,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
   // Create Group from checked students or create a fresh empty group card with assigned slot
   const handleCreateGroup = () => {
-    const checkedStudents = importedStudents.filter(s => step3CheckedStudentIds.includes(s.id));
-    const levelLabel = checkedStudents.length > 0 ? (checkedStudents[0]?.level || 'General') : 'General';
+    const checkedStudents = importedStudents.filter(s => step3CheckedStudentIds.some(cid => String(cid) === String(s.id)));
+    const levelLabel = checkedStudents.length > 0 ? (checkedStudents[0]?.level || 'Beginner') : 'General';
 
     // Determine default slot for the group
     let defaultSlotId = step3SlotFilter !== 'ALL' ? step3SlotFilter : null;
@@ -4113,12 +4127,13 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       // Clean previously assigned groups of these students to prevent duplicates
       const cleaned = prev.map(g => ({
         ...g,
-        studentIds: g.studentIds.filter(id => !step3CheckedStudentIds.includes(id))
+        studentIds: g.studentIds.filter(id => !step3CheckedStudentIds.some(cid => String(cid) === String(id)))
       }));
       return reindexGroups([...cleaned, newGroup]);
     });
     setActiveDropGroupId(newGroup.id);
     setStep3CheckedStudentIds([]);
+    userClearedGroupsRef.current = false;
 
     // Auto-scroll smoothly to the newly created group card and focus it in the center
     setTimeout(() => {
@@ -4171,6 +4186,24 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       return;
     }
 
+    // Ensure student IDs from this deleted group are preserved in slotStudentMap so they return to the unassigned Students List
+    if (targetGrp) {
+      const sId = targetGrp.slotId || slots[0]?.id;
+      if (sId) {
+        const sIdKey = String(sId);
+        const gStudents = (Array.isArray(targetGrp.studentIds) ? targetGrp.studentIds : (Array.isArray(targetGrp.students) ? targetGrp.students.map(s => s?.id).filter(Boolean) : [])).map(String);
+        setSlotStudentMap(prev => {
+          const currentList = (prev[sId] || prev[sIdKey] || []).map(String);
+          const merged = Array.from(new Set([...currentList, ...gStudents]));
+          return {
+            ...prev,
+            [sId]: merged,
+            [sIdKey]: merged
+          };
+        });
+      }
+    }
+
     setTrainingGroups(prev => {
       const remaining = prev.filter(g => g.id !== groupId);
       return reindexGroups(remaining);
@@ -4187,7 +4220,13 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   // Clear all groups for fresh manual creation (scoped to active slot)
   const clearAllGroups = () => {
     const currentSlotId = step3SlotFilter !== 'ALL' ? step3SlotFilter : (selectedSlotId || slots[0]?.id);
-    const hasPublishedInSlot = trainingGroups.some(g => String(g.slotId || slots[0]?.id) === String(currentSlotId) && (g.isExistingDbGroup || (g.existingSessionIds && g.existingSessionIds.length > 0)));
+    const isSlotScoped = step3SlotFilter !== 'ALL' && !editSession;
+
+    const groupsInScope = isSlotScoped
+      ? trainingGroups.filter(g => String(g.slotId || slots[0]?.id) === String(currentSlotId))
+      : trainingGroups;
+
+    const hasPublishedInSlot = groupsInScope.some(g => (g.isExistingDbGroup || (g.existingSessionIds && g.existingSessionIds.length > 0)));
     if (hasPublishedInSlot) {
       setUiAlert({
         title: 'Published Groups Protected',
@@ -4197,31 +4236,69 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       });
       return;
     }
-    userClearedGroupsRef.current = true;
-    if (step3SlotFilter !== 'ALL' && !editSession) {
+
+    if (isSlotScoped) {
+      // Collect all student IDs from the groups being cleared in this slot
+      const clearedStudentIds = groupsInScope.flatMap(g => {
+        if (Array.isArray(g.studentIds)) return g.studentIds;
+        if (Array.isArray(g.students)) return g.students.map(s => s?.id).filter(Boolean);
+        return [];
+      });
+
+      // Remove only unpublished groups in this slot
       setTrainingGroups(prev => {
         const remaining = prev.filter(g => String(g.slotId || slots[0]?.id) !== String(currentSlotId));
         return reindexGroups(remaining);
       });
-      // Clear students in slotStudentMap for this slot so they return to unassigned list
-      setSlotStudentMap(prev => ({
-        ...prev,
-        [currentSlotId]: []
-      }));
+
+      // Keep ALL students in this slot's slotStudentMap so they all return to the unassigned Students List!
+      setSlotStudentMap(prev => {
+        const existingInSlot = (prev[currentSlotId] || prev[String(currentSlotId)] || prev[step3SlotFilter] || prev[String(step3SlotFilter)] || []);
+        // Preserve authentic student IDs
+        const combined = Array.from(new Set([...existingInSlot, ...clearedStudentIds]));
+        return {
+          ...prev,
+          [currentSlotId]: combined,
+          [String(currentSlotId)]: combined,
+          [step3SlotFilter]: combined,
+          [String(step3SlotFilter)]: combined
+        };
+      });
     } else {
-      setTrainingGroups([]);
-      setSlotStudentMap({});
+      // Clear all unpublished groups across all slots
+      setTrainingGroups(prev => {
+        const remaining = prev.filter(g => g.isExistingDbGroup || (g.existingSessionIds && g.existingSessionIds.length > 0));
+        return reindexGroups(remaining);
+      });
+
+      // Ensure every cleared student remains in their slot's slotStudentMap
+      setSlotStudentMap(prev => {
+        const nextMap = { ...prev };
+        groupsInScope.forEach(g => {
+          const sId = g.slotId || slots[0]?.id;
+          if (sId) {
+            const sIdKey = String(sId);
+            const gStudents = (Array.isArray(g.studentIds) ? g.studentIds : (Array.isArray(g.students) ? g.students.map(s => s?.id).filter(Boolean) : []));
+            const currentList = (nextMap[sId] || nextMap[sIdKey] || []);
+            const merged = Array.from(new Set([...currentList, ...gStudents]));
+            nextMap[sId] = merged;
+            nextMap[sIdKey] = merged;
+          }
+        });
+        return nextMap;
+      });
     }
+
+    setStep3CheckedStudentIds([]);
+    setStep3CheckedStudentIdsBySlot(prev => ({
+      ...prev,
+      [currentSlotId]: [],
+      [String(currentSlotId)]: [],
+      [step3SlotFilter]: [],
+      [String(step3SlotFilter)]: []
+    }));
     setActiveDropGroupId(null);
-    try {
-      const schoolId = currentUser?.school_id || null;
-      const rawSchool = currentUser?.school || currentUser?.school_name || activeSchoolName || '';
-      const schoolName = typeof rawSchool === 'object' ? (rawSchool?.name || rawSchool?.school_name || '') : String(rawSchool);
-      const delParams = new URLSearchParams({ date: selectedSessionDateYYYYMMDD });
-      if (schoolId) delParams.set('school_id', schoolId);
-      if (schoolName) delParams.set('school_name', schoolName);
-      fetch(`${API}/api/session-drafts?${delParams.toString()}`, { method: 'DELETE' }).catch(() => { });
-    } catch (e) { }
+    userClearedGroupsRef.current = false;
   };
 
   // Remove individual student from a group
@@ -4377,6 +4454,40 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       .sort((a, b) => b.count - a.count);
   }, [getPreviousCoachForStudent]);
 
+  // Helper to resolve an authentic coach from allInstructors given coachObj, coachId, coachName, or group students
+  const resolveAuthenticCoach = useCallback((coachCandidate, coachId, coachName, students = []) => {
+    let valid = null;
+    if (coachCandidate && coachCandidate.id) {
+      valid = allInstructors.find(i => String(i.id) === String(coachCandidate.id));
+    }
+    if (!valid && coachId) {
+      valid = allInstructors.find(i => String(i.id) === String(coachId));
+    }
+    if (!valid && coachName && coachName.toLowerCase() !== 'instructor' && coachName.toLowerCase() !== 'coach' && coachName.toLowerCase() !== 'unassigned coach') {
+      const clean = coachName.split(',')[0].trim().toLowerCase();
+      valid = allInstructors.find(i => {
+        const iname = (i.name || '').trim().toLowerCase();
+        return iname === clean || iname.includes(clean) || clean.includes(iname);
+      });
+    }
+    // Deep fallback: check the students' previous/assigned coach!
+    if (!valid && Array.isArray(students) && students.length > 0) {
+      const pCoaches = getPreviousCoachesForGroup(students);
+      if (pCoaches && pCoaches.length > 0) {
+        valid = pCoaches[0].coach;
+      } else {
+        for (const st of students) {
+          const pc = getPreviousCoachForStudent(st);
+          if (pc) {
+            valid = pc;
+            break;
+          }
+        }
+      }
+    }
+    return valid;
+  }, [allInstructors, getPreviousCoachesForGroup, getPreviousCoachForStudent]);
+
   // ── Auto-Group Previously Assigned Students for Slot(s) ──
   const autoGroupSlotStudents = useCallback((slotIdToGroup = null, forceRegroup = false) => {
     if (editSession) return [];
@@ -4420,23 +4531,78 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       const studentsToGroup = slotStudentIds.filter(id => !assignedStudentIdsInSlot.has(String(id)));
       if (studentsToGroup.length === 0) return;
 
-      // Group students by previous coach
-      const clusters = new Map(); // key: coachId (or 'no-coach') -> { coach, students: [] }
+      // Group students by previous group and coach
+      const clusters = new Map(); // key -> { prevGroupTitle, coach, students: [] }
+      const targetDateObj = parseLocalDateOnly(selectedSessionDateYYYYMMDD);
 
       studentsToGroup.forEach(sid => {
         const st = resolveStudentFromPool(sid);
         if (!st) return;
 
-        const prevCoach = getPreviousCoachForStudent(st);
-        const coachKey = prevCoach ? String(prevCoach.id) : 'no-coach';
+        const studentNameClean = (st.name || '').toLowerCase().trim();
+        const parentNameClean = (st.parentStudentName || '').toLowerCase().trim();
+        const studentIdStr = st.id != null ? String(st.id) : null;
+        const parentIdStr = st.parentStudentId != null ? String(st.parentStudentId) : null;
 
-        if (!clusters.has(coachKey)) {
-          clusters.set(coachKey, {
-            coach: prevCoach,
+        let matched = [];
+        if (Array.isArray(existingDbSessions) && existingDbSessions.length > 0) {
+          matched = existingDbSessions.filter(sess => {
+            const sessDateStr = sess.date || '';
+            if (targetDateObj && sessDateStr) {
+              const sessDateObj = parseLocalDateOnly(sessDateStr);
+              if (sessDateObj && sessDateObj.getTime() >= targetDateObj.getTime()) return false;
+            }
+            const sName = (sess.student || sess.student_name || '').toLowerCase().trim();
+            const gName = (sess.guest_name || '').toLowerCase().trim();
+            const sidStr = sess.student_id != null ? String(sess.student_id) : null;
+
+            if (studentIdStr && sidStr === studentIdStr) return true;
+            if (parentIdStr && sidStr === parentIdStr) return true;
+            if (studentNameClean && (sName === studentNameClean || gName === studentNameClean)) return true;
+            if (parentNameClean && sName === parentNameClean) return true;
+            return false;
+          });
+        }
+
+        let clusterKey = '';
+        let prevGroupTitle = '';
+        let resolvedCoach = null;
+
+        if (matched.length > 0) {
+          matched.sort((a, b) => {
+            const dA = parseLocalDateOnly(a.date)?.getTime() || 0;
+            const dB = parseLocalDateOnly(b.date)?.getTime() || 0;
+            return dB - dA;
+          });
+          const latestSess = matched[0];
+          const pastGroupName = (latestSess.group_name || '').trim();
+          const pastDate = latestSess.date || '';
+          const cId = latestSess.instructor_id || (Array.isArray(latestSess.instructor_ids) && latestSess.instructor_ids[0]) || null;
+          const cName = (latestSess.instructor || '').trim();
+
+          resolvedCoach = resolveAuthenticCoach(null, cId, cName, [st]);
+
+          // Keep students from different past groups strictly SEPARATE!
+          clusterKey = `prev__${pastDate}__${pastGroupName || 'grp'}__${resolvedCoach ? resolvedCoach.id : (cName || 'coach')}`;
+          prevGroupTitle = pastGroupName || 'Previous Group';
+        } else {
+          // No past session: fall back to student's initial coach or level
+          resolvedCoach = resolveAuthenticCoach(null, null, null, [st]);
+          const coachKey = resolvedCoach ? String(resolvedCoach.id) : 'no-coach';
+          const levelKey = (st.level || 'Beginner').toLowerCase();
+          clusterKey = `new__${coachKey}__${levelKey}`;
+          prevGroupTitle = 'New Group';
+        }
+
+        if (!clusters.has(clusterKey)) {
+          clusters.set(clusterKey, {
+            clusterKey,
+            prevGroupTitle,
+            coach: resolvedCoach,
             students: []
           });
         }
-        clusters.get(coachKey).students.push(st);
+        clusters.get(clusterKey).students.push(st);
       });
 
       // Track used group letters in this slot so each group gets a unique letter: Group A, Group B...
@@ -4458,15 +4624,15 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
       // Sort clusters: coaches with most students first, 'no-coach' last
       const sortedClusterEntries = Array.from(clusters.entries()).sort((a, b) => {
-        if (a[0] === 'no-coach') return 1;
-        if (b[0] === 'no-coach') return -1;
+        if (a[0].startsWith('new__no-coach')) return 1;
+        if (b[0].startsWith('new__no-coach')) return -1;
         return b[1].students.length - a[1].students.length;
       });
 
       // Default chunk size per group card (max 5 students or slot capacity)
       const maxPerGroup = Math.max(1, Math.min(5, sCap || 5));
 
-      sortedClusterEntries.forEach(([coachKey, { coach, students }]) => {
+      sortedClusterEntries.forEach(([clusterKey, { coach, students, prevGroupTitle }]) => {
         if (students.length === 0) return;
 
         // If cluster is larger than maxPerGroup, split into sub-groups
@@ -4474,23 +4640,47 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           const chunk = students.slice(i, i + maxPerGroup);
           const letter = getNextLetter();
           const firstSt = chunk[0];
-          const levelLabel = firstSt?.level || 'General';
+          const levelLabel = firstSt?.level || 'Beginner';
           const dayLabel = firstSt?.whichDay ? `Day ${firstSt.whichDay}` : 'Day 1';
 
-          // Do NOT automatically assign coach for school groups.
-          // Keep coach unassigned so it appears as a 1-click suggested option in the group card
-          // and on the opposite 'Available Instructors' list for manual assignment.
           let assignedCoachId = null;
+          let assignedCoachIds = [];
+
           if (isIndividualCoach && currentIndividualCoach?.id) {
             assignedCoachId = currentIndividualCoach.id;
+            assignedCoachIds = [assignedCoachId];
           } else if (isCoachFreelance && (currentUser?.instructor_id || currentUser?.id)) {
             assignedCoachId = currentUser.instructor_id || currentUser.id;
+            assignedCoachIds = [assignedCoachId];
+          } else {
+            // Assign the authentic coach! Deep resolution from coach object, candidates, or chunk students
+            const validCoach = resolveAuthenticCoach(coach, coach?.id, coach?.name, chunk);
+            if (validCoach && validCoach.id) {
+              const leave = getInstructorLeaveOnDate(validCoach, selectedSessionDateYYYYMMDD);
+              const targetTime = (slotTime ? slotTime.split(' - ')[0] : '').trim().toLowerCase();
+              let conflict = false;
+              if (targetTime) {
+                for (const og of updatedGroups) {
+                  const ogSlot = slots.find(s => String(s.id) === String(og.slotId)) || slots[0];
+                  const ogTime = (ogSlot ? (ogSlot.startTime || ogSlot.time || '').split(' - ')[0] : '').trim().toLowerCase();
+                  if (ogTime && ogTime === targetTime) {
+                    const ogCoaches = og.assignedInstructorIds || (og.assignedInstructorId ? [og.assignedInstructorId] : []);
+                    if (ogCoaches.map(String).includes(String(validCoach.id))) {
+                      conflict = true;
+                      break;
+                    }
+                  }
+                }
+              }
+              if (!leave && !conflict) {
+                assignedCoachId = validCoach.id;
+                assignedCoachIds = [validCoach.id];
+              }
+            }
           }
 
-          const assignedCoachIds = assignedCoachId ? [assignedCoachId] : [];
-
           const newGroup = {
-            id: `group-auto-${sId}-${coachKey}-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+            id: `group-auto-${sId}-${clusterKey}-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
             name: `Group ${letter}`,
             time: slotTime,
             startTime: (slotTime ? slotTime.split(' - ')[0] : '').trim(),
@@ -4500,6 +4690,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             studentIds: chunk.map(s => s.id),
             assignedInstructorId: assignedCoachId,
             assignedInstructorIds: assignedCoachIds,
+            notes: prevGroupTitle ? `Previous: ${prevGroupTitle}` : ''
           };
 
           updatedGroups.push(newGroup);
@@ -4516,7 +4707,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     }
 
     return createdGroups;
-  }, [editSession, slots, slotStudentMap, trainingGroups, resolveStudentFromPool, getPreviousCoachForStudent, isIndividualCoach, currentIndividualCoach, isCoachFreelance, currentUser, reindexGroups]);
+  }, [editSession, slots, slotStudentMap, trainingGroups, resolveStudentFromPool, getPreviousCoachForStudent, isIndividualCoach, currentIndividualCoach, isCoachFreelance, currentUser, reindexGroups, resolveAuthenticCoach, existingDbSessions, allInstructors, selectedSessionDateYYYYMMDD, getInstructorLeaveOnDate]);
 
   // Keep ref updated so proceedToStep3 and other callbacks can call it synchronously
   useEffect(() => {
@@ -4591,26 +4782,16 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       const cId = latestSess.instructor_id || (Array.isArray(latestSess.instructor_ids) && latestSess.instructor_ids[0]) || null;
       const cName = (latestSess.instructor || '').trim();
 
-      let matchedCoach = null;
-      if (cId) {
-        matchedCoach = allInstructors.find(i => String(i.id) === String(cId));
-      }
-      if (!matchedCoach && cName) {
-        const clean = cName.split(',')[0].trim().toLowerCase();
-        matchedCoach = allInstructors.find(i => {
-          const iname = (i.name || '').trim().toLowerCase();
-          return iname === clean || iname.includes(clean) || clean.includes(iname);
-        });
-      }
+      let matchedCoach = resolveAuthenticCoach(null, cId, cName, [st]);
       if (!matchedCoach && (cId || cName)) {
         matchedCoach = {
-          id: cId || 1,
-          name: cName || 'Coach',
+          id: cId || null,
+          name: cName || 'Unassigned Coach',
           role: 'Instructor'
         };
       }
 
-      const clusterKey = `${latestSess.date}__${gName}__${matchedCoach ? matchedCoach.id : (cName || 'no-coach')}`;
+      const clusterKey = `${latestSess.date}__${gName}__${matchedCoach ? (matchedCoach.id || matchedCoach.name) : (cName || 'no-coach')}`;
 
       if (!clusters.has(clusterKey)) {
         clusters.set(clusterKey, {
@@ -4668,26 +4849,15 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     const nextLetter = String.fromCharCode(code);
 
     const firstSt = suggestion.students[0];
-    const level = firstSt?.level || 'General';
+    const level = firstSt?.level || 'Beginner';
     const day = firstSt?.whichDay ? `Day ${firstSt.whichDay}` : 'Day 1';
 
     let assignedCoachIds = [];
     let coachAssignedMsg = '';
 
     if (includeCoach) {
-      let coachObj = suggestion.coach;
-      if (!coachObj && suggestion.coachName) {
-        const clean = suggestion.coachName.split(',')[0].trim().toLowerCase();
-        coachObj = allInstructors.find(i => {
-          const iname = (i.name || '').trim().toLowerCase();
-          return iname === clean || iname.includes(clean) || clean.includes(iname);
-        });
-      }
-      if (!coachObj && suggestion.coachId) {
-        coachObj = allInstructors.find(i => String(i.id) === String(suggestion.coachId));
-      }
-
-      const coachIdToAssign = coachObj?.id || suggestion.coachId;
+      const coachObj = resolveAuthenticCoach(suggestion.coach, suggestion.coachId, suggestion.coachName, suggestion.students);
+      const coachIdToAssign = coachObj?.id || null;
       const coachNameToDisplay = coachObj?.name || suggestion.coachName || 'Coach';
 
       if (isIndividualCoach && currentIndividualCoach?.id) {
@@ -4769,24 +4939,13 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       const nextLetter = String.fromCharCode(code);
 
       const firstSt = sug.students[0];
-      const level = firstSt?.level || 'General';
+      const level = firstSt?.level || 'Beginner';
       const day = firstSt?.whichDay ? `Day ${firstSt.whichDay}` : 'Day 1';
 
       let assignedCoachIds = [];
       if (includeCoaches) {
-        let coachObj = sug.coach;
-        if (!coachObj && sug.coachName) {
-          const clean = sug.coachName.split(',')[0].trim().toLowerCase();
-          coachObj = allInstructors.find(i => {
-            const iname = (i.name || '').trim().toLowerCase();
-            return iname === clean || iname.includes(clean) || clean.includes(iname);
-          });
-        }
-        if (!coachObj && sug.coachId) {
-          coachObj = allInstructors.find(i => String(i.id) === String(sug.coachId));
-        }
-
-        const coachIdToAssign = coachObj?.id || sug.coachId;
+        const coachObj = resolveAuthenticCoach(sug.coach, sug.coachId, sug.coachName, sug.students);
+        const coachIdToAssign = coachObj?.id || null;
 
         if (isIndividualCoach && currentIndividualCoach?.id) {
           assignedCoachIds = [currentIndividualCoach.id];
@@ -8205,7 +8364,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                     </div>
                   ) : (
                     filteredColumn1Students.map(student => {
-                      const isChecked = step3CheckedStudentIds.includes(student.id);
+                      const isChecked = step3CheckedStudentIds.some(cid => String(cid) === String(student.id));
                       const badge = getBadgeStyle(student.level);
                       const assignedGroup = trainingGroups.find(g => g.studentIds.includes(student.id));
                       const slotAssignment = getStudentSlotAssignment(student.id);
@@ -8234,7 +8393,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                           draggable={true}
                           onDragStart={(e) => {
                             let ids = [student.id];
-                            if (step3CheckedStudentIds.includes(student.id) && step3CheckedStudentIds.length > 0) {
+                            if (step3CheckedStudentIds.some(cid => String(cid) === String(student.id)) && step3CheckedStudentIds.length > 0) {
                               ids = step3CheckedStudentIds;
                             } else if (!student.isGuest) {
                               // If dragging an unselected main student, automatically pull along their unassigned guests
@@ -9330,17 +9489,13 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                       style={{
                         marginTop: '20px',
                         padding: '16px 18px',
-                        background: '#F8FAFC',
+                        background: '#FAFAFA',
                         borderRadius: '12px',
-                        border: '1.5px dashed #CBD5E1',
-                        opacity: 0.82,
-                        transition: 'all 0.25s ease',
+                        border: '1px solid #E2E8F0',
                         display: 'flex',
                         flexDirection: 'column',
                         gap: '12px'
                       }}
-                      onMouseEnter={e => { e.currentTarget.style.opacity = '1'; }}
-                      onMouseLeave={e => { e.currentTarget.style.opacity = '0.82'; }}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -9349,8 +9504,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                             fontWeight: 800,
                             textTransform: 'uppercase',
                             letterSpacing: '0.06em',
-                            background: '#E2E8F0',
+                            background: '#F1F5F9',
                             color: '#475569',
+                            border: '1px solid #E2E8F0',
                             padding: '3px 8px',
                             borderRadius: '6px'
                           }}>
@@ -9417,14 +9573,22 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                               className="ns-group-card"
                               style={{
                                 position: 'relative',
-                                opacity: 0.85,
-                                border: '1.5px dashed #00D2B4',
+                                opacity: 0.6,
+                                border: '1.5px solid #0F172A',
                                 background: '#FFFFFF',
                                 transition: 'all 0.25s ease',
-                                boxShadow: '0 2px 8px rgba(0, 210, 180, 0.08)'
+                                boxShadow: '0 2px 6px rgba(15, 23, 42, 0.05)'
                               }}
-                              onMouseEnter={e => { e.currentTarget.style.opacity = '1'; }}
-                              onMouseLeave={e => { e.currentTarget.style.opacity = '0.85'; }}
+                              onMouseEnter={e => {
+                                e.currentTarget.style.opacity = '1';
+                                e.currentTarget.style.border = '2px dotted #00D2B4';
+                                e.currentTarget.style.boxShadow = '0 6px 18px rgba(0, 210, 180, 0.22)';
+                              }}
+                              onMouseLeave={e => {
+                                e.currentTarget.style.opacity = '0.6';
+                                e.currentTarget.style.border = '1.5px solid #0F172A';
+                                e.currentTarget.style.boxShadow = '0 2px 6px rgba(15, 23, 42, 0.05)';
+                              }}
                             >
                               {/* Top Banner indicating Previous Group Template */}
                               <div style={{
@@ -9620,7 +9784,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                           border: '1px solid #E2E8F0',
                                           flexShrink: 0
                                         }}>
-                                          {s.level || 'General'}
+                                          {s.level || 'Beginner'}
                                         </span>
                                         <span style={{
                                           fontSize: '9.5px',
@@ -9990,6 +10154,9 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                           .map(g => g.name);
 
                         const isPrevCoachRecommendation = prevCoachedGroupNames.length > 0;
+                        const prevCoachBadgeLabel = prevCoachedGroupNames.length === 1
+                          ? `🕒 Prev Coach (${prevCoachedGroupNames[0]})`
+                          : `🕒 Prev Coach (${prevCoachedGroupNames.length} Groups)`;
 
                         const badgeText = isOnLeave
                           ? '🏖️ On Leave'
@@ -9998,10 +10165,19 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                             : isAssignedInCurrentSlot
                               ? 'Assigned'
                               : isPrevCoachRecommendation
-                                ? `🕒 Previous Coach (${prevCoachedGroupNames.join(', ')})`
+                                ? prevCoachBadgeLabel
                                 : totalAssignedCount > 0
                                   ? `Assigned (Other slot)`
                                   : 'Available';
+
+                        const badgeTitle = isOnLeave
+                          ? `On Leave on ${formattedSessionDate}${leaveOnDate?.leave_type ? ` (${leaveOnDate.leave_type})` : ''}`
+                          : activeConflict
+                            ? `Already coaching ${activeConflict.conflictingGroup.name} at ${activeConflict.time}`
+                            : isPrevCoachRecommendation
+                              ? `Previous Coach for: ${prevCoachedGroupNames.join(', ')}`
+                              : undefined;
+
                         const badgeClass = isOnLeave
                           ? 'leave'
                           : activeConflict
@@ -10090,7 +10266,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                   id: `group-${activeSlotId}-${Date.now()}`,
                                   name: 'Group A',
                                   day: 'Day 1',
-                                  level: 'General',
+                                  level: 'Beginner',
                                   slotId: activeSlotId,
                                   studentIds: slotStudents,
                                   assignedInstructorId: inst.id,
@@ -10105,7 +10281,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                             <span className="ns-drag-grip" style={{ color: isOnLeave ? '#CBD5E1' : '#0D9488', fontSize: '13px' }}>⠿</span>
                             <UserAvatar src={inst.avatar} name={inst.name} size={36} className="ns-inst-avatar" />
                             <div className="ns-inst-info">
-                              <h4 className="ns-inst-name">
+                              <h4 className="ns-inst-name" title={inst.name}>
                                 {inst.name}
                                 {(() => {
                                   const hasSameName = allInstructors.some(other => String(other.id) !== String(inst.id) && other.name && inst.name && other.name.toLowerCase().trim() === inst.name.toLowerCase().trim());
@@ -10115,8 +10291,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                   return null;
                                 })()}
                               </h4>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                                <span className="ns-inst-role">
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '5px', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden' }}>
+                                <span className="ns-inst-role" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '85px' }}>
                                   {inst.role || 'Instructor'}
                                 </span>
                                 <span
@@ -10128,7 +10304,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                     background: (inst.gender || '').toLowerCase() === 'female' ? '#FDF2F8' : '#EFF6FF',
                                     color: (inst.gender || '').toLowerCase() === 'female' ? '#DB2777' : '#1D4ED8',
                                     border: `1px solid ${(inst.gender || '').toLowerCase() === 'female' ? '#FBCFE8' : '#BFDBFE'}`,
-                                    whiteSpace: 'nowrap'
+                                    whiteSpace: 'nowrap',
+                                    flexShrink: 0
                                   }}
                                 >
                                   {(inst.gender || '').toLowerCase() === 'female' ? '♀ Female' : '♂ Male'}
@@ -10137,6 +10314,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                             </div>
                             <span
                               className={`ns-inst-badge ${badgeClass}`}
+                              title={badgeTitle}
                               style={isOnLeave ? {
                                 background: '#FEE2E2',
                                 color: '#B91C1C',
@@ -12632,14 +12810,16 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         .ns-inst-card {
           border: 1.5px solid #0D9488;
           border-radius: 12px;
-          padding: 10px 12px;
+          padding: 8px 12px;
           display: flex;
           align-items: center;
-          gap: 10px;
+          gap: 9px;
           cursor: grab;
           transition: all 0.15s;
           background: #FFFFFF;
           user-select: none;
+          box-sizing: border-box;
+          min-height: 54px;
         }
         .ns-inst-card:active {
           cursor: grabbing;
@@ -12663,10 +12843,16 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           height: 36px;
           border-radius: 50%;
           object-fit: cover;
+          flex-shrink: 0;
         }
         .ns-inst-info {
-          flex: 1;
+          flex: 1 1 0%;
           min-width: 0;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+          gap: 2px;
+          overflow: hidden;
         }
         .ns-inst-name {
           font-size: 13.5px;
@@ -12676,16 +12862,28 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
+          line-height: 1.25;
         }
         .ns-inst-role {
           font-size: 11px;
           color: #64748B;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          line-height: 1.2;
         }
         .ns-inst-badge {
-          font-size: 11px;
-          font-weight: 600;
+          font-size: 10.5px;
+          font-weight: 700;
           padding: 3px 8px;
           border-radius: 6px;
+          white-space: nowrap;
+          flex-shrink: 0;
+          max-width: 140px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          text-align: right;
+          line-height: 1.3;
         }
         .ns-inst-badge.available {
           background: #E6F9F5;
@@ -12698,6 +12896,16 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         .ns-inst-badge.leave {
           background: #F1F5F9;
           color: #94A3B8;
+        }
+        .ns-inst-badge.recommendation {
+          background: #CCFBF1;
+          color: #0F766E;
+          border: 1px solid #5EEAD4;
+        }
+        .ns-inst-badge.conflict {
+          background: #FEF2F2;
+          color: #DC2626;
+          border: 1px solid #FECACA;
         }
 
         .ns-bottom-action-bar {

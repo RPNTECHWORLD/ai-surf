@@ -220,24 +220,97 @@ export default function UserProfileMenu({ user, school, onLogout }) {
 
   // Synchronized user state
   const [localUser, setLocalUser] = useState(() => {
-    if (user) return user;
-    try {
-      const saved = sessionStorage.getItem('user') || localStorage.getItem('user');
-      return saved ? JSON.parse(saved) : null;
-    } catch (e) {
-      return null;
+    let u = user;
+    if (!u) {
+      try {
+        const saved = sessionStorage.getItem('user') || localStorage.getItem('user');
+        u = saved ? JSON.parse(saved) : null;
+      } catch (e) {
+        u = null;
+      }
     }
+    if (u && (u.role === 'admin' || u.role === 'superadmin')) {
+      if (u.guest_role || u.is_main_admin || u.is_view_admin) {
+        u = { ...u };
+        delete u.guest_role;
+        delete u.is_main_admin;
+        delete u.is_view_admin;
+        try {
+          localStorage.setItem('user', JSON.stringify(u));
+          sessionStorage.setItem('user', JSON.stringify(u));
+        } catch (e) {}
+      }
+    }
+    return u;
   });
 
   useEffect(() => {
-    if (user) setLocalUser(user);
+    if (user) {
+      if (user.role === 'admin' || user.role === 'superadmin') {
+        if (user.guest_role || user.is_main_admin || user.is_view_admin) {
+          const cleaned = { ...user };
+          delete cleaned.guest_role;
+          delete cleaned.is_main_admin;
+          delete cleaned.is_view_admin;
+          setLocalUser(cleaned);
+          try {
+            localStorage.setItem('user', JSON.stringify(cleaned));
+            sessionStorage.setItem('user', JSON.stringify(cleaned));
+          } catch (e) {}
+          return;
+        }
+      }
+      setLocalUser(user);
+    }
+  }, [user]);
+
+  // Real-time sync for coach name to guarantee it matches instructor record
+  useEffect(() => {
+    const u = localUser || user;
+    if (u && (u.role === 'coach' || u.role === 'head_coach')) {
+      const cId = u.instructor_id || u.id;
+      const url = cId ? `${API}/api/instructors/${cId}` : `${API}/api/instructors`;
+      fetch(url)
+        .then(r => r.json())
+        .then(data => {
+          let inst = data;
+          if (Array.isArray(data)) {
+            inst = data.find(i => 
+              (cId && String(i.id) === String(cId)) ||
+              (u.email && i.email && i.email.toLowerCase().trim() === u.email.toLowerCase().trim())
+            );
+          }
+          if (inst && inst.name && u.name !== inst.name) {
+            const updated = { ...u, name: inst.name, instructor_name: inst.name };
+            sessionStorage.setItem('user', JSON.stringify(updated));
+            localStorage.setItem('user', JSON.stringify(updated));
+            setLocalUser(updated);
+            window.dispatchEvent(new Event('user_updated'));
+          }
+        })
+        .catch(() => {});
+    }
   }, [user]);
 
   useEffect(() => {
     const syncUser = () => {
       try {
         const saved = sessionStorage.getItem('user') || localStorage.getItem('user');
-        if (saved) setLocalUser(JSON.parse(saved));
+        if (saved) {
+          let parsed = JSON.parse(saved);
+          if (parsed && (parsed.role === 'admin' || parsed.role === 'superadmin')) {
+            if (parsed.guest_role || parsed.is_main_admin || parsed.is_view_admin) {
+              delete parsed.guest_role;
+              delete parsed.is_main_admin;
+              delete parsed.is_view_admin;
+              try {
+                localStorage.setItem('user', JSON.stringify(parsed));
+                sessionStorage.setItem('user', JSON.stringify(parsed));
+              } catch (e) {}
+            }
+          }
+          setLocalUser(parsed);
+        }
       } catch (e) {}
     };
     window.addEventListener('storage', syncUser);
@@ -292,6 +365,10 @@ export default function UserProfileMenu({ user, school, onLogout }) {
 
   // Fetch Guest Admins for current school
   const fetchGuestAdmins = async () => {
+    if (!isOriginalSchoolAdmin) {
+      setGuestLoading(false);
+      return;
+    }
     setGuestLoading(true);
     setGuestError('');
     try {
@@ -325,6 +402,11 @@ export default function UserProfileMenu({ user, school, onLogout }) {
     setGuestError('');
     setGuestSuccess('');
 
+    if (!isOriginalSchoolAdmin) {
+      setGuestError('Only the original School Administrator can create or manage Guest Admins.');
+      return;
+    }
+
     if (!guestForm.email.trim() || !guestForm.password.trim()) {
       setGuestError('Email/ID and Password are required.');
       return;
@@ -350,7 +432,8 @@ export default function UserProfileMenu({ user, school, onLogout }) {
           password: guestForm.password,
           guest_role: chosenRole,
           school_name: schName,
-          school_id: schId
+          school_id: schId,
+          creator_role: currentRole
         })
       });
 
@@ -372,6 +455,7 @@ export default function UserProfileMenu({ user, school, onLogout }) {
 
   // Handle Delete Guest Admin
   const handleDeleteGuestAdmin = async (guestId, guestEmail) => {
+    if (!isOriginalSchoolAdmin) return;
     if (!window.confirm(`Are you sure you want to revoke and delete Guest Admin "${guestEmail}"?`)) {
       return;
     }
@@ -480,14 +564,25 @@ export default function UserProfileMenu({ user, school, onLogout }) {
   const currentRole = effectiveUser?.role || 'admin';
   const currentSchoolName = typeof school?.name === 'string' ? school.name : (school?.name?.name || effectiveUser?.school_name || effectiveUser?.school || '');
 
-  const isHeadCoachUser = Boolean(effectiveUser?.is_head_coach || currentRole === 'head_coach');
-  const isGuestAdmin = currentRole === 'guest_admin';
+  // Strictly enforce that students/athletes are NEVER head coach
+  const isStudent = currentRole === 'athlete' || currentRole === 'student' || currentRole === 'user';
+  const isHeadCoachUser = !isStudent && (currentRole === 'coach' || currentRole === 'head_coach') && Boolean(effectiveUser?.is_head_coach || currentRole === 'head_coach');
+  const isGuestAdmin = currentRole === 'guest_admin' && effectiveUser?.role !== 'admin' && effectiveUser?.role !== 'superadmin';
   const isViewAdmin = isGuestAdmin && (effectiveUser?.guest_role === 'view_admin' || effectiveUser?.is_view_admin);
   const isMainAdmin = isGuestAdmin && !isViewAdmin;
-  const isSchoolAdmin = (currentRole === 'admin' || !user?.role || isHeadCoachUser || isMainAdmin);
+  const isSchoolAdmin = !isStudent && (currentRole === 'admin' || !effectiveUser?.role || isHeadCoachUser || isMainAdmin);
   const isCoach = (currentRole === 'coach' || currentRole === 'instructor') && !isHeadCoachUser;
-  const isStudent = currentRole === 'athlete' || currentRole === 'student';
   const isCoachSchoolAffiliated = Boolean(editCoachSchool) && editCoachSchool !== 'Individual / Freelance Coach';
+
+  // Strictly only the ORIGINAL School Admin (never Guest Admin / Main Admin, never Coach, never Student) can create or manage Guest Admins
+  const isOriginalSchoolAdmin = (
+    !isGuestAdmin &&
+    !effectiveUser?.created_by_school &&
+    !isHeadCoachUser &&
+    !isStudent &&
+    !isCoach &&
+    (currentRole === 'admin' || currentRole === 'superadmin' || user?.role === 'admin' || user?.role === 'superadmin')
+  );
 
   const storedSchool = (() => {
     try {
@@ -947,7 +1042,7 @@ export default function UserProfileMenu({ user, school, onLogout }) {
     setTimeout(() => setSwitchFeedback(''), 2500);
   };
 
-  const isHeadCoach = Boolean(effectiveUser?.is_head_coach || currentRole === 'head_coach');
+  const isHeadCoach = !isStudent && (currentRole === 'coach' || currentRole === 'head_coach') && Boolean(effectiveUser?.is_head_coach || currentRole === 'head_coach');
   const roleDisplayNames = {
     admin: 'School Admin',
     guest_admin: isViewAdmin ? 'View Admin 👁️' : (isMainAdmin ? 'Main Admin ⚡' : 'Guest Admin'),
@@ -958,7 +1053,7 @@ export default function UserProfileMenu({ user, school, onLogout }) {
     guest: 'Guest Viewer',
     superadmin: 'Super Admin'
   };
-  const displayRoleLabel = isHeadCoach ? 'Head Coach 👑' : (isGuestAdmin ? (isViewAdmin ? 'View Admin 👁️' : 'Main Admin ⚡') : (roleDisplayNames[currentRole] || currentRole));
+  const displayRoleLabel = isStudent ? 'Student' : (isHeadCoach ? 'Head Coach 👑' : (isGuestAdmin ? (isViewAdmin ? 'View Admin 👁️' : 'Main Admin ⚡') : (roleDisplayNames[currentRole] || currentRole)));
 
   return (
     <div className="db-profile-menu-container" ref={menuRef} style={{ position: 'relative' }}>
@@ -1293,8 +1388,8 @@ export default function UserProfileMenu({ user, school, onLogout }) {
             </button>
           </div>
 
-          {/* GUEST ADMIN ACTION (Only available for School Admin / Main Admin, not View Admin) */}
-          {isSchoolAdmin && !isViewAdmin && (
+          {/* GUEST ADMIN ACTION (Exclusively for Original School Admin, never Guest Admins or Coaches) */}
+          {isOriginalSchoolAdmin && (
             <div
               style={{
                 padding: '8px 12px',
@@ -1452,9 +1547,9 @@ export default function UserProfileMenu({ user, school, onLogout }) {
       )}
 
       {/* =========================================================================
-          MODAL 1: GUEST ADMIN MANAGEMENT (Create & Manage Guest Admins)
+          MODAL 1: GUEST ADMIN MANAGEMENT (Create & Manage Guest Admins) - Original School Admin Only
           ========================================================================= */}
-      {showGuestAdminModal && (
+      {showGuestAdminModal && isOriginalSchoolAdmin && (
         <div
           style={{
             position: 'fixed',
