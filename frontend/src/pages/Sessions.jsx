@@ -8298,7 +8298,7 @@ const Sessions = () => {
                     <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
                       <button
                         className="ses-btn-primary"
-                        style={{ flex: 1, padding: '10px' }}
+                        style={{ width: '100%', padding: '10px' }}
                         onClick={() => {
                           const videoParam = selectedSessionDetail.video_url ? `&video=${encodeURIComponent(selectedSessionDetail.video_url)}` : '';
                           navigate(`/analysis?student=${encodeURIComponent(selectedSessionDetail.student || '')}&date=${encodeURIComponent(selectedSessionDetail.date || '')}${videoParam}&athletes=${encodeURIComponent(JSON.stringify([selectedSessionDetail.student]))}`);
@@ -8306,14 +8306,6 @@ const Sessions = () => {
                       >
                         Launch AI Video Analysis
                       </button>
-                      {!isStudent && (
-                        <button
-                          className="ses-btn-secondary"
-                          onClick={() => navigate(`/sessions/${selectedSessionDetail.id}/edit`)}
-                        >
-                          Edit Slot
-                        </button>
-                      )}
                     </div>
                   </div>
                 </div>

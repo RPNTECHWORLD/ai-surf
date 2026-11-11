@@ -1759,7 +1759,25 @@ const StudentsManagement = () => {
   };
 
   const handleExportCSV = () => {
-    const listToExport = (filtered && filtered.length > 0) ? filtered : approvedStudents;
+    // Check if user has explicitly searched or filtered
+    const hasSearch = Boolean(search && search.trim());
+    const hasDropdownFilter = Boolean(
+      (levelFilter && levelFilter !== 'All') ||
+      (instructorFilter && instructorFilter !== 'All') ||
+      (sessionTimeFilter && sessionTimeFilter !== 'All') ||
+      (stayFilter && stayFilter !== 'All') ||
+      (swimmingFilter && swimmingFilter !== 'All') ||
+      (dateFilter && dateFilter !== 'All') ||
+      (dateRange && (dateRange.startDate || dateRange.endDate))
+    );
+    const hasStatFilter = Boolean(activeStatFilter && activeStatFilter !== 'TOTAL');
+
+    // If activeStatFilter is 'TOTAL' or user hasn't explicitly applied a narrowing filter/search,
+    // export all approved students in this school/view so upcoming/completed students are not left out!
+    const listToExport = (hasSearch || hasDropdownFilter || (hasStatFilter && activeStatFilter !== 'ACTIVE'))
+      ? (filtered && filtered.length > 0 ? filtered : approvedStudents)
+      : approvedStudents;
+
     if (!listToExport || listToExport.length === 0) {
       if (typeof showToast === 'function') {
         showToast('⚠️ No students available to export.');
@@ -1789,7 +1807,8 @@ const StudentsManagement = () => {
       "Accompanying Guests"
     ];
 
-    const rows = listToExport.map(s => {
+    const rows = [];
+    listToExport.forEach(s => {
       const progressInfo = calculateCurrentCourseDay(s);
       const progressText = progressInfo.status === 'active'
         ? `Day ${progressInfo.which_day} of ${progressInfo.total_days}`
@@ -1807,10 +1826,10 @@ const StudentsManagement = () => {
         : (s.dob ? calculateAge(s.dob) : '');
 
       const genderVal = s.gender || (s.division && /women|girl/i.test(s.division) ? 'Female' : 'Male');
-
       const statusLabel = progressInfo.status ? (progressInfo.status.charAt(0).toUpperCase() + progressInfo.status.slice(1)) : 'Active';
 
-      return [
+      // 1. Primary Student Row
+      rows.push([
         s.name || '',
         s.email || '',
         s.whatsapp_number || s.phone || '',
@@ -1827,8 +1846,37 @@ const StudentsManagement = () => {
         statusLabel,
         s.instructor_name || s.instructor || '',
         s.school || s.school_name || activeSchoolName || '',
-        guestsText
-      ];
+        guestList.length > 0 ? `${guestList.length} Guest(s): ${guestsText}` : 'None'
+      ]);
+
+      // 2. Accompanying Guest Individual Participant Rows
+      guestList.forEach((g, gIdx) => {
+        const gAgeVal = (g.age !== undefined && g.age !== null && g.age !== '')
+          ? g.age
+          : (g.dob ? calculateAge(g.dob) : '');
+
+        const gGenderVal = g.gender || 'Male';
+
+        rows.push([
+          g.name || `Guest ${gIdx + 1} (${s.name})`,
+          g.email || s.email || '',
+          g.whatsapp_number || g.phone || s.whatsapp_number || s.phone || '',
+          gGenderVal,
+          gAgeVal || '',
+          g.dob || '',
+          g.swimming_ability || 'Swimmer',
+          g.level || 'Beginner',
+          s.course_duration || (s.days ? `${s.days} Days Course` : '3 Days Course'),
+          s.start_date || s.startDate || '',
+          getStudentEndDate(s) || '',
+          s.session_time || '',
+          progressText,
+          statusLabel,
+          s.instructor_name || s.instructor || '',
+          s.school || s.school_name || activeSchoolName || '',
+          `Accompanying Guest of ${s.name || 'Primary Student'}`
+        ]);
+      });
     });
 
     const allData = [headers, ...rows];
@@ -1856,7 +1904,7 @@ const StudentsManagement = () => {
     URL.revokeObjectURL(url);
 
     if (typeof showToast === 'function') {
-      showToast(`✓ Successfully exported ${listToExport.length} student(s) to CSV!`);
+      showToast(`✓ Successfully exported ${rows.length} student(s) / participant(s) to CSV!`);
     }
   };
 
@@ -2032,6 +2080,7 @@ const StudentsManagement = () => {
       // 1. From backend students list if approval_status === 'pending'
       (students || []).forEach(s => {
         if (!s || !s.email) return;
+        if (s.role && s.role !== 'athlete' && s.role !== 'student' && s.role !== 'user' && s.role !== 'Athlete') return;
         if (s.approval_status === 'pending') {
           addIfPending(
             s.email, s.name, s.school, s.start_date, s.session_time,
@@ -2041,9 +2090,12 @@ const StudentsManagement = () => {
         }
       });
 
-      // 2. From school_join_requests
+      // 2. From school_join_requests (strictly for student/athlete requests only)
       const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
       reqs.forEach(r => {
+        // Exclude coach/instructor requests from student pending requests
+        if (r.role && r.role !== 'athlete' && r.role !== 'student' && r.role !== 'user' && r.role !== 'Athlete') return;
+        if (r.role === 'coach' || r.role === 'instructor' || r.role === 'admin' || r.role === 'superadmin') return;
         if (r.status !== 'approved' && r.status !== 'rejected') {
           addIfPending(
             r.student_email || r.email,
@@ -2064,7 +2116,7 @@ const StudentsManagement = () => {
       const savedAccs = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
       savedAccs.forEach(u => {
         if (!u || !u.email) return;
-        if (u.role && u.role !== 'athlete' && u.role !== 'student' && u.role !== 'Athlete') return;
+        if (u.role && u.role !== 'athlete' && u.role !== 'student' && u.role !== 'Athlete' && u.role !== 'user') return;
         if (u.approval_status === 'pending') {
           addIfPending(
             u.email, u.name, u.school, u.start_date, u.session_time,
@@ -2079,6 +2131,7 @@ const StudentsManagement = () => {
       const mockStudents = JSON.parse(localStorage.getItem('mock_students_data') || '[]');
       mockStudents.forEach(u => {
         if (!u || !u.email) return;
+        if (u.role && u.role !== 'athlete' && u.role !== 'student' && u.role !== 'user') return;
         if (u.approval_status === 'pending') {
           addIfPending(
             u.email, u.name, u.school, u.start_date, u.session_time,

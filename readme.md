@@ -24,21 +24,6 @@
   - Removed `<button className="ach-btn-video">Video Analysis</button>` from the top header actions.
   - Removed `<button className="ach-btn-analysis">Video</button>` from each individual session history card row.
 
-#### Step 3 Student Checkbox Selection Fix After "Clear All" (`NewSession.jsx`)
-- **Problem**:
-  - In `NewSession.jsx` (Step 3: Assign Instructors), after clicking **"Clear All"** to clear training groups in a time slot, students returned to the unassigned *Students List* on the left, but clicking their checkboxes or cards did not select or check them.
-- **Root Cause**:
-  - When `clearAllGroups` was executed, student IDs in `clearedStudentIds` and `slotStudentMap` were transformed into string primitives (`.map(String)`).
-  - In `activeSlotStudentIdSet`, the `Set` contained string IDs (e.g. `Set {"1", "2"}`).
-  - When the user clicked on a student, `toggleStep3StudentCheck(student.id)` received the authentic database ID (an integer, e.g. `1`).
-  - Strict equality in `activeSlotStudentIdSet.has(1)` evaluated to `false` because `"1" !== 1`.
-  - As a result, the function exited immediately at `if (!activeSlotStudentIdSet.has(id)) return;` without selecting or checking the student.
-- **Resolution**:
-  - **Type-Resilient `activeSlotStudentIdSet`**: Updated the Set generator to store both authentic ID values, stringified representations (`String(id)`), and parsed integers (`Number(id)`).
-  - **Flexible Type Checking**: Updated `toggleStep3StudentCheck`, `step3CheckedStudentIds`, and `setStep3CheckedStudentIds` to accept both string and number ID formats (`has(id) || has(String(id)) || has(Number(id))`).
-  - **Checkbox State Resolution**: Updated JSX `isChecked` to use `step3CheckedStudentIds.some(cid => String(cid) === String(student.id))` rather than strict `includes(student.id)`.
-  - **Group Creation Integration**: Updated `handleCreateGroup` to match checked students using string-safe comparisons, ensuring manual group creation from selected students works seamlessly after clearing.
-
 #### 3-Day Course Certificate Download & Celebration Party Popper Confetti (`MyAchievements.jsx`)
 - **User Request**:
   - Add a **"Download Certificate"** option when a student completes 3 sessions, which downloads an official 3-day course certificate with their name, school, date, wave count, and coach verification.
@@ -2030,3 +2015,136 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
     - The menu button **`🛡️ Guest Admin Access - Create`** is rendered **ONLY** when `isOriginalSchoolAdmin` is true.
     - All associated functions (`fetchGuestAdmins`, `handleCreateGuestAdmin`, `handleDeleteGuestAdmin`) and the modal popup are strictly guarded by `isOriginalSchoolAdmin`.
     - No Guest Admin (neither Main Admin nor View Admin), Coach, Head Coach, or Student can ever see or invoke Guest Admin creation.
+
+---
+
+### CHANGES ON 11-11-2026
+
+#### 1. Separated Coach vs Student Join Requests & Dedicated Coach Join Requests Modal (`InstructorManagement.jsx`, `StudentsManagement.jsx`)
+- **Problem**:
+  - Coaches who registered online (e.g. Sathya) were erroneously appearing inside the student **Pending Registration Requests** popup modal in `StudentsManagement.jsx`.
+  - In `InstructorManagement.jsx`, pending coaches were displayed directly inside the active roster card grid with an intrusive inline cell containing `Pending School Approval [Approve] [Reject]` buttons inside the card, rather than being handled cleanly via a dedicated modal.
+- **Resolution**:
+  - **Student Pending Requests Guard (`StudentsManagement.jsx`)**:
+    - Filtered `allPendingRequests` in `StudentsManagement.jsx` to strictly exclude requests with role `coach`, `instructor`, `admin`, or `superadmin` across backend records, `school_join_requests`, and `savedAccounts`.
+    - Only actual student registrations (`athlete`, `student`, `user`) now appear in the student pending modal.
+  - **Removed Card Cell & Clean Coach Roster (`InstructorManagement.jsx`)**:
+    - Removed the inline `Pending School Approval` cell and action buttons from inside the instructor card in the grid ("kila atha cell vena").
+    - Excluded pending coaches from `filtered` active instructor roster cards so pending registrations do not clutter the active instructor cards grid until approved.
+  - **Dedicated Coach Join Requests Modal (`InstructorManagement.jsx`)**:
+    - Configured the top header `[⏳ Join Requests (N)]` button to open a dedicated **Pending Coach Registration Requests** modal dialog (`showCoachJoinRequestsModal`).
+    - The modal aggregates pending coach registrations from backend instructors (`approval_status === 'pending'`), `school_join_requests` (role coach/instructor), and `savedAccounts`.
+    - Features coach search, contact info, school affiliation, certifications, and one-click `[✓ Accept]` and `[✕ Decline]` actions.
+    - Approving a coach synchronously updates the backend, sets `approval_status: 'approved'` in localStorage (`school_join_requests`, `savedAccounts`), and brings the coach directly into the active instructor roster.
+  - **Group Card Student Deduplication (`NewSession.jsx`)**:
+    - Enhanced group card student rendering in Step 3 (*Instructor Groups Matching*) with composite ID and name deduplication guards (`seenGrpStudentKeys`) so duplicate student chips (e.g. Grace Hall, Liam Torres) cannot render multiple times in the same group card.
+  - **Verification**: Clean Vite production build (`npm --prefix frontend run build`) compiled successfully with 0 errors in 2.87s.
+
+#### 2. Removed "Edit Slot" Button from Session Details Popup (`Sessions.jsx`)
+- **Problem**:
+  - In the calendar session roster view, clicking on an individual session opened the **Session Details** popup which showed an "Edit Slot" button alongside "Launch AI Video Analysis", allowing users to trigger slot edits from this view where editing was not desired.
+- **Resolution**:
+  - Removed the `Edit Slot` button from `selectedSessionDetail` in [Sessions.jsx](file:///d:/surfing/ai/frontend/src/pages/Sessions.jsx#L8298-L8315).
+  - Expanded `Launch AI Video Analysis` to full width (`width: '100%'`).
+  - **Verification**: Clean Vite production build (`npm --prefix frontend run build`) compiled successfully with 0 errors in 1.97s.
+
+#### 3. Fixed Coach Selection Auto-Assigning All Students into Group (`NewSession.jsx`)
+- **Problem**:
+  - In Step 3 (*Instructor Groups Matching*), when clicking an instructor card from the *Available Instructors* column without selecting any students from the *Students List*, all students in that time slot were immediately auto-assigned into a newly created group card under that coach, rather than creating an empty group card with only the clicked coach selected.
+- **Root Cause**:
+  - In `NewSession.jsx` (line ~10418), when no group existed in the active slot or when all existing groups were already occupied by coaches, the fallback logic executed:
+    ```javascript
+    const slotStudents = slotStudentMap[activeSlotId] || [];
+    studentIds: deduplicateStudentIds(slotStudents)
+    ```
+    This dumped all students currently in `slotStudentMap` for that slot into the new group's `studentIds`, stripping every student from the left-hand *Students List* and bulk-assigning them to that single coach.
+- **Resolution**:
+  - **Selective Assignment Guard**:
+    - Replaced the bulk slot students dump with `checkedToAdd = (step3CheckedStudentIds && step3CheckedStudentIds.length > 0) ? deduplicateStudentIds(step3CheckedStudentIds) : []`.
+    - If the user has not explicitly checked any students, `studentIds` is initialized as empty `[]`.
+    - An empty group card (e.g. `Group A`, `Group B`) is created with only the clicked coach assigned (`assignedInstructorIds: [inst.id]`), leaving all students untouched in the unassigned *Students List*.
+    - If the user has explicitly selected/checked students, only those checked students are assigned to the group, and `setStep3CheckedStudentIds([])` resets the selection.
+  - **Verification**: Clean Vite production build (`npm --prefix frontend run build`) compiled successfully with 0 errors in 2.36s.
+
+#### 4. Fixed Student Page CSV Export Count & Accompanying Guests Omission (`StudentsManagement.jsx`)
+- **Problem**:
+  - In the Students Management page, when clicking **"Export CSV"**, users with 20 students / participants (e.g., 18 primary students + 2 accompanying guests, or 20 approved students where 2 were upcoming/inactive) found that only 18 students were included in the downloaded CSV file, while 2 participants were completely omitted.
+- **Root Cause**:
+  - **Omission of Accompanying Guests as Individual Rows**: `handleExportCSV` previously iterated over `listToExport` via `.map()`, creating only 1 row per primary student. Accompanying guests were merely appended as a comma-separated text note in the last column of the primary student's row rather than as full participant rows. Since the page title (`Students (20)`) and the *Total Students* stat card sum `approvedStudents.length + totalApprovedGuests` (18 + 2 = 20), the resulting CSV file was missing 2 individual participant rows.
+  - **Default Filter Narrowing**: `listToExport` used `(filtered && filtered.length > 0) ? filtered : approvedStudents`. On page load, `activeStatFilter` defaults to `'ACTIVE'`. Any students who were upcoming or completed were filtered out of `filtered`, resulting in fewer records being exported than the total student count shown in the top header.
+- **Resolution**:
+  - **Explicit Individual Rows for Accompanying Guests**:
+    - `handleExportCSV` now iterates through each student and outputs their primary student record, and then directly generates full participant rows for each accompanying guest (`g.name`, `g.gender`, `g.age`, `g.swimming_ability`, `g.level`, session times, and relationship tag `Accompanying Guest of [Parent Name]`).
+  - **Smart Scope Resolution**:
+    - If the user has explicitly applied a search query or specific dropdown filter (level, coach, stay, date range), the export cleanly respects `filtered` and includes matching students and their guests.
+    - If no narrowing search or specific filter is set (or when viewing 'TOTAL'), `handleExportCSV` exports all `approvedStudents` and their guests, guaranteeing that no registered student is omitted.
+  - **Real-Time Row Count Toast**:
+    - Updated export feedback toast to report the exact total of exported participant rows (`Successfully exported ${rows.length} student(s) / participant(s) to CSV!`).
+  - **Verification**: Clean Vite production build (`npm --prefix frontend run build`) compiled successfully with 0 errors in 2.11s.
+
+#### 5. Fixed Group Slot Reassignment & Student Count Zeroing Bug (`NewSession.jsx`)
+- **Problem**:
+  - In Step 3 (*Instructor Groups Matching*), when moving an existing group card to a different time slot using the group card's slot dropdown (e.g. moving a group from the 2nd slot `09:30 AM` to `06:30 AM`), the top time slot pills unexpectedly displayed `0 Students` across all slots (e.g., `(1) 06:30 AM 0 Students | (2) 09:30 AM 0 Students | (3) 02:00 PM 0 Students | (4) 08:30 AM 0 Students`).
+- **Root Cause**:
+  - **Key Resolution Mismatch in `slotStudentMap`**: Time slots in `SchoolSlotConfig` and drafts can be keyed either by numeric IDs (`1`, `2`), string IDs (`"1"`, `"2"`), or slot time strings (`"06:30 AM"`, `"09:30 AM"`).
+  - In `handleMoveGroupToSlot`, students removed from the source slot were only added back under `newMap[newSlotId]` and `newMap[String(newSlotId)]`. If other slots stored students by time strings, lookups failed.
+  - In `getSlotAllStudentIds`, `fromMap` previously only checked `slotStudentMap[sId] || slotStudentMap[String(sId)]`, returning empty arrays `[]` whenever students were stored under `startTime` or formatted time ranges, causing counts to collapse to `0 Students`.
+  - In `isGroupSlotMatch`, groups with mismatched ID types or times were falsely flagged as belonging to "other slots", causing `assignedInOtherSlots` to exclude all students and zero out slot student totals.
+  - In `useEffect` for slot selection auto-reset, strict identity equality (`s.id === selectedSlotId`) failed when string IDs were compared with numeric IDs, causing the active slot selection and filter to reset unexpectedly.
+- **Resolution**:
+  - **Multi-Key Slot Student Resolution in `getSlotAllStudentIds`**:
+    - `fromMap` now aggregates student IDs across all possible slot key formats: `slotStudentMap[sId]`, `slotStudentMap[String(sId)]`, `slotStudentMap[slotObj.startTime]`, `slotStudentMap[sStart]`, `slotStudentMap[slotObj.time]`, and `slotStudentMap[sFull]`.
+    - `isGroupSlotMatch` prioritizes start time / time range compatibility and safely falls back without premature exclusion.
+  - **Comprehensive Group Slot Reassignment in `handleMoveGroupToSlot`**:
+    - Updates the moved group in `trainingGroups` with new `slotId`, `time`, and `startTime`.
+    - Strips the group's student IDs from all slots in `slotStudentMap` and registers them across all valid key representations of the target slot (`id`, `String(id)`, `startTime`, `time`).
+    - Automatically updates `slotCapacityMap` if the moved group increases total students beyond the slot's current capacity.
+  - **Type-Agnostic Slot Comparisons**:
+    - Converted strict equality checks to string-coerced comparisons (`String(s.id) === String(selectedSlotId)`) in auto-reset effects, `getSlotThemeForSlot`, and `displayedTrainingGroups`.
+  - **Verification**: Clean Vite production build (`npm --prefix frontend run build`) compiled successfully with 0 errors in 3.14s.
+
+#### 6. Fixed Duplicate Students Bug on "Auto Group" in Step 3 (`NewSession.jsx`)
+- **Problem**:
+  - When clicking the **"Auto Group"** button in Step 3 (*Instructor Groups Matching*), student cards inside the generated group cards were duplicated (e.g., `Grace Hall` rendered twice, `Liam Torres` rendered twice).
+- **Root Cause**:
+  - In JavaScript, `Set` uses strict identity equality (`===`). Student IDs originating from different sources (such as database integers `718` from the pool, string identifiers `'718'` from URL/draft/cleared group arrays) caused `Set` deduplications to treat `718` and `'718'` as distinct values (`new Set([718, '718']).size === 2`).
+  - In `autoGroupSlotStudents`, `slotStudentIds` was not deduplicated prior to filtering. When resolving students via `resolveStudentFromPool`, both numeric and string representations resolved to the same student object, appending duplicate student references into the cluster's `students` array.
+  - When `students.slice(i, i + maxPerGroup)` divided the cluster into group cards, the duplicate objects were copied directly into `newGroup.studentIds`, causing duplicate chips to render inside the group card.
+- **Resolution**:
+  - **Universal Canonical Deduplication Helper (`deduplicateStudentIds`)**: Added a type-agnostic deduplication function that converts IDs to trimmed string keys to guarantee that no student or guest ID is ever stored or processed more than once, regardless of numeric or string typing.
+  - **`autoGroupSlotStudents` Strict Uniqueness Guard**:
+    - Raw slot student IDs are now pre-deduplicated through `deduplicateStudentIds`.
+    - Added a `seenStudentKeysInSlot` Set that tracks all assigned students across groups and clusters in the active slot run. Any student or guest already encountered is immediately skipped.
+    - Added cluster-level uniqueness checks (`seenStudentKeys`) to ensure no student can ever be pushed more than once to a cluster.
+    - Deduplicated the final slice before setting `newGroup.studentIds: deduplicateStudentIds(chunk.map(s => s.id))`.
+  - **Group Card Defensive Render Deduplication**:
+    - Added a unique key filter (`seenGrpStudentKeys`) in the JSX mapping of `grpStudents` so that even if historical draft state contains duplicate keys, only a single unique student chip will ever render per student in any group card.
+  - **State Deduplication Across User Actions**:
+    - Applied `deduplicateStudentIds` to `clearAll`, `handleCreateGroup`, `handleDropOnGroup`, `previousGroupSuggestions`, and Step 2 roster selections (`matchingFilteredIds`).
+  - **Verification**: Clean Vite production build (`npm --prefix frontend run build`) compiled successfully with 0 errors in 2.94s.
+
+7. Real Production AWS RDS Extraction, Local Backup & Complete Database Sync
+- **Root Cause of Old Backup Data**:
+  - The previous script used a hardcoded fallback (`database-2`) which was an older staging snapshot.
+  - The authentic live production database (`aisurf-db-cluster.cluster-ckl2omi0klbx.us-east-1.rds.amazonaws.com`) resides securely within the AWS VPC private subnet.
+- **Strict Read-Only Extraction via EC2 Backend Instance (`i-0c62e04f44a9ea237`)**:
+  - Connected from the backend EC2 server directly to `aisurf-db-cluster` in strict session read-only mode (`conn.set_session(readonly=True, autocommit=False)`).
+  - Dumped all 38 tables representing real live production data:
+    - **Students**: 566 records (including latest registrants like `KISHORE RAMESH`, `Aniket Ingle`, etc.)
+    - **Sessions**: 2,343 records
+    - **Scores**: 7,268 records
+    - **Users**: 553 records
+    - **Instructors / Coaches**: 50 records
+    - **Surf Schools**: 10 records (Bala Surf, Arun Surf, athnexlive, samsurf, rpn surf school, Togai Surf, Aquatic Indica, etc.)
+    - **Badges**: 166 records
+  - Saved dump to S3 (`s3://aisurf-media-uploads-149051628601/backups/real_prod_backup.json`) and downloaded locally to `backups/real_prod_backup_latest.json` (46.7 MB).
+  - Zero modifications were made to the live production database.
+- **Local Database Replacement**:
+  - Cleaned and restored all tables into local PostgreSQL (`postgresql://postgres:eric%402004@localhost:5432/surfing_db`) using replica session mode and initial bulk truncation.
+  - Re-aligned all PostgreSQL sequences to match MAX IDs.
+  - Synchronized local SQLite (`backend/aisurf.db`).
+  - Verified local API: `http://127.0.0.1:8000/api/superadmin/students` returns all **566 live students**.
+ 8. Full Production AWS Deployment (`https://athnexlive.com`)
+- Built and deployed the frontend bundle to AWS S3 & Nginx on EC2 instance (`i-02999b6093bc5bfd2`).
+- Deployed `backend/main.py` updates to AWS EC2 instance (`i-0c62e04f44a9ea237`) and restarted `aisurf-backend`.
+- Verified live endpoints: `https://athnexlive.com` (HTTP 200 OK) and `https://athnexlive.com/api/schools` (HTTP 200 OK).

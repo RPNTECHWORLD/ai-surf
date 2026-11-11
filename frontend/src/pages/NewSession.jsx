@@ -376,6 +376,21 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     return String(val || '');
   };
 
+  // Universal canonical deduplication for student/guest IDs
+  const deduplicateStudentIds = (ids) => {
+    if (!Array.isArray(ids)) return [];
+    const seen = new Set();
+    const result = [];
+    ids.forEach(id => {
+      if (id === null || id === undefined) return;
+      const key = String(id).trim();
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      result.push(id);
+    });
+    return result;
+  };
+
   const isStudent = currentUser?.role === 'athlete' || currentUser?.role === 'student' || currentUser?.role === 'user';
   const isCoach = currentUser?.role === 'coach' || currentUser?.role === 'instructor';
   const isHeadCoach = Boolean(currentUser?.is_head_coach || currentUser?.role === 'head_coach');
@@ -2863,11 +2878,11 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   // Auto-reset selectedSlotId & step3SlotFilter if the selected slot is off on the current selected day of week
   useEffect(() => {
     if (activeSlotsForDay.length > 0) {
-      const isCurrentActive = activeSlotsForDay.some(s => s.id === selectedSlotId);
+      const isCurrentActive = activeSlotsForDay.some(s => String(s.id) === String(selectedSlotId));
       if (!isCurrentActive) {
         setSelectedSlotId(activeSlotsForDay[0].id);
       }
-      if (step3SlotFilter === 'ALL' || !activeSlotsForDay.some(s => s.id === step3SlotFilter)) {
+      if (step3SlotFilter === 'ALL' || !activeSlotsForDay.some(s => String(s.id) === String(step3SlotFilter))) {
         setStep3SlotFilter(activeSlotsForDay[0].id);
       }
     }
@@ -2879,12 +2894,12 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     if (!slotOrId) return getSlotTheme(0);
     const slotId = typeof slotOrId === 'object' ? slotOrId.id : slotOrId;
 
-    const activeIdx = activeSlotsForDay.findIndex(s => s.id === slotId);
+    const activeIdx = activeSlotsForDay.findIndex(s => String(s.id) === String(slotId));
     if (activeIdx !== -1) {
       return getSlotTheme(activeIdx);
     }
 
-    const allIdx = slots.findIndex(s => s.id === slotId);
+    const allIdx = slots.findIndex(s => String(s.id) === String(slotId));
     if (allIdx !== -1) {
       return getSlotTheme(allIdx);
     }
@@ -2907,17 +2922,21 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         if (String(grpSlotId) === String(sId)) return true;
         if (sStart && String(grpSlotId).trim().toLowerCase() === sStart) return true;
         if (sFull && String(grpSlotId).trim().toLowerCase() === sFull) return true;
-        // If grp has a slotId that belongs to another recognized slot, it CANNOT match this slot!
-        const matchedOtherSlot = slots.find(s => String(s.id) === String(grpSlotId));
-        if (matchedOtherSlot) return false;
       }
 
-      // Fallback only if grp has NO slotId or unknown slotId:
+      // Check by time string / start time
       const grpTime = (grp.time || '').trim().toLowerCase();
       const grpStart = (grp.startTime || (grp.time ? grp.time.split(' - ')[0] : '')).trim().toLowerCase();
 
       if (sStart && grpStart && sStart === grpStart) return true;
       if (sFull && grpTime === sFull) return true;
+
+      // If grp has an explicit slotId belonging to another recognized slot, it does not match this slot
+      if (grpSlotId != null) {
+        const matchedOtherSlot = slots.find(s => String(s.id) === String(grpSlotId) && String(s.id) !== String(sId));
+        if (matchedOtherSlot) return false;
+      }
+
       return false;
     };
 
@@ -2950,7 +2969,24 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     });
 
     // 3. Add staged students in slotStudentMap for this slot (who are NOT in a group in another slot)
-    const fromMap = slotStudentMap[sId] || slotStudentMap[String(sId)] || [];
+    const getFromMap = () => {
+      const candidates = [
+        slotStudentMap[sId],
+        slotStudentMap[String(sId)],
+        slotObj?.startTime ? slotStudentMap[slotObj.startTime] : null,
+        sStart ? slotStudentMap[sStart] : null,
+        slotObj?.time ? slotStudentMap[slotObj.time] : null,
+        sFull ? slotStudentMap[sFull] : null,
+      ];
+      const merged = new Set();
+      candidates.forEach(arr => {
+        if (Array.isArray(arr)) {
+          arr.forEach(id => { if (id != null) merged.add(id); });
+        }
+      });
+      return Array.from(merged);
+    };
+    const fromMap = getFromMap();
     if (Array.isArray(fromMap)) {
       fromMap.forEach(id => {
         if (id != null && !assignedInOtherSlots.has(String(id))) {
@@ -3120,7 +3156,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
         // Add all family members to active slot
         const existingInSlot = (newMap[activeSlotId] || newMap[String(activeSlotId)] || []);
-        const updated = Array.from(new Set([...existingInSlot, ...familyIds]));
+        const updated = deduplicateStudentIds([...existingInSlot, ...familyIds]);
         newMap[activeSlotId] = updated;
         newMap[String(activeSlotId)] = updated;
         return newMap;
@@ -3859,9 +3895,22 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
   // Step 3: Training groups filtered by slot (strictly ordered Group A, Group B, Group C...)
   const displayedTrainingGroups = useMemo(() => {
-    const list = (editSession || step3SlotFilter === 'ALL')
-      ? trainingGroups
-      : trainingGroups.filter(g => String(g.slotId || slots[0]?.id) === String(step3SlotFilter));
+    if (editSession || step3SlotFilter === 'ALL') {
+      return sortGroupsInOrder(trainingGroups);
+    }
+    const filterSlotObj = slots.find(s => String(s.id) === String(step3SlotFilter));
+    const filterStart = (filterSlotObj?.startTime || (filterSlotObj?.time ? filterSlotObj.time.split(' - ')[0] : '')).trim().toLowerCase();
+    const filterFull = (filterSlotObj?.time || filterSlotObj?.startTime || '').trim().toLowerCase();
+
+    const list = trainingGroups.filter(g => {
+      const gSlotId = g.slotId;
+      if (gSlotId != null && String(gSlotId) === String(step3SlotFilter)) return true;
+      const gStart = (g.startTime || (g.time ? g.time.split(' - ')[0] : '')).trim().toLowerCase();
+      const gTime = (g.time || '').trim().toLowerCase();
+      if (filterStart && gStart && filterStart === gStart) return true;
+      if (filterFull && gTime && filterFull === gTime) return true;
+      return false;
+    });
     return sortGroupsInOrder(list);
   }, [trainingGroups, step3SlotFilter, slots, editSession]);
 
@@ -4015,7 +4064,10 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
   // Helper to move an entire group (and its students) from one slot to another seamlessly
   const handleMoveGroupToSlot = (groupId, targetSlotId) => {
-    const matchedSlot = slots.find(s => String(s.id) === String(targetSlotId));
+    const matchedSlot = slots.find(s => String(s.id) === String(targetSlotId) ||
+      (s.startTime && String(s.startTime).trim().toLowerCase() === String(targetSlotId).trim().toLowerCase()) ||
+      (s.time && String(s.time).trim().toLowerCase() === String(targetSlotId).trim().toLowerCase())
+    );
     const newSlotId = matchedSlot ? matchedSlot.id : targetSlotId;
     const newSlotTime = matchedSlot ? (matchedSlot.time || matchedSlot.startTime || '') : '';
     const newSlotStartTime = matchedSlot ? (matchedSlot.startTime || (matchedSlot.time ? matchedSlot.time.split(' - ')[0] : '')) : '';
@@ -4038,17 +4090,60 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
     setSlotStudentMap(prev => {
       const newMap = { ...prev };
+      // Remove grpStudentIds from ALL existing slot keys
       Object.keys(newMap).forEach(k => {
         if (Array.isArray(newMap[k])) {
           newMap[k] = newMap[k].filter(id => !grpStudentIds.includes(String(id)));
         }
       });
-      const currentInTarget = (newMap[newSlotId] || newMap[String(newSlotId)] || []).map(String);
-      const combined = Array.from(new Set([...currentInTarget, ...grpStudentIds]));
-      newMap[newSlotId] = combined;
-      newMap[String(newSlotId)] = combined;
+
+      // Target keys to update (id, String(id), startTime, time)
+      const targetKeys = new Set([
+        newSlotId,
+        String(newSlotId),
+        matchedSlot?.startTime,
+        matchedSlot?.time,
+        newSlotStartTime,
+        newSlotTime
+      ].filter(Boolean));
+
+      // Collect existing students already in the target slot under any of its keys
+      const existingInTarget = new Set();
+      targetKeys.forEach(k => {
+        if (Array.isArray(newMap[k])) {
+          newMap[k].forEach(id => existingInTarget.add(id));
+        }
+      });
+
+      // Combine existing with moved group students
+      grpStudentIds.forEach(id => existingInTarget.add(id));
+      const combined = Array.from(existingInTarget);
+
+      // Write combined array to all target slot keys so any lookup format succeeds
+      targetKeys.forEach(k => {
+        newMap[k] = combined;
+      });
+
       return newMap;
     });
+
+    // Also ensure slotCapacityMap accommodates the new total if needed
+    if (matchedSlot) {
+      setSlotCapacityMap(prev => {
+        const currentCap = prev[newSlotId] !== undefined ? prev[newSlotId] : getSlotCapacity(matchedSlot);
+        const targetStudentsCount = trainingGroups
+          .filter(g => String(g.slotId) === String(newSlotId) || g.id === groupId)
+          .flatMap(g => g.studentIds || []).length;
+        if (targetStudentsCount > currentCap) {
+          return {
+            ...prev,
+            [newSlotId]: targetStudentsCount,
+            [String(newSlotId)]: targetStudentsCount
+          };
+        }
+        return prev;
+      });
+    }
 
     setSelectedSlotId(newSlotId);
     setStep3SlotFilter(newSlotId);
@@ -4119,7 +4214,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       day: dayLabel,
       level: levelLabel,
       slotId: defaultSlotId,
-      studentIds: [...step3CheckedStudentIds],
+      studentIds: deduplicateStudentIds(step3CheckedStudentIds),
       assignedInstructorId: (isIndividualCoach && currentIndividualCoach?.id) ? currentIndividualCoach.id : ((isCoachFreelance && (currentUser?.instructor_id || currentUser?.id)) ? (currentUser?.instructor_id || currentUser?.id) : null),
       assignedInstructorIds: (isIndividualCoach && currentIndividualCoach?.id) ? [currentIndividualCoach.id] : ((isCoachFreelance && (currentUser?.instructor_id || currentUser?.id)) ? [(currentUser?.instructor_id || currentUser?.id)] : []),
     };
@@ -4194,7 +4289,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         const gStudents = (Array.isArray(targetGrp.studentIds) ? targetGrp.studentIds : (Array.isArray(targetGrp.students) ? targetGrp.students.map(s => s?.id).filter(Boolean) : [])).map(String);
         setSlotStudentMap(prev => {
           const currentList = (prev[sId] || prev[sIdKey] || []).map(String);
-          const merged = Array.from(new Set([...currentList, ...gStudents]));
+          const merged = deduplicateStudentIds([...currentList, ...gStudents]);
           return {
             ...prev,
             [sId]: merged,
@@ -4254,8 +4349,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       // Keep ALL students in this slot's slotStudentMap so they all return to the unassigned Students List!
       setSlotStudentMap(prev => {
         const existingInSlot = (prev[currentSlotId] || prev[String(currentSlotId)] || prev[step3SlotFilter] || prev[String(step3SlotFilter)] || []);
-        // Preserve authentic student IDs
-        const combined = Array.from(new Set([...existingInSlot, ...clearedStudentIds]));
+        // Preserve authentic student IDs without type duplicates
+        const combined = deduplicateStudentIds([...existingInSlot, ...clearedStudentIds]);
         return {
           ...prev,
           [currentSlotId]: combined,
@@ -4280,7 +4375,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             const sIdKey = String(sId);
             const gStudents = (Array.isArray(g.studentIds) ? g.studentIds : (Array.isArray(g.students) ? g.students.map(s => s?.id).filter(Boolean) : []));
             const currentList = (nextMap[sId] || nextMap[sIdKey] || []);
-            const merged = Array.from(new Set([...currentList, ...gStudents]));
+            const merged = deduplicateStudentIds([...currentList, ...gStudents]);
             nextMap[sId] = merged;
             nextMap[sIdKey] = merged;
           }
@@ -4500,8 +4595,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     let updatedGroups = [...trainingGroups];
 
     targetSlotIds.forEach(sId => {
-      const slotStudentIds = slotStudentMap[sId] || slotStudentMap[String(sId)] || [];
-      if (!Array.isArray(slotStudentIds) || slotStudentIds.length === 0) return;
+      const rawSlotStudentIds = slotStudentMap[sId] || slotStudentMap[String(sId)] || [];
+      if (!Array.isArray(rawSlotStudentIds) || rawSlotStudentIds.length === 0) return;
 
       const slotObj = slots.find(s => String(s.id) === String(sId)) || slots[0];
       const slotTime = slotObj ? (slotObj.startTime || slotObj.time || '') : '';
@@ -4527,17 +4622,33 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         currentSlotGroups.flatMap(g => g.studentIds || []).map(String)
       );
 
+      // Canonical deduplication of slot students by string key
+      const uniqueSlotStudentIds = deduplicateStudentIds(rawSlotStudentIds);
+
       // Students in this slot who are not yet in any group in this slot
-      const studentsToGroup = slotStudentIds.filter(id => !assignedStudentIdsInSlot.has(String(id)));
+      const studentsToGroup = uniqueSlotStudentIds.filter(id => !assignedStudentIdsInSlot.has(String(id)));
       if (studentsToGroup.length === 0) return;
 
       // Group students by previous group and coach
-      const clusters = new Map(); // key -> { prevGroupTitle, coach, students: [] }
+      const clusters = new Map(); // key -> { prevGroupTitle, coach, students: [], seenStudentKeys: Set }
       const targetDateObj = parseLocalDateOnly(selectedSessionDateYYYYMMDD);
+
+      // Track seen student keys in this slot so NO student/guest can ever enter multiple clusters or groups
+      const seenStudentKeysInSlot = new Set(
+        Array.from(assignedStudentIdsInSlot).map(String)
+      );
 
       studentsToGroup.forEach(sid => {
         const st = resolveStudentFromPool(sid);
         if (!st) return;
+
+        // Canonical student key
+        const studentCanonicalKey = String(st.id != null ? st.id : (st.sessGuestId || st.name)).trim();
+        if (seenStudentKeysInSlot.has(studentCanonicalKey)) {
+          // Already assigned in a group or added to another cluster in this run! Skip duplicate
+          return;
+        }
+        seenStudentKeysInSlot.add(studentCanonicalKey);
 
         const studentNameClean = (st.name || '').toLowerCase().trim();
         const parentNameClean = (st.parentStudentName || '').toLowerCase().trim();
@@ -4599,10 +4710,15 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             clusterKey,
             prevGroupTitle,
             coach: resolvedCoach,
-            students: []
+            students: [],
+            seenStudentKeys: new Set()
           });
         }
-        clusters.get(clusterKey).students.push(st);
+        const cl = clusters.get(clusterKey);
+        if (!cl.seenStudentKeys.has(studentCanonicalKey)) {
+          cl.seenStudentKeys.add(studentCanonicalKey);
+          cl.students.push(st);
+        }
       });
 
       // Track used group letters in this slot so each group gets a unique letter: Group A, Group B...
@@ -4633,11 +4749,25 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       const maxPerGroup = Math.max(1, Math.min(5, sCap || 5));
 
       sortedClusterEntries.forEach(([clusterKey, { coach, students, prevGroupTitle }]) => {
-        if (students.length === 0) return;
+        if (!Array.isArray(students) || students.length === 0) return;
+
+        // Deduplicate students within this cluster
+        const uniqueClusterStudents = [];
+        const seenClusterStudentKeys = new Set();
+        students.forEach(st => {
+          if (!st) return;
+          const k = String(st.id != null ? st.id : (st.sessGuestId || st.name)).trim();
+          if (!seenClusterStudentKeys.has(k)) {
+            seenClusterStudentKeys.add(k);
+            uniqueClusterStudents.push(st);
+          }
+        });
+
+        if (uniqueClusterStudents.length === 0) return;
 
         // If cluster is larger than maxPerGroup, split into sub-groups
-        for (let i = 0; i < students.length; i += maxPerGroup) {
-          const chunk = students.slice(i, i + maxPerGroup);
+        for (let i = 0; i < uniqueClusterStudents.length; i += maxPerGroup) {
+          const chunk = uniqueClusterStudents.slice(i, i + maxPerGroup);
           const letter = getNextLetter();
           const firstSt = chunk[0];
           const levelLabel = firstSt?.level || 'Beginner';
@@ -4679,6 +4809,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             }
           }
 
+          const chunkStudentIds = deduplicateStudentIds(chunk.map(s => s.id));
+
           const newGroup = {
             id: `group-auto-${sId}-${clusterKey}-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
             name: `Group ${letter}`,
@@ -4687,7 +4819,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             day: dayLabel,
             level: levelLabel,
             slotId: sId,
-            studentIds: chunk.map(s => s.id),
+            studentIds: chunkStudentIds,
             assignedInstructorId: assignedCoachId,
             assignedInstructorIds: assignedCoachIds,
             notes: prevGroupTitle ? `Previous: ${prevGroupTitle}` : ''
@@ -4699,11 +4831,13 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       });
     });
 
-    if (createdGroups.length > 0) {
+    if (createdGroups.length > 0 || forceRegroup) {
       userClearedGroupsRef.current = false;
       const reindexed = reindexGroups(updatedGroups);
       setTrainingGroups(reindexed);
-      setActiveDropGroupId(createdGroups[0].id);
+      if (createdGroups.length > 0) {
+        setActiveDropGroupId(createdGroups[0].id);
+      }
     }
 
     return createdGroups;
@@ -4728,7 +4862,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       ? [step3SlotFilter]
       : slots.map(s => s.id);
 
-    const slotStudentIds = targetSlotIds.flatMap(sId => slotStudentMap[sId] || slotStudentMap[String(sId)] || []);
+    const rawSlotStudentIds = targetSlotIds.flatMap(sId => slotStudentMap[sId] || slotStudentMap[String(sId)] || []);
+    const slotStudentIds = deduplicateStudentIds(rawSlotStudentIds);
     if (slotStudentIds.length === 0) return [];
 
     const assignedStudentIdSet = new Set(
@@ -4740,10 +4875,17 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
     const targetDateObj = parseLocalDateOnly(selectedSessionDateYYYYMMDD);
     const clusters = new Map();
+    const seenStudentKeysInSuggestion = new Set(
+      Array.from(assignedStudentIdSet).map(String)
+    );
 
     unassignedStudentIds.forEach(id => {
       const st = resolveStudentFromPool(id);
       if (!st) return;
+
+      const studentCanonicalKey = String(st.id != null ? st.id : (st.sessGuestId || st.name)).trim();
+      if (seenStudentKeysInSuggestion.has(studentCanonicalKey)) return;
+      seenStudentKeysInSuggestion.add(studentCanonicalKey);
 
       const studentNameClean = (st.name || '').toLowerCase().trim();
       const parentNameClean = (st.parentStudentName || '').toLowerCase().trim();
@@ -4825,7 +4967,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         coach: c.coach,
         coachId: c.coachId || c.coach?.id || null,
         coachName: c.coach?.name || c.rawCoachName || 'Unassigned Coach',
-        students: c.students,
+        students: deduplicateStudentIds(c.students.map(s => s.id)).map(id => c.students.find(s => String(s.id) === String(id))).filter(Boolean),
         slotId: c.slotId
       };
     }).sort((a, b) => b.students.length - a.students.length);
@@ -4888,13 +5030,15 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       }
     }
 
+    const uniqueStudentIds = deduplicateStudentIds(suggestion.students.map(s => s.id));
+
     const newGroup = {
       id: `grp_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
       name: `Group ${nextLetter}`,
       level: level,
       courseDay: day,
       slotId: targetSlotId,
-      studentIds: suggestion.students.map(s => s.id),
+      studentIds: uniqueStudentIds,
       assignedInstructorIds: assignedCoachIds,
       assignedInstructorId: assignedCoachIds[0] || null,
       notes: suggestion.groupName ? `Previous: ${suggestion.groupName} (${suggestion.displayDate})` : ''
@@ -4973,13 +5117,15 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         }
       }
 
+      const uniqueStudentIds = deduplicateStudentIds(sug.students.map(s => s.id));
+
       const newGroup = {
         id: `grp_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
         name: `Group ${nextLetter}`,
         level: level,
         courseDay: day,
         slotId: targetSlotId,
-        studentIds: sug.students.map(s => s.id),
+        studentIds: uniqueStudentIds,
         assignedInstructorIds: assignedCoachIds,
         assignedInstructorId: assignedCoachIds[0] || null,
         notes: sug.groupName ? `Previous: ${sug.groupName} (${sug.displayDate})` : ''
@@ -5077,11 +5223,12 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         const sIds = data.studentIds || [];
         setTrainingGroups(prev => prev.map(g => {
           if (g.id === targetGroupId) {
-            const merged = Array.from(new Set([...g.studentIds, ...sIds]));
+            const merged = deduplicateStudentIds([...(g.studentIds || []), ...sIds]);
             return { ...g, studentIds: merged };
           }
           if (data.fromGroupId && g.id === data.fromGroupId) {
-            return { ...g, studentIds: g.studentIds.filter(id => !sIds.includes(id)) };
+            const sIdStrs = sIds.map(String);
+            return { ...g, studentIds: (g.studentIds || []).filter(id => !sIdStrs.includes(String(id))) };
           }
           return g;
         }));
@@ -7142,7 +7289,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                           } else {
                             // Keep previously selected students and ADD matching filtered students!
                             const currentSelected = slotStudentMap[activeSlotId] || slotStudentMap[String(activeSlotId)] || [];
-                            const combinedIds = Array.from(new Set([...currentSelected, ...matchingFilteredIds]));
+                            const combinedIds = deduplicateStudentIds([...currentSelected, ...matchingFilteredIds]);
 
                             // Automatically expand slot capacity if combined students exceed current capacity
                             if (combinedIds.length > slotCap) {
@@ -7159,7 +7306,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                               });
                               // PRESERVE existing selected students and append new filtered students!
                               const existingInActive = newMap[activeSlotId] || newMap[String(activeSlotId)] || [];
-                              const updated = Array.from(new Set([...existingInActive, ...matchingFilteredIds]));
+                              const updated = deduplicateStudentIds([...existingInActive, ...matchingFilteredIds]);
                               newMap[activeSlotId] = updated;
                               newMap[String(activeSlotId)] = updated;
                               return newMap;
@@ -8908,9 +9055,22 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                         const effectiveGroupCoaches = assignedInstructors.length > 0
                           ? assignedInstructors
                           : (isIndividualCoach && currentIndividualCoach ? [currentIndividualCoach] : []);
+                        const seenGrpStudentKeys = new Set();
                         const grpStudents = (grp.studentIds || [])
                           .map(id => resolveStudentFromPool(id))
                           .filter(Boolean)
+                          .filter(st => {
+                            const rawIdKey = st.id != null ? `id_${st.id}` : '';
+                            const guestKey = st.sessGuestId ? `guest_${st.sessGuestId}` : '';
+                            const nameKey = (st.name || '').toLowerCase().trim();
+                            const primaryKey = rawIdKey || guestKey || `name_${nameKey}`;
+                            if (seenGrpStudentKeys.has(primaryKey)) return false;
+                            const nameStrictKey = `name_${nameKey}`;
+                            if (seenGrpStudentKeys.has(nameStrictKey)) return false;
+                            seenGrpStudentKeys.add(primaryKey);
+                            if (nameKey) seenGrpStudentKeys.add(nameStrictKey);
+                            return true;
+                          })
                           .slice()
                           .sort((a, b) => {
                             const familyIdA = a.parentStudentId || a.id;
@@ -10230,7 +10390,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                               const activeSlotId = step3SlotFilter !== 'ALL' ? step3SlotFilter : (selectedSlotId || slots[0]?.id);
                               const activeSlotGroups = displayedTrainingGroups;
 
-                              // If instructor was recommended for an unassigned group, prioritize that group
+                              // 1. If instructor was recommended for an unassigned group in this slot, prioritize that group
                               let targetGroup = activeSlotGroups.find(g => {
                                 const ids = g.assignedInstructorIds || (g.assignedInstructorId ? [g.assignedInstructorId] : []);
                                 if (ids.length > 0) return false;
@@ -10239,11 +10399,19 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                 return pCoaches.some(pc => String(pc.coach.id) === String(inst.id));
                               });
 
-                              if (!targetGroup) {
-                                targetGroup = activeSlotGroups.find(g => g.id === activeDropGroupId);
+                              // 2. If the user explicitly clicked/focused an empty or unassigned group in this slot:
+                              if (!targetGroup && activeDropGroupId) {
+                                const focusedGrp = activeSlotGroups.find(g => g.id === activeDropGroupId);
+                                if (focusedGrp) {
+                                  const ids = focusedGrp.assignedInstructorIds || (focusedGrp.assignedInstructorId ? [focusedGrp.assignedInstructorId] : []);
+                                  // If focused group doesn't have this coach yet:
+                                  if (!ids.map(String).includes(String(inst.id))) {
+                                    targetGroup = focusedGrp;
+                                  }
+                                }
                               }
 
-                              // If active group is from another slot, pick an unassigned group in this slot
+                              // 3. Pick any group in this slot that has NO coach assigned yet:
                               if (!targetGroup) {
                                 targetGroup = activeSlotGroups.find(g => {
                                   const ids = g.assignedInstructorIds || (g.assignedInstructorId ? [g.assignedInstructorId] : []);
@@ -10251,29 +10419,45 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                 });
                               }
 
-                              // If still none, fallback to first group in current slot
-                              if (!targetGroup && activeSlotGroups.length > 0) {
-                                targetGroup = activeSlotGroups[0];
-                              }
-
                               if (targetGroup) {
                                 setActiveDropGroupId(targetGroup.id);
                                 assignInstructorToGroup(targetGroup.id, inst.id);
                               } else {
-                                // If NO group exists in current slot yet, auto-create Group A for THIS slot and assign coach
-                                const slotStudents = slotStudentMap[activeSlotId] || [];
+                                // 4. If all groups already have coaches or NO group exists yet in this slot:
+                                // Create a fresh group card for this coach!
+                                // ONLY assign students if user explicitly selected/checked them; otherwise create an EMPTY group card!
+                                const checkedToAdd = (step3CheckedStudentIds && step3CheckedStudentIds.length > 0)
+                                  ? deduplicateStudentIds(step3CheckedStudentIds)
+                                  : [];
+
+                                const checkedStudents = importedStudents.filter(s => checkedToAdd.some(cid => String(cid) === String(s.id)));
+                                const levelLabel = checkedStudents.length > 0 ? (checkedStudents[0]?.level || 'Beginner') : 'General';
+                                const dayLabel = (checkedStudents.length > 0 && checkedStudents[0]?.whichDay)
+                                  ? `Day ${checkedStudents[0].whichDay}`
+                                  : 'Day 1';
+
+                                const matchedSlot = slots.find(s => String(s.id) === String(activeSlotId)) || slots[0];
+                                const slotTime = matchedSlot ? (matchedSlot.time || matchedSlot.startTime || '') : '';
+                                const slotStartTime = matchedSlot ? (matchedSlot.startTime || (matchedSlot.time ? matchedSlot.time.split(' - ')[0] : '')) : '';
+
                                 const newGroup = {
                                   id: `group-${activeSlotId}-${Date.now()}`,
                                   name: 'Group A',
-                                  day: 'Day 1',
-                                  level: 'Beginner',
+                                  day: dayLabel,
+                                  level: levelLabel,
+                                  time: slotTime,
+                                  startTime: slotStartTime,
                                   slotId: activeSlotId,
-                                  studentIds: slotStudents,
+                                  studentIds: checkedToAdd,
                                   assignedInstructorId: inst.id,
                                   assignedInstructorIds: [inst.id],
                                 };
+
                                 setTrainingGroups(prev => reindexGroups([...prev, newGroup]));
                                 setActiveDropGroupId(newGroup.id);
+                                if (checkedToAdd.length > 0) {
+                                  setStep3CheckedStudentIds([]);
+                                }
                               }
                             }}
                             title={isOnLeave ? `On Leave on ${formattedSessionDate}${leaveOnDate?.leave_type ? ` (${leaveOnDate.leave_type})` : ''}` : activeConflict ? `Already coaching ${activeConflict.conflictingGroup.name} at ${activeConflict.time}` : 'Drag into a group or click to assign'}

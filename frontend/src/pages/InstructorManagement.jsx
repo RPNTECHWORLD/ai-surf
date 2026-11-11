@@ -204,6 +204,9 @@ const InstructorManagement = () => {
   const [actionLoadingId, setActionLoadingId] = useState(null);
   const [changeApprovalLeave, setChangeApprovalLeave] = useState(null);
   const [filterPendingOnly, setFilterPendingOnly] = useState(false);
+  const [showCoachJoinRequestsModal, setShowCoachJoinRequestsModal] = useState(false);
+  const [coachPendingSearch, setCoachPendingSearch] = useState('');
+  const [coachReqRefreshKey, setCoachReqRefreshKey] = useState(0);
   const [coachActionLoadingId, setCoachActionLoadingId] = useState(null);
   const [leaveMonthDate, setLeaveMonthDate] = useState(() => new Date()); // Default to current month
   const [leaveViewMode, setLeaveViewMode] = useState('list'); // 'list' (default) | 'calendar'
@@ -507,13 +510,116 @@ const InstructorManagement = () => {
       .catch(() => {});
   }, [currentSchool]);
 
-  const pendingCoachesCount = useMemo(() => {
-    return instructors.filter(i => (i.approval_status || '').toLowerCase() === 'pending').length;
-  }, [instructors]);
+  const allPendingCoachRequests = useMemo(() => {
+    const list = [];
+    const seenEmails = new Set();
+    const seenIds = new Set();
+
+    const addIfCoachPending = (coachObj) => {
+      if (!coachObj) return;
+      const email = (coachObj.email || coachObj.student_email || '').toLowerCase().trim();
+      const id = coachObj.id || coachObj.instructor_id;
+      if (email && seenEmails.has(email)) return;
+      if (id && seenIds.has(String(id))) return;
+
+      // School filtering
+      if (!isSuperAdmin && currentSchool) {
+        const cSchool = (coachObj.school || coachObj.school_name || '').toLowerCase().trim();
+        const activeS = currentSchool.toLowerCase().trim();
+        if (cSchool && cSchool !== activeS && cSchool !== 'individual / freelance coach') {
+          return;
+        }
+      }
+
+      if (email) seenEmails.add(email);
+      if (id) seenIds.add(String(id));
+
+      const certs = Array.isArray(coachObj.certifications)
+        ? coachObj.certifications
+        : (coachObj.certifications ? String(coachObj.certifications).split(',').map(s => s.trim()).filter(Boolean) : []);
+
+      list.push({
+        id: id || `pending-coach-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        name: coachObj.name || coachObj.student_name || (email ? email.split('@')[0] : 'Coach'),
+        email: email || '',
+        phone: coachObj.phone || coachObj.whatsapp_number || '',
+        school: coachObj.school || coachObj.school_name || currentSchool || '',
+        experience: coachObj.experience || 'Experienced',
+        certifications: certs.length > 0 ? certs : ['ISA Certified'],
+        fitness_level: coachObj.fitness_level || 'Elite',
+        gender: coachObj.gender || 'Male',
+        age: coachObj.age || (coachObj.dob ? calculateAge(coachObj.dob) : ''),
+        dob: coachObj.dob || '',
+        created_at: coachObj.created_at || coachObj.createdAt || coachObj.start_date || '',
+        raw: coachObj
+      });
+    };
+
+    // 1. From backend instructors list where approval_status === 'pending'
+    (instructors || []).forEach(inst => {
+      if ((inst.approval_status || '').toLowerCase() === 'pending') {
+        addIfCoachPending(inst);
+      }
+    });
+
+    // 2. From school_join_requests where role is coach/instructor and status pending
+    try {
+      const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+      reqs.forEach(r => {
+        const role = (r.role || '').toLowerCase();
+        if (role === 'coach' || role === 'instructor') {
+          if (r.status !== 'approved' && r.status !== 'rejected') {
+            addIfCoachPending({
+              id: r.id,
+              name: r.name || r.student_name,
+              email: r.email || r.student_email,
+              phone: r.phone || r.whatsapp_number,
+              school: r.school || r.school_name,
+              certifications: r.certifications || (r.level ? [r.level] : []),
+              dob: r.dob,
+              created_at: r.created_at || r.timestamp || r.date,
+              approval_status: 'pending'
+            });
+          }
+        }
+      });
+    } catch (e) {}
+
+    // 3. From savedAccounts where role is coach/instructor and pending
+    try {
+      const savedAccs = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
+      savedAccs.forEach(u => {
+        const role = (u.role || '').toLowerCase();
+        if (role === 'coach' || role === 'instructor') {
+          if ((u.approval_status || '').toLowerCase() === 'pending') {
+            addIfCoachPending(u);
+          }
+        }
+      });
+    } catch (e) {}
+
+    return list;
+  }, [instructors, coachReqRefreshKey, currentSchool, isSuperAdmin]);
+
+  const pendingCoachesCount = allPendingCoachRequests.length;
+
+  const filteredPendingCoachRequests = useMemo(() => {
+    if (!coachPendingSearch || !coachPendingSearch.trim()) return allPendingCoachRequests;
+    const q = coachPendingSearch.toLowerCase().trim();
+    return allPendingCoachRequests.filter(c => {
+      const name = (c.name || '').toLowerCase();
+      const email = (c.email || '').toLowerCase();
+      const phone = (c.phone || '').toLowerCase();
+      const school = (c.school || '').toLowerCase();
+      const certs = Array.isArray(c.certifications) ? c.certifications.join(' ').toLowerCase() : '';
+      return name.includes(q) || email.includes(q) || phone.includes(q) || school.includes(q) || certs.includes(q);
+    });
+  }, [allPendingCoachRequests, coachPendingSearch]);
 
   const filtered = instructors
     .filter(i => {
-      if (filterPendingOnly && (i.approval_status || '').toLowerCase() !== 'pending') {
+      // Pending coach registrations are reviewed in the dedicated Join Requests modal and do not clutter active cards
+      if ((i.approval_status || '').toLowerCase() === 'pending') {
         return false;
       }
       if (!isSuperAdmin && currentSchool) {
@@ -860,32 +966,76 @@ const InstructorManagement = () => {
   };
 
   const handleApproveCoach = async (instructor) => {
-    if (coachActionLoadingId === instructor.id) return;
-    setCoachActionLoadingId(instructor.id);
+    if (!instructor) return;
+    const coachId = instructor.id;
+    if (coachActionLoadingId === coachId) return;
+    setCoachActionLoadingId(coachId);
     try {
-      const res = await fetch(`${API}/api/instructors/${instructor.id}/approve`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${sessionStorage.getItem('token') || ''}`
+      if (coachId && !String(coachId).startsWith('pending-coach-')) {
+        try {
+          await fetch(`${API}/api/instructors/${coachId}/approve`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${sessionStorage.getItem('token') || ''}`
+            }
+          });
+        } catch (e) {}
+      }
+
+      // Update state instructors
+      setInstructors(prev => {
+        const found = prev.some(i => i.id === coachId || (i.email && i.email.toLowerCase() === (instructor.email || '').toLowerCase()));
+        if (found) {
+          return prev.map(inst =>
+            (inst.id === coachId || (inst.email && inst.email.toLowerCase() === (instructor.email || '').toLowerCase()))
+              ? { ...inst, approval_status: 'approved', is_active: true }
+              : inst
+          );
+        } else {
+          return [{
+            ...instructor,
+            approval_status: 'approved',
+            is_active: true
+          }, ...prev];
         }
       });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        setInstructors(prev => prev.map(inst => 
-          inst.id === instructor.id 
-            ? { ...inst, approval_status: 'approved', is_active: true }
-            : inst
-        ));
-        setStatusToast({
-          show: true,
-          text: `✓ Coach "${instructor.name}" approved and activated!`,
-          isSuccess: true
+
+      // Update school_join_requests in localStorage
+      try {
+        const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+        const updatedReqs = reqs.map(r => {
+          if ((r.email && r.email.toLowerCase() === (instructor.email || '').toLowerCase()) ||
+              (r.student_email && r.student_email.toLowerCase() === (instructor.email || '').toLowerCase()) ||
+              (r.id && String(r.id) === String(coachId))) {
+            return { ...r, status: 'approved' };
+          }
+          return r;
         });
-        setTimeout(() => setStatusToast(prev => ({ ...prev, show: false })), 4000);
-      } else {
-        alert(data.detail || 'Failed to approve coach.');
-      }
+        localStorage.setItem('school_join_requests', JSON.stringify(updatedReqs));
+      } catch (e) {}
+
+      // Update savedAccounts in localStorage
+      try {
+        const savedAccs = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
+        const updatedAccs = savedAccs.map(u => {
+          if ((u.email && u.email.toLowerCase() === (instructor.email || '').toLowerCase()) ||
+              (u.id && String(u.id) === String(coachId))) {
+            return { ...u, approval_status: 'approved', is_active: true };
+          }
+          return u;
+        });
+        localStorage.setItem('savedAccounts', JSON.stringify(updatedAccs));
+      } catch (e) {}
+
+      setCoachReqRefreshKey(k => k + 1);
+      setStatusToast({
+        show: true,
+        text: `✓ Coach "${instructor.name}" approved and activated!`,
+        isSuccess: true
+      });
+      setTimeout(() => setStatusToast(prev => ({ ...prev, show: false })), 4000);
+      fetchInstructors();
     } catch (err) {
       alert('Error approving coach: ' + (err.message || err));
     } finally {
@@ -894,33 +1044,63 @@ const InstructorManagement = () => {
   };
 
   const handleRejectCoach = async (instructor) => {
-    if (coachActionLoadingId === instructor.id) return;
+    if (!instructor) return;
+    const coachId = instructor.id;
+    if (coachActionLoadingId === coachId) return;
     if (!window.confirm(`Are you sure you want to reject coach "${instructor.name}"?`)) return;
-    setCoachActionLoadingId(instructor.id);
+    setCoachActionLoadingId(coachId);
     try {
-      const res = await fetch(`${API}/api/instructors/${instructor.id}/reject`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${sessionStorage.getItem('token') || ''}`
-        }
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        setInstructors(prev => prev.map(inst => 
-          inst.id === instructor.id 
-            ? { ...inst, approval_status: 'rejected', is_active: false }
-            : inst
-        ));
-        setStatusToast({
-          show: true,
-          text: `✕ Coach "${instructor.name}" registration was rejected.`,
-          isSuccess: true
-        });
-        setTimeout(() => setStatusToast(prev => ({ ...prev, show: false })), 4000);
-      } else {
-        alert(data.detail || 'Failed to reject coach.');
+      if (coachId && !String(coachId).startsWith('pending-coach-')) {
+        try {
+          await fetch(`${API}/api/instructors/${coachId}/reject`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${sessionStorage.getItem('token') || ''}`
+            }
+          });
+        } catch (e) {}
       }
+
+      setInstructors(prev => prev.filter(inst =>
+        inst.id !== coachId && (!inst.email || inst.email.toLowerCase() !== (instructor.email || '').toLowerCase())
+      ));
+
+      // Update school_join_requests
+      try {
+        const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+        const updatedReqs = reqs.map(r => {
+          if ((r.email && r.email.toLowerCase() === (instructor.email || '').toLowerCase()) ||
+              (r.student_email && r.student_email.toLowerCase() === (instructor.email || '').toLowerCase()) ||
+              (r.id && String(r.id) === String(coachId))) {
+            return { ...r, status: 'rejected' };
+          }
+          return r;
+        });
+        localStorage.setItem('school_join_requests', JSON.stringify(updatedReqs));
+      } catch (e) {}
+
+      // Update savedAccounts
+      try {
+        const savedAccs = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
+        const updatedAccs = savedAccs.map(u => {
+          if ((u.email && u.email.toLowerCase() === (instructor.email || '').toLowerCase()) ||
+              (u.id && String(u.id) === String(coachId))) {
+            return { ...u, approval_status: 'rejected' };
+          }
+          return u;
+        });
+        localStorage.setItem('savedAccounts', JSON.stringify(updatedAccs));
+      } catch (e) {}
+
+      setCoachReqRefreshKey(k => k + 1);
+      setStatusToast({
+        show: true,
+        text: `✕ Coach "${instructor.name}" registration was rejected.`,
+        isSuccess: true
+      });
+      setTimeout(() => setStatusToast(prev => ({ ...prev, show: false })), 4000);
+      fetchInstructors();
     } catch (err) {
       alert('Error rejecting coach: ' + (err.message || err));
     } finally {
@@ -1389,22 +1569,16 @@ const InstructorManagement = () => {
 
             <button
               type="button"
-              onClick={() => setFilterPendingOnly(prev => !prev)}
+              onClick={() => setShowCoachJoinRequestsModal(true)}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '8px',
                 padding: '11px 18px',
                 borderRadius: '12px',
-                border: filterPendingOnly 
-                  ? '1.5px solid #D97706' 
-                  : (pendingCoachesCount > 0 ? '1.5px solid #FCD34D' : '1.5px solid #CBD5E1'),
-                background: filterPendingOnly 
-                  ? '#F59E0B' 
-                  : (pendingCoachesCount > 0 ? '#FEF3C7' : '#FFFFFF'),
-                color: filterPendingOnly 
-                  ? '#FFFFFF' 
-                  : (pendingCoachesCount > 0 ? '#B45309' : '#0F172A'),
+                border: pendingCoachesCount > 0 ? '1.5px solid #FCD34D' : '1.5px solid #CBD5E1',
+                background: pendingCoachesCount > 0 ? '#FEF3C7' : '#FFFFFF',
+                color: pendingCoachesCount > 0 ? '#B45309' : '#0F172A',
                 fontWeight: 700,
                 fontSize: '13.5px',
                 cursor: 'pointer',
@@ -1413,27 +1587,23 @@ const InstructorManagement = () => {
                 boxSizing: 'border-box'
               }}
               onMouseEnter={(e) => {
-                if (!filterPendingOnly) {
-                  e.currentTarget.style.borderColor = '#D97706';
-                  e.currentTarget.style.color = '#B45309';
-                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(245, 158, 11, 0.15)';
-                }
+                e.currentTarget.style.borderColor = '#D97706';
+                e.currentTarget.style.color = '#B45309';
+                e.currentTarget.style.boxShadow = '0 4px 12px rgba(245, 158, 11, 0.15)';
               }}
               onMouseLeave={(e) => {
-                if (!filterPendingOnly) {
-                  e.currentTarget.style.borderColor = pendingCoachesCount > 0 ? '#FCD34D' : '#CBD5E1';
-                  e.currentTarget.style.color = pendingCoachesCount > 0 ? '#B45309' : '#0F172A';
-                  e.currentTarget.style.boxShadow = '0 2px 6px rgba(0,0,0,0.03)';
-                }
+                e.currentTarget.style.borderColor = pendingCoachesCount > 0 ? '#FCD34D' : '#CBD5E1';
+                e.currentTarget.style.color = pendingCoachesCount > 0 ? '#B45309' : '#0F172A';
+                e.currentTarget.style.boxShadow = '0 2px 6px rgba(0,0,0,0.03)';
               }}
-              title={filterPendingOnly ? 'Showing pending coach requests — click to view all' : 'View pending coach requests requiring approval'}
+              title="View pending coach registration requests"
             >
               <span style={{ fontSize: '15px', lineHeight: 1 }}>⏳</span>
-              <span>join Requests</span>
+              <span>Join Requests</span>
               {pendingCoachesCount > 0 ? (
                 <span style={{
-                  background: filterPendingOnly ? '#FFFFFF' : '#EF4444',
-                  color: filterPendingOnly ? '#B45309' : '#FFFFFF',
+                  background: '#EF4444',
+                  color: '#FFFFFF',
                   padding: '2px 8px',
                   borderRadius: '10px',
                   fontSize: '11.5px',
@@ -1961,72 +2131,7 @@ const InstructorManagement = () => {
                           </div>
                         )}
 
-                        {isPendingCoach && (
-                          <div style={{
-                            margin: '12px 0 6px 0',
-                            padding: '10px 12px',
-                            background: 'rgba(245, 158, 11, 0.08)',
-                            borderRadius: '12px',
-                            border: '1.5px solid rgba(245, 158, 11, 0.3)',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: '8px'
-                          }}>
-                            <div style={{ fontSize: '12px', color: '#B45309', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              <span>⏳</span> Pending School Approval
-                            </div>
-                            <div style={{ display: 'flex', gap: '8px' }}>
-                              <button
-                                type="button"
-                                disabled={isViewAdmin || (!isAdminOrSchoolAdmin && !isSuperAdmin) || coachActionLoadingId === instructor.id}
-                                onClick={(e) => { e.stopPropagation(); handleApproveCoach(instructor); }}
-                                style={{
-                                  flex: 1,
-                                  padding: '8px 10px',
-                                  background: '#10B981',
-                                  color: '#FFFFFF',
-                                  border: 'none',
-                                  borderRadius: '8px',
-                                  fontSize: '12px',
-                                  fontWeight: 700,
-                                  cursor: (isViewAdmin || (!isAdminOrSchoolAdmin && !isSuperAdmin) || coachActionLoadingId === instructor.id) ? 'not-allowed' : 'pointer',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  gap: '5px',
-                                  boxShadow: '0 2px 4px rgba(16, 185, 129, 0.25)'
-                                }}
-                              >
-                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
-                                <span>{coachActionLoadingId === instructor.id ? 'Approving...' : 'Approve'}</span>
-                              </button>
-                              <button
-                                type="button"
-                                disabled={isViewAdmin || (!isAdminOrSchoolAdmin && !isSuperAdmin) || coachActionLoadingId === instructor.id}
-                                onClick={(e) => { e.stopPropagation(); handleRejectCoach(instructor); }}
-                                style={{
-                                  flex: 1,
-                                  padding: '8px 10px',
-                                  background: '#EF4444',
-                                  color: '#FFFFFF',
-                                  border: 'none',
-                                  borderRadius: '8px',
-                                  fontSize: '12px',
-                                  fontWeight: 700,
-                                  cursor: (isViewAdmin || (!isAdminOrSchoolAdmin && !isSuperAdmin) || coachActionLoadingId === instructor.id) ? 'not-allowed' : 'pointer',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  gap: '5px',
-                                  boxShadow: '0 2px 4px rgba(239, 68, 68, 0.25)'
-                                }}
-                              >
-                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
-                                <span>{coachActionLoadingId === instructor.id ? 'Rejecting...' : 'Reject'}</span>
-                              </button>
-                            </div>
-                          </div>
-                        )}
+
 
                         <div className="im-card-divider" />
                         <div className="im-card-footer">
@@ -3316,6 +3421,389 @@ const InstructorManagement = () => {
                         {filteredLeaves.map(leave => renderLeaveCard(leave))}
                       </div>
                     )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── COACH / INSTRUCTOR JOIN REQUESTS MODAL ── */}
+        {showCoachJoinRequestsModal && (
+          <div
+            className="im-modal-overlay"
+            onClick={() => setShowCoachJoinRequestsModal(false)}
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(5, 11, 26, 0.65)',
+              backdropFilter: 'blur(6px)',
+              zIndex: 9990,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '20px',
+              animation: 'imFadeIn 0.2s ease-out'
+            }}
+          >
+            <div
+              className="im-modal"
+              onClick={e => e.stopPropagation()}
+              style={{
+                width: '100%',
+                maxWidth: '1080px',
+                maxHeight: '90vh',
+                background: '#FFFFFF',
+                borderRadius: '24px',
+                boxShadow: '0 25px 60px rgba(0,0,0,0.22)',
+                display: 'flex',
+                flexDirection: 'column',
+                overflow: 'hidden',
+                animation: 'imSlideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1)'
+              }}
+            >
+              {/* Modal Header */}
+              <div
+                style={{
+                  padding: '24px 28px 18px 28px',
+                  borderBottom: '1.5px solid #F1F5F9',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '16px'
+                }}
+              >
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <h3 style={{ fontSize: '22px', fontWeight: 800, color: '#0F172A', margin: 0 }}>
+                      Pending Coach Registration Requests
+                    </h3>
+                    <span style={{
+                      background: '#FEF3C7',
+                      color: '#B45309',
+                      border: '1px solid #FCD34D',
+                      fontSize: '12px',
+                      fontWeight: 800,
+                      padding: '3px 12px',
+                      borderRadius: '20px',
+                      letterSpacing: '0.4px'
+                    }}>
+                      {coachPendingSearch ? `${filteredPendingCoachRequests.length} of ${allPendingCoachRequests.length} PENDING` : `${allPendingCoachRequests.length} PENDING`}
+                    </span>
+                  </div>
+                  <p style={{ color: '#64748B', fontSize: '13.5px', margin: '6px 0 0 0' }}>
+                    Review pending coach registrations and approve them directly into your active coaching roster.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowCoachJoinRequestsModal(false)}
+                  style={{
+                    width: '38px',
+                    height: '38px',
+                    borderRadius: '12px',
+                    border: '1px solid #E2E8F0',
+                    background: '#F8FAFC',
+                    color: '#64748B',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    fontSize: '18px',
+                    fontWeight: 700,
+                    transition: 'all 0.15s ease'
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = '#F1F5F9'; e.currentTarget.style.color = '#0F172A'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.color = '#64748B'; }}
+                  title="Close"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Search Bar */}
+              <div style={{ padding: '16px 28px', background: '#F8FAFC', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
+                <div style={{ position: 'relative', width: '100%', maxWidth: '380px' }}>
+                  <input
+                    type="text"
+                    placeholder="Search coach by name, email, phone, certifications..."
+                    value={coachPendingSearch}
+                    onChange={e => setCoachPendingSearch(e.target.value)}
+                    style={{
+                      width: '100%',
+                      height: '38px',
+                      padding: '0 14px 0 36px',
+                      borderRadius: '10px',
+                      border: '1.5px solid #CBD5E1',
+                      fontSize: '13px',
+                      background: '#FFFFFF',
+                      outline: 'none',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                  <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#94A3B8', fontSize: '14px' }}>
+                    🔍
+                  </span>
+                  {coachPendingSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setCoachPendingSearch('')}
+                      style={{
+                        position: 'absolute',
+                        right: '10px',
+                        top: '50%',
+                        transform: 'translateY(-50%)',
+                        background: 'none',
+                        border: 'none',
+                        color: '#94A3B8',
+                        cursor: 'pointer',
+                        fontSize: '14px',
+                        fontWeight: 700,
+                        padding: 0
+                      }}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+                <div style={{ fontSize: '13px', color: '#64748B', fontWeight: 600 }}>
+                  Showing {filteredPendingCoachRequests.length} coach request(s)
+                </div>
+              </div>
+
+              {/* Requests Body */}
+              <div style={{ padding: '24px 28px', overflowY: 'auto', flex: 1 }}>
+                {allPendingCoachRequests.length === 0 ? (
+                  <div style={{
+                    textAlign: 'center',
+                    padding: '60px 20px',
+                    background: '#F8FAFC',
+                    borderRadius: '16px',
+                    border: '1.5px dashed #CBD5E1'
+                  }}>
+                    <div style={{ fontSize: '48px', marginBottom: '12px' }}>🏄‍♂️</div>
+                    <h4 style={{ margin: 0, fontSize: '19px', fontWeight: 800, color: '#0F172A' }}>
+                      No Pending Coach Requests
+                    </h4>
+                    <p style={{ margin: '8px 0 0', fontSize: '14px', color: '#64748B' }}>
+                      No new coach registration requests waiting for review at this moment.
+                    </p>
+                  </div>
+                ) : filteredPendingCoachRequests.length === 0 ? (
+                  <div style={{
+                    textAlign: 'center',
+                    padding: '50px 20px',
+                    background: '#F8FAFC',
+                    borderRadius: '16px',
+                    border: '1.5px dashed #CBD5E1'
+                  }}>
+                    <div style={{ fontSize: '40px', marginBottom: '10px' }}>🔍</div>
+                    <h4 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: '#0F172A' }}>
+                      No matching coach requests
+                    </h4>
+                    <p style={{ margin: '6px 0 0', fontSize: '13.5px', color: '#64748B' }}>
+                      No pending requests matched "{coachPendingSearch}".
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setCoachPendingSearch('')}
+                      style={{
+                        marginTop: '12px',
+                        padding: '6px 14px',
+                        borderRadius: '8px',
+                        border: '1px solid #CBD5E1',
+                        background: '#FFFFFF',
+                        color: '#0D9488',
+                        fontWeight: 700,
+                        fontSize: '12.5px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Clear Search
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{
+                    overflowX: 'auto',
+                    borderRadius: '14px',
+                    border: '1.5px solid #CBD5E1',
+                    background: '#FFFFFF',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
+                  }}>
+                    <table style={{ width: '100%', minWidth: '880px', borderCollapse: 'collapse' }}>
+                      <thead>
+                        <tr style={{ background: '#F8FAFC', borderBottom: '2px solid #CBD5E1' }}>
+                          <th style={{ padding: '14px 16px', fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#475569', textAlign: 'left', minWidth: '220px' }}>Coach</th>
+                          <th style={{ padding: '14px 14px', fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#475569', textAlign: 'left', minWidth: '220px' }}>Contact</th>
+                          <th style={{ padding: '14px 14px', fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#475569', textAlign: 'left', minWidth: '150px' }}>School</th>
+                          <th style={{ padding: '14px 14px', fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#475569', textAlign: 'left', minWidth: '160px' }}>Certifications</th>
+                          <th style={{ padding: '14px 14px', fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#475569', textAlign: 'left', minWidth: '110px' }}>Date</th>
+                          <th style={{ padding: '14px 16px', fontSize: '12px', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#475569', textAlign: 'center', minWidth: '190px' }}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredPendingCoachRequests.map((coach, cIdx) => {
+                          const coachName = coach.name || 'Coach';
+                          const initials = coachName.split(' ').map(n => n[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || 'CO';
+                          const isLoading = coachActionLoadingId === coach.id;
+
+                          return (
+                            <tr key={coach.id || coach.email || cIdx} style={{ background: '#FFFFFF', borderBottom: '1px solid #F1F5F9', transition: 'background 0.15s ease' }}>
+                              {/* 1. Coach Name & Avatar */}
+                              <td style={{ padding: '16px 16px', verticalAlign: 'middle' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                  <div style={{
+                                    width: '44px',
+                                    height: '44px',
+                                    borderRadius: '50%',
+                                    background: 'linear-gradient(135deg, #0284C7 0%, #0369A1 100%)',
+                                    color: '#FFFFFF',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: '15px',
+                                    fontWeight: 800,
+                                    boxShadow: '0 3px 8px rgba(2, 132, 199, 0.28)',
+                                    flexShrink: 0
+                                  }}>
+                                    {initials}
+                                  </div>
+                                  <div>
+                                    <div style={{ fontSize: '15px', fontWeight: 800, color: '#0F172A', lineHeight: 1.3 }}>
+                                      {coachName}
+                                    </div>
+                                    <div style={{ fontSize: '12px', color: '#64748B', marginTop: '2px' }}>
+                                      {coach.fitness_level || 'Elite'} &bull; {coach.gender || 'Coach'}
+                                    </div>
+                                  </div>
+                                </div>
+                              </td>
+
+                              {/* 2. Contact Details */}
+                              <td style={{ padding: '16px 14px', verticalAlign: 'middle' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                  {coach.email && (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12.5px', color: '#0F172A', fontWeight: 600 }}>
+                                      <span style={{ color: '#0284C7' }}>✉</span>
+                                      <span style={{ wordBreak: 'break-all' }}>{coach.email}</span>
+                                    </div>
+                                  )}
+                                  {coach.phone && (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#475569' }}>
+                                      <span style={{ color: '#16A34A' }}>📞</span>
+                                      <span>{coach.phone}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+
+                              {/* 3. School */}
+                              <td style={{ padding: '16px 14px', verticalAlign: 'middle' }}>
+                                <span style={{
+                                  display: 'inline-block',
+                                  padding: '3px 9px',
+                                  borderRadius: '6px',
+                                  background: '#F1F5F9',
+                                  color: '#334155',
+                                  fontSize: '12px',
+                                  fontWeight: 700
+                                }}>
+                                  {coach.school || currentSchool || 'Freelance Coach'}
+                                </span>
+                              </td>
+
+                              {/* 4. Certifications */}
+                              <td style={{ padding: '16px 14px', verticalAlign: 'middle' }}>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                                  {(coach.certifications || []).map((cert, certIdx) => (
+                                    <span
+                                      key={certIdx}
+                                      style={{
+                                        fontSize: '11px',
+                                        fontWeight: 700,
+                                        padding: '2px 7px',
+                                        borderRadius: '5px',
+                                        background: '#E0F2FE',
+                                        color: '#0369A1',
+                                        border: '1px solid #BAE6FD'
+                                      }}
+                                    >
+                                      {cert}
+                                    </span>
+                                  ))}
+                                </div>
+                              </td>
+
+                              {/* 5. Date */}
+                              <td style={{ padding: '16px 14px', verticalAlign: 'middle', fontSize: '12px', color: '#64748B' }}>
+                                {coach.created_at ? String(coach.created_at).split('T')[0] : 'Today'}
+                              </td>
+
+                              {/* 6. Action Buttons */}
+                              <td style={{ padding: '16px 16px', verticalAlign: 'middle', textAlign: 'center' }}>
+                                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                                  <button
+                                    type="button"
+                                    disabled={isLoading}
+                                    onClick={() => handleRejectCoach(coach)}
+                                    style={{
+                                      padding: '7px 14px',
+                                      borderRadius: '8px',
+                                      border: '1.5px solid #FECACA',
+                                      background: '#FEF2F2',
+                                      color: '#DC2626',
+                                      fontWeight: 700,
+                                      fontSize: '12.5px',
+                                      cursor: isLoading ? 'not-allowed' : 'pointer',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '5px',
+                                      transition: 'all 0.15s ease'
+                                    }}
+                                    onMouseEnter={e => { if (!isLoading) { e.currentTarget.style.background = '#FEE2E2'; e.currentTarget.style.borderColor = '#F87171'; } }}
+                                    onMouseLeave={e => { if (!isLoading) { e.currentTarget.style.background = '#FEF2F2'; e.currentTarget.style.borderColor = '#FECACA'; } }}
+                                    title="Decline and remove coach registration"
+                                  >
+                                    <span>✕</span>
+                                    <span>Decline</span>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    disabled={isLoading}
+                                    onClick={() => handleApproveCoach(coach)}
+                                    style={{
+                                      padding: '7px 16px',
+                                      borderRadius: '8px',
+                                      border: 'none',
+                                      background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
+                                      color: '#FFFFFF',
+                                      fontWeight: 700,
+                                      fontSize: '12.5px',
+                                      cursor: isLoading ? 'not-allowed' : 'pointer',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '5px',
+                                      boxShadow: '0 2px 6px rgba(16, 185, 129, 0.35)',
+                                      transition: 'all 0.15s ease'
+                                    }}
+                                    onMouseEnter={e => { if (!isLoading) { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 4px 10px rgba(16, 185, 129, 0.45)'; } }}
+                                    onMouseLeave={e => { if (!isLoading) { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = '0 2px 6px rgba(16, 185, 129, 0.35)'; } }}
+                                    title="Approve coach into school roster"
+                                  >
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                                    <span>{isLoading ? 'Approving...' : 'Accept'}</span>
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
                 )}
               </div>
