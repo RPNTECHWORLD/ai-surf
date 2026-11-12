@@ -2148,3 +2148,52 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
 - Built and deployed the frontend bundle to AWS S3 & Nginx on EC2 instance (`i-02999b6093bc5bfd2`).
 - Deployed `backend/main.py` updates to AWS EC2 instance (`i-0c62e04f44a9ea237`) and restarted `aisurf-backend`.
 - Verified live endpoints: `https://athnexlive.com` (HTTP 200 OK) and `https://athnexlive.com/api/schools` (HTTP 200 OK).
+
+---
+
+### CHANGES ON 12-11-2026
+
+#### 1. Full Production AWS Deployment Verified (`https://athnexlive.com`)
+- **Backend Deployment**:
+  - Uploaded latest `backend/main.py` to `s3://aisurf-media-uploads-149051628601/deploy/main.py`.
+  - Executed AWS Systems Manager (SSM) command (`895ebec1-48f2-460a-bf93-e7e6704fd186`) on Backend EC2 (`i-0c62e04f44a9ea237`).
+  - Successfully restarted `aisurf-backend` systemd service; status verified as `active (running)`.
+- **Frontend Deployment**:
+  - Re-built clean production bundle via Vite (`npm run build`) with 0 errors in 1.42s.
+  - Packaged and uploaded `aisurf-frontend.zip` (2.26 MB) to S3.
+  - Executed AWS Systems Manager (SSM) command (`5d67f4c3-1836-4bcd-9fb8-5a2a919593d4`) on Frontend EC2 (`i-02999b6093bc5bfd2`).
+  - Extracted fresh bundle to `/var/www/frontend` and reloaded `nginx` systemd service; status verified as `active (running)`.
+- **Live Endpoint Verification**:
+  - `https://athnexlive.com`: HTTP 200 OK.
+  - `https://athnexlive.com/api/schools`: HTTP 200 OK returning live RDS surf schools.
+
+#### 2. Removed Analytics Tab from Student View (`Sidebar.jsx`, `Analytics.jsx`)
+- **Problem**:
+  - Students logging into their portal (e.g. `RPNitheesh`) saw the school-wide **"Analytics"** (Badge Progression) tab in the top navigation bar. The school-level student progression and badge management view is meant strictly for School Admins and Coaches.
+- **Resolution**:
+  - In [Sidebar.jsx](file:///d:/surfing/ai/frontend/src/components/Sidebar.jsx#L198-L203), wrapped `{ label: 'Analytics', path: '/analytics' }` in `if (!isStudent)`, so the Analytics tab is completely hidden for student and athlete roles. Students only see their relevant tabs (`My Profile`, `My Sessions`, `My Achievements`, `Competitions`, `Athlete Intel`).
+  - In [Analytics.jsx](file:///d:/surfing/ai/frontend/src/pages/Analytics.jsx#L294-L300), added a protective guard that automatically redirects any student navigating to `/analytics` to `/achievements`.
+  - **Verification**: Clean Vite production build (`npm --prefix frontend run build`) compiled successfully with 0 errors in 1.68s.
+
+#### 3. Surf Session Milestone Card Enhancement: Ocean Training Time & Waves Caught Added (`MyAchievements.jsx`)
+- **Requirement**:
+  - In the **Share Surf Session Milestone** card modal, display the number of waves caught (`na yetha wave pudichan`) and session ocean duration (`yevalo time`), positioned directly below the `Date & Time` row.
+  - Also ensure high-res poster canvas generation, social sharing, and direct WhatsApp / Web Share reflect the actual image poster with waves caught and training duration.
+- **Resolution**:
+  - In [MyAchievements.jsx](file:///d:/surfing/ai/frontend/src/pages/MyAchievements.jsx):
+    1. Added `getSessionWaves(sess)`: resolves waves caught from `sess.waves_ridden`, `sess.waves_caught`, `sess.wave_count`, or verified score.
+    2. Added `getSessionDuration(sess)`: parses slot duration from `sess.duration_mins`, `sess.duration`, or `sess.time` (e.g. `06:30 AM - 08:30 AM` → `2 Hours (120m)`).
+    3. Updated modal session details card right beneath `📅 Date & Time`:
+       - `⏱️ Training Time`: dynamic duration (e.g. `2 Hours (120m)`).
+       - `🌊 Waves Caught`: highlighted count (e.g. `8 Waves Caught`).
+    4. Enhanced high-resolution Canvas story poster generator (`generateStoryPosterBlob`): creates a 6-metric balanced athletic layout with `TRAINING TIME` and `WAVES CAUGHT` blocks alongside date, spot, coach, and technique score.
+    5. Enhanced `handleShareWhatsApp` and `handleNativeShare` with direct Web Share API (`navigator.share({ files: [imageFile] })`), and on desktop automatically downloads the high-res poster and copies the image to clipboard for instantaneous paste (Ctrl+V) into WhatsApp chats.
+  - **Verification**: Production build (`npm --prefix frontend run build`) compiled successfully in 1.97s with 0 errors.
+
+#### 4. Highlighted "Share Achievement with Friends" Button (`MyAchievements.jsx`)
+- **Requirement**:
+  - Update session card share button text to `"Share Achievement with Friends"` and give it high-contrast, prominent highlighting.
+- **Resolution**:
+  - In [MyAchievements.jsx](file:///d:/surfing/ai/frontend/src/pages/MyAchievements.jsx#L1162-L1178), updated label to `<span>Share Achievement with Friends</span>`.
+  - Replaced low-contrast pale mint background (`#F0FDF4`) with an eye-catching ocean gradient (`linear-gradient(135deg, #0D9488 0%, #0284C7 100%)`), bold white typography (`#FFFFFF`, `font-weight: 800`), sleek pill border radius (`9999px`), and depth shadow (`box-shadow: 0 4px 14px rgba(13, 148, 136, 0.35)`).
+  - **Verification**: Production build (`npm --prefix frontend run build`) compiled successfully with 0 errors in 2.60s.
