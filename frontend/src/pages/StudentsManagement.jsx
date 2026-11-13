@@ -700,12 +700,19 @@ const StudentsManagement = () => {
 
   const normalizeLevel = (lvl) => {
     const s = String(lvl || '').trim().toLowerCase();
-    if (s.includes('advance intermediate') || s.includes('advanced intermediate')) return 'Advance Intermediate';
-    if (s.includes('advance beginner') || s.includes('advanced beginner') || s.includes('yellow')) return 'Advance Beginner';
-    if (s.includes('intermediate')) return 'Intermediate';
-    if (s.includes('pro') || s.includes('master')) return 'Pro';
-    if (s.includes('advanced')) return 'Pro';
-    if (s.includes('beginner')) return 'Beginner';
+    if (!s) return 'Beginner';
+    // 1. Advance Intermediate
+    if ((s.includes('adv') && s.includes('int')) || s.includes('blue')) return 'Advance Intermediate';
+    // 2. Advance Beginner
+    if ((s.includes('adv') && s.includes('beg')) || s.includes('yellow')) return 'Advance Beginner';
+    // 3. Pro / Master / Elite / Red
+    if (s.includes('pro') || s.includes('master') || s.includes('elite') || s.includes('red')) return 'Pro';
+    // 4. Intermediate / Green
+    if (s.includes('int') || s.includes('green')) return 'Intermediate';
+    // 5. Standalone Advance / Advanced
+    if (s === 'advance' || s === 'advanced' || s.startsWith('adv')) return 'Advance Intermediate';
+    // 6. Beginner / Novice / White
+    if (s.includes('beg') || s.includes('novice') || s.includes('white')) return 'Beginner';
     return 'Beginner';
   };
 
@@ -1068,25 +1075,25 @@ const StudentsManagement = () => {
     } else if (activeStatFilter === 'UPCOMING') {
       matchStat = isStudentUpcoming(s, targetEvaluationDate);
     } else if (activeStatFilter === 'BEGINNER') {
-      const matchLvl = normalizeLevel(s.level) === 'Beginner' || (guestList || []).some(g => normalizeLevel(g.level) === 'Beginner');
+      const matchLvl = normalizeLevel(s.level) === 'Beginner' || (guestList || []).some(g => normalizeLevel(g.level || s.level) === 'Beginner');
       matchStat = isTotalScope ? matchLvl : isUpcomingScope ? (isStudentUpcoming(s, targetEvaluationDate) && matchLvl) : (isStudentActive(s, targetEvaluationDate) && matchLvl);
     } else if (activeStatFilter === 'ADV. BEGINNER') {
-      const matchLvl = normalizeLevel(s.level) === 'Advance Beginner' || (guestList || []).some(g => normalizeLevel(g.level) === 'Advance Beginner');
+      const matchLvl = normalizeLevel(s.level) === 'Advance Beginner' || (guestList || []).some(g => normalizeLevel(g.level || s.level) === 'Advance Beginner');
       matchStat = isTotalScope ? matchLvl : isUpcomingScope ? (isStudentUpcoming(s, targetEvaluationDate) && matchLvl) : (isStudentActive(s, targetEvaluationDate) && matchLvl);
     } else if (activeStatFilter === 'INTERMEDIATE') {
-      const matchLvl = normalizeLevel(s.level) === 'Intermediate' || (guestList || []).some(g => normalizeLevel(g.level) === 'Intermediate');
+      const matchLvl = normalizeLevel(s.level) === 'Intermediate' || (guestList || []).some(g => normalizeLevel(g.level || s.level) === 'Intermediate');
       matchStat = isTotalScope ? matchLvl : isUpcomingScope ? (isStudentUpcoming(s, targetEvaluationDate) && matchLvl) : (isStudentActive(s, targetEvaluationDate) && matchLvl);
     } else if (activeStatFilter === 'ADV. INTERMEDIATE') {
-      const matchLvl = normalizeLevel(s.level) === 'Advance Intermediate' || (guestList || []).some(g => normalizeLevel(g.level) === 'Advance Intermediate');
+      const matchLvl = normalizeLevel(s.level) === 'Advance Intermediate' || (guestList || []).some(g => normalizeLevel(g.level || s.level) === 'Advance Intermediate');
       matchStat = isTotalScope ? matchLvl : isUpcomingScope ? (isStudentUpcoming(s, targetEvaluationDate) && matchLvl) : (isStudentActive(s, targetEvaluationDate) && matchLvl);
     } else if (activeStatFilter === 'ADVANCED' || activeStatFilter === 'PRO') {
-      const matchLvl = normalizeLevel(s.level) === 'Pro' || (guestList || []).some(g => normalizeLevel(g.level) === 'Pro');
+      const matchLvl = normalizeLevel(s.level) === 'Pro' || (guestList || []).some(g => normalizeLevel(g.level || s.level) === 'Pro');
       matchStat = isTotalScope ? matchLvl : isUpcomingScope ? (isStudentUpcoming(s, targetEvaluationDate) && matchLvl) : (isStudentActive(s, targetEvaluationDate) && matchLvl);
     }
 
     const matchLevel = (!levelFilter || levelFilter === 'All')
       ? true
-      : (normalizeLevel(s.level) === normalizeLevel(levelFilter) || (guestList || []).some(g => normalizeLevel(g.level) === normalizeLevel(levelFilter)));
+      : (normalizeLevel(s.level) === normalizeLevel(levelFilter) || (guestList || []).some(g => normalizeLevel(g.level || s.level) === normalizeLevel(levelFilter)));
     const matchInstructor = instructorFilter === 'All' || s.instructor === instructorFilter;
     const matchSession = sessionTimeFilter === 'All' ||
       s.session_time === sessionTimeFilter ||
@@ -1179,7 +1186,7 @@ const StudentsManagement = () => {
 
       const guests = getStudentGuestsDetails(s) || [];
       guests.forEach(g => {
-        const gLvl = normalizeLevel(g.level);
+        const gLvl = normalizeLevel(g.level || s.level);
         if (counts[gLvl] !== undefined) counts[gLvl] += 1;
         else counts['Beginner'] += 1;
       });
@@ -2187,6 +2194,7 @@ const StudentsManagement = () => {
   }, [allPendingRequests, pendingDateFilter, pendingSearch]);
 
   const handleApproveStudentRequest = async (reqId, studentEmail) => {
+    if (isViewAdmin) return;
     try {
       const emailLower = (studentEmail || '').toLowerCase().trim();
       const targetReq = allPendingRequests.find(r =>
@@ -2341,6 +2349,7 @@ const StudentsManagement = () => {
   };
 
   const handleRejectStudentRequest = (reqId, studentEmail) => {
+    if (isViewAdmin) return;
     showConfirm(
       'Decline Request',
       `Decline registration request for ${studentEmail || 'student'}?`,
@@ -4015,7 +4024,7 @@ const StudentsManagement = () => {
                         </div>
                       </td>
                       <td>
-                        {!s.has_password && (
+                        {!isViewAdmin && !s.has_password && (
                           <button
                             className="sm-invite-btn"
                             title="Generate & copy invite link"
@@ -4077,6 +4086,22 @@ const StudentsManagement = () => {
                               </>
                             )}
                           </button>
+                        )}
+                        {isViewAdmin && !s.has_password && (
+                          <span style={{
+                            fontSize: '11px',
+                            color: '#64748B',
+                            fontWeight: 600,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            background: '#F1F5F9',
+                            border: '1px solid #CBD5E1',
+                            padding: '3px 8px',
+                            borderRadius: '6px'
+                          }}>
+                            Not Joined
+                          </span>
                         )}
                         {s.has_password && (
                           <span style={{

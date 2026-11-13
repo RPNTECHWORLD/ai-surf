@@ -181,30 +181,25 @@ function mapLevelToBadgeInfo(rawLevel, existingBadgeLevels = []) {
   let nextTime = '3 weeks';
   let nextColor = '#64748B';
 
-  if (lvl.includes('pro') || lvl.includes('master')) {
-    baseBadge = 'RED';
-    badgeRank = 5;
-    nextTime = 'Max Level';
-    nextColor = '#0D9488';
-  } else if (lvl.includes('advance intermediate') || lvl.includes('advanced intermediate')) {
+  if ((lvl.includes('adv') && lvl.includes('int')) || lvl.includes('blue') || lvl === 'advance' || lvl === 'advanced' || lvl.startsWith('adv')) {
     baseBadge = 'BLUE';
     badgeRank = 4;
     nextTime = '3 months';
     nextColor = '#64748B';
-  } else if (lvl.includes('intermediate')) {
-    baseBadge = 'GREEN';
-    badgeRank = 3;
-    nextTime = 'Ready Now';
-    nextColor = '#0D9488';
-  } else if (lvl.includes('advance beginner') || lvl.includes('advanced beginner') || lvl.includes('yellow')) {
+  } else if ((lvl.includes('adv') && lvl.includes('beg')) || lvl.includes('yellow')) {
     baseBadge = 'YELLOW';
     badgeRank = 2;
     nextTime = '1 month';
     nextColor = '#64748B';
-  } else if (lvl.includes('advanced')) {
+  } else if (lvl.includes('pro') || lvl.includes('master') || lvl.includes('elite') || lvl.includes('red')) {
     baseBadge = 'RED';
     badgeRank = 5;
     nextTime = 'Max Level';
+    nextColor = '#0D9488';
+  } else if (lvl.includes('int') || lvl.includes('green')) {
+    baseBadge = 'GREEN';
+    badgeRank = 3;
+    nextTime = 'Ready Now';
     nextColor = '#0D9488';
   } else {
     baseBadge = 'WHITE';
@@ -245,6 +240,7 @@ function mapLevelToBadgeInfo(rawLevel, existingBadgeLevels = []) {
 }
 
 const Analytics = () => {
+  const navigate = useNavigate();
   const [badgeStats, setBadgeStats] = useState([
     { label: 'WHITE', count: 0 },
     { label: 'YELLOW', count: 0 },
@@ -290,7 +286,15 @@ const Analytics = () => {
   const studentName = (currentUser?.name || '').toLowerCase().trim();
   const studentEmail = (currentUser?.email || '').toLowerCase().trim();
 
+  // Redirect students away from Analytics (school badge progression view is strictly for Admin/Coaches)
   useEffect(() => {
+    if (isStudent) {
+      navigate('/achievements', { replace: true });
+    }
+  }, [isStudent, navigate]);
+
+  useEffect(() => {
+    if (isStudent) return;
     const queryParams = new URLSearchParams();
     if (isCoach && coachId) {
       queryParams.append('instructor_id', coachId);
@@ -564,6 +568,10 @@ const Analytics = () => {
   }, [filteredStudents]);
 
   const maxCount = displayBadgeStats.length > 0 ? Math.max(...displayBadgeStats.map(b => b.count), 1) : 1;
+
+  if (isStudent) {
+    return null;
+  }
 
   return (
     <div className="an-page">

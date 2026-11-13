@@ -18,6 +18,16 @@ export default function UserProfileMenu({ user, school, onLogout }) {
   // Modals state
   const [showGuestAdminModal, setShowGuestAdminModal] = useState(false);
   const [showDeleteAccountModal, setShowDeleteAccountModal] = useState(false);
+  const [showServicesModal, setShowServicesModal] = useState(false);
+  const [posterUrl, setPosterUrl] = useState(() => localStorage.getItem('athnex_milestone_poster_bg') || '/surf-milestone-bg.jpg');
+  const [posterUploading, setPosterUploading] = useState(false);
+  const [servicesList, setServicesList] = useState([]);
+  const [servicesSaving, setServicesSaving] = useState(false);
+  const [servicesFeedback, setServicesFeedback] = useState('');
+  const [newServiceName, setNewServiceName] = useState('');
+  const [newServiceDuration, setNewServiceDuration] = useState('');
+  const [newServicePrice, setNewServicePrice] = useState('');
+  const posterFileInputRef = useRef(null);
 
   // Guest Admin Management State
   const [guestAdmins, setGuestAdmins] = useState([]);
@@ -70,7 +80,18 @@ export default function UserProfileMenu({ user, school, onLogout }) {
   const [customEditLangInput, setCustomEditLangInput] = useState('');
   const [editCoachSpecializations, setEditCoachSpecializations] = useState([]);
   const [editCoachCertifications, setEditCoachCertifications] = useState('');
-  const [schoolsList, setSchoolsList] = useState([]);
+  const DEFAULT_SURF_SCHOOLS = [
+    'rpn tech ac',
+    'Aquatic Indica Surf School - Mulki',
+    'Aquatic Indica Surf School - Dapoli',
+    'Togai Surf Camp/School',
+    'athnexlive',
+    'rpn surf school',
+    'samsurf',
+    'Bala Surf training center',
+    'Arun Surf training center'
+  ];
+  const [schoolsList, setSchoolsList] = useState(DEFAULT_SURF_SCHOOLS);
   const [schoolsData, setSchoolsData] = useState([]);
 
   // Student Edit Profile State
@@ -504,7 +525,119 @@ export default function UserProfileMenu({ user, school, onLogout }) {
     }));
   };
 
-  // Handle Delete My Account (Password verification & 30-Day Retention Grace Period)
+  // ── Our Services & Milestone Poster State & Handlers ──
+  const defaultServices = [
+    { id: 1, name: '3-Day Beginner Surf Course', duration: '3 Days (6 Hours)', price: '₹4,500', active: true },
+    { id: 2, name: '5-Day Intermediate Surf Skills', duration: '5 Days (10 Hours)', price: '₹7,500', active: true },
+    { id: 3, name: 'Private 1-on-1 Ocean Coaching', duration: '2 Hours / Session', price: '₹2,500', active: true },
+    { id: 4, name: 'Weekend Surf Camp & Theory', duration: '2 Days (4 Hours)', price: '₹3,500', active: true },
+  ];
+
+  const posterPresets = [
+    { label: 'Default AI Action', url: '/surf-milestone-bg.jpg' },
+    { label: 'Deep Blue Barrel', url: 'https://images.unsplash.com/photo-1502680390469-be75c86b636f?auto=format&fit=crop&w=1200&q=80' },
+    { label: 'Golden Hour Sunset', url: 'https://images.unsplash.com/photo-1455729552865-3658a5d39692?auto=format&fit=crop&w=1200&q=80' },
+    { label: 'Tropical Ocean Swell', url: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=1200&q=80' },
+    { label: 'Crystal Crest Break', url: 'https://images.unsplash.com/photo-1516815231560-8f41ec531527?auto=format&fit=crop&w=1200&q=80' },
+  ];
+
+  const openServicesModal = async () => {
+    setShowServicesModal(true);
+    setServicesFeedback('');
+    try {
+      const schName = typeof school?.name === 'string' ? school.name : (school?.name?.name || user?.school_name || user?.school || '');
+      const cached = localStorage.getItem(`athnex_poster_${schName}`) || localStorage.getItem('athnex_milestone_poster_bg');
+      if (cached) setPosterUrl(cached);
+
+      const res = await fetch(`${API}/api/schools/poster?school=${encodeURIComponent(schName)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.poster_url) {
+          setPosterUrl(data.poster_url);
+          localStorage.setItem('athnex_milestone_poster_bg', data.poster_url);
+          if (schName) localStorage.setItem(`athnex_poster_${schName}`, data.poster_url);
+        }
+        if (Array.isArray(data.services) && data.services.length > 0) {
+          setServicesList(data.services);
+        } else {
+          setServicesList(defaultServices);
+        }
+      } else {
+        if (!cached) setPosterUrl('/surf-milestone-bg.jpg');
+        setServicesList(defaultServices);
+      }
+    } catch (e) {
+      console.warn('Failed to fetch school poster and services', e);
+      setServicesList(defaultServices);
+    }
+  };
+
+  const handlePosterFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPosterUploading(true);
+    setServicesFeedback('');
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch(`${API}/api/upload-image`, {
+        method: 'POST',
+        body: fd
+      });
+      if (!res.ok) throw new Error('Image upload failed');
+      const data = await res.json();
+      const uploadedUrl = data.url || data.image_url;
+      if (uploadedUrl) {
+        setPosterUrl(uploadedUrl);
+        setServicesFeedback('✓ Photo uploaded! Click "Save Changes" to apply across all student posters.');
+      }
+    } catch (err) {
+      console.error(err);
+      setServicesFeedback('❌ Failed to upload photo. Please try a valid image file.');
+    } finally {
+      setPosterUploading(false);
+    }
+  };
+
+  const handleSaveServicesAndPoster = async () => {
+    setServicesSaving(true);
+    setServicesFeedback('');
+    try {
+      const schName = typeof school?.name === 'string' ? school.name : (school?.name?.name || user?.school_name || user?.school || '');
+      const payload = {
+        school: schName,
+        school_id: school?.id || user?.school_id,
+        poster_url: posterUrl || '/surf-milestone-bg.jpg',
+        services: servicesList
+      };
+      const res = await fetch(`${API}/api/schools/poster`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        localStorage.setItem('athnex_milestone_poster_bg', payload.poster_url);
+        if (schName) {
+          localStorage.setItem(`athnex_poster_${schName}`, payload.poster_url);
+        }
+        window.dispatchEvent(new Event('storage'));
+        setServicesFeedback('✓ Milestone Poster Photo saved successfully!');
+        setTimeout(() => {
+          setShowServicesModal(false);
+          setServicesFeedback('');
+        }, 1500);
+      } else {
+        throw new Error('Save failed');
+      }
+    } catch (e) {
+      console.error(e);
+      setServicesFeedback('❌ Failed to save changes. Please try again.');
+    } finally {
+      setServicesSaving(false);
+    }
+  };
+
+  // Handle Delete My Account (Password verification & 07-Day Retention Grace Period)
   const handleDeleteMyAccount = async () => {
     if (!deletePassword.trim()) {
       setDeleteError('Please enter your account password to authorize deletion.');
@@ -1388,6 +1521,66 @@ export default function UserProfileMenu({ user, school, onLogout }) {
             </button>
           </div>
 
+          {/* OUR SERVICES ACTION (Available for School Admin) */}
+          {isSchoolAdmin && (
+            <div
+              style={{
+                padding: '8px 12px',
+                borderBottom: theme === 'dark' ? '1px solid #334155' : '1px solid #F1F5F9'
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  setIsOpen(false);
+                  openServicesModal();
+                }}
+                style={{
+                  width: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '9px 12px',
+                  borderRadius: '10px',
+                  border: theme === 'dark' ? '1px solid #065F46' : '1px solid #A7F3D0',
+                  background: theme === 'dark' ? 'rgba(6, 95, 70, 0.22)' : '#ECFDF5',
+                  color: '#059669',
+                  fontSize: '12.5px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  transition: 'all 0.15s ease',
+                  fontFamily: "'Outfit', sans-serif"
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = '#059669';
+                  e.currentTarget.style.color = '#FFFFFF';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = theme === 'dark' ? 'rgba(6, 95, 70, 0.22)' : '#ECFDF5';
+                  e.currentTarget.style.color = '#059669';
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '15px' }}>🏄</span>
+                  <span>Our Services</span>
+                </div>
+                <span
+                  style={{
+                    fontSize: '10px',
+                    padding: '2px 7px',
+                    borderRadius: '5px',
+                    background: '#059669',
+                    color: '#FFFFFF',
+                    fontWeight: 800
+                  }}
+                >
+                  Poster Photo
+                </span>
+              </button>
+            </div>
+          )}
+
           {/* GUEST ADMIN ACTION (Exclusively for Original School Admin, never Guest Admins or Coaches) */}
           {isOriginalSchoolAdmin && (
             <div
@@ -2070,7 +2263,7 @@ export default function UserProfileMenu({ user, school, onLogout }) {
       )}
 
       {/* =========================================================================
-          MODAL 2: DELETE MY ACCOUNT CONFIRMATION (30-DAY RETENTION POLICY)
+          MODAL 2: DELETE MY ACCOUNT CONFIRMATION (07-DAY RETENTION POLICY)
           ========================================================================= */}
       {showDeleteAccountModal && (
         <div
@@ -2145,7 +2338,7 @@ export default function UserProfileMenu({ user, school, onLogout }) {
                       borderRadius: '12px'
                     }}
                   >
-                    30-Day Grace Period
+                    07-Day Grace Period
                   </span>
                 </div>
                 <p style={{ margin: '3px 0 0 0', fontSize: '12px', color: theme === 'dark' ? '#CBD5E1' : '#64748B' }}>
@@ -2177,7 +2370,7 @@ export default function UserProfileMenu({ user, school, onLogout }) {
                 </div>
               )}
 
-              {/* 30-Day Retention Notice Card */}
+              {/* 07-Day Retention Notice Card */}
               <div
                 style={{
                   background: theme === 'dark' ? 'rgba(56, 189, 248, 0.08)' : '#F0F9FF',
@@ -2190,7 +2383,7 @@ export default function UserProfileMenu({ user, school, onLogout }) {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
                   <span style={{ fontSize: '15px' }}>🛡️</span>
                   <strong style={{ fontSize: '12.5px', color: theme === 'dark' ? '#38BDF8' : '#0369A1' }}>
-                    30-Day Data Retention Guarantee
+                    07-Day Data Retention Guarantee
                   </strong>
                 </div>
                 <ul
@@ -2463,7 +2656,7 @@ export default function UserProfileMenu({ user, school, onLogout }) {
                   borderRadius: '20px'
                 }}
               >
-                30-Day Retention Grace Period Active
+                07-Day Retention Grace Period Active
               </span>
             </div>
 
@@ -2952,7 +3145,12 @@ export default function UserProfileMenu({ user, school, onLogout }) {
                       }}
                     >
                       <option value="Individual / Freelance Coach">👤 Individual / Freelance Coach (Independent)</option>
-                      {schoolsList.filter(s => s !== 'Individual / Freelance Coach').map(s => (
+                      {Array.from(new Set([
+                        ...schoolsList,
+                        editCoachSchool,
+                        currentUser?.school,
+                        'rpn tech ac'
+                      ])).filter(Boolean).filter(s => s !== 'Individual / Freelance Coach').map(s => (
                         <option key={s} value={s}>🏫 {s}</option>
                       ))}
                     </select>
@@ -3697,6 +3895,302 @@ export default function UserProfileMenu({ user, school, onLogout }) {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── OUR SERVICES & MILESTONE POSTER PHOTO MODAL ── */}
+      {showServicesModal && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(15, 23, 42, 0.75)',
+            backdropFilter: 'blur(5px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10000,
+            padding: '16px'
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowServicesModal(false);
+          }}
+        >
+          <div
+            style={{
+              width: '680px',
+              maxWidth: '100%',
+              maxHeight: '92vh',
+              overflowY: 'auto',
+              background: theme === 'dark' ? '#1E293B' : '#FFFFFF',
+              border: theme === 'dark' ? '1px solid #334155' : '1px solid #E2E8F0',
+              borderRadius: '20px',
+              padding: '24px',
+              boxShadow: '0 25px 60px rgba(0, 0, 0, 0.28)',
+              fontFamily: "'Outfit', 'Plus Jakarta Sans', sans-serif"
+            }}
+          >
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px', color: '#FFFFFF' }}>
+                    📸
+                  </div>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: theme === 'dark' ? '#FFFFFF' : '#0F172A' }}>
+                      Milestone Story Poster Photo
+                    </h3>
+                    <p style={{ margin: '2px 0 0 0', fontSize: '12px', color: '#64748B' }}>
+                      Set or upload your academy's official background photo for student milestone share posters!
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowServicesModal(false)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '20px',
+                  cursor: 'pointer',
+                  color: '#94A3B8'
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{
+              background: theme === 'dark' ? '#0F172A' : '#F8FAFC',
+              border: `1.5px solid ${theme === 'dark' ? '#334155' : '#E2E8F0'}`,
+              borderRadius: '16px',
+              padding: '18px',
+              marginBottom: '20px'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+                <div>
+                  <h4 style={{ margin: 0, fontSize: '14.5px', fontWeight: 800, color: theme === 'dark' ? '#2DD4BF' : '#0D9488', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span>📸</span> Official Story Card Background Photo
+                  </h4>
+                  <p style={{ margin: '3px 0 0 0', fontSize: '11.5px', color: '#64748B' }}>
+                    When students share or download their milestone story card in My Achievements, all session metrics (Waves Caught, Duration, Score, Coach, Date) will be branded on this photo!
+                  </p>
+                </div>
+              </div>
+
+              {/* Poster Live Preview Card */}
+              <div style={{
+                position: 'relative',
+                height: '180px',
+                borderRadius: '14px',
+                backgroundImage: `linear-gradient(180deg, rgba(15, 23, 42, 0.6) 0%, rgba(15, 23, 42, 0.9) 100%), url(${posterUrl || '/surf-milestone-bg.jpg'})`,
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+                border: '2px solid #2DD4BF',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+                padding: '14px',
+                boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+                marginBottom: '14px',
+                overflow: 'hidden'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '12px', fontWeight: 900, color: '#2DD4BF', letterSpacing: '0.05em' }}>
+                    ⚡ ATHNEX LIVE
+                  </span>
+                  <span style={{ fontSize: '10px', fontWeight: 800, color: '#FCD34D', background: 'rgba(0,0,0,0.4)', padding: '2px 8px', borderRadius: '6px', border: '1px solid rgba(252,211,77,0.4)' }}>
+                    🏆 VERIFIED ATHLETE
+                  </span>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: '18px', fontWeight: 900, color: '#FFFFFF', letterSpacing: '-0.01em' }}>
+                    STUDENT SURFER NAME
+                  </div>
+                  <div style={{ fontSize: '11px', color: '#E2E8F0', marginTop: '2px' }}>
+                    {school?.name || effectiveUser?.school_name || 'Surf Academy'} • Intermediate Surfer
+                  </div>
+                  <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
+                    <span style={{ background: 'rgba(15,23,42,0.85)', padding: '3px 8px', borderRadius: '6px', fontSize: '10.5px', fontWeight: 700, color: '#2DD4BF', border: '1px solid rgba(45,212,191,0.3)' }}>
+                      🌊 8 Waves Caught
+                    </span>
+                    <span style={{ background: 'rgba(15,23,42,0.85)', padding: '3px 8px', borderRadius: '6px', fontSize: '10.5px', fontWeight: 700, color: '#38BDF8', border: '1px solid rgba(56,189,248,0.3)' }}>
+                      ⏱️ 2 Hours (120m)
+                    </span>
+                    <span style={{ background: 'rgba(15,23,42,0.85)', padding: '3px 8px', borderRadius: '6px', fontSize: '10.5px', fontWeight: 700, color: '#FCD34D', border: '1px solid rgba(252,211,77,0.3)' }}>
+                      ⭐ 85/100
+                    </span>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '9px', color: '#94A3B8', borderTop: '1px solid rgba(255,255,255,0.15)', paddingTop: '6px' }}>
+                  <span>📍 Kovalam / Chennai Beach</span>
+                  <span>Official Verified Record</span>
+                </div>
+              </div>
+
+              {/* Upload & Preset Selector Row */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                <input
+                  type="file"
+                  ref={posterFileInputRef}
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={handlePosterFileUpload}
+                />
+                <button
+                  type="button"
+                  onClick={() => posterFileInputRef.current?.click()}
+                  disabled={posterUploading}
+                  style={{
+                    padding: '9px 16px',
+                    borderRadius: '10px',
+                    border: 'none',
+                    background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
+                    color: '#FFFFFF',
+                    fontSize: '12.5px',
+                    fontWeight: 700,
+                    cursor: posterUploading ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '7px',
+                    boxShadow: '0 4px 12px rgba(13,148,136,0.3)'
+                  }}
+                >
+                  {posterUploading ? (
+                    <>
+                      <span>⏳</span>
+                      <span>Uploading Photo...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>📁</span>
+                      <span>Upload Custom Poster Photo</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPosterUrl('/surf-milestone-bg.jpg')}
+                  style={{
+                    padding: '9px 14px',
+                    borderRadius: '10px',
+                    border: `1px solid ${theme === 'dark' ? '#475569' : '#CBD5E1'}`,
+                    background: theme === 'dark' ? '#334155' : '#FFFFFF',
+                    color: theme === 'dark' ? '#F1F5F9' : '#475569',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                >
+                  ↺ Reset to Default
+                </button>
+              </div>
+
+              {/* Quick Preset Buttons */}
+              <div>
+                <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748B', display: 'block', marginBottom: '6px' }}>
+                  Or Choose from HD Surf Action Presets:
+                </span>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  {posterPresets.map((preset, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => setPosterUrl(preset.url)}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: '8px',
+                        border: posterUrl === preset.url ? '2px solid #0D9488' : `1px solid ${theme === 'dark' ? '#334155' : '#E2E8F0'}`,
+                        background: posterUrl === preset.url ? (theme === 'dark' ? 'rgba(13,148,136,0.2)' : '#F0FDFA') : (theme === 'dark' ? '#1E293B' : '#FFFFFF'),
+                        color: posterUrl === preset.url ? '#0D9488' : (theme === 'dark' ? '#CBD5E1' : '#475569'),
+                        fontSize: '11.5px',
+                        fontWeight: posterUrl === preset.url ? 800 : 600,
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      {posterUrl === preset.url ? '✓ ' : ''}{preset.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Feedback Message */}
+            {servicesFeedback && (
+              <div style={{
+                padding: '10px 14px',
+                borderRadius: '8px',
+                background: servicesFeedback.startsWith('✓') ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                color: servicesFeedback.startsWith('✓') ? '#059669' : '#DC2626',
+                border: `1px solid ${servicesFeedback.startsWith('✓') ? '#10B981' : '#EF4444'}`,
+                fontSize: '12px',
+                fontWeight: 700,
+                textAlign: 'center',
+                marginBottom: '16px'
+              }}>
+                {servicesFeedback}
+              </div>
+            )}
+
+            {/* Footer Action Buttons */}
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', alignItems: 'center', borderTop: `1px solid ${theme === 'dark' ? '#334155' : '#E2E8F0'}`, paddingTop: '16px' }}>
+              <button
+                type="button"
+                onClick={() => setShowServicesModal(false)}
+                disabled={servicesSaving}
+                style={{
+                  padding: '10px 20px',
+                  borderRadius: '10px',
+                  border: `1px solid ${theme === 'dark' ? '#475569' : '#CBD5E1'}`,
+                  background: theme === 'dark' ? '#334155' : '#FFFFFF',
+                  color: theme === 'dark' ? '#F8FAFC' : '#475569',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  cursor: servicesSaving ? 'not-allowed' : 'pointer'
+                }}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSaveServicesAndPoster}
+                disabled={servicesSaving || posterUploading}
+                style={{
+                  padding: '10px 24px',
+                  borderRadius: '10px',
+                  border: 'none',
+                  background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
+                  color: '#FFFFFF',
+                  fontSize: '13.5px',
+                  fontWeight: 800,
+                  cursor: servicesSaving || posterUploading ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  boxShadow: '0 4px 14px rgba(13, 148, 136, 0.35)'
+                }}
+              >
+                {servicesSaving ? (
+                  <>
+                    <span>⏳</span>
+                    <span>Saving Changes...</span>
+                  </>
+                ) : (
+                  <span>Save Configuration</span>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

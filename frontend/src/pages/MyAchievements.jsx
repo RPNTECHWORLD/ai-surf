@@ -18,6 +18,9 @@ export default function MyAchievements() {
   const [downloadingImg, setDownloadingImg] = useState(false);
   const [downloadingCert, setDownloadingCert] = useState(false);
   const [confettiActive, setConfettiActive] = useState(false);
+  const [posterBgUrl, setPosterBgUrl] = useState(() => {
+    return localStorage.getItem('athnex_milestone_poster_bg') || '/surf-milestone-bg.jpg';
+  });
   const confettiCanvasRef = useRef(null);
   const animFrameRef = useRef(null);
   const cardRef = useRef(null);
@@ -105,6 +108,37 @@ export default function MyAchievements() {
     fetchStudentAndSessions();
   }, [loggedUser, studentName]);
 
+  // Load custom school milestone poster background if configured
+  useEffect(() => {
+    const fetchPoster = async () => {
+      try {
+        const sch = studentSchool || '';
+        const cached = (sch && localStorage.getItem(`athnex_poster_${sch}`)) || localStorage.getItem('athnex_milestone_poster_bg');
+        if (cached) setPosterBgUrl(cached);
+
+        const res = await fetch(`${API}/api/schools/poster?school=${encodeURIComponent(sch)}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.poster_url) {
+            setPosterBgUrl(data.poster_url);
+            localStorage.setItem('athnex_milestone_poster_bg', data.poster_url);
+            if (sch) localStorage.setItem(`athnex_poster_${sch}`, data.poster_url);
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to load custom poster image', err);
+      }
+    };
+    fetchPoster();
+
+    const onStorageChange = () => {
+      const updated = localStorage.getItem('athnex_milestone_poster_bg');
+      if (updated) setPosterBgUrl(updated);
+    };
+    window.addEventListener('storage', onStorageChange);
+    return () => window.removeEventListener('storage', onStorageChange);
+  }, [studentSchool]);
+
   // Determine if a session is finished / completed
   const isSessionCompleted = (sess) => {
     if (!sess) return false;
@@ -120,20 +154,48 @@ export default function MyAchievements() {
     return false;
   };
 
+  // Derive verified coach technique score out of 100
+  const getSessionScore = (sess) => {
+    if (!sess) return 85;
+    const direct = parseInt(sess.score || sess.technique_score || sess.coach_rating, 10);
+    if (!isNaN(direct) && direct > 0) return direct;
+    if (sess.notes) {
+      const sm = sess.notes.match(/(?:Coach (?:Rating|Score)|Technique Score|Score):\s*(\d+)/i) || sess.notes.match(/\[\s*(\d+)\s*(?:out of|\/)\s*100\s*\]/i);
+      if (sm) return parseInt(sm[1], 10);
+    }
+    return 85;
+  };
+
+  // Derive session waves caught / ridden
+  const getSessionWaves = (sess) => {
+    if (!sess) return 6;
+    const direct = parseInt(sess.waves_ridden || sess.waves_caught || sess.wave_count, 10);
+    if (!isNaN(direct) && direct > 0) return direct;
+    if (sess.notes) {
+      const wm = sess.notes.match(/Wave Count:\s*(\d+)/i);
+      if (wm) return parseInt(wm[1], 10);
+    }
+    const sc = getSessionScore(sess);
+    if (sc > 0) {
+      return Math.max(4, Math.min(12, Math.round(sc / 10) + 1));
+    }
+    return 6;
+  };
+
   // Compute milestone statistics from session history
   const stats = useMemo(() => {
     const completedList = sessions.filter(isSessionCompleted);
     const upcomingList = sessions.filter(s => !isSessionCompleted(s));
 
     const totalWaves = completedList.reduce((sum, s) => {
-      const count = parseInt(s.waves_ridden || s.waves_caught || s.wave_count || 0, 10);
+      const count = getSessionWaves(s);
       return sum + (isNaN(count) ? 0 : count);
     }, 0) || (completedList.length * 6); // Realistic average if count unrecorded
 
     const totalHours = (completedList.length * 2.0).toFixed(1);
 
     const scores = completedList
-      .map(s => parseInt(s.score || s.technique_score || 0, 10))
+      .map(s => getSessionScore(s))
       .filter(sc => !isNaN(sc) && sc > 0);
     const avgScore = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 85;
 
@@ -167,37 +229,314 @@ export default function MyAchievements() {
     });
   }, [sessions, activeTab, searchQuery]);
 
+  // Derive ocean training time / duration
+  const getSessionDuration = (sess) => {
+    if (!sess) return '2 Hours (120m)';
+    if (sess.duration_mins) {
+      const mins = parseInt(sess.duration_mins, 10);
+      if (!isNaN(mins) && mins > 0) {
+        if (mins % 60 === 0) {
+          const hrs = mins / 60;
+          return `${hrs} ${hrs === 1 ? 'Hour' : 'Hours'} (${mins}m)`;
+        }
+        const hrs = Math.floor(mins / 60);
+        const rem = mins % 60;
+        return hrs > 0 ? `${hrs}h ${rem}m (${mins}m)` : `${mins} Mins`;
+      }
+    }
+    if (sess.duration) return String(sess.duration);
+    if (sess.time && sess.time.includes('-')) {
+      const parts = sess.time.split('-');
+      if (parts.length === 2) {
+        const parseMinutes = (tStr) => {
+          const m = tStr.trim().match(/(\d+):(\d+)\s*(AM|PM)?/i);
+          if (!m) return null;
+          let h = parseInt(m[1], 10);
+          const min = parseInt(m[2], 10);
+          const meridiem = (m[3] || '').toUpperCase();
+          if (meridiem === 'PM' && h < 12) h += 12;
+          if (meridiem === 'AM' && h === 12) h = 0;
+          return h * 60 + min;
+        };
+        const startM = parseMinutes(parts[0]);
+        const endM = parseMinutes(parts[1]);
+        if (startM !== null && endM !== null) {
+          let diff = endM - startM;
+          if (diff < 0) diff += 24 * 60;
+          if (diff > 0) {
+            const hrs = Math.floor(diff / 60);
+            const rem = diff % 60;
+            if (rem === 0) return `${hrs} ${hrs === 1 ? 'Hour' : 'Hours'} (${diff}m)`;
+            return hrs > 0 ? `${hrs}h ${rem}m (${diff}m)` : `${diff} Mins`;
+          }
+        }
+      }
+    }
+    return '2 Hours (120m)';
+  };
+
   // Helper to construct share text for a specific session
   const buildShareText = (sess) => {
     if (sess === 'overall') {
       return (
-        `\uD83C\uDFC4 *My Surfing Milestones at Athnex Live!* \uD83C\uDF0A\n` +
-        `\uD83D\uDC64 Surfer: *${studentName}*\n` +
-        `\uD83C\uDFC6 Skill Level: *${studentLevel}*\n` +
-        `\u2705 Sessions Completed: *${stats.completed} Sessions*\n` +
-        `\uD83C\uDF0A Waves Ridden: *${stats.totalWaves} Waves*\n` +
-        `\u23F1 Ocean Training: *${stats.totalHours} hrs*\n` +
-        `\u2B50 Coach Score: *${stats.avgScore}/100*\n` +
-        `\uD83D\uDCCD Academy: *${studentSchool}*\n\n` +
-        `Track verified surf progress & AI video analysis on https://athnexlive.com \uD83E\uDD19`
+        `🏄 *My Surfing Milestones at Athnex Live!* 🌊\n` +
+        `👤 Surfer: *${studentName}*\n` +
+        `🏆 Skill Level: *${studentLevel}*\n` +
+        `✅ Sessions Completed: *${stats.completed} Sessions*\n` +
+        `🌊 Waves Ridden: *${stats.totalWaves} Waves*\n` +
+        `⏱️ Ocean Training: *${stats.totalHours} hrs*\n` +
+        `⭐ Coach Score: *${stats.avgScore}/100*\n` +
+        `📍 Academy: *${studentSchool}*\n\n` +
+        `Track verified surf progress & AI video analysis on https://athnexlive.com 🤙`
       );
     }
     const coachName = sess.instructor || sess.instructor_name || 'Coach';
     const loc = sess.location || studentSchool || 'Surf Spot';
+    const duration = getSessionDuration(sess);
+    const waves = getSessionWaves(sess);
+    const scoreVal = getSessionScore(sess);
     return (
-      `\uD83C\uDFC4 *Surf Session Milestone Completed!* \uD83C\uDF0A\n` +
-      `\uD83D\uDC64 Surfer: *${studentName}*\n` +
-      `\uD83D\uDCC5 Date: *${sess.date}* (${sess.time || 'Morning Session'})\n` +
-      `\uD83D\uDCCD Spot: *${loc}*\n` +
-      `\uD83C\uDFC4 Coach: *${coachName}*\n` +
-      `\uD83D\uDD25 Level: *${sess.level || sess.type || studentLevel}*\n` +
-      `\u2B50 Verified at *Athnex Live* (https://athnexlive.com) \uD83E\uDD19`
+      `🏄 *Surf Session Milestone Completed!* 🌊\n` +
+      `👤 Surfer: *${studentName}*\n` +
+      `📅 Date: *${sess.date}* (${sess.time || 'Morning Session'})\n` +
+      `⏱️ Training Time: *${duration}*\n` +
+      `🌊 Waves Caught: *${waves} Waves*\n` +
+      `⭐ Technique Score: *${scoreVal}/100*\n` +
+      `📍 Spot: *${loc}*\n` +
+      `🏄 Coach: *${coachName}*\n` +
+      `🔥 Level: *${sess.level || sess.type || studentLevel}*\n` +
+      `⭐ Verified at *Athnex Live* (https://athnexlive.com) 🤙`
     );
   };
 
-  // WhatsApp Share Handler
-  const handleShareWhatsApp = (sess) => {
+  // High-Resolution Story Poster Blob Generator
+  const generateStoryPosterBlob = async (sess) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1080;
+    canvas.height = 1350; // Standard 4:5 mobile story / portrait ratio
+    const ctx = canvas.getContext('2d');
+    const isOverall = sess === 'overall';
+
+    const bgImg = new Image();
+    bgImg.crossOrigin = 'anonymous';
+    bgImg.src = posterBgUrl || '/surf-milestone-bg.jpg';
+
+    await new Promise((resolve) => {
+      bgImg.onload = resolve;
+      bgImg.onerror = resolve; // fallback gracefully if image load interrupted
+    });
+
+    // 1. Draw Background AI Surfing Image
+    if (bgImg.complete && bgImg.naturalWidth > 0) {
+      const imgRatio = bgImg.naturalWidth / bgImg.naturalHeight;
+      const targetRatio = canvas.width / canvas.height;
+      let sWidth = bgImg.naturalWidth;
+      let sHeight = bgImg.naturalHeight;
+      let sx = 0;
+      let sy = 0;
+
+      if (imgRatio > targetRatio) {
+        sWidth = bgImg.naturalHeight * targetRatio;
+        sx = (bgImg.naturalWidth - sWidth) / 2;
+      } else {
+        sHeight = bgImg.naturalWidth / targetRatio;
+        sy = (bgImg.naturalHeight - sHeight) / 2;
+      }
+      ctx.drawImage(bgImg, sx, sy, sWidth, sHeight, 0, 0, canvas.width, canvas.height);
+    } else {
+      const bgGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+      bgGrad.addColorStop(0, '#0F172A');
+      bgGrad.addColorStop(0.5, '#042F2E');
+      bgGrad.addColorStop(1, '#022C22');
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    // 2. Cinematic Gradient Overlay
+    const overlayGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    overlayGrad.addColorStop(0, 'rgba(15, 23, 42, 0.78)');
+    overlayGrad.addColorStop(0.3, 'rgba(15, 23, 42, 0.45)');
+    overlayGrad.addColorStop(0.65, 'rgba(15, 23, 42, 0.75)');
+    overlayGrad.addColorStop(1, 'rgba(2, 6, 23, 0.96)');
+    ctx.fillStyle = overlayGrad;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // 3. Borders
+    ctx.lineWidth = 10;
+    ctx.strokeStyle = '#2DD4BF';
+    ctx.strokeRect(36, 36, canvas.width - 72, canvas.height - 72);
+
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+    ctx.strokeRect(50, 50, canvas.width - 100, canvas.height - 100);
+
+    // 4. Header Branding
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#2DD4BF';
+    ctx.font = 'bold 36px "Plus Jakarta Sans", sans-serif';
+    ctx.fillText('⚡ ATHNEX LIVE', 80, 115);
+
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#FCD34D';
+    ctx.font = 'bold 24px "Plus Jakarta Sans", sans-serif';
+    ctx.fillText('🏆 VERIFIED ATHLETE', canvas.width - 80, 115);
+
+    // 5. Motivational Header Slogan
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#2DD4BF';
+    ctx.font = '800 26px "Plus Jakarta Sans", sans-serif';
+    ctx.fillText('🌊 PUSH YOUR LIMITS  •  MASTER THE OCEAN', canvas.width / 2, 215);
+
+    // 6. Surfer Name & Title
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = '900 64px "Plus Jakarta Sans", sans-serif';
+    ctx.fillText(studentName.toUpperCase(), canvas.width / 2, 305);
+
+    ctx.fillStyle = '#E2E8F0';
+    ctx.font = '600 28px "Plus Jakarta Sans", sans-serif';
+    ctx.fillText(`${studentSchool}  •  ${studentLevel} Surfer`, canvas.width / 2, 355);
+
+    // 7. Metric Blocks (6 high-impact metrics)
+    const boxW = 440;
+    const boxH = 122;
+    const startY = 425;
+    const gapX = 40;
+    const gapY = 20;
+    const col1X = (canvas.width / 2) - boxW - (gapX / 2);
+    const col2X = (canvas.width / 2) + (gapX / 2);
+
+    const wavesCount = getSessionWaves(sess);
+    const durationText = getSessionDuration(sess);
+
+    const metrics = isOverall ? [
+      { label: 'COMPLETED SESSIONS', val: `${stats.completed}`, sub: 'Verified On Water', icon: '🏄‍♂️' },
+      { label: 'TOTAL WAVES RIDDEN', val: `${stats.totalWaves}`, sub: 'Ocean Logged', icon: '🌊' },
+      { label: 'WATER TRAINING', val: `${stats.totalHours} hrs`, sub: 'Coached Direct', icon: '⏱️' },
+      { label: 'TECHNIQUE SCORE', val: `${stats.avgScore} / 100`, sub: 'Coach Verified', icon: '⭐' },
+      { label: 'TRAINING SPOT', val: `${studentSchool}`, sub: 'Official Academy', icon: '📍' },
+      { label: 'ATHLETE STATUS', val: `${studentLevel}`, sub: 'Certified Surfer', icon: '🏆' }
+    ] : [
+      { label: 'SESSION DATE', val: `${sess.date || 'Today'}`, sub: `${sess.time || 'Morning Slot'}`, icon: '📅' },
+      { label: 'TRAINING TIME', val: `${durationText}`, sub: 'Ocean Water Time', icon: '⏱️' },
+      { label: 'WAVES CAUGHT', val: `${wavesCount} Waves`, sub: 'Successfully Ridden', icon: '🌊' },
+      { label: 'TECHNIQUE SCORE', val: `${getSessionScore(sess)} / 100`, sub: 'Coach Verified', icon: '⭐' },
+      { label: 'SURF SPOT', val: `${sess.location || studentSchool || 'Surf Spot'}`, sub: 'Tidal Swell Spot', icon: '📍' },
+      { label: 'COACH', val: `${sess.instructor || sess.instructor_name || 'Coach'}`, sub: 'ISA Certified', icon: '🏄' }
+    ];
+
+    const drawBox = (x, y, data) => {
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.84)';
+      ctx.strokeStyle = 'rgba(45, 212, 191, 0.45)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.roundRect(x, y, boxW, boxH, 16);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#94A3B8';
+      ctx.font = '700 18px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText(`${data.icon} ${data.label}`, x + 22, y + 34);
+
+      ctx.fillStyle = '#2DD4BF';
+      ctx.font = '900 34px "Plus Jakarta Sans", sans-serif';
+      let displayVal = String(data.val);
+      if (displayVal.length > 20) displayVal = displayVal.slice(0, 18) + '...';
+      ctx.fillText(displayVal, x + 22, y + 78);
+
+      ctx.fillStyle = '#E2E8F0';
+      ctx.font = '600 16px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText(data.sub, x + 22, y + 107);
+    };
+
+    drawBox(col1X, startY, metrics[0]);
+    drawBox(col2X, startY, metrics[1]);
+    drawBox(col1X, startY + boxH + gapY, metrics[2]);
+    drawBox(col2X, startY + boxH + gapY, metrics[3]);
+    drawBox(col1X, startY + (boxH + gapY) * 2, metrics[4]);
+    drawBox(col2X, startY + (boxH + gapY) * 2, metrics[5]);
+
+    // 8. Motivational Quote Box
+    const quoteY = startY + (boxH + gapY) * 3 + 15;
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+    ctx.strokeStyle = 'rgba(252, 211, 77, 0.45)';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.roundRect(80, quoteY, canvas.width - 160, 135, 18);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#FCD34D';
+    ctx.font = 'italic 800 26px "Plus Jakarta Sans", sans-serif';
+    ctx.fillText('“Every wave caught is a boundary pushed.”', canvas.width / 2, quoteY + 54);
+
+    ctx.fillStyle = '#CBD5E1';
+    ctx.font = '500 20px "Plus Jakarta Sans", sans-serif';
+    ctx.fillText('Conquer your athletic surfing journey on Athnex Live', canvas.width / 2, quoteY + 98);
+
+    // 9. Footer Watermark
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#94A3B8';
+    ctx.font = '700 20px "Plus Jakarta Sans", sans-serif';
+    ctx.fillText('ATHNEX LIVE  •  athnexlive.com  •  OFFICIAL SURF ATHLETE RECORD', canvas.width / 2, canvas.height - 75);
+
+    return new Promise((resolve) => {
+      canvas.toBlob((blob) => resolve(blob), 'image/png');
+    });
+  };
+
+  // WhatsApp Share Handler — Shares actual image poster on mobile or auto-downloads & copies to clipboard on desktop
+  const handleShareWhatsApp = async (sess) => {
     const text = buildShareText(sess);
+    const cleanName = studentName.replace(/\s+/g, '_');
+
+    try {
+      setDownloadingImg(true);
+      const blob = await generateStoryPosterBlob(sess);
+      if (blob) {
+        const file = new File([blob], `Athnex_Surfing_Milestone_${cleanName}.png`, { type: 'image/png' });
+
+        // Native file share (Mobile devices with WhatsApp)
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({
+            files: [file],
+            title: `Athnex Surf Milestone - ${studentName}`,
+            text: text
+          });
+          setDownloadingImg(false);
+          return;
+        }
+
+        // Desktop fallback: Auto-download the high-res poster and copy image to clipboard
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `Athnex_Surfing_Milestone_${cleanName}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        try {
+          if (navigator.clipboard && window.ClipboardItem) {
+            await navigator.clipboard.write([
+              new ClipboardItem({ 'image/png': blob })
+            ]);
+          }
+        } catch (clipErr) {
+          console.warn('Clipboard image write not permitted in context', clipErr);
+        }
+        setCopyFeedback(true);
+        setTimeout(() => setCopyFeedback(false), 3500);
+      }
+    } catch (err) {
+      console.warn('WhatsApp poster share preparation error', err);
+    } finally {
+      setDownloadingImg(false);
+    }
+
+    // Open WhatsApp Web with text
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
   };
 
@@ -215,9 +554,32 @@ export default function MyAchievements() {
     window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent('https://athnexlive.com')}`, '_blank');
   };
 
-  // Native Mobile Web Share API Handler
+  // Native Mobile Web Share API Handler — Direct Photo Share
   const handleNativeShare = async (sess) => {
     const text = buildShareText(sess);
+    const cleanName = studentName.replace(/\s+/g, '_');
+
+    try {
+      setDownloadingImg(true);
+      const blob = await generateStoryPosterBlob(sess);
+      if (blob) {
+        const file = new File([blob], `Athnex_Surfing_Milestone_${cleanName}.png`, { type: 'image/png' });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({
+            files: [file],
+            title: `🏄 Surf Session Milestone - ${studentName}`,
+            text: text
+          });
+          setDownloadingImg(false);
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn('Native file share failed', e);
+    } finally {
+      setDownloadingImg(false);
+    }
+
     if (navigator.share) {
       try {
         await navigator.share({
@@ -245,189 +607,24 @@ export default function MyAchievements() {
     }
   };
 
-  // High-Quality Motivational Story Poster Canvas Exporter
+  // High-Quality Motivational Story Poster Canvas Downloader
   const handleDownloadStoryCard = async (sess) => {
     try {
       setDownloadingImg(true);
-      const canvas = document.createElement('canvas');
-      canvas.width = 1080;
-      canvas.height = 1350; // Standard 4:5 mobile story / high-res portrait ratio
-      const ctx = canvas.getContext('2d');
-
-      const isOverall = sess === 'overall';
-      const bgImg = new Image();
-      bgImg.crossOrigin = 'anonymous';
-      bgImg.src = '/surf-milestone-bg.jpg';
-
-      await new Promise((resolve) => {
-        bgImg.onload = resolve;
-        bgImg.onerror = resolve; // fallback gracefully if image load interrupted
-      });
-
-      // 1. Draw Background AI Surfing Image
-      if (bgImg.complete && bgImg.naturalWidth > 0) {
-        const imgRatio = bgImg.naturalWidth / bgImg.naturalHeight;
-        const targetRatio = canvas.width / canvas.height;
-        let sWidth = bgImg.naturalWidth;
-        let sHeight = bgImg.naturalHeight;
-        let sx = 0;
-        let sy = 0;
-
-        if (imgRatio > targetRatio) {
-          sWidth = bgImg.naturalHeight * targetRatio;
-          sx = (bgImg.naturalWidth - sWidth) / 2;
-        } else {
-          sHeight = bgImg.naturalWidth / targetRatio;
-          sy = (bgImg.naturalHeight - sHeight) / 2;
-        }
-        ctx.drawImage(bgImg, sx, sy, sWidth, sHeight, 0, 0, canvas.width, canvas.height);
-      } else {
-        const bgGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-        bgGrad.addColorStop(0, '#0F172A');
-        bgGrad.addColorStop(0.5, '#042F2E');
-        bgGrad.addColorStop(1, '#022C22');
-        ctx.fillStyle = bgGrad;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-      }
-
-      // 2. Cinematic Gradient Overlay (Deep oceanic shadows for elite readability)
-      const overlayGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-      overlayGrad.addColorStop(0, 'rgba(15, 23, 42, 0.78)');
-      overlayGrad.addColorStop(0.3, 'rgba(15, 23, 42, 0.45)');
-      overlayGrad.addColorStop(0.65, 'rgba(15, 23, 42, 0.75)');
-      overlayGrad.addColorStop(1, 'rgba(2, 6, 23, 0.96)');
-      ctx.fillStyle = overlayGrad;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      // Outer Athletic Gold / Teal Border
-      ctx.lineWidth = 10;
-      ctx.strokeStyle = '#2DD4BF';
-      ctx.strokeRect(36, 36, canvas.width - 72, canvas.height - 72);
-
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-      ctx.strokeRect(50, 50, canvas.width - 100, canvas.height - 100);
-
-      // 3. Header Branding
-      ctx.textAlign = 'left';
-      ctx.fillStyle = '#2DD4BF';
-      ctx.font = 'bold 36px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText('⚡ ATHNEX LIVE', 80, 115);
-
-      ctx.textAlign = 'right';
-      ctx.fillStyle = '#FCD34D';
-      ctx.font = 'bold 24px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText('🏆 VERIFIED ATHLETE', canvas.width - 80, 115);
-
-      // 4. Motivational Header Slogan
-      ctx.textAlign = 'center';
-      ctx.fillStyle = '#2DD4BF';
-      ctx.font = '800 26px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText('🌊 PUSH YOUR LIMITS  •  MASTER THE OCEAN', canvas.width / 2, 215);
-
-      // 5. Surfer Name & Title
-      ctx.fillStyle = '#FFFFFF';
-      ctx.font = '900 66px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText(studentName.toUpperCase(), canvas.width / 2, 305);
-
-      ctx.fillStyle = '#E2E8F0';
-      ctx.font = '600 28px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText(`${studentSchool}  •  ${studentLevel} Surfer`, canvas.width / 2, 355);
-
-      // 6. Draw 4 Key High-Impact Metric Blocks
-      const boxW = 430;
-      const boxH = 155;
-      const startY = 445;
-      const gapX = 40;
-      const gapY = 28;
-      const col1X = (canvas.width / 2) - boxW - (gapX / 2);
-      const col2X = (canvas.width / 2) + (gapX / 2);
-
-      const metrics = isOverall ? [
-        { label: 'COMPLETED SESSIONS', val: `${stats.completed}`, sub: 'Verified On Water', icon: '🏄‍♂️' },
-        { label: 'TOTAL WAVES RIDDEN', val: `${stats.totalWaves}`, sub: 'Ocean Logged', icon: '🌊' },
-        { label: 'WATER TRAINING', val: `${stats.totalHours} hrs`, sub: 'Coached Direct', icon: '⏱️' },
-        { label: 'TECHNIQUE SCORE', val: `${stats.avgScore} / 100`, sub: 'Coach Verified', icon: '⭐' }
-      ] : [
-        { label: 'SESSION DATE', val: `${sess.date || 'Today'}`, sub: `${sess.time || 'Morning Session'}`, icon: '📅' },
-        { label: 'SURF SPOT', val: `${sess.location || studentSchool}`, sub: 'Tidal Swell Spot', icon: '📍' },
-        { label: 'COACH', val: `${sess.instructor || 'Coach'}`, sub: 'ISA Certified', icon: '🏄' },
-        { label: 'TECHNIQUE SCORE', val: `${sess.score || 85} / 100`, sub: 'Wave Graded', icon: '⭐' }
-      ];
-
-      const drawBox = (x, y, data) => {
-        // Frosted box
-        ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
-        ctx.strokeStyle = 'rgba(45, 212, 191, 0.45)';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.roundRect(x, y, boxW, boxH, 18);
-        ctx.fill();
-        ctx.stroke();
-
-        // Label
-        ctx.textAlign = 'left';
-        ctx.fillStyle = '#94A3B8';
-        ctx.font = '700 20px "Plus Jakarta Sans", sans-serif';
-        ctx.fillText(`${data.icon} ${data.label}`, x + 24, y + 42);
-
-        // Value
-        ctx.fillStyle = '#2DD4BF';
-        ctx.font = '900 44px "Plus Jakarta Sans", sans-serif';
-        ctx.fillText(data.val, x + 24, y + 96);
-
-        // Subtext
-        ctx.fillStyle = '#E2E8F0';
-        ctx.font = '600 18px "Plus Jakarta Sans", sans-serif';
-        ctx.fillText(data.sub, x + 24, y + 132);
-      };
-
-      drawBox(col1X, startY, metrics[0]);
-      drawBox(col2X, startY, metrics[1]);
-      drawBox(col1X, startY + boxH + gapY, metrics[2]);
-      drawBox(col2X, startY + boxH + gapY, metrics[3]);
-
-      // 7. Motivational Quote Box
-      const quoteY = startY + (boxH * 2) + (gapY * 2) + 25;
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
-      ctx.strokeStyle = 'rgba(252, 211, 77, 0.45)';
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.roundRect(80, quoteY, canvas.width - 160, 145, 18);
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.textAlign = 'center';
-      ctx.fillStyle = '#FCD34D';
-      ctx.font = 'italic 800 26px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText('“Every wave caught is a boundary pushed.”', canvas.width / 2, quoteY + 58);
-
-      ctx.fillStyle = '#CBD5E1';
-      ctx.font = '500 21px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText('Conquer your athletic surfing journey on Athnex Live', canvas.width / 2, quoteY + 104);
-
-      // 8. Footer Watermark
-      ctx.textAlign = 'center';
-      ctx.fillStyle = '#94A3B8';
-      ctx.font = '700 20px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText('ATHNEX LIVE  •  athnexlive.com  •  OFFICIAL SURF ATHLETE RECORD', canvas.width / 2, canvas.height - 75);
-
-      // 9. Download output
-      canvas.toBlob((blob) => {
-        if (!blob) return;
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        const cleanName = studentName.replace(/\s+/g, '_');
-        a.download = `Athnex_Surfing_Milestone_${cleanName}.png`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        setDownloadingImg(false);
-      }, 'image/png');
+      const blob = await generateStoryPosterBlob(sess);
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const cleanName = studentName.replace(/\s+/g, '_');
+      a.download = `Athnex_Surfing_Milestone_${cleanName}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
     } catch (err) {
       console.error('Failed to generate story image card:', err);
+    } finally {
       setDownloadingImg(false);
     }
   };
@@ -1006,11 +1203,11 @@ export default function MyAchievements() {
                       <div className="ach-metric-pills">
                         <div className="ach-pill" title="Estimated waves caught in this session">
                           <span className="ach-pill-icon">🌊</span>
-                          <span className="ach-pill-val">{sess.waves_ridden || sess.wave_count || 6} Waves</span>
+                          <span className="ach-pill-val">{getSessionWaves(sess)} Waves</span>
                         </div>
                         <div className="ach-pill" title="Verified technique assessment score">
                           <span className="ach-pill-icon">⭐</span>
-                          <span className="ach-pill-val">{sess.score || 85}/100</span>
+                          <span className="ach-pill-val">{getSessionScore(sess)}/100</span>
                         </div>
                       </div>
 
@@ -1019,16 +1216,16 @@ export default function MyAchievements() {
                           type="button"
                           className="ach-btn-share"
                           onClick={() => openShareModal(sess)}
-                          title="Share this session milestone on WhatsApp, Instagram, and social media"
+                          title="Share your surf achievement milestone with friends on WhatsApp & Social Media"
                         >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                             <circle cx="18" cy="5" r="3"></circle>
                             <circle cx="6" cy="12" r="3"></circle>
                             <circle cx="18" cy="19" r="3"></circle>
                             <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
                             <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
                           </svg>
-                          <span>Share Session</span>
+                          <span>Share Achievement with Friends</span>
                         </button>
                       </div>
                     </div>
@@ -1063,7 +1260,13 @@ export default function MyAchievements() {
               </div>
 
               {/* Visual Shareable Milestone Card Preview (AI Surfing Action Poster) */}
-              <div className="ach-share-preview-card" ref={cardRef}>
+              <div
+                className="ach-share-preview-card"
+                ref={cardRef}
+                style={{
+                  backgroundImage: `linear-gradient(180deg, rgba(15, 23, 42, 0.74) 0%, rgba(15, 23, 42, 0.92) 100%), url(${posterBgUrl || '/surf-milestone-bg.jpg'})`
+                }}
+              >
                 <div className="ach-card-glow-bg"></div>
 
                 <div className="ach-card-top-branding">
@@ -1117,24 +1320,47 @@ export default function MyAchievements() {
                     </div>
                   </div>
                 ) : (
-                  <div className="ach-card-session-details">
-                    <div className="ach-card-detail-item">
-                      <span className="ach-card-detail-lbl">📅 Date & Time</span>
-                      <span className="ach-card-detail-val">{shareModalSession.date} ({shareModalSession.time || 'Morning'})</span>
+                  <>
+                    {/* Big Prominent Metric Boxes */}
+                    <div className="ach-card-metrics-grid">
+                      <div className="ach-card-metric-cell">
+                        <span className="ach-card-m-val" style={{ color: '#2DD4BF' }}>
+                          🌊 {getSessionWaves(shareModalSession)} Waves
+                        </span>
+                        <span className="ach-card-m-lbl">Waves Caught</span>
+                      </div>
+                      <div className="ach-card-metric-cell">
+                        <span className="ach-card-m-val" style={{ color: '#38BDF8' }}>
+                          ⏱️ {getSessionDuration(shareModalSession)}
+                        </span>
+                        <span className="ach-card-m-lbl">Training Duration</span>
+                      </div>
+                      <div className="ach-card-metric-cell">
+                        <span className="ach-card-m-val" style={{ color: '#FCD34D' }}>
+                          ⭐ {getSessionScore(shareModalSession)} / 100
+                        </span>
+                        <span className="ach-card-m-lbl">Technique Rating</span>
+                      </div>
+                      <div className="ach-card-metric-cell">
+                        <span className="ach-card-m-val" style={{ color: '#FFFFFF', fontSize: '13.5px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={shareModalSession.instructor || shareModalSession.instructor_name || 'Coach'}>
+                          🏄 {shareModalSession.instructor || shareModalSession.instructor_name || 'Coach'}
+                        </span>
+                        <span className="ach-card-m-lbl">Assigned Coach</span>
+                      </div>
                     </div>
-                    <div className="ach-card-detail-item">
-                      <span className="ach-card-detail-lbl">📍 Surf Spot</span>
-                      <span className="ach-card-detail-val">{shareModalSession.location || studentSchool}</span>
+
+                    {/* Date, Time & Surf Spot placed below */}
+                    <div className="ach-card-session-meta-strip">
+                      <div className="ach-card-detail-item">
+                        <span className="ach-card-detail-lbl">📅 Date & Time</span>
+                        <span className="ach-card-detail-val">{shareModalSession.date} ({shareModalSession.time || 'Morning'})</span>
+                      </div>
+                      <div className="ach-card-detail-item">
+                        <span className="ach-card-detail-lbl">📍 Surf Spot</span>
+                        <span className="ach-card-detail-val">{shareModalSession.location || studentSchool}</span>
+                      </div>
                     </div>
-                    <div className="ach-card-detail-item">
-                      <span className="ach-card-detail-lbl">🏄 Instructor</span>
-                      <span className="ach-card-detail-val">{shareModalSession.instructor || shareModalSession.instructor_name || 'Coach'}</span>
-                    </div>
-                    <div className="ach-card-detail-item">
-                      <span className="ach-card-detail-lbl">⭐ Coach Rating</span>
-                      <span className="ach-card-detail-val" style={{ color: '#FCD34D' }}>{shareModalSession.score || 85} / 100 Verified</span>
-                    </div>
-                  </div>
+                  </>
                 )}
 
                 {/* Motivational Quote Banner */}
@@ -1229,6 +1455,12 @@ export default function MyAchievements() {
                     </svg>
                   </button>
                 </div>
+
+                {copyFeedback && (
+                  <div className="ach-copy-toast-banner">
+                    ✓ High-Res Story Poster Downloaded & Copied! Ready to paste (Ctrl+V) in WhatsApp
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1699,21 +1931,27 @@ export default function MyAchievements() {
         .ach-btn-share {
           display: inline-flex;
           align-items: center;
-          gap: 6px;
-          background: #F0FDF4;
-          border: 1px solid #BBF7D0;
-          color: #16A34A;
+          gap: 7px;
+          background: linear-gradient(135deg, #0D9488 0%, #0284C7 100%);
+          border: 1px solid rgba(255, 255, 255, 0.25);
+          color: #FFFFFF;
           font-size: 12px;
-          font-weight: 700;
-          padding: 6px 12px;
-          border-radius: 8px;
+          font-weight: 800;
+          padding: 8px 16px;
+          border-radius: 9999px;
           cursor: pointer;
-          transition: all 0.15s ease;
+          white-space: nowrap;
+          box-shadow: 0 4px 14px rgba(13, 148, 136, 0.35);
+          transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
         }
         .ach-btn-share:hover {
-          background: #DCFCE7;
-          border-color: #86EFAC;
-          transform: translateY(-1px);
+          background: linear-gradient(135deg, #0F766E 0%, #0369A1 100%);
+          transform: translateY(-2px);
+          box-shadow: 0 6px 20px rgba(13, 148, 136, 0.5);
+        }
+        .ach-btn-share:active {
+          transform: translateY(0);
+          box-shadow: 0 2px 8px rgba(13, 148, 136, 0.3);
         }
 
         .ach-btn-analysis {
@@ -1789,6 +2027,8 @@ export default function MyAchievements() {
           border-radius: 18px;
           width: 480px;
           max-width: 100%;
+          max-height: 94vh;
+          overflow-y: auto;
           padding: 22px;
           box-shadow: 0 20px 50px rgba(0,0,0,0.18);
           display: flex;
@@ -1945,34 +2185,39 @@ export default function MyAchievements() {
         }
 
         .ach-card-metric-cell {
-          background: rgba(15, 23, 42, 0.78);
+          background: rgba(15, 23, 42, 0.82);
           backdrop-filter: blur(10px);
-          border: 1px solid rgba(45, 212, 191, 0.25);
-          border-radius: 10px;
-          padding: 9px 11px;
+          border: 1px solid rgba(45, 212, 191, 0.28);
+          border-radius: 11px;
+          padding: 10px 12px;
           display: flex;
           flex-direction: column;
+          justify-content: center;
+          min-height: 56px;
         }
 
         .ach-card-m-val {
-          font-size: 16px;
+          font-size: 15px;
           font-weight: 800;
           color: #2DD4BF;
+          line-height: 1.25;
         }
         .ach-card-m-lbl {
           font-size: 10px;
           color: #94A3B8;
           text-transform: uppercase;
-          letter-spacing: 0.04em;
-          margin-top: 2px;
+          letter-spacing: 0.05em;
+          margin-top: 3px;
+          font-weight: 600;
         }
 
-        .ach-card-session-details {
+        .ach-card-session-details,
+        .ach-card-session-meta-strip {
           background: rgba(15, 23, 42, 0.78);
           backdrop-filter: blur(10px);
           border: 1px solid rgba(255, 255, 255, 0.12);
           border-radius: 10px;
-          padding: 10px 12px;
+          padding: 9px 12px;
           display: flex;
           flex-direction: column;
           gap: 6px;
@@ -2177,6 +2422,19 @@ export default function MyAchievements() {
         .ach-icon-fb  { background: #1877F2; }
         .ach-icon-ig  { background: radial-gradient(circle at 30% 107%, #fdf497 0%, #fdf497 5%, #fd5949 45%, #d6249f 60%, #285AEB 90%); }
         .ach-icon-x   { background: #000000; }
+
+        .ach-copy-toast-banner {
+          margin-top: 10px;
+          padding: 9px 12px;
+          background: rgba(16, 185, 129, 0.14);
+          border: 1px solid #10B981;
+          border-radius: 8px;
+          color: #059669;
+          font-size: 11.5px;
+          font-weight: 700;
+          text-align: center;
+          line-height: 1.4;
+        }
 
         @media (max-width: 900px) {
           .ach-stats-grid {

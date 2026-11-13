@@ -42,11 +42,20 @@ const BADGE_LEVELS = [
 ];
 
 const normalizeBadgeLevel = (lvl) => {
-  const s = String(lvl || '').toLowerCase().trim();
-  if (s.includes('pro') || s.includes('master') || s === 'advanced') return 'Pro';
-  if (s.includes('advance intermediate') || s.includes('advanced intermediate')) return 'Advance Intermediate';
-  if (s.includes('intermediate')) return 'Intermediate';
-  if (s.includes('advance beginner') || s.includes('advanced beginner') || s.includes('yellow')) return 'Advance Beginner';
+  const s = String(lvl || '').trim().toLowerCase();
+  if (!s) return 'Beginner';
+  // 1. Advance Intermediate
+  if ((s.includes('adv') && s.includes('int')) || s.includes('blue')) return 'Advance Intermediate';
+  // 2. Advance Beginner
+  if ((s.includes('adv') && s.includes('beg')) || s.includes('yellow')) return 'Advance Beginner';
+  // 3. Pro / Master / Elite / Red
+  if (s.includes('pro') || s.includes('master') || s.includes('elite') || s.includes('red')) return 'Pro';
+  // 4. Intermediate / Green
+  if (s.includes('int') || s.includes('green')) return 'Intermediate';
+  // 5. Standalone Advance / Advanced
+  if (s === 'advance' || s === 'advanced' || s.startsWith('adv')) return 'Advance Intermediate';
+  // 6. Beginner / Novice / White
+  if (s.includes('beg') || s.includes('novice') || s.includes('white')) return 'Beginner';
   return 'Beginner';
 };
 
@@ -447,7 +456,7 @@ const Sessions = () => {
 
   const currentStudentName = loggedInStudent?.name || currentUser?.name || currentUser?.student_name || currentUser?.username || 'Student';
   const currentCoachName = currentUser?.name || '';
-  const currentCoachId = currentUser?.instructor_id || currentUser?.id || null;
+  const currentCoachInstructorId = currentUser?.instructor_id || null;
 
   const activeSchoolName = (() => {
     try {
@@ -502,15 +511,54 @@ const Sessions = () => {
 
   const loggedInCoach = useMemo(() => {
     if (!allInstructorsList || allInstructorsList.length === 0) return null;
-    if (currentCoachId) {
-      const byId = allInstructorsList.find(i => String(i.id) === String(currentCoachId) || parseInt(i.id) === parseInt(currentCoachId));
+    const userEmail = (currentUser?.email || '').toLowerCase().trim();
+    if (currentCoachInstructorId) {
+      const byId = allInstructorsList.find(i => (
+        String(i.id) === String(currentCoachInstructorId) ||
+        parseInt(i.id) === parseInt(currentCoachInstructorId)
+      ));
       if (byId) return byId;
     }
-    if (currentCoachName) {
-      return allInstructorsList.find(i => i.name && i.name.toLowerCase().trim() === currentCoachName.toLowerCase().trim());
+    if (currentUser?.id) {
+      const byUserId = allInstructorsList.find(i => i.user_id && (
+        String(i.user_id) === String(currentUser.id) ||
+        parseInt(i.user_id) === parseInt(currentUser.id)
+      ));
+      if (byUserId) return byUserId;
+    }
+    if (userEmail) {
+      const byEmail = allInstructorsList.find(i => (i.email || '').toLowerCase().trim() === userEmail);
+      if (byEmail) return byEmail;
+    }
+    const cleanCoachName = (currentCoachName || '').toLowerCase().trim();
+    if (cleanCoachName && !['coach', 'instructor', 'staff', 'admin', 'user'].includes(cleanCoachName)) {
+      return allInstructorsList.find(i => i.name && i.name.toLowerCase().trim() === cleanCoachName);
     }
     return null;
-  }, [allInstructorsList, currentCoachId, currentCoachName]);
+  }, [allInstructorsList, currentCoachInstructorId, currentCoachName, currentUser]);
+
+  const coachCandidateIds = useMemo(() => {
+    const ids = new Set();
+    // ONLY genuine instructor IDs (from instructors table), NEVER users.id!
+    if (currentUser?.instructor_id) ids.add(String(currentUser.instructor_id));
+    if (loggedInCoach?.id) ids.add(String(loggedInCoach.id));
+    return ids;
+  }, [currentUser, loggedInCoach]);
+
+  const coachCandidateNames = useMemo(() => {
+    const names = new Set();
+    const generic = new Set(['coach', 'instructor', 'staff', 'admin', 'user']);
+    if (currentUser?.name && !generic.has(currentUser.name.toLowerCase().trim())) {
+      names.add(currentUser.name.toLowerCase().trim());
+    }
+    if (currentUser?.username && !generic.has(currentUser.username.toLowerCase().trim())) {
+      names.add(currentUser.username.toLowerCase().trim());
+    }
+    if (loggedInCoach?.name && !generic.has(loggedInCoach.name.toLowerCase().trim())) {
+      names.add(loggedInCoach.name.toLowerCase().trim());
+    }
+    return names;
+  }, [currentUser, loggedInCoach]);
 
   // Coach's assigned school (strictly from instructor profile or currentUser, NOT from activeSchool switcher!)
   const coachSchool = resolveSchoolStr(
@@ -636,6 +684,17 @@ const Sessions = () => {
   // Real-time synchronization with Session Configuration changes via API / custom events
   const [configuredSlotsFromApi, setConfiguredSlotsFromApi] = useState([]);
   const [slotsConfigVersion, setSlotsConfigVersion] = useState(0);
+  const [activeOperatingMonths, setActiveOperatingMonths] = useState(() => {
+    try {
+      const saved = localStorage.getItem('athnex_active_months');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  });
+
   useEffect(() => {
     const handleSync = (e) => {
       if (e?.detail && Array.isArray(e.detail)) {
@@ -643,9 +702,16 @@ const Sessions = () => {
       }
       setSlotsConfigVersion(v => v + 1);
     };
+    const handleMonthsSync = (e) => {
+      if (e?.detail && Array.isArray(e.detail)) {
+        setActiveOperatingMonths(e.detail);
+      }
+    };
     window.addEventListener('session_slots_updated', handleSync);
+    window.addEventListener('active_months_updated', handleMonthsSync);
     return () => {
       window.removeEventListener('session_slots_updated', handleSync);
+      window.removeEventListener('active_months_updated', handleMonthsSync);
     };
   }, []);
 
@@ -667,8 +733,16 @@ const Sessions = () => {
         .then(res => res.json())
         .then(data => {
           if (isCancelled) return;
-          if (data && data.status === 'success' && Array.isArray(data.slots) && data.slots.length > 0) {
-            setConfiguredSlotsFromApi(data.slots);
+          if (data && data.status === 'success') {
+            if (Array.isArray(data.slots) && data.slots.length > 0) {
+              setConfiguredSlotsFromApi(data.slots);
+            }
+            if (data.settings && Array.isArray(data.settings.activeMonths) && data.settings.activeMonths.length > 0) {
+              setActiveOperatingMonths(data.settings.activeMonths);
+              try {
+                localStorage.setItem('athnex_active_months', JSON.stringify(data.settings.activeMonths));
+              } catch (e) {}
+            }
             setSlotsConfigVersion(v => v + 1);
           }
         })
@@ -1075,20 +1149,22 @@ const Sessions = () => {
   // Helper to parse structured coach feedback from session notes string
   const parseCoachNotes = (raw) => {
     if (!raw || typeof raw !== 'string') {
-      return { waveCount: '', whatDidWell: '', whatDidWellScore: '', whatToImprove: '', whatToImproveScore: '' };
+      return { waveCount: '', score: '', whatDidWell: '', whatDidWellScore: '', whatToImprove: '', whatToImproveScore: '' };
     }
 
     let waveCount = '';
     const waveMatch = raw.match(/Wave Count:\s*(\d+)/i);
     if (waveMatch) waveCount = waveMatch[1];
 
+    let score = '';
+    const scoreMatch = raw.match(/(?:Coach (?:Rating|Score)|Technique Score|Score):\s*(\d+)/i) || raw.match(/\[\s*(\d+)\s*(?:out of|\/)\s*100\s*\]/i);
+    if (scoreMatch) score = scoreMatch[1];
+
     let whatDidWell = '';
     let whatDidWellScore = '';
     const wellBlockMatch = raw.match(/What You did Well:\s*\n?([\s\S]*?)(?=(?:What to Improve:|$))/i);
     if (wellBlockMatch) {
       const block = wellBlockMatch[1];
-      const scoreMatch = block.match(/\[\s*(\d+)\s*(?:out of|\/)\s*10\s*\]/i) || block.match(/\(\s*(\d+)\s*(?:out of|\/)\s*10\s*\)/i);
-      if (scoreMatch) whatDidWellScore = scoreMatch[1];
       whatDidWell = block
         .replace(/\[\s*\d+\s*(?:out of|\/)\s*10\s*\]\.?/gi, '')
         .replace(/\(\s*\d+\s*(?:out of|\/)\s*10\s*\)\.?/gi, '')
@@ -1101,8 +1177,6 @@ const Sessions = () => {
     const impBlockMatch = raw.match(/What to Improve:\s*\n?([\s\S]*?)$/i);
     if (impBlockMatch) {
       const block = impBlockMatch[1];
-      const scoreMatch = block.match(/\[\s*(\d+)\s*(?:out of|\/)\s*10\s*\]/i) || block.match(/\(\s*(\d+)\s*(?:out of|\/)\s*10\s*\)/i);
-      if (scoreMatch) whatToImproveScore = scoreMatch[1];
       whatToImprove = block
         .replace(/\[\s*\d+\s*(?:out of|\/)\s*10\s*\]\.?/gi, '')
         .replace(/\(\s*\d+\s*(?:out of|\/)\s*10\s*\)\.?/gi, '')
@@ -1110,21 +1184,22 @@ const Sessions = () => {
         .trim();
     }
 
-    return { waveCount, whatDidWell, whatDidWellScore, whatToImprove, whatToImproveScore };
+    return { waveCount, score, whatDidWell, whatDidWellScore, whatToImprove, whatToImproveScore };
   };
 
-  const formatCoachNotes = (wc, well, wellScore, imp, impScore) => {
+  const formatCoachNotes = (wc, score, well, imp) => {
     const parts = [];
     if (wc !== '' && wc !== null && wc !== undefined) {
       parts.push(`Wave Count: ${wc}`);
     }
-    if (well || wellScore) {
-      const scoreStr = wellScore ? ` [${wellScore} out of 10]` : '';
-      parts.push(`What You did Well:\n - ${well || '—'}${scoreStr}`);
+    if (score !== '' && score !== null && score !== undefined) {
+      parts.push(`Coach Rating: ${score}/100`);
     }
-    if (imp || impScore) {
-      const scoreStr = impScore ? ` [${impScore} out of 10]` : '';
-      parts.push(`What to Improve:\n - ${imp || '—'}${scoreStr}`);
+    if (well) {
+      parts.push(`What You did Well:\n - ${well}`);
+    }
+    if (imp) {
+      parts.push(`What to Improve:\n - ${imp}`);
     }
     return parts.join('\n\n');
   };
@@ -1140,6 +1215,7 @@ const Sessions = () => {
   const [hubImageUrl, setHubImageUrl] = useState('');
   const [hubNotes, setHubNotes] = useState('');
   const [hubWaveCount, setHubWaveCount] = useState('');
+  const [hubScore, setHubScore] = useState('');
   const [hubWhatDidWell, setHubWhatDidWell] = useState('');
   const [hubWhatDidWellScore, setHubWhatDidWellScore] = useState('');
   const [hubWhatToImprove, setHubWhatToImprove] = useState('');
@@ -1190,6 +1266,7 @@ const Sessions = () => {
       const p = parseCoachNotes(s.notes || '');
       notesMap[s.id] = {
         waveCount: p.waveCount || '',
+        score: p.score || (s.score ? String(s.score) : ''),
         whatDidWell: p.whatDidWell || '',
         whatDidWellScore: p.whatDidWellScore || '',
         whatToImprove: p.whatToImprove || '',
@@ -1223,6 +1300,7 @@ const Sessions = () => {
 
     const activeObj = notesMap[initialStudentId] || parseCoachNotes(initialNotes);
     setHubWaveCount(activeObj.waveCount || '');
+    setHubScore(activeObj.score || '');
     setHubWhatDidWell(activeObj.whatDidWell || '');
     setHubWhatDidWellScore(activeObj.whatDidWellScore || '');
     setHubWhatToImprove(activeObj.whatToImprove || '');
@@ -1477,6 +1555,10 @@ const Sessions = () => {
   };
 
   const handleHubStatusChange = async (newVal) => {
+    if (isViewAdmin) {
+      showToast('Status changes are restricted for View Admin (Read-Only Mode)', 'warning');
+      return;
+    }
     if (!selectedHubSession) return;
     const isGroupSession = Boolean(selectedHubSession.isGroup);
     const sessionIds = (isGroupSession && selectedHubSession.sessions)
@@ -1529,12 +1611,13 @@ const Sessions = () => {
   };
 
   const handleSelectHubStudent = (newStudentId) => {
-    // 1. Persist current student's form inputs to map
+    // 1. Persist current student's form inputs to map (only if not view admin)
     const currId = hubSelectedStudentId;
     let nextMap = { ...hubStudentNotesMap };
-    if (currId) {
+    if (currId && !isViewAdmin) {
       nextMap[currId] = {
         waveCount: hubWaveCount,
+        score: hubScore,
         whatDidWell: hubWhatDidWell,
         whatDidWellScore: hubWhatDidWellScore,
         whatToImprove: hubWhatToImprove,
@@ -1547,12 +1630,14 @@ const Sessions = () => {
     setHubSelectedStudentId(newStudentId);
     const targetObj = nextMap[newStudentId] || {
       waveCount: '',
+      score: '',
       whatDidWell: '',
       whatDidWellScore: '',
       whatToImprove: '',
       whatToImproveScore: ''
     };
     setHubWaveCount(targetObj.waveCount || '');
+    setHubScore(targetObj.score || '');
     setHubWhatDidWell(targetObj.whatDidWell || '');
     setHubWhatDidWellScore(targetObj.whatDidWellScore || '');
     setHubWhatToImprove(targetObj.whatToImprove || '');
@@ -1560,28 +1645,30 @@ const Sessions = () => {
 
     const formatted = formatCoachNotes(
       targetObj.waveCount,
+      targetObj.score,
       targetObj.whatDidWell,
-      targetObj.whatDidWellScore,
-      targetObj.whatToImprove,
-      targetObj.whatToImproveScore
+      targetObj.whatToImprove
     );
     setHubNotes(formatted);
   };
 
   const handleUpdateNotesField = (updates) => {
+    if (isViewAdmin) return;
     const nextWc = updates.waveCount !== undefined ? updates.waveCount : hubWaveCount;
+    const nextScore = updates.score !== undefined ? updates.score : hubScore;
     const nextWell = updates.whatDidWell !== undefined ? updates.whatDidWell : hubWhatDidWell;
     const nextWellScore = updates.whatDidWellScore !== undefined ? updates.whatDidWellScore : hubWhatDidWellScore;
     const nextImp = updates.whatToImprove !== undefined ? updates.whatToImprove : hubWhatToImprove;
     const nextImpScore = updates.whatToImproveScore !== undefined ? updates.whatToImproveScore : hubWhatToImproveScore;
 
     if (updates.waveCount !== undefined) setHubWaveCount(updates.waveCount);
+    if (updates.score !== undefined) setHubScore(updates.score);
     if (updates.whatDidWell !== undefined) setHubWhatDidWell(updates.whatDidWell);
     if (updates.whatDidWellScore !== undefined) setHubWhatDidWellScore(updates.whatDidWellScore);
     if (updates.whatToImprove !== undefined) setHubWhatToImprove(updates.whatToImprove);
     if (updates.whatToImproveScore !== undefined) setHubWhatToImproveScore(updates.whatToImproveScore);
 
-    const formatted = formatCoachNotes(nextWc, nextWell, nextWellScore, nextImp, nextImpScore);
+    const formatted = formatCoachNotes(nextWc, nextScore, nextWell, nextImp);
     setHubNotes(formatted);
 
     // Keep map in sync for current student
@@ -1590,6 +1677,7 @@ const Sessions = () => {
         ...prev,
         [hubSelectedStudentId]: {
           waveCount: nextWc,
+          score: nextScore,
           whatDidWell: nextWell,
           whatDidWellScore: nextWellScore,
           whatToImprove: nextImp,
@@ -1607,6 +1695,7 @@ const Sessions = () => {
   };
 
   const handleSetStudentLevel = (sessionId, newLevel) => {
+    if (isViewAdmin) return;
     setHubStudentLevelMap(prev => ({
       ...prev,
       [sessionId]: newLevel
@@ -1616,6 +1705,7 @@ const Sessions = () => {
   };
 
   const handleUpgradeStudentLevel = (sessionId) => {
+    if (isViewAdmin) return;
     const currentLvl = getActiveStudentLevel(sessionId);
     const norm = normalizeBadgeLevel(currentLvl);
     const currentIdx = BADGE_LEVELS.findIndex(b => b.label.toLowerCase() === norm.toLowerCase());
@@ -1628,6 +1718,7 @@ const Sessions = () => {
   };
 
   const handleDowngradeStudentLevel = (sessionId) => {
+    if (isViewAdmin) return;
     const currentLvl = getActiveStudentLevel(sessionId);
     const norm = normalizeBadgeLevel(currentLvl);
     const currentIdx = BADGE_LEVELS.findIndex(b => b.label.toLowerCase() === norm.toLowerCase());
@@ -1638,6 +1729,10 @@ const Sessions = () => {
   };
 
   const handleSaveHubChanges = async () => {
+    if (isViewAdmin) {
+      showToast('Saving changes is restricted for View Admin (Read-Only Mode)', 'warning');
+      return;
+    }
     if (!selectedHubSession) return;
     setHubIsSaving(true);
     try {
@@ -1664,6 +1759,7 @@ const Sessions = () => {
         ...(hubSelectedStudentId ? {
           [hubSelectedStudentId]: {
             waveCount: hubWaveCount,
+            score: hubScore,
             whatDidWell: hubWhatDidWell,
             whatDidWellScore: hubWhatDidWellScore,
             whatToImprove: hubWhatToImprove,
@@ -1678,10 +1774,9 @@ const Sessions = () => {
           const sNotesFormatted = sObj
             ? formatCoachNotes(
               sObj.waveCount,
+              sObj.score,
               sObj.whatDidWell,
-              sObj.whatDidWellScore,
-              sObj.whatToImprove,
-              sObj.whatToImproveScore
+              sObj.whatToImprove
             )
             : (s.notes || '');
 
@@ -2150,8 +2245,8 @@ const Sessions = () => {
 
   // Role-Scoped Base Sessions List
   const roleScopedSessions = useMemo(() => {
-    // Coach Role: Only show sessions where THIS coach is the instructor
-    if (isCoach && !isHeadCoach && (currentCoachName || currentCoachId)) {
+    // Coach Role: Strictly show sessions where THIS coach is the assigned instructor
+    if (isCoach && !isHeadCoach) {
       return sessions.filter(s => {
         const sSchool = (s.school || '').toLowerCase().trim();
 
@@ -2165,22 +2260,51 @@ const Sessions = () => {
         }
 
         const sInstId = s.instructor_id != null && s.instructor_id !== '' ? String(s.instructor_id) : '';
-        const sInstIds = Array.isArray(s.instructor_ids) ? s.instructor_ids.map(String) : [];
-        const cId = currentCoachId != null && currentCoachId !== '' ? String(currentCoachId) : '';
+        const sInstIds = Array.isArray(s.instructor_ids)
+          ? s.instructor_ids.map(String)
+          : (typeof s.instructor_ids === 'string' && s.instructor_ids.trim().startsWith('[')
+              ? (() => { try { return JSON.parse(s.instructor_ids).map(String); } catch (e) { return []; } })()
+              : []);
 
-        // 1. Strict ID Match: If session has instructor_id or instructor_ids, ONLY match by ID.
-        // Never fall through to name matching (prevents same-name coach cross-contamination).
+        // 1. Strict ID Match against coachCandidateIds
         if (sInstId || sInstIds.length > 0) {
-          if (cId) {
-            return sInstId === cId || sInstIds.includes(cId) || (parseInt(sInstId) === parseInt(cId));
+          if (coachCandidateIds && coachCandidateIds.size > 0) {
+            if (sInstId && coachCandidateIds.has(sInstId)) return true;
+            if (sInstIds.some(id => coachCandidateIds.has(id))) return true;
+          }
+          // If this session has instructor IDs but none matched, also check if coach's name is explicitly listed in notes or instructor field
+          if (coachCandidateNames && coachCandidateNames.size > 0) {
+            const sInst = (s.instructor || s.instructor_name || '').toLowerCase().trim();
+            if (sInst) {
+              const splitNames = sInst.split(/[,&]+|\band\b/i).map(n => n.trim()).filter(Boolean);
+              if (splitNames.some(n => coachCandidateNames.has(n))) return true;
+            }
+            const sNotes = (s.notes || '').toLowerCase();
+            if (sNotes.includes('coaches:')) {
+              for (const cName of coachCandidateNames) {
+                if (cName && sNotes.includes(cName)) return true;
+              }
+            }
           }
           return false;
         }
 
-        // 2. Fallback: Only for legacy sessions with NO instructor ID
-        const cNameLower = (currentCoachName || '').toLowerCase().trim();
-        const sInstLower = (s.instructor || s.instructor_name || '').toLowerCase().trim();
-        return Boolean(cNameLower && sInstLower && sInstLower === cNameLower);
+        // 2. Fallback: match by coach's verified name(s)
+        if (coachCandidateNames && coachCandidateNames.size > 0) {
+          const sInst = (s.instructor || s.instructor_name || '').toLowerCase().trim();
+          if (sInst) {
+            const splitNames = sInst.split(/[,&]+|\band\b/i).map(n => n.trim()).filter(Boolean);
+            if (splitNames.some(n => coachCandidateNames.has(n))) return true;
+          }
+          const sNotes = (s.notes || '').toLowerCase();
+          if (sNotes.includes('coaches:')) {
+            for (const cName of coachCandidateNames) {
+              if (cName && sNotes.includes(cName)) return true;
+            }
+          }
+        }
+
+        return false;
       });
     }
 
@@ -2233,20 +2357,69 @@ const Sessions = () => {
     }
 
     return sessions;
-  }, [sessions, currentUser, isStudent, isCoach, isHeadCoach, currentStudentName, currentCoachName, currentCoachId, effectiveSchoolLower, isSuperAdmin, studentCandidateNames, studentCandidateIds, coachAffiliatedSchool, isCoachFreelance]);
+  }, [sessions, currentUser, isStudent, isCoach, isHeadCoach, currentStudentName, currentCoachName, currentCoachInstructorId, effectiveSchoolLower, isSuperAdmin, studentCandidateNames, studentCandidateIds, coachAffiliatedSchool, isCoachFreelance, coachCandidateIds, coachCandidateNames]);
 
   // Extract unique instructors and students for dropdowns
   const availableInstructors = useMemo(() => {
     const names = new Set();
+    const pendingCoachIdentifiers = (() => {
+      const ids = new Set();
+      const emails = new Set();
+      const coachNames = new Set();
+      try {
+        const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+        reqs.forEach(r => {
+          if ((r.role || '').toLowerCase() === 'coach' || (r.role || '').toLowerCase() === 'instructor') {
+            if (r.status !== 'approved' && r.status !== 'rejected') {
+              if (r.email) emails.add(r.email.toLowerCase().trim());
+              if (r.student_email) emails.add(r.student_email.toLowerCase().trim());
+              if (r.name) coachNames.add(r.name.toLowerCase().trim());
+              if (r.student_name) coachNames.add(r.student_name.toLowerCase().trim());
+              if (r.id) ids.add(String(r.id));
+            }
+          }
+        });
+        const savedAccs = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
+        savedAccs.forEach(u => {
+          if (((u.role || '').toLowerCase() === 'coach' || (u.role || '').toLowerCase() === 'instructor') && (u.approval_status || '').toLowerCase() === 'pending') {
+            if (u.email) emails.add(u.email.toLowerCase().trim());
+            if (u.name) coachNames.add(u.name.toLowerCase().trim());
+            if (u.id) ids.add(String(u.id));
+          }
+        });
+      } catch (e) {}
+      return { ids, emails, coachNames };
+    })();
+
+    const isPending = (inst) => {
+      if ((inst.approval_status || '').toLowerCase() === 'pending') return true;
+      if (inst.is_active === false && (inst.approval_status || '').toLowerCase() !== 'rejected') return true;
+      const iId = inst.id ? String(inst.id) : '';
+      const iUserId = inst.user_id ? String(inst.user_id) : '';
+      const iEmail = (inst.email || '').toLowerCase().trim();
+      const iName = (inst.name || '').toLowerCase().trim();
+      if (iId && pendingCoachIdentifiers.ids.has(iId)) return true;
+      if (iUserId && pendingCoachIdentifiers.ids.has(iUserId)) return true;
+      if (iEmail && pendingCoachIdentifiers.emails.has(iEmail)) return true;
+      if (iName && pendingCoachIdentifiers.coachNames.has(iName)) return true;
+      return false;
+    };
+
     roleScopedSessions.forEach(s => {
       if (s.instructor) {
         s.instructor.split(/[,&]+|\band\b/i).forEach(n => {
           const trimmed = n.trim();
-          if (trimmed) names.add(trimmed);
+          if (trimmed && !pendingCoachIdentifiers.coachNames.has(trimmed.toLowerCase())) {
+            names.add(trimmed);
+          }
         });
       }
     });
-    allInstructorsList.forEach(i => { if (i.name) names.add(i.name.trim()); });
+    allInstructorsList.forEach(i => {
+      if (i.name && !isPending(i)) {
+        names.add(i.name.trim());
+      }
+    });
     return Array.from(names).sort();
   }, [roleScopedSessions, allInstructorsList]);
 
@@ -2908,10 +3081,43 @@ const Sessions = () => {
     setCurrentDate(new Date(year, month + 1, 1));
   };
 
+  // Calendar-Scoped Sessions: isolates to coach's sessions for coach, or filters by instructorFilter for admin
+  const calendarScopedSessions = useMemo(() => {
+    if (!roleScopedSessions || roleScopedSessions.length === 0) return [];
+    if (isCoach && !isHeadCoach) {
+      // For coaches, roleScopedSessions is already strictly limited to their own assigned groups
+      return roleScopedSessions;
+    }
+    // For admin / staff / head coach: filter by selected instructorFilter if set
+    if (instructorFilter && instructorFilter !== 'All') {
+      const iFilterLower = instructorFilter.toLowerCase().trim();
+      return roleScopedSessions.filter(s => {
+        const sInstLower = (s.instructor || s.instructor_name || '').toLowerCase().trim();
+        const sInstId = s.instructor_id != null && s.instructor_id !== '' ? String(s.instructor_id) : '';
+        const sInstIds = Array.isArray(s.instructor_ids)
+          ? s.instructor_ids.map(String)
+          : (typeof s.instructor_ids === 'string' && s.instructor_ids.trim().startsWith('[')
+              ? (() => { try { return JSON.parse(s.instructor_ids).map(String); } catch (e) { return []; } })()
+              : []);
+        const sNotes = (s.notes || '').toLowerCase();
+
+        return (
+          sInstLower === iFilterLower ||
+          sInstLower.includes(iFilterLower) ||
+          iFilterLower.includes(sInstLower) ||
+          sInstId === String(instructorFilter) ||
+          sInstIds.includes(String(instructorFilter)) ||
+          (sNotes.includes('coaches:') && sNotes.includes(iFilterLower))
+        );
+      });
+    }
+    return roleScopedSessions;
+  }, [roleScopedSessions, isCoach, isHeadCoach, instructorFilter]);
+
   // Group sessions by ISO date string e.g. "2026-09-15"
   const sessionsByISO = useMemo(() => {
     const map = {};
-    roleScopedSessions.forEach(s => {
+    calendarScopedSessions.forEach(s => {
       const iso = normalizeToYYYYMMDD(s.date);
       if (iso) {
         if (!map[iso]) map[iso] = [];
@@ -2919,12 +3125,12 @@ const Sessions = () => {
       }
     });
     return map;
-  }, [roleScopedSessions]);
+  }, [calendarScopedSessions]);
 
   // List of distinct dates that have assigned sessions
   const assignedDatesList = useMemo(() => {
     const map = new Map();
-    roleScopedSessions.forEach(s => {
+    calendarScopedSessions.forEach(s => {
       const iso = normalizeToYYYYMMDD(s.date);
       if (iso) {
         if (!map.has(iso)) {
@@ -2938,17 +3144,17 @@ const Sessions = () => {
       }
     });
     return Array.from(map.values()).sort((a, b) => a.iso.localeCompare(b.iso));
-  }, [roleScopedSessions]);
+  }, [calendarScopedSessions]);
 
   // Selected date's sessions (matching by ISO or raw date string)
   const activeDaySessions = useMemo(() => {
     if (!selectedCalendarDate) return [];
     const targetISO = normalizeToYYYYMMDD(selectedCalendarDate);
-    return roleScopedSessions.filter(s => {
+    return calendarScopedSessions.filter(s => {
       const sISO = normalizeToYYYYMMDD(s.date);
       return sISO === targetISO || s.date === selectedCalendarDate;
     });
-  }, [roleScopedSessions, selectedCalendarDate]);
+  }, [calendarScopedSessions, selectedCalendarDate]);
 
   // Group breakdown for active day roster drawer
   const activeDayGroups = useMemo(() => {
@@ -4198,18 +4404,24 @@ const Sessions = () => {
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  {isStudent ? (
+                  {isStudent || isViewAdmin ? (
                     <span
                       style={{
                         background: statusBg(hubStatus),
                         color: statusColor(hubStatus),
-                        border: `1px solid ${statusColor(hubStatus)}40`,
+                        border: `1.5px solid ${statusColor(hubStatus)}60`,
                         borderRadius: '8px',
-                        padding: '5px 10px',
+                        padding: '5px 12px',
                         fontSize: '12px',
-                        fontWeight: 600
+                        fontWeight: 700,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        cursor: 'default'
                       }}
+                      title="Session Status (Read-Only Mode)"
                     >
+                      <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: statusColor(hubStatus) }}></span>
                       {hubStatus}
                     </span>
                   ) : (() => {
@@ -5205,230 +5417,256 @@ const Sessions = () => {
                           📝 Coach Feedback, Wave Counts & Tactical Briefing
                         </label>
                         <p style={{ margin: '2px 0 0', fontSize: '12px', color: '#64748B' }}>
-                          {isStudent ? 'Performance metrics and tactical advice from your coach' : 'Fill in session wave count and evaluate performance with 1 to 10 scores'}
+                          {isStudent || isViewAdmin ? 'Performance metrics and tactical advice from coach' : 'Fill in session wave count and evaluate performance with 1 to 10 scores'}
                         </p>
                       </div>
-                      {!isStudent && (
+                      {!isStudent && !isViewAdmin && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <span style={{ fontSize: '11px', color: '#0D9488', fontWeight: 700, background: '#F0FDFA', border: '1px solid #99F6E4', padding: '3px 8px', borderRadius: '6px' }}>
                             Interactive Scoring Mode
                           </span>
                         </div>
                       )}
+                      {isViewAdmin && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 700, background: '#F1F5F9', border: '1px solid #CBD5E1', padding: '3px 8px', borderRadius: '6px' }}>
+                            👁️ View-Only Mode
+                          </span>
+                        </div>
+                      )}
                     </div>
 
                     {/* Interactive Athlete Selector for Group Sessions (Always visible cards with 1-click switching) */}
-                    {selectedHubSession?.sessions && selectedHubSession.sessions.length > 1 && (
-                      <div style={{
-                        background: 'linear-gradient(135deg, #F0FDFA 0%, #F8FAFC 100%)',
-                        border: '1.5px solid #0D9488',
-                        borderRadius: '16px',
-                        padding: '16px 18px',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '12px',
-                        boxShadow: '0 4px 16px rgba(13, 148, 136, 0.08)'
-                      }}>
-                        {/* Header */}
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    {(() => {
+                      const rawSessions = selectedHubSession?.sessions || [];
+                      if (rawSessions.length <= 1) return null;
+
+                      // Deduplicate duplicate non-guest student rows
+                      const seenAthleteKeys = new Set();
+                      const dedupedSessions = rawSessions.filter(s => {
+                        const isGuestRow = Boolean(s.is_guest || (s.guest_name && s.guest_name.trim()));
+                        if (isGuestRow) return true; // keep all guest entries
+                        const k = s.student_id ? `id_${s.student_id}` : `name_${(s.student || s.student_name || '').toLowerCase().trim()}`;
+                        if (!k || k === 'name_') return true;
+                        if (seenAthleteKeys.has(k)) return false;
+                        seenAthleteKeys.add(k);
+                        return true;
+                      });
+
+                      const activeStudentId = hubSelectedStudentId || dedupedSessions[0]?.id;
+                      const activeAthleteObj = dedupedSessions.find(s => s.id === activeStudentId) || dedupedSessions[0];
+
+                      return (
+                        <div style={{
+                          background: 'linear-gradient(135deg, #F0FDFA 0%, #F8FAFC 100%)',
+                          border: '1.5px solid #0D9488',
+                          borderRadius: '16px',
+                          padding: '16px 18px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '12px',
+                          boxShadow: '0 4px 16px rgba(13, 148, 136, 0.08)'
+                        }}>
+                          {/* Header */}
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                              <div style={{
+                                width: '36px',
+                                height: '36px',
+                                borderRadius: '10px',
+                                background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
+                                color: '#FFFFFF',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '17px',
+                                fontWeight: 700,
+                                flexShrink: 0
+                              }}>
+                                👥
+                              </div>
+                              <div>
+                                <div style={{ fontSize: '13.5px', fontWeight: 800, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <span>Athletes in this Session ({dedupedSessions.length}):</span>
+                                </div>
+                                <div style={{ fontSize: '12px', color: '#64748B' }}>
+                                  Click any athlete to view &amp; record their specific wave count and feedback
+                                </div>
+                              </div>
+                            </div>
+
                             <div style={{
-                              width: '36px',
-                              height: '36px',
-                              borderRadius: '10px',
-                              background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
-                              color: '#FFFFFF',
+                              fontSize: '12px',
+                              fontWeight: 700,
+                              color: '#0F766E',
+                              background: '#CCFBF1',
+                              padding: '4px 12px',
+                              borderRadius: '20px',
+                              border: '1px solid #99F6E4',
                               display: 'flex',
                               alignItems: 'center',
-                              justifyContent: 'center',
-                              fontSize: '17px',
-                              fontWeight: 700,
-                              flexShrink: 0
+                              gap: '6px'
                             }}>
-                              👥
-                            </div>
-                            <div>
-                              <div style={{ fontSize: '13.5px', fontWeight: 800, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <span>Athletes in this Session ({selectedHubSession.sessions.length}):</span>
-                              </div>
-                              <div style={{ fontSize: '12px', color: '#64748B' }}>
-                                Click any athlete to view &amp; record their specific wave count and feedback
-                              </div>
+                              <span>Active:</span>
+                              <span style={{ color: '#134E4A' }}>
+                                {activeAthleteObj?.student || activeAthleteObj?.student_name || 'Athlete'}
+                              </span>
                             </div>
                           </div>
 
+                          {/* Athlete Selector Chips / Tabs (Uniform Equal Size Grid) */}
                           <div style={{
-                            fontSize: '12px',
-                            fontWeight: 700,
-                            color: '#0F766E',
-                            background: '#CCFBF1',
-                            padding: '4px 12px',
-                            borderRadius: '20px',
-                            border: '1px solid #99F6E4',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '6px'
+                            display: 'grid',
+                            gridTemplateColumns: dedupedSessions.length <= 4
+                              ? `repeat(${dedupedSessions.length}, minmax(0, 1fr))`
+                              : 'repeat(auto-fit, minmax(200px, 1fr))',
+                            gap: '10px',
+                            width: '100%',
+                            alignItems: 'stretch'
                           }}>
-                            <span>Active:</span>
-                            <span style={{ color: '#134E4A' }}>
-                              {selectedHubSession.sessions.find(s => s.id === (hubSelectedStudentId || selectedHubSession.sessions[0]?.id))?.student || 'Athlete'}
-                            </span>
+                            {dedupedSessions.map((s, idx) => {
+                              const isSelected = s.id === activeStudentId;
+                              const sObj = hubStudentNotesMap[s.id];
+                              const hasFeedback = Boolean(sObj && (sObj.waveCount || sObj.whatDidWell || sObj.whatToImprove));
+                              const studentDisplayName = s.student || s.student_name || `Student ${idx + 1}`;
+                              const studentInitials = studentDisplayName.trim().split(/\s+/).map(p => p[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || 'ST';
+                              const currentLvl = hubStudentLevelMap[s.id] || s.level || 'Beginner';
+                              const bMeta = BADGE_LEVELS.find(b => b.label.toLowerCase() === normalizeBadgeLevel(currentLvl).toLowerCase()) || BADGE_LEVELS[0];
+
+                              return (
+                                <button
+                                  key={s.id || idx}
+                                  type="button"
+                                  onClick={() => handleSelectHubStudent(s.id)}
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '10px',
+                                    padding: '8px 12px',
+                                    borderRadius: '12px',
+                                    border: isSelected ? '2px solid #0D9488' : '1.5px solid #CBD5E1',
+                                    background: isSelected ? 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)' : '#FFFFFF',
+                                    color: isSelected ? '#FFFFFF' : '#1E293B',
+                                    cursor: 'pointer',
+                                    fontWeight: 700,
+                                    fontSize: '13.5px',
+                                    boxShadow: isSelected ? '0 4px 14px rgba(13, 148, 136, 0.32)' : '0 1px 3px rgba(0,0,0,0.04)',
+                                    transition: 'all 0.18s ease',
+                                    textAlign: 'left',
+                                    width: '100%',
+                                    minWidth: 0,
+                                    height: '56px',
+                                    boxSizing: 'border-box'
+                                  }}
+                                  onMouseEnter={e => {
+                                    if (!isSelected) {
+                                      e.currentTarget.style.borderColor = '#0D9488';
+                                      e.currentTarget.style.background = '#F0FDFA';
+                                      e.currentTarget.style.transform = 'translateY(-1px)';
+                                    }
+                                  }}
+                                  onMouseLeave={e => {
+                                    if (!isSelected) {
+                                      e.currentTarget.style.borderColor = '#CBD5E1';
+                                      e.currentTarget.style.background = '#FFFFFF';
+                                      e.currentTarget.style.transform = 'translateY(0)';
+                                    }
+                                  }}
+                                >
+                                  {/* Avatar Circle */}
+                                  <div style={{
+                                    width: '28px',
+                                    height: '28px',
+                                    borderRadius: '50%',
+                                    background: isSelected ? '#FFFFFF' : 'linear-gradient(135deg, #0284C7 0%, #0369A1 100%)',
+                                    color: isSelected ? '#0D9488' : '#FFFFFF',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: '11px',
+                                    fontWeight: 800,
+                                    flexShrink: 0
+                                  }}>
+                                    {studentInitials}
+                                  </div>
+
+                                  {/* Student Name & Details */}
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0, flex: 1, overflow: 'hidden' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
+                                      <span style={{
+                                        fontSize: '13.5px',
+                                        fontWeight: 800,
+                                        whiteSpace: 'nowrap',
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis'
+                                      }}>
+                                        {studentDisplayName}
+                                      </span>
+                                      {s.is_guest && (
+                                        <span style={{
+                                          fontSize: '10px',
+                                          fontWeight: 700,
+                                          padding: '1px 6px',
+                                          borderRadius: '6px',
+                                          background: isSelected ? 'rgba(255,255,255,0.25)' : '#E0F2FE',
+                                          color: isSelected ? '#FFFFFF' : '#0369A1',
+                                          flexShrink: 0
+                                        }}>
+                                          Guest
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0, justifyContent: 'space-between' }}>
+                                      <span style={{
+                                        fontSize: '11px',
+                                        fontWeight: 700,
+                                        opacity: isSelected ? 1 : 0.85,
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '3px',
+                                        whiteSpace: 'nowrap',
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                        minWidth: 0
+                                      }} title={bMeta.label}>
+                                        <span style={{ flexShrink: 0 }}>{bMeta.icon}</span>
+                                        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{bMeta.label}</span>
+                                      </span>
+                                      {hasFeedback ? (
+                                        <span style={{
+                                          fontSize: '10px',
+                                          fontWeight: 700,
+                                          padding: '1px 6px',
+                                          borderRadius: '6px',
+                                          background: isSelected ? '#10B981' : '#DCFCE7',
+                                          color: isSelected ? '#FFFFFF' : '#15803D',
+                                          flexShrink: 0
+                                        }}>
+                                          ✓ Evaluated
+                                        </span>
+                                      ) : (
+                                        <span style={{
+                                          fontSize: '10px',
+                                          fontWeight: 600,
+                                          opacity: 0.6,
+                                          flexShrink: 0
+                                        }}>
+                                          Pending
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </button>
+                              );
+                            })}
                           </div>
                         </div>
+                      );
+                    })()}
 
-                        {/* Athlete Selector Chips / Tabs (Uniform Equal Size Grid) */}
-                        <div style={{
-                          display: 'grid',
-                          gridTemplateColumns: selectedHubSession.sessions.length <= 4
-                            ? `repeat(${selectedHubSession.sessions.length}, minmax(0, 1fr))`
-                            : 'repeat(auto-fit, minmax(200px, 1fr))',
-                          gap: '10px',
-                          width: '100%',
-                          alignItems: 'stretch'
-                        }}>
-                          {selectedHubSession.sessions.map((s, idx) => {
-                            const activeStudentId = hubSelectedStudentId || selectedHubSession.sessions[0]?.id;
-                            const isSelected = s.id === activeStudentId;
-                            const sObj = hubStudentNotesMap[s.id];
-                            const hasFeedback = Boolean(sObj && (sObj.waveCount || sObj.whatDidWell || sObj.whatToImprove));
-                            const studentDisplayName = s.student || s.student_name || `Student ${idx + 1}`;
-                            const studentInitials = studentDisplayName.trim().split(/\s+/).map(p => p[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || 'ST';
-                            const currentLvl = hubStudentLevelMap[s.id] || s.level || 'Beginner';
-                            const bMeta = BADGE_LEVELS.find(b => b.label.toLowerCase() === normalizeBadgeLevel(currentLvl).toLowerCase()) || BADGE_LEVELS[0];
-
-                            return (
-                              <button
-                                key={s.id || idx}
-                                type="button"
-                                onClick={() => handleSelectHubStudent(s.id)}
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '10px',
-                                  padding: '8px 12px',
-                                  borderRadius: '12px',
-                                  border: isSelected ? '2px solid #0D9488' : '1.5px solid #CBD5E1',
-                                  background: isSelected ? 'linear-gradient(135deg, #0D9488 0%, #0F766E 100%)' : '#FFFFFF',
-                                  color: isSelected ? '#FFFFFF' : '#1E293B',
-                                  cursor: 'pointer',
-                                  fontWeight: 700,
-                                  fontSize: '13.5px',
-                                  boxShadow: isSelected ? '0 4px 14px rgba(13, 148, 136, 0.32)' : '0 1px 3px rgba(0,0,0,0.04)',
-                                  transition: 'all 0.18s ease',
-                                  textAlign: 'left',
-                                  width: '100%',
-                                  minWidth: 0,
-                                  height: '56px',
-                                  boxSizing: 'border-box'
-                                }}
-                                onMouseEnter={e => {
-                                  if (!isSelected) {
-                                    e.currentTarget.style.borderColor = '#0D9488';
-                                    e.currentTarget.style.background = '#F0FDFA';
-                                    e.currentTarget.style.transform = 'translateY(-1px)';
-                                  }
-                                }}
-                                onMouseLeave={e => {
-                                  if (!isSelected) {
-                                    e.currentTarget.style.borderColor = '#CBD5E1';
-                                    e.currentTarget.style.background = '#FFFFFF';
-                                    e.currentTarget.style.transform = 'translateY(0)';
-                                  }
-                                }}
-                              >
-                                {/* Avatar Circle */}
-                                <div style={{
-                                  width: '28px',
-                                  height: '28px',
-                                  borderRadius: '50%',
-                                  background: isSelected ? '#FFFFFF' : 'linear-gradient(135deg, #0284C7 0%, #0369A1 100%)',
-                                  color: isSelected ? '#0D9488' : '#FFFFFF',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  fontSize: '11px',
-                                  fontWeight: 800,
-                                  flexShrink: 0
-                                }}>
-                                  {studentInitials}
-                                </div>
-
-                                {/* Student Name & Details */}
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0, flex: 1, overflow: 'hidden' }}>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 }}>
-                                    <span style={{
-                                      fontSize: '13.5px',
-                                      fontWeight: 800,
-                                      whiteSpace: 'nowrap',
-                                      overflow: 'hidden',
-                                      textOverflow: 'ellipsis'
-                                    }}>
-                                      {studentDisplayName}
-                                    </span>
-                                    {s.is_guest && (
-                                      <span style={{
-                                        fontSize: '10px',
-                                        fontWeight: 700,
-                                        padding: '1px 6px',
-                                        borderRadius: '6px',
-                                        background: isSelected ? 'rgba(255,255,255,0.25)' : '#E0F2FE',
-                                        color: isSelected ? '#FFFFFF' : '#0369A1',
-                                        flexShrink: 0
-                                      }}>
-                                        Guest
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0, justifyContent: 'space-between' }}>
-                                    <span style={{
-                                      fontSize: '11px',
-                                      fontWeight: 700,
-                                      opacity: isSelected ? 1 : 0.85,
-                                      display: 'inline-flex',
-                                      alignItems: 'center',
-                                      gap: '3px',
-                                      whiteSpace: 'nowrap',
-                                      overflow: 'hidden',
-                                      textOverflow: 'ellipsis',
-                                      minWidth: 0
-                                    }} title={currentLvl}>
-                                      <span style={{ flexShrink: 0 }}>{bMeta.icon}</span>
-                                      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{currentLvl}</span>
-                                    </span>
-                                    {hasFeedback ? (
-                                      <span style={{
-                                        fontSize: '10px',
-                                        fontWeight: 700,
-                                        padding: '1px 6px',
-                                        borderRadius: '6px',
-                                        background: isSelected ? '#10B981' : '#DCFCE7',
-                                        color: isSelected ? '#FFFFFF' : '#15803D',
-                                        flexShrink: 0
-                                      }}>
-                                        ✓ Evaluated
-                                      </span>
-                                    ) : (
-                                      <span style={{
-                                        fontSize: '10px',
-                                        fontWeight: 600,
-                                        opacity: 0.6,
-                                        flexShrink: 0
-                                      }}>
-                                        Pending
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* ─── CONDITIONAL: STUDENT VIEW (REPORT CARD) vs COACH VIEW (INTERACTIVE EDITING) ─── */}
-                    {isStudent ? (
-                      /* ─── STUDENT PERFORMANCE REPORT CARD ─── */
+                    {/* ─── CONDITIONAL: STUDENT / VIEW ADMIN (REPORT CARD) vs COACH VIEW (INTERACTIVE EDITING) ─── */}
+                    {isStudent || isViewAdmin ? (
+                      /* ─── STUDENT & VIEW ADMIN PERFORMANCE REPORT CARD (READ-ONLY) ─── */
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
 
                         {/* Student Current Badge Progression Badge */}
@@ -5514,31 +5752,61 @@ const Sessions = () => {
                               <h3 style={{ margin: '2px 0 0', fontSize: '17px', fontWeight: 800, color: '#FFFFFF', fontFamily: 'Outfit, sans-serif' }}>
                                 Performance & Coach Tactical Feedback
                               </h3>
-                              <p style={{ margin: '2px 0 0', fontSize: '12.5px', color: '#CBD5E1' }}>
-                                Coach: <strong>{selectedHubSession?.coach || 'demo1'}</strong>
-                              </p>
+                              {(() => {
+                                const activeStudentObj = selectedHubSession?.sessions?.find(s => s.id === (hubSelectedStudentId || selectedHubSession?.sessions?.[0]?.id)) || selectedHubSession;
+                                const activeStudentName = activeStudentObj?.student || activeStudentObj?.student_name || selectedHubSession?.student || 'Athlete';
+                                return (
+                                  <p style={{ margin: '2px 0 0', fontSize: '12.5px', color: '#CBD5E1' }}>
+                                    Athlete: <strong style={{ color: '#38BDF8' }}>{activeStudentName}</strong> • Coach: <strong>{selectedHubSession?.coach || selectedHubSession?.instructor || 'Instructor'}</strong>
+                                  </p>
+                                );
+                              })()}
                             </div>
                           </div>
 
-                          {/* Wave Count Metric Box */}
-                          <div
-                            style={{
-                              background: 'rgba(255, 255, 255, 0.08)',
-                              border: '1px solid rgba(255, 255, 255, 0.18)',
-                              borderRadius: '12px',
-                              padding: '10px 18px',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '12px'
-                            }}
-                          >
-                            <span style={{ fontSize: '26px' }}>🌊</span>
-                            <div>
-                              <div style={{ fontSize: '11px', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
-                                Waves Caught
+                          {/* Wave Count & Technique Score Metric Boxes */}
+                          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                            <div
+                              style={{
+                                background: 'rgba(255, 255, 255, 0.08)',
+                                border: '1px solid rgba(255, 255, 255, 0.18)',
+                                borderRadius: '12px',
+                                padding: '10px 18px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '12px'
+                              }}
+                            >
+                              <span style={{ fontSize: '26px' }}>🌊</span>
+                              <div>
+                                <div style={{ fontSize: '11px', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                                  Waves Caught
+                                </div>
+                                <div style={{ fontSize: '20px', fontWeight: 900, color: '#38BDF8', fontFamily: 'Outfit, sans-serif' }}>
+                                  {parseInt(hubWaveCount) > 0 ? `${hubWaveCount} Waves` : '0 Logged'}
+                                </div>
                               </div>
-                              <div style={{ fontSize: '20px', fontWeight: 900, color: '#38BDF8', fontFamily: 'Outfit, sans-serif' }}>
-                                {parseInt(hubWaveCount) > 0 ? `${hubWaveCount} Waves` : '0 Logged'}
+                            </div>
+
+                            <div
+                              style={{
+                                background: 'rgba(255, 255, 255, 0.08)',
+                                border: '1px solid rgba(255, 255, 255, 0.18)',
+                                borderRadius: '12px',
+                                padding: '10px 18px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '12px'
+                              }}
+                            >
+                              <span style={{ fontSize: '26px' }}>⭐</span>
+                              <div>
+                                <div style={{ fontSize: '11px', fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                                  Coach Score
+                                </div>
+                                <div style={{ fontSize: '20px', fontWeight: 900, color: '#FCD34D', fontFamily: 'Outfit, sans-serif' }}>
+                                  {hubScore ? `${hubScore} / 100` : '85 / 100 Verified'}
+                                </div>
                               </div>
                             </div>
                           </div>
@@ -5566,33 +5834,6 @@ const Sessions = () => {
                                 <span style={{ fontSize: '12px', color: '#64748B' }}>Strengths & Key Highlights</span>
                               </div>
                             </div>
-
-                            {/* Score Display */}
-                            {hubWhatDidWellScore ? (
-                              <div
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '8px',
-                                  background: 'linear-gradient(135deg, #ECFDF5 0%, #D1FAE5 100%)',
-                                  border: '1.5px solid #86EFAC',
-                                  borderRadius: '12px',
-                                  padding: '6px 16px',
-                                  boxShadow: '0 2px 8px rgba(16, 185, 129, 0.2)'
-                                }}
-                              >
-                                <span style={{ fontSize: '16px', color: '#F59E0B' }}>★</span>
-                                <span style={{ fontSize: '13px', fontWeight: 700, color: '#065F46' }}>Score:</span>
-                                <span style={{ fontSize: '20px', fontWeight: 900, color: '#047857', fontFamily: 'Outfit, sans-serif' }}>
-                                  {hubWhatDidWellScore}
-                                </span>
-                                <span style={{ fontSize: '13px', fontWeight: 700, color: '#059669' }}>/ 10</span>
-                              </div>
-                            ) : (
-                              <span style={{ fontSize: '12px', color: '#94A3B8', fontWeight: 600, background: '#F1F5F9', padding: '4px 10px', borderRadius: '8px' }}>
-                                Score Pending
-                              </span>
-                            )}
                           </div>
 
                           {/* Coach Comments */}
@@ -5654,33 +5895,6 @@ const Sessions = () => {
                                 <span style={{ fontSize: '12px', color: '#64748B' }}>Target Focus Areas & Technique Advice</span>
                               </div>
                             </div>
-
-                            {/* Score Display */}
-                            {hubWhatToImproveScore ? (
-                              <div
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '8px',
-                                  background: 'linear-gradient(135deg, #FFF7ED 0%, #FFEDD5 100%)',
-                                  border: '1.5px solid #FDBA74',
-                                  borderRadius: '12px',
-                                  padding: '6px 16px',
-                                  boxShadow: '0 2px 8px rgba(234, 88, 12, 0.2)'
-                                }}
-                              >
-                                <span style={{ fontSize: '16px', color: '#EA580C' }}>🎯</span>
-                                <span style={{ fontSize: '13px', fontWeight: 700, color: '#9A3412' }}>Score:</span>
-                                <span style={{ fontSize: '20px', fontWeight: 900, color: '#C2410C', fontFamily: 'Outfit, sans-serif' }}>
-                                  {hubWhatToImproveScore}
-                                </span>
-                                <span style={{ fontSize: '13px', fontWeight: 700, color: '#EA580C' }}>/ 10</span>
-                              </div>
-                            ) : (
-                              <span style={{ fontSize: '12px', color: '#94A3B8', fontWeight: 600, background: '#F1F5F9', padding: '4px 10px', borderRadius: '8px' }}>
-                                Score Pending
-                              </span>
-                            )}
                           </div>
 
                           {/* Coach Comments */}
@@ -5879,7 +6093,125 @@ const Sessions = () => {
                           );
                         })()}
 
-                        {/* CARD 1: Wave Count */}
+                        {/* CARD 1: Coach Technique Score (0 to 100) */}
+                        <div style={{ background: '#FFFFFF', border: '1.5px solid #E2E8F0', borderRadius: '14px', padding: '16px 18px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '4px' }}>
+                            <span style={{ fontSize: '13.5px', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <span style={{ fontSize: '16px' }}>⭐</span> Coach Technique Score:
+                            </span>
+                            <span style={{ fontSize: '12px', color: '#64748B' }}>Score out of 100 (Reflects directly in milestone story share)</span>
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const curr = parseInt(hubScore) || 0;
+                                handleUpdateNotesField({ score: Math.max(0, curr - 5).toString() });
+                              }}
+                              style={{
+                                width: '36px',
+                                height: '36px',
+                                borderRadius: '8px',
+                                border: '1.5px solid #CBD5E1',
+                                background: '#F8FAFC',
+                                fontSize: '18px',
+                                fontWeight: 700,
+                                color: '#334155',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                userSelect: 'none'
+                              }}
+                              title="Decrease score by 5"
+                            >
+                              −
+                            </button>
+
+                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                placeholder="85"
+                                value={hubScore}
+                                onChange={(e) => {
+                                  let val = e.target.value;
+                                  if (val !== '') {
+                                    const num = parseInt(val, 10);
+                                    if (!isNaN(num)) val = Math.min(100, Math.max(0, num)).toString();
+                                  }
+                                  handleUpdateNotesField({ score: val });
+                                }}
+                                style={{
+                                  width: '85px',
+                                  height: '36px',
+                                  padding: '0 10px',
+                                  border: '1.5px solid #F59E0B',
+                                  borderRadius: '8px',
+                                  fontSize: '16px',
+                                  fontWeight: 800,
+                                  color: '#B45309',
+                                  textAlign: 'center',
+                                  background: '#FFFBEB',
+                                  boxSizing: 'border-box'
+                                }}
+                              />
+                              <span style={{ fontSize: '13px', fontWeight: 800, color: '#94A3B8' }}>/ 100</span>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const curr = parseInt(hubScore) || 0;
+                                handleUpdateNotesField({ score: Math.min(100, curr + 5).toString() });
+                              }}
+                              style={{
+                                width: '36px',
+                                height: '36px',
+                                borderRadius: '8px',
+                                border: '1.5px solid #CBD5E1',
+                                background: '#F8FAFC',
+                                fontSize: '18px',
+                                fontWeight: 700,
+                                color: '#334155',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                userSelect: 'none'
+                              }}
+                              title="Increase score by 5"
+                            >
+                              +
+                            </button>
+
+                            <div style={{ display: 'flex', gap: '6px', marginLeft: '6px', flexWrap: 'wrap' }}>
+                              {[60, 70, 75, 80, 85, 90, 95, 100].map(sc => (
+                                <button
+                                  key={sc}
+                                  type="button"
+                                  onClick={() => handleUpdateNotesField({ score: sc.toString() })}
+                                  style={{
+                                    padding: '5px 10px',
+                                    borderRadius: '6px',
+                                    fontSize: '12px',
+                                    fontWeight: 700,
+                                    border: hubScore === sc.toString() ? '1.5px solid #F59E0B' : '1px solid #E2E8F0',
+                                    background: hubScore === sc.toString() ? '#F59E0B' : '#F8FAFC',
+                                    color: hubScore === sc.toString() ? '#FFFFFF' : '#475569',
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  {sc}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* CARD 2: Wave Count */}
                         <div style={{ background: '#FFFFFF', border: '1.5px solid #E2E8F0', borderRadius: '14px', padding: '16px 18px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                             <span style={{ fontSize: '13.5px', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -5995,24 +6327,6 @@ const Sessions = () => {
                             <span style={{ fontSize: '13.5px', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
                               <span style={{ fontSize: '16px' }}>🌟</span> What You did Well:
                             </span>
-                            {hubWhatDidWellScore ? (
-                              <span style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '4px',
-                                fontSize: '12px',
-                                fontWeight: 800,
-                                color: '#065F46',
-                                background: '#D1FAE5',
-                                border: '1px solid #A7F3D0',
-                                padding: '3px 9px',
-                                borderRadius: '6px'
-                              }}>
-                                ★ Score: {hubWhatDidWellScore} out of 10
-                              </span>
-                            ) : (
-                              <span style={{ fontSize: '12px', color: '#94A3B8' }}>Rate 1 to 10</span>
-                            )}
                           </div>
 
                           <input
@@ -6029,57 +6343,9 @@ const Sessions = () => {
                               color: '#0F172A',
                               boxSizing: 'border-box',
                               background: '#FFFFFF',
-                              marginBottom: '12px',
                               outline: 'none'
                             }}
                           />
-
-                          {/* 1 to 10 Score Selector */}
-                          <div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                              <span style={{ fontSize: '11.5px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
-                                Score (1 to 10):
-                              </span>
-                              {hubWhatDidWellScore && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleUpdateNotesField({ whatDidWellScore: '' })}
-                                  style={{ background: 'none', border: 'none', color: '#EF4444', fontSize: '11px', fontWeight: 600, cursor: 'pointer', padding: 0 }}
-                                >
-                                  Clear Score ✕
-                                </button>
-                              )}
-                            </div>
-
-                            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((score) => {
-                                const isSelected = hubWhatDidWellScore === score.toString();
-                                return (
-                                  <button
-                                    key={score}
-                                    type="button"
-                                    onClick={() => handleUpdateNotesField({ whatDidWellScore: score.toString() })}
-                                    style={{
-                                      flex: '1 0 30px',
-                                      maxWidth: '48px',
-                                      height: '34px',
-                                      borderRadius: '8px',
-                                      fontSize: '13px',
-                                      fontWeight: isSelected ? 800 : 600,
-                                      border: isSelected ? '2px solid #0D9488' : '1px solid #CBD5E1',
-                                      background: isSelected ? 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)' : '#F8FAFC',
-                                      color: isSelected ? '#FFFFFF' : '#334155',
-                                      cursor: 'pointer',
-                                      transition: 'all 0.15s ease',
-                                      boxShadow: isSelected ? '0 2px 8px rgba(13, 148, 136, 0.35)' : 'none'
-                                    }}
-                                  >
-                                    {score}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
                         </div>
 
                         {/* CARD 3: What to Improve */}
@@ -6088,24 +6354,6 @@ const Sessions = () => {
                             <span style={{ fontSize: '13.5px', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
                               <span style={{ fontSize: '16px' }}>🎯</span> What to Improve:
                             </span>
-                            {hubWhatToImproveScore ? (
-                              <span style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '4px',
-                                fontSize: '12px',
-                                fontWeight: 800,
-                                color: '#9A3412',
-                                background: '#FFEDD5',
-                                border: '1px solid #FED7AA',
-                                padding: '3px 9px',
-                                borderRadius: '6px'
-                              }}>
-                                ★ Score: {hubWhatToImproveScore} out of 10
-                              </span>
-                            ) : (
-                              <span style={{ fontSize: '12px', color: '#94A3B8' }}>Rate 1 to 10</span>
-                            )}
                           </div>
 
                           <input
@@ -6122,57 +6370,9 @@ const Sessions = () => {
                               color: '#0F172A',
                               boxSizing: 'border-box',
                               background: '#FFFFFF',
-                              marginBottom: '12px',
                               outline: 'none'
                             }}
                           />
-
-                          {/* 1 to 10 Score Selector */}
-                          <div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                              <span style={{ fontSize: '11.5px', fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.4px' }}>
-                                Score (1 to 10):
-                              </span>
-                              {hubWhatToImproveScore && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleUpdateNotesField({ whatToImproveScore: '' })}
-                                  style={{ background: 'none', border: 'none', color: '#EF4444', fontSize: '11px', fontWeight: 600, cursor: 'pointer', padding: 0 }}
-                                >
-                                  Clear Score ✕
-                                </button>
-                              )}
-                            </div>
-
-                            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((score) => {
-                                const isSelected = hubWhatToImproveScore === score.toString();
-                                return (
-                                  <button
-                                    key={score}
-                                    type="button"
-                                    onClick={() => handleUpdateNotesField({ whatToImproveScore: score.toString() })}
-                                    style={{
-                                      flex: '1 0 30px',
-                                      maxWidth: '48px',
-                                      height: '34px',
-                                      borderRadius: '8px',
-                                      fontSize: '13px',
-                                      fontWeight: isSelected ? 800 : 600,
-                                      border: isSelected ? '2px solid #EA580C' : '1px solid #CBD5E1',
-                                      background: isSelected ? 'linear-gradient(135deg, #EA580C 0%, #F59E0B 100%)' : '#F8FAFC',
-                                      color: isSelected ? '#FFFFFF' : '#334155',
-                                      cursor: 'pointer',
-                                      transition: 'all 0.15s ease',
-                                      boxShadow: isSelected ? '0 2px 8px rgba(234, 88, 12, 0.35)' : 'none'
-                                    }}
-                                  >
-                                    {score}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
                         </div>
                       </>
                     )}
@@ -6241,7 +6441,7 @@ const Sessions = () => {
                     Close
                   </button>
 
-                  {!isStudent && (
+                  {!isStudent && !isViewAdmin && (
                     <button
                       type="button"
                       style={{
@@ -6443,25 +6643,128 @@ const Sessions = () => {
                 {/* MONTHLY INTERACTIVE CALENDAR VIEW */}
                 <div className="ses-cal-month-view">
                   {/* Month Navigator Header */}
-                  <div className="ses-cal-nav-bar">
-                    <div className="ses-cal-month-title">
-                      {MONTH_NAMES[month]} {year}
-                    </div>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button className="ses-cal-nav-btn" onClick={handlePrevMonth}>‹ Prev</button>
-                      <button
-                        className="ses-cal-nav-btn"
-                        onClick={() => {
-                          const todayIso = getTodayYYYYMMDD();
-                          setCurrentDate(new Date());
-                          setSelectedCalendarDate(todayIso);
-                        }}
-                      >
-                        Active Month
-                      </button>
-                      <button className="ses-cal-nav-btn" onClick={handleNextMonth}>Next ›</button>
-                    </div>
-                  </div>
+                  {(() => {
+                    const MONTH_CODES_LIST = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+                    const currentMonthCode = MONTH_CODES_LIST[month];
+                    const isCurrentMonthActive = !activeOperatingMonths || activeOperatingMonths.length === 0 || activeOperatingMonths.includes(currentMonthCode);
+
+                    return (
+                      <>
+                        <div className="ses-cal-nav-bar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                          <div className="ses-cal-month-title" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <span>{MONTH_NAMES[month]} {year}</span>
+                            <span style={{
+                              fontSize: '11px',
+                              fontWeight: 800,
+                              padding: '2px 8px',
+                              borderRadius: '12px',
+                              background: isCurrentMonthActive ? '#F0FDF4' : '#FFFBEB',
+                              color: isCurrentMonthActive ? '#15803D' : '#B45309',
+                              border: isCurrentMonthActive ? '1px solid #BBF7D0' : '1px solid #FDE68A',
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.4px'
+                            }}>
+                              {isCurrentMonthActive ? '✓ Active Season' : '🏖️ Off-Season'}
+                            </span>
+                            {/* Coach Badge if Coach logged in */}
+                            {isCoach && !isHeadCoach && (
+                              <span style={{
+                                fontSize: '11px',
+                                fontWeight: 700,
+                                padding: '2px 8px',
+                                borderRadius: '12px',
+                                background: '#E0F2FE',
+                                color: '#0369A1',
+                                border: '1px solid #BAE6FD',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.3px'
+                              }}>
+                                🏄 Coach: {loggedInCoach?.name || currentUser?.name || 'Assigned Groups'}
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            {/* Coach Filter Dropdown for Admin */}
+                            {(!isCoach || isHeadCoach) && !isStudent && (
+                              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                                <label style={{ fontSize: '12px', fontWeight: 600, color: '#475569' }}>Coach:</label>
+                                <select
+                                  value={instructorFilter}
+                                  onChange={(e) => setInstructorFilter(e.target.value)}
+                                  style={{
+                                    fontSize: '12px',
+                                    padding: '4px 8px',
+                                    borderRadius: '8px',
+                                    border: '1px solid #CBD5E1',
+                                    background: instructorFilter !== 'All' ? '#E6F9F5' : '#FFF',
+                                    color: instructorFilter !== 'All' ? '#0D9488' : '#0F172A',
+                                    fontWeight: instructorFilter !== 'All' ? 700 : 500,
+                                    cursor: 'pointer',
+                                    outline: 'none'
+                                  }}
+                                >
+                                  <option value="All">All Coaches</option>
+                                  {availableInstructors.map(name => (
+                                    <option key={name} value={name}>{name}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            )}
+                            <button className="ses-cal-nav-btn" onClick={handlePrevMonth}>‹ Prev</button>
+                            <button
+                              className="ses-cal-nav-btn"
+                              onClick={() => {
+                                const todayIso = getTodayYYYYMMDD();
+                                setCurrentDate(new Date());
+                                setSelectedCalendarDate(todayIso);
+                              }}
+                            >
+                              Active Month
+                            </button>
+                            <button className="ses-cal-nav-btn" onClick={handleNextMonth}>Next ›</button>
+                          </div>
+                        </div>
+
+                        {!isCurrentMonthActive && (
+                          <div style={{
+                            background: '#FFFBEB',
+                            border: '1.5px solid #FCD34D',
+                            borderRadius: '10px',
+                            padding: '10px 14px',
+                            marginBottom: '14px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: '10px',
+                            fontSize: '12.5px',
+                            color: '#92400E'
+                          }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{ fontSize: '18px' }}>🏖️</span>
+                              <div>
+                                <strong>Off-Season Notice:</strong> {effectiveSchool || 'This school'} is configured as off-season / closed during <strong>{MONTH_NAMES[month]}</strong>.
+                                <span style={{ display: 'block', fontSize: '11.5px', color: '#B45309', marginTop: '2px' }}>
+                                  Active Operating Months: <strong>{activeOperatingMonths.join(', ')}</strong>.
+                                </span>
+                              </div>
+                            </div>
+                            <span style={{
+                              fontSize: '11px',
+                              fontWeight: 800,
+                              background: '#FEF3C7',
+                              color: '#B45309',
+                              border: '1px solid #FDE68A',
+                              padding: '4px 8px',
+                              borderRadius: '6px',
+                              whiteSpace: 'nowrap'
+                            }}>
+                              Off-Season
+                            </span>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
 
                   {/* Weekday Names Header */}
                   <div className="ses-cal-grid-header">
@@ -6561,8 +6864,15 @@ const Sessions = () => {
                               title={isPastDate ? `${cellISO} (Past Date)` : `Date: ${cellISO}`}
                               onClick={() => {
                                 setSelectedCalendarDate(cellISO);
-                                setSelectedDayDetailsModal(cellISO);
-                                setDayModalSlotFilter('All');
+                                if (!isStudent) {
+                                  setSelectedDayDetailsModal(cellISO);
+                                  setDayModalSlotFilter('All');
+                                } else {
+                                  const mySession = (calendarScopedSessions || []).find(s => normalizeToYYYYMMDD(s.date) === cellISO);
+                                  if (mySession) {
+                                    setSelectedHubSession(mySession);
+                                  }
+                                }
                               }}
                             >
                               <div className="ses-cal-day-num" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
@@ -6582,6 +6892,27 @@ const Sessions = () => {
                                   }}>
                                     {dayNum}
                                   </span>
+                                  {(() => {
+                                    const cellMonthCode = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][month];
+                                    const isCellMonthActive = !activeOperatingMonths || activeOperatingMonths.length === 0 || activeOperatingMonths.includes(cellMonthCode);
+                                    if (!isCellMonthActive && !hasSessions) {
+                                      return (
+                                        <span style={{
+                                          fontSize: '9px',
+                                          fontWeight: 700,
+                                          background: '#F1F5F9',
+                                          color: '#94A3B8',
+                                          padding: '1px 5px',
+                                          borderRadius: '4px',
+                                          border: '1px solid #E2E8F0',
+                                          letterSpacing: '0.2px'
+                                        }}>
+                                          Off-Season
+                                        </span>
+                                      );
+                                    }
+                                    return null;
+                                  })()}
                                 </div>
 
                                 {hasSessions && (
@@ -6654,8 +6985,15 @@ const Sessions = () => {
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         setSelectedCalendarDate(cellISO);
-                                        setSelectedDayDetailsModal(cellISO);
-                                        setDayModalSlotFilter(slot.time);
+                                        if (!isStudent) {
+                                          setSelectedDayDetailsModal(cellISO);
+                                          setDayModalSlotFilter(slot.time);
+                                        } else {
+                                          const mySession = (calendarScopedSessions || []).find(s => normalizeToYYYYMMDD(s.date) === cellISO);
+                                          if (mySession) {
+                                            setSelectedHubSession(mySession);
+                                          }
+                                        }
                                       }}
                                       title={`Slot ${slot.time}: ${numGroups} ${numGroups === 1 ? 'Group' : 'Groups'} (${slot.totalStudents} surfers). Click to open roster.`}
                                     >
@@ -7034,9 +7372,9 @@ const Sessions = () => {
                 </div>
 
         {/* Pro Day Details Full-Roster Modal */}
-        {selectedDayDetailsModal && (() => {
+        {!isStudent && selectedDayDetailsModal && (() => {
           const targetISO = selectedDayDetailsModal;
-          const targetDaySessions = (sessions || []).filter(s => normalizeToYYYYMMDD(s.date) === targetISO);
+          const targetDaySessions = (calendarScopedSessions || []).filter(s => normalizeToYYYYMMDD(s.date) === targetISO);
           const { groups: modalGroups, ungrouped: modalUngrouped } = buildSessionGrouping(targetDaySessions);
           const todayISO = getTodayYYYYMMDD();
           const isPast = targetISO < todayISO;
@@ -8283,9 +8621,14 @@ const Sessions = () => {
                       </div>
                       <div className="ses-detail-row">
                         <span className="ses-detail-label">Status</span>
-                        <span className="ses-status-pill" style={{ backgroundColor: statusBg(selectedSessionDetail.status), color: statusColor(selectedSessionDetail.status) }}>
-                          {selectedSessionDetail.status}
-                        </span>
+                        {(() => {
+                          const effStatus = formatSessionStatus(selectedSessionDetail);
+                          return (
+                            <span className="ses-status-pill" style={{ backgroundColor: statusBg(selectedSessionDetail), color: statusColor(selectedSessionDetail) }}>
+                              {effStatus}
+                            </span>
+                          );
+                        })()}
                       </div>
                       {selectedSessionDetail.notes && (
                         <div style={{ background: '#F8FAFC', padding: '10px 14px', borderRadius: '8px', border: '1px solid #E2E8F0', marginTop: '6px' }}>

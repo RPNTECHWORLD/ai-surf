@@ -197,8 +197,9 @@ const Sidebar = () => {
     items.push({ label: sessionsLabel, path: '/sessions' });
     if (isStudent) {
       items.push({ label: 'My Achievements', path: '/achievements' });
+    } else {
+      items.push({ label: 'Analytics', path: '/analytics' });
     }
-    items.push({ label: 'Analytics', path: '/analytics' });
     items.push(
       { label: 'Competitions', path: '/competitions' },
       { label: 'Athlete Intel', path: '/athlete-intelligence' }

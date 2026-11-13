@@ -309,23 +309,35 @@ function getStudentCourseDayInfo(s, idx = 0) {
   return { whichDay, totalDays, courseDuration: durStr };
 }
 
+function normalizeLevel(level) {
+  const s = String(level || '').trim().toLowerCase();
+  if (!s) return 'Beginner';
+  // 1. Advance Intermediate
+  if ((s.includes('adv') && s.includes('int')) || s.includes('blue')) return 'Advance Intermediate';
+  // 2. Advance Beginner
+  if ((s.includes('adv') && s.includes('beg')) || s.includes('yellow')) return 'Advance Beginner';
+  // 3. Pro / Master / Elite / Red
+  if (s.includes('pro') || s.includes('master') || s.includes('elite') || s.includes('red')) return 'Pro';
+  // 4. Intermediate / Green
+  if (s.includes('int') || s.includes('green')) return 'Intermediate';
+  // 5. Standalone Advance / Advanced
+  if (s === 'advance' || s === 'advanced' || s.startsWith('adv')) return 'Advance Intermediate';
+  // 6. Beginner / Novice / White
+  if (s.includes('beg') || s.includes('novice') || s.includes('white')) return 'Beginner';
+  return 'Beginner';
+}
+
 function normalizeLevelKey(level) {
-  const l = (level || '').toLowerCase().trim();
-  if (l.includes('advance intermediate') || l.includes('advanced intermediate') || l === 'advanced' || l === 'advance') return 'advance_intermediate';
-  if (l.includes('advance beginner') || l.includes('advanced beginner')) return 'advance_beginner';
-  if (l.includes('intermediate')) return 'intermediate';
-  if (l.includes('beginner') || l.includes('novice')) return 'beginner';
-  if (l.includes('pro') || l.includes('master') || l.includes('elite')) return 'pro';
+  const norm = normalizeLevel(level);
+  if (norm === 'Advance Beginner') return 'advance_beginner';
+  if (norm === 'Intermediate') return 'intermediate';
+  if (norm === 'Advance Intermediate') return 'advance_intermediate';
+  if (norm === 'Pro') return 'pro';
   return 'beginner';
 }
 
 function normalizeLevelDisplay(level) {
-  const k = normalizeLevelKey(level);
-  if (k === 'advance_beginner') return 'Advance Beginner';
-  if (k === 'advance_intermediate') return 'Advance Intermediate';
-  if (k === 'intermediate') return 'Intermediate';
-  if (k === 'pro') return 'Pro';
-  return 'Beginner';
+  return normalizeLevel(level);
 }
 
 const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, editSession = null } = {}) => {
@@ -2122,6 +2134,24 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       const matched = [];
       const seenKeys = new Set();
 
+      const targetDateStr = (() => {
+        if (editSession?.date) {
+          const dStr = String(editSession.date).trim();
+          const ymd = dStr.match(/^(\d{4})[-/](\d{2})[-/](\d{2})/);
+          if (ymd) return `${ymd[1]}-${ymd[2]}-${ymd[3]}`;
+          const dmy = dStr.match(/^(\d{2})[-/](\d{2})[-/](\d{4})$/);
+          if (dmy) return `${dmy[3]}-${dmy[2]}-${dmy[1]}`;
+          const d = new Date(dStr);
+          if (!isNaN(d.getTime())) {
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${y}-${m}-${day}`;
+          }
+        }
+        return selectedSessionDateYYYYMMDD;
+      })();
+
       // 1. Process all sessions in editSession (Both Guests and Regular Students)
       sessList.forEach(sess => {
         const isGuest = Boolean(sess.guest_name && sess.guest_name.trim());
@@ -2167,8 +2197,12 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           if (!seenKeys.has(regKey)) {
             seenKeys.add(regKey);
             if (regSt) {
+              const regStatus = getStudentStatusOnDate(regSt, targetDateStr);
               matched.push({
                 ...regSt,
+                whichDay: regStatus.whichDay || regSt.whichDay || 1,
+                totalDays: regStatus.totalDays || regSt.totalDays || 3,
+                dateStatus: regStatus.status,
                 isGuest: false,
                 isActiveOnDate: true
               });
@@ -2193,18 +2227,61 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
         }
       });
 
-      // 2. Also include other students from dbStudents so user can add new students if desired
+      // 2. Strictly include ONLY other students from dbStudents who are ACTIVE on this session date
+      // (within active course date range or already scheduled on this date)
       dbStudents.forEach(st => {
         const regKey = `reg-${st.id}`;
         if (!seenKeys.has(regKey)) {
-          seenKeys.add(regKey);
-          matched.push({
-            ...st,
-            isGuest: false,
-            isActiveOnDate: true
-          });
+          const status = getStudentStatusOnDate(st, targetDateStr);
+          const isSched = isStudentScheduledInDbOnDate(st);
+          if (status.isActive || isSched) {
+            seenKeys.add(regKey);
+            matched.push({
+              ...st,
+              whichDay: status.whichDay || st.whichDay || 1,
+              totalDays: status.totalDays || st.totalDays || 3,
+              dateStatus: status.status,
+              isGuest: false,
+              isActiveOnDate: true
+            });
+          }
         }
       });
+
+      // 3. Guarantee any student/guest in existing DB sessions on this date is also included
+      if (existingDbDateSessions && existingDbDateSessions.length > 0) {
+        existingDbDateSessions.forEach(sess => {
+          const isGuest = Boolean(sess.guest_name && sess.guest_name.trim());
+          const sName = isGuest ? sess.guest_name.trim() : (sess.student_name || sess.student || '').trim();
+          const sId = sess.student_id;
+          if (!sName) return;
+          const sNameLow = sName.toLowerCase();
+          const sessGuestSlug = isGuest ? `sess-guest-${sId || '0'}-${sName.replace(/\s+/g, '-').toLowerCase()}` : null;
+          const key = isGuest ? `guest-${sId || '0'}-${sNameLow}` : (sId != null ? `reg-${sId}` : `reg-${sNameLow}`);
+
+          if (!seenKeys.has(key)) {
+            seenKeys.add(key);
+            matched.push({
+              id: isGuest ? sessGuestSlug : (sId || `sess-st-${sName.replace(/\s+/g, '-').toLowerCase()}`),
+              sessGuestId: sessGuestSlug,
+              name: sName,
+              gender: sess.gender || 'Male',
+              level: sess.type || sess.level || 'Beginner',
+              day: 'day1',
+              whichDay: 1,
+              totalDays: 3,
+              courseDuration: '3 Days Course',
+              waitlistGroup: '3 Days Course',
+              avatar: '',
+              isReal: true,
+              isGuest: isGuest,
+              isActiveOnDate: true,
+              parentStudentId: isGuest ? sId : null,
+              parentStudentName: isGuest ? (sess.student_name || sess.student || null) : null
+            });
+          }
+        });
+      }
 
       return matched;
     }

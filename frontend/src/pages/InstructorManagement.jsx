@@ -230,6 +230,10 @@ const InstructorManagement = () => {
   };
 
   const handleUpdateLeaveStatus = async (leaveId, status, adminNotes = '') => {
+    if (isViewAdmin) {
+      alert('Leave status actions are restricted for View Admin (Read-Only Mode)');
+      return;
+    }
     setActionLoadingId(leaveId);
     try {
       const res = await fetch(`${API}/api/leave-requests/${leaveId}`, {
@@ -358,6 +362,7 @@ const InstructorManagement = () => {
   const isCoachSchoolAffiliated = Boolean(effectiveCoachSchool) && effectiveCoachSchool !== 'Individual / Freelance Coach';
 
   const handleCopyGeneralCoachInvite = () => {
+    if (isViewAdmin) return;
     const baseUrl = window.location.origin;
     const schoolName = schoolsList[0] || getActiveSchoolName() || '';
     const inviteUrl = `${baseUrl}/coach-portal`;
@@ -375,6 +380,7 @@ const InstructorManagement = () => {
   };
 
   const handleGenerateCoachInvite = (instructor) => {
+    if (isViewAdmin) return;
     const baseUrl = window.location.origin;
     const schoolName = instructor.school || schoolsList[0] || getActiveSchoolName() || '';
     const inviteUrl = `${baseUrl}/coach-portal?id=${instructor.id}`;
@@ -616,12 +622,37 @@ const InstructorManagement = () => {
     });
   }, [allPendingCoachRequests, coachPendingSearch]);
 
+  const pendingCoachIdentifiers = useMemo(() => {
+    const ids = new Set();
+    const emails = new Set();
+    const names = new Set();
+    (allPendingCoachRequests || []).forEach(c => {
+      if (c.email) emails.add(c.email.toLowerCase().trim());
+      if (c.id) ids.add(String(c.id));
+      if (c.name) names.add(c.name.toLowerCase().trim());
+      if (c.raw?.id) ids.add(String(c.raw.id));
+      if (c.raw?.user_id) ids.add(String(c.raw.user_id));
+      if (c.raw?.email) emails.add(c.raw.email.toLowerCase().trim());
+    });
+    return { ids, emails, names };
+  }, [allPendingCoachRequests]);
+
   const filtered = instructors
     .filter(i => {
       // Pending coach registrations are reviewed in the dedicated Join Requests modal and do not clutter active cards
       if ((i.approval_status || '').toLowerCase() === 'pending') {
         return false;
       }
+      const iId = i.id ? String(i.id) : '';
+      const iUserId = i.user_id ? String(i.user_id) : '';
+      const iEmail = (i.email || '').toLowerCase().trim();
+      const iName = (i.name || '').toLowerCase().trim();
+
+      if (iId && pendingCoachIdentifiers.ids.has(iId)) return false;
+      if (iUserId && pendingCoachIdentifiers.ids.has(iUserId)) return false;
+      if (iEmail && pendingCoachIdentifiers.emails.has(iEmail)) return false;
+      if (iName && pendingCoachIdentifiers.names.has(iName)) return false;
+
       if (!isSuperAdmin && currentSchool) {
         const iSchool = (i.school || '').toLowerCase().trim();
         if (iSchool && iSchool !== currentSchool.toLowerCase().trim()) return false;
@@ -966,6 +997,7 @@ const InstructorManagement = () => {
   };
 
   const handleApproveCoach = async (instructor) => {
+    if (isViewAdmin) return;
     if (!instructor) return;
     const coachId = instructor.id;
     if (coachActionLoadingId === coachId) return;
@@ -1044,6 +1076,7 @@ const InstructorManagement = () => {
   };
 
   const handleRejectCoach = async (instructor) => {
+    if (isViewAdmin) return;
     if (!instructor) return;
     const coachId = instructor.id;
     if (coachActionLoadingId === coachId) return;
@@ -1405,7 +1438,26 @@ const InstructorManagement = () => {
 
         {/* Bottom Actions Row */}
         <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '10px', borderTop: '1px solid #F1F5F9', paddingTop: '12px' }}>
-          {isPending ? (
+          {isViewAdmin ? (
+            <span
+              style={{
+                fontSize: '12px',
+                fontWeight: 700,
+                color: isApproved ? '#15803D' : (isRejected ? '#B91C1C' : '#D97706'),
+                background: isApproved ? '#DCFCE7' : (isRejected ? '#FEE2E2' : '#FEF3C7'),
+                border: `1px solid ${isApproved ? '#86EFAC' : (isRejected ? '#FCA5A5' : '#FCD34D')}`,
+                borderRadius: '8px',
+                padding: '5px 12px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                cursor: 'default'
+              }}
+              title="Status (View-Only Mode)"
+            >
+              {isApproved ? '✓ Approved' : (isRejected ? '✕ Rejected' : '⏳ Pending Review')}
+            </span>
+          ) : isPending ? (
             <>
               <button
                 type="button"
@@ -1567,64 +1619,66 @@ const InstructorManagement = () => {
               )}
             </button>
 
-            <button
-              type="button"
-              onClick={() => setShowCoachJoinRequestsModal(true)}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '11px 18px',
-                borderRadius: '12px',
-                border: pendingCoachesCount > 0 ? '1.5px solid #FCD34D' : '1.5px solid #CBD5E1',
-                background: pendingCoachesCount > 0 ? '#FEF3C7' : '#FFFFFF',
-                color: pendingCoachesCount > 0 ? '#B45309' : '#0F172A',
-                fontWeight: 700,
-                fontSize: '13.5px',
-                cursor: 'pointer',
-                transition: 'all 0.2s ease',
-                boxShadow: '0 2px 6px rgba(0,0,0,0.03)',
-                boxSizing: 'border-box'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = '#D97706';
-                e.currentTarget.style.color = '#B45309';
-                e.currentTarget.style.boxShadow = '0 4px 12px rgba(245, 158, 11, 0.15)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = pendingCoachesCount > 0 ? '#FCD34D' : '#CBD5E1';
-                e.currentTarget.style.color = pendingCoachesCount > 0 ? '#B45309' : '#0F172A';
-                e.currentTarget.style.boxShadow = '0 2px 6px rgba(0,0,0,0.03)';
-              }}
-              title="View pending coach registration requests"
-            >
-              <span style={{ fontSize: '15px', lineHeight: 1 }}>⏳</span>
-              <span>Join Requests</span>
-              {pendingCoachesCount > 0 ? (
-                <span style={{
-                  background: '#EF4444',
-                  color: '#FFFFFF',
-                  padding: '2px 8px',
-                  borderRadius: '10px',
-                  fontSize: '11.5px',
-                  fontWeight: 800,
-                  boxShadow: '0 2px 6px rgba(239, 68, 68, 0.3)'
-                }}>
-                  {pendingCoachesCount}
-                </span>
-              ) : (
-                <span style={{
-                  background: '#F1F5F9',
-                  color: '#64748B',
-                  padding: '2px 8px',
-                  borderRadius: '10px',
-                  fontSize: '11px',
-                  fontWeight: 700
-                }}>
-                  0
-                </span>
-              )}
-            </button>
+            {!isViewAdmin && (
+              <button
+                type="button"
+                onClick={() => setShowCoachJoinRequestsModal(true)}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '11px 18px',
+                  borderRadius: '12px',
+                  border: pendingCoachesCount > 0 ? '1.5px solid #FCD34D' : '1.5px solid #CBD5E1',
+                  background: pendingCoachesCount > 0 ? '#FEF3C7' : '#FFFFFF',
+                  color: pendingCoachesCount > 0 ? '#B45309' : '#0F172A',
+                  fontWeight: 700,
+                  fontSize: '13.5px',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease',
+                  boxShadow: '0 2px 6px rgba(0,0,0,0.03)',
+                  boxSizing: 'border-box'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = '#D97706';
+                  e.currentTarget.style.color = '#B45309';
+                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(245, 158, 11, 0.15)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = pendingCoachesCount > 0 ? '#FCD34D' : '#CBD5E1';
+                  e.currentTarget.style.color = pendingCoachesCount > 0 ? '#B45309' : '#0F172A';
+                  e.currentTarget.style.boxShadow = '0 2px 6px rgba(0,0,0,0.03)';
+                }}
+                title="View pending coach registration requests"
+              >
+                <span style={{ fontSize: '15px', lineHeight: 1 }}>⏳</span>
+                <span>Join Requests</span>
+                {pendingCoachesCount > 0 ? (
+                  <span style={{
+                    background: '#EF4444',
+                    color: '#FFFFFF',
+                    padding: '2px 8px',
+                    borderRadius: '10px',
+                    fontSize: '11.5px',
+                    fontWeight: 800,
+                    boxShadow: '0 2px 6px rgba(239, 68, 68, 0.3)'
+                  }}>
+                    {pendingCoachesCount}
+                  </span>
+                ) : (
+                  <span style={{
+                    background: '#F1F5F9',
+                    color: '#64748B',
+                    padding: '2px 8px',
+                    borderRadius: '10px',
+                    fontSize: '11px',
+                    fontWeight: 700
+                  }}>
+                    0
+                  </span>
+                )}
+              </button>
+            )}
 
             {!isViewAdmin && (
               <button
@@ -1820,7 +1874,7 @@ const InstructorManagement = () => {
                             onClick={(e) => e.stopPropagation()}
                           >
                             {/* Pending Coach Approval Actions in Dropdown */}
-                            {isPendingCoach && (
+                            {isPendingCoach && !isViewAdmin && (
                               <>
                                 <button
                                   type="button"
@@ -2140,43 +2194,45 @@ const InstructorManagement = () => {
                           </button>
 
 
-                          <button
-                            type="button"
-                            className="im-card-invite-btn"
-                            title="Generate & copy invite link for coach"
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '6px',
-                              background: copiedInviteId === instructor.id ? 'rgba(16, 185, 129, 0.12)' : 'rgba(13, 148, 136, 0.1)',
-                              color: copiedInviteId === instructor.id ? '#10B981' : '#0D9488',
-                              border: `1px solid ${copiedInviteId === instructor.id ? 'rgba(16, 185, 129, 0.3)' : 'rgba(13, 148, 136, 0.3)'}`,
-                              padding: '8px 12px',
-                              borderRadius: '10px',
-                              fontSize: '12px',
-                              fontWeight: '700',
-                              cursor: 'pointer',
-                              fontFamily: "'Outfit', sans-serif",
-                              transition: 'all 0.2s ease',
-                              flexShrink: 0
-                            }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleGenerateCoachInvite(instructor);
-                            }}
-                          >
-                            {copiedInviteId === instructor.id ? (
-                              <>
-                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                                <span>Copied!</span>
-                              </>
-                            ) : (
-                              <>
-                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
-                                <span>Invite</span>
-                              </>
-                            )}
-                          </button>
+                          {!isViewAdmin && (
+                            <button
+                              type="button"
+                              className="im-card-invite-btn"
+                              title="Generate & copy invite link for coach"
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                background: copiedInviteId === instructor.id ? 'rgba(16, 185, 129, 0.12)' : 'rgba(13, 148, 136, 0.1)',
+                                color: copiedInviteId === instructor.id ? '#10B981' : '#0D9488',
+                                border: `1px solid ${copiedInviteId === instructor.id ? 'rgba(16, 185, 129, 0.3)' : 'rgba(13, 148, 136, 0.3)'}`,
+                                padding: '8px 12px',
+                                borderRadius: '10px',
+                                fontSize: '12px',
+                                fontWeight: '700',
+                                cursor: 'pointer',
+                                fontFamily: "'Outfit', sans-serif",
+                                transition: 'all 0.2s ease',
+                                flexShrink: 0
+                              }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleGenerateCoachInvite(instructor);
+                              }}
+                            >
+                              {copiedInviteId === instructor.id ? (
+                                <>
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#10B981" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                                  <span>Copied!</span>
+                                </>
+                              ) : (
+                                <>
+                                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+                                  <span>Invite</span>
+                                </>
+                              )}
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -3429,7 +3485,7 @@ const InstructorManagement = () => {
         )}
 
         {/* ── COACH / INSTRUCTOR JOIN REQUESTS MODAL ── */}
-        {showCoachJoinRequestsModal && (
+        {showCoachJoinRequestsModal && !isViewAdmin && (
           <div
             className="im-modal-overlay"
             onClick={() => setShowCoachJoinRequestsModal(false)}
@@ -4189,7 +4245,7 @@ const InstructorManagement = () => {
         )}
 
         {/* CHANGE APPROVAL MODAL (Clean 1-Click Approve / Reject, No Remarks) */}
-        {changeApprovalLeave && (
+        {changeApprovalLeave && !isViewAdmin && (
           <div
             className="im-modal-overlay"
             onClick={() => setChangeApprovalLeave(null)}

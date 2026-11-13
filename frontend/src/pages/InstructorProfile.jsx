@@ -41,7 +41,18 @@ const InstructorProfile = () => {
 
   // Auth states
   const [currentUser, setCurrentUser] = useState(null);
-  const [schoolsList, setSchoolsList] = useState([]);
+  const DEFAULT_SURF_SCHOOLS = [
+    'rpn tech ac',
+    'Aquatic Indica Surf School - Mulki',
+    'Aquatic Indica Surf School - Dapoli',
+    'Togai Surf Camp/School',
+    'athnexlive',
+    'rpn surf school',
+    'samsurf',
+    'Bala Surf training center',
+    'Arun Surf training center'
+  ];
+  const [schoolsList, setSchoolsList] = useState(DEFAULT_SURF_SCHOOLS);
   const [schoolsData, setSchoolsData] = useState([]);
 
   const getSchoolLocation = (schoolName) => {
@@ -427,22 +438,64 @@ const InstructorProfile = () => {
     const coachSchool = (currentCoach?.school || '').trim();
     const isFreelance = coachSchool.toLowerCase() === 'individual / freelance coach';
 
-    // If coachObj has assigned_students directly from backend API
-    if (Array.isArray(coachObj?.assigned_students) && coachObj.assigned_students.length > 0) {
+    // 1. Initial immediate population from backend API's coachObj.assigned_students
+    const initialAssigned = Array.isArray(coachObj?.assigned_students) ? coachObj.assigned_students : [];
+    if (initialAssigned.length > 0) {
       if (isFreelance) {
-        setAssignedStudents(coachObj.assigned_students.filter(s => (s.school || '').toLowerCase().trim() === 'individual / freelance coach'));
+        setAssignedStudents(initialAssigned.filter(s => (s.school || '').toLowerCase().trim() === 'individual / freelance coach'));
       } else if (coachSchool) {
-        setAssignedStudents(coachObj.assigned_students.filter(s => (s.school || '').toLowerCase().trim() === coachSchool.toLowerCase()));
+        setAssignedStudents(initialAssigned.filter(s => (s.school || '').toLowerCase().trim() === coachSchool.toLowerCase()));
       } else {
-        setAssignedStudents(coachObj.assigned_students);
+        setAssignedStudents(initialAssigned);
       }
     }
 
+    const targetSchool = isFreelance
+      ? 'individual / freelance coach'
+      : (coachSchool || activeSchoolName || 'all');
+    const studentsUrl = `${API}/api/students?school=${encodeURIComponent(targetSchool || 'all')}`;
+    const sessionsUrl = targetSchool && targetSchool.toLowerCase() !== 'all'
+      ? `${API}/api/sessions?school=${encodeURIComponent(targetSchool)}`
+      : `${API}/api/sessions`;
+
     Promise.all([
-      fetch(`${API}/api/students`).then(r => r.json()).catch(() => []),
-      fetch(`${API}/api/sessions`).then(r => r.json()).catch(() => [])
+      fetch(studentsUrl).then(r => r.json()).catch(() => []),
+      fetch(sessionsUrl).then(r => r.json()).catch(() => [])
     ]).then(([studentsData, sessionsData]) => {
-      const allStudents = Array.isArray(studentsData) ? studentsData : [];
+      const fetchedStudents = Array.isArray(studentsData) ? studentsData : [];
+      // Combine fetched students with initialAssigned so no student profile or level is lost
+      const studentMap = new Map();
+      initialAssigned.forEach(st => {
+        if (!st) return;
+        if (st.id) studentMap.set(String(st.id), st);
+        if (st.name) studentMap.set(st.name.toLowerCase().trim(), st);
+      });
+      fetchedStudents.forEach(st => {
+        if (!st) return;
+        if (st.id) studentMap.set(String(st.id), st);
+        if (st.name) studentMap.set(st.name.toLowerCase().trim(), st);
+      });
+
+      // Merge fetched students with initial assigned students so no students are dropped
+      const allStudentsList = [...fetchedStudents];
+      initialAssigned.forEach(st => {
+        if (st && !allStudentsList.some(item => (st.id && String(item.id) === String(st.id)) || (st.name && (item.name || '').toLowerCase().trim() === st.name.toLowerCase().trim()))) {
+          allStudentsList.push(st);
+        }
+      });
+      const allStudents = allStudentsList;
+
+      const findStudentProfile = (stId, stName) => {
+        const idStr = stId ? String(stId) : '';
+        const nameClean = (stName || '').toLowerCase().trim();
+        if (idStr && studentMap.has(idStr)) return studentMap.get(idStr);
+        if (nameClean && studentMap.has(nameClean)) return studentMap.get(nameClean);
+        return allStudents.find(student =>
+          (idStr && String(student.id) === idStr) ||
+          (nameClean && (student.name || '').trim().toLowerCase() === nameClean)
+        ) || null;
+      };
+
       const allSessions = Array.isArray(sessionsData) ? sessionsData : [];
 
       // 1. Sessions for this coach isolated by affiliation
@@ -456,18 +509,10 @@ const InstructorProfile = () => {
         }
         return true;
       }).map(s => {
-        let resolvedType = s.type || s.level;
-        if (!resolvedType || resolvedType.toLowerCase() === 'general') {
-          const st = allStudents.find(student => 
-            (s.student_id && String(student.id) === String(s.student_id)) ||
-            (s.student && (student.name || '').trim().toLowerCase() === (s.student || '').trim().toLowerCase())
-          );
-          if (st && st.level && st.level.toLowerCase() !== 'general') {
-            resolvedType = st.level;
-          } else {
-            resolvedType = 'Beginner';
-          }
-        }
+        const st = findStudentProfile(s.student_id, s.student || s.student_name);
+        const resolvedType = (st && st.level && st.level.toLowerCase() !== 'general')
+          ? st.level
+          : (s.student_level || (s.type && s.type.toLowerCase() !== 'general' ? s.type : '') || s.level || 'Beginner');
         return {
           ...s,
           type: resolvedType
@@ -477,7 +522,7 @@ const InstructorProfile = () => {
 
       // 2. Identify students associated with this coach isolated by affiliation
       const sessionStudentIds = new Set(coachSessions.map(sess => String(sess.student_id)).filter(Boolean));
-      const sessionStudentNames = new Set(coachSessions.filter(sess => !sess.student_id).map(sess => (sess.student || '').toLowerCase().trim()).filter(Boolean));
+      const sessionStudentNames = new Set(coachSessions.filter(sess => !sess.student_id).map(sess => (sess.student || sess.student_name || '').toLowerCase().trim()).filter(Boolean));
 
       const matchedStudents = [];
       const seenStudentIds = new Set();
@@ -508,22 +553,24 @@ const InstructorProfile = () => {
 
       // Also ensure any student appearing in coachSessions is included even if not directly linked
       coachSessions.forEach(sess => {
-        const sessName = sess.student || '';
+        const sessName = sess.student || sess.student_name || '';
         const sessIdStr = sess.student_id ? String(sess.student_id) : '';
         const sessNameLower = sessName.toLowerCase().trim();
 
         if (sessName && !seenStudentNames.has(sessNameLower) && (!sessIdStr || !seenStudentIds.has(sessIdStr))) {
-          // Always look up true student profile from allStudents to get their actual skill level
-          const realSt = allStudents.find(item => 
-            (sessIdStr && String(item.id) === sessIdStr) ||
-            ((item.name || '').toLowerCase().trim() === sessNameLower)
-          );
+          // Always look up true student profile from studentMap / allStudents to get their actual skill level
+          const realSt = findStudentProfile(sessIdStr, sessName);
+          const realLvl = (realSt && realSt.level && realSt.level.toLowerCase() !== 'general')
+            ? realSt.level
+            : (sess.student_level || 'Beginner');
+
           matchedStudents.push({
             id: sess.student_id || realSt?.id || `sess_${sess.id}`,
             name: realSt?.name || sessName,
-            level: realSt?.level || sess.student_level || 'Beginner',
+            level: realLvl,
             last_active: sess.date || 'Today',
-            image: realSt?.image || sess.image_url || ''
+            image: realSt?.image || sess.image_url || '',
+            school: realSt?.school || sess.school || ''
           });
           if (sessIdStr) seenStudentIds.add(sessIdStr);
           seenStudentNames.add(sessNameLower);
@@ -535,16 +582,16 @@ const InstructorProfile = () => {
         const sIdStr = st.id ? String(st.id) : '';
         const sNameLower = (st.name || '').toLowerCase().trim();
 
-        // Always resolve accurate student skill level from their real profile
-        const profileSt = allStudents.find(item =>
-          (sIdStr && String(item.id) === sIdStr) ||
-          ((item.name || '').toLowerCase().trim() === sNameLower)
-        );
-        const resolvedLevel = profileSt?.level || st.level || 'Beginner';
+        // Always resolve accurate student skill level from real profile or fallback to st.level
+        const profileSt = findStudentProfile(st.id, st.name);
+        const resolvedLevel = (profileSt && profileSt.level && profileSt.level.toLowerCase() !== 'general')
+          ? profileSt.level
+          : (st.level && st.level.toLowerCase() !== 'general' ? st.level : 'Beginner');
 
         const stSessions = coachSessions.filter(sess => {
           const matchId = sess.student_id && String(sess.student_id) === sIdStr;
           const matchName = (sess.student && sess.student.toLowerCase().trim() === sNameLower) ||
+                            (sess.student_name && sess.student_name.toLowerCase().trim() === sNameLower) ||
                             (sess.guest_name && sess.guest_name.toLowerCase().trim() === sNameLower);
           return matchId || matchName;
         });
@@ -1677,7 +1724,50 @@ const InstructorProfile = () => {
                             <div className="ip-student-time">{s.last_active || 'Today'}</div>
                           </div>
                         </div>
-                        <span className={`ip-level-badge level-${(s.level || 'Beginner').toLowerCase()}`}>{s.level || 'Beginner'}</span>
+                        {(() => {
+                          const normLvl = (() => {
+                            const str = String(s.level || '').trim().toLowerCase();
+                            if ((str.includes('adv') && str.includes('beg')) || str.includes('yellow')) return 'Advance Beginner';
+                            if ((str.includes('adv') && str.includes('int')) || str.includes('blue')) return 'Advance Intermediate';
+                            if (str.includes('pro') || str.includes('master') || str.includes('elite') || str.includes('red')) return 'Pro';
+                            if (str.includes('int') || str.includes('green')) return 'Intermediate';
+                            if (str.startsWith('adv') || str === 'advance' || str === 'advanced') return 'Advance Intermediate';
+                            return 'Beginner';
+                          })();
+
+                          const lvlStyles = {
+                            'Beginner': { bg: '#F8FAFC', color: '#475569', border: '#CBD5E1', icon: '⚪' },
+                            'Advance Beginner': { bg: '#FEF3C7', color: '#B45309', border: '#F59E0B', icon: '🟡' },
+                            'Intermediate': { bg: '#D1FAE5', color: '#047857', border: '#10B981', icon: '🟢' },
+                            'Advance Intermediate': { bg: '#DBEAFE', color: '#1D4ED8', border: '#3B82F6', icon: '🔵' },
+                            'Pro': { bg: '#FFE4E6', color: '#BE123C', border: '#F43F5E', icon: '🔴' }
+                          };
+                          const st = lvlStyles[normLvl] || lvlStyles['Beginner'];
+
+                          return (
+                            <span 
+                              className={`ip-level-badge level-${normLvl.toLowerCase().replace(/\s+/g, '-')}`}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                fontSize: '11px',
+                                fontWeight: 800,
+                                background: st.bg,
+                                color: st.color,
+                                border: `1.5px solid ${st.border}`,
+                                padding: '3px 8px',
+                                borderRadius: '6px',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.4px',
+                                flexShrink: 0
+                              }}
+                            >
+                              <span>{st.icon}</span>
+                              <span>{normLvl}</span>
+                            </span>
+                          );
+                        })()}
                       </div>
                     ));
                   })()}
@@ -1716,9 +1806,57 @@ const InstructorProfile = () => {
                           <div className="ip-activity-title">Session with {session.student}</div>
                           <div className="ip-activity-sub">{session.location} • {session.date} at {session.time}</div>
                         </div>
-                        <span className="ip-badge-primary">
-                          {session.type && session.type.toLowerCase() !== 'general' ? session.type : 'Beginner'}
-                        </span>
+                        {(() => {
+                          const normLvl = (() => {
+                            const sCleanName = (session.student || session.student_name || '').toLowerCase().trim();
+                            const sId = session.student_id ? String(session.student_id) : '';
+                            const matchedStudent = (assignedStudents || []).find(item =>
+                              (sId && String(item.id) === sId) ||
+                              ((item.name || '').toLowerCase().trim() === sCleanName)
+                            );
+                            const rawLvl = (matchedStudent && matchedStudent.level && matchedStudent.level.toLowerCase() !== 'general')
+                              ? matchedStudent.level
+                              : (session.type && session.type.toLowerCase() !== 'general' ? session.type : (session.student_level || 'Beginner'));
+
+                            const str = String(rawLvl || '').trim().toLowerCase();
+                            if ((str.includes('adv') && str.includes('beg')) || str.includes('yellow')) return 'Advance Beginner';
+                            if ((str.includes('adv') && str.includes('int')) || str.includes('blue')) return 'Advance Intermediate';
+                            if (str.includes('pro') || str.includes('master') || str.includes('elite') || str.includes('red')) return 'Pro';
+                            if (str.includes('int') || str.includes('green')) return 'Intermediate';
+                            if (str.startsWith('adv') || str === 'advance' || str === 'advanced') return 'Advance Intermediate';
+                            return 'Beginner';
+                          })();
+                          const lvlStyles = {
+                            'Beginner': { bg: '#F8FAFC', color: '#475569', border: '#CBD5E1' },
+                            'Advance Beginner': { bg: '#FEF3C7', color: '#B45309', border: '#F59E0B' },
+                            'Intermediate': { bg: '#D1FAE5', color: '#047857', border: '#10B981' },
+                            'Advance Intermediate': { bg: '#DBEAFE', color: '#1D4ED8', border: '#3B82F6' },
+                            'Pro': { bg: '#FFE4E6', color: '#BE123C', border: '#F43F5E' }
+                          };
+                          const st = lvlStyles[normLvl] || lvlStyles['Beginner'];
+                          return (
+                            <span 
+                              className={`ip-level-badge level-${normLvl.toLowerCase().replace(/\s+/g, '-')}`}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                fontSize: '11px',
+                                fontWeight: 800,
+                                background: st.bg,
+                                color: st.color,
+                                border: `1.5px solid ${st.border}`,
+                                padding: '3px 8px',
+                                borderRadius: '6px',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.4px',
+                                flexShrink: 0
+                              }}
+                            >
+                              <span>{normLvl}</span>
+                            </span>
+                          );
+                        })()}
                       </div>
                     ))
                   ) : (
@@ -1942,7 +2080,13 @@ const InstructorProfile = () => {
                       required
                     >
                       <option value="Individual / Freelance Coach">👤 Individual / Freelance Coach (Independent)</option>
-                      {schoolsList.filter(s => s !== 'Individual / Freelance Coach').map(s => (
+                      {Array.from(new Set([
+                        ...schoolsList,
+                        instructor?.school,
+                        editForm.school,
+                        currentUser?.school,
+                        'rpn tech ac'
+                      ])).filter(Boolean).filter(s => s !== 'Individual / Freelance Coach').map(s => (
                         <option key={s} value={s}>🏫 {s}</option>
                       ))}
                     </select>
@@ -2699,10 +2843,12 @@ const InstructorProfile = () => {
         .ip-student-name { font-size: 13px; font-weight: 700; color: #0F172A; }
         .ip-student-time { font-size: 12px; color: #64748B; margin-top: 2px; }
         
-        .ip-level-badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 700; text-transform: uppercase; }
-        .level-beginner { background: rgba(245, 158, 11, 0.12); color: #F59E0B; }
-        .level-intermediate { background: rgba(13, 148, 136, 0.12); color: #0D9488; }
-        .level-advanced { background: rgba(124, 58, 237, 0.12); color: #7C3AED; }
+        .ip-level-badge { padding: 3px 8px; border-radius: 6px; font-size: 11px; font-weight: 800; text-transform: uppercase; }
+        .level-beginner { background: #F8FAFC; color: #475569; border: 1.5px solid #CBD5E1; }
+        .level-advance-beginner, .level-advanced-beginner { background: #FEF3C7; color: #B45309; border: 1.5px solid #F59E0B; }
+        .level-intermediate { background: #D1FAE5; color: #047857; border: 1.5px solid #10B981; }
+        .level-advance-intermediate, .level-advanced-intermediate { background: #DBEAFE; color: #1D4ED8; border: 1.5px solid #3B82F6; }
+        .level-pro, .level-advanced, .level-master { background: #FFE4E6; color: #BE123C; border: 1.5px solid #F43F5E; }
 
         /* Activity */
         .ip-activity-list { display: flex; flex-direction: column; gap: 12px; }

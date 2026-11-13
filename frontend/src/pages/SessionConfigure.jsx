@@ -82,6 +82,22 @@ export const getNextAvailableSlotTime = (currentSlots) => {
 };
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+export const ALL_MONTHS = [
+  { code: 'Jan', num: 1, name: 'January', season: 'Peak Surf' },
+  { code: 'Feb', num: 2, name: 'February', season: 'Peak Surf' },
+  { code: 'Mar', num: 3, name: 'March', season: 'Spring Swell' },
+  { code: 'Apr', num: 4, name: 'April', season: 'Warm Water' },
+  { code: 'May', num: 5, name: 'May', season: 'Pre-Monsoon' },
+  { code: 'Jun', num: 6, name: 'June', season: 'Monsoon Break' },
+  { code: 'Jul', num: 7, name: 'July', season: 'Monsoon Break' },
+  { code: 'Aug', num: 8, name: 'August', season: 'Monsoon Break' },
+  { code: 'Sep', num: 9, name: 'September', season: 'Transition' },
+  { code: 'Oct', num: 10, name: 'October', season: 'Surf Season' },
+  { code: 'Nov', num: 11, name: 'November', season: 'Prime Swell' },
+  { code: 'Dec', num: 12, name: 'December', season: 'Prime Swell' }
+];
+
 const defaultSlots = [
   { id: 1, time: "06:30 AM", duration: "120", maxStudents: 5, days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], active: true },
   { id: 2, time: "09:30 AM", duration: "120", maxStudents: 5, days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], active: true },
@@ -96,7 +112,13 @@ const SessionConfigure = () => {
   const fromSource = searchParams.get('from');
 
   const [slots, setSlots] = useState(defaultSlots);
-  const [settings, setSettings] = useState({ defaultDuration: "90", maxStudents: "4", breakBetween: "30", cancellationWindow: "24" });
+  const [settings, setSettings] = useState({
+    defaultDuration: "90",
+    maxStudents: "4",
+    breakBetween: "30",
+    cancellationWindow: "24",
+    activeMonths: ALL_MONTHS.map(m => m.code)
+  });
   const [saving, setSaving] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
 
@@ -168,15 +190,36 @@ const SessionConfigure = () => {
       fetch(`${API}/api/session-slots?${queryParams.toString()}`)
         .then(res => res.json())
         .then(data => {
+          let loadedActiveMonths = null;
+          try {
+            const savedLocal = localStorage.getItem(`athnex_active_months_${schoolId || schoolName || 'default'}`) || localStorage.getItem('athnex_active_months');
+            if (savedLocal) {
+              const parsed = JSON.parse(savedLocal);
+              if (Array.isArray(parsed) && parsed.length > 0) loadedActiveMonths = parsed;
+            }
+          } catch (e) {}
+
           if (data && data.status === 'success' && Array.isArray(data.slots) && data.slots.length > 0) {
             setSlots(data.slots);
             if (data.settings && typeof data.settings === 'object' && Object.keys(data.settings).length > 0) {
-              setSettings(prev => ({ ...prev, ...data.settings }));
+              const serverMonths = Array.isArray(data.settings.activeMonths) && data.settings.activeMonths.length > 0
+                ? data.settings.activeMonths
+                : (loadedActiveMonths || ALL_MONTHS.map(m => m.code));
+              setSettings(prev => ({
+                ...prev,
+                ...data.settings,
+                activeMonths: serverMonths
+              }));
+            } else if (loadedActiveMonths) {
+              setSettings(prev => ({ ...prev, activeMonths: loadedActiveMonths }));
             }
           } else {
             // If this school has no custom configuration yet, use standard default slots!
             // NEVER display another school's slots!
             setSlots(defaultSlots);
+            if (loadedActiveMonths) {
+              setSettings(prev => ({ ...prev, activeMonths: loadedActiveMonths }));
+            }
           }
         })
         .catch(err => {
@@ -263,11 +306,64 @@ const SessionConfigure = () => {
     });
   };
 
+  const toggleMonth = (monthCode) => {
+    setSettings(prev => {
+      const current = Array.isArray(prev.activeMonths) && prev.activeMonths.length > 0
+        ? prev.activeMonths
+        : ALL_MONTHS.map(m => m.code);
+      const isCurrentlyActive = current.includes(monthCode);
+      // Ensure at least 1 month stays active
+      if (isCurrentlyActive && current.length <= 1) {
+        return prev;
+      }
+      const updatedMonths = isCurrentlyActive
+        ? current.filter(m => m !== monthCode)
+        : [...current, monthCode];
+
+      const newSettings = { ...prev, activeMonths: updatedMonths };
+      syncToStorageAndDrafts(slots, newSettings);
+      try {
+        const { schoolId, schoolName } = getActiveSchoolInfo();
+        const key = `athnex_active_months_${schoolId || schoolName || 'default'}`;
+        localStorage.setItem(key, JSON.stringify(updatedMonths));
+        localStorage.setItem('athnex_active_months', JSON.stringify(updatedMonths));
+        window.dispatchEvent(new CustomEvent('active_months_updated', { detail: updatedMonths }));
+      } catch (e) {}
+      return newSettings;
+    });
+  };
+
+  const applyMonthPreset = (presetMonths) => {
+    setSettings(prev => {
+      const updatedMonths = Array.isArray(presetMonths) && presetMonths.length > 0
+        ? presetMonths
+        : ALL_MONTHS.map(m => m.code);
+      const newSettings = { ...prev, activeMonths: updatedMonths };
+      syncToStorageAndDrafts(slots, newSettings);
+      try {
+        const { schoolId, schoolName } = getActiveSchoolInfo();
+        const key = `athnex_active_months_${schoolId || schoolName || 'default'}`;
+        localStorage.setItem(key, JSON.stringify(updatedMonths));
+        localStorage.setItem('athnex_active_months', JSON.stringify(updatedMonths));
+        window.dispatchEvent(new CustomEvent('active_months_updated', { detail: updatedMonths }));
+      } catch (e) {}
+      return newSettings;
+    });
+  };
+
   const inp = { border: "1.5px solid #E2E8F0", borderRadius: "8px", padding: "8px 12px", background: "#F8FAFC", outline: "none", boxSizing: "border-box", fontSize: "14px", fontWeight: 600, color: "#0F172A", width: "100%", fontFamily: "inherit" };
 
   const handleSaveConfiguration = () => {
     setSaving(true);
-    syncToStorageAndDrafts(slots);
+    syncToStorageAndDrafts(slots, settings);
+    try {
+      const { schoolId, schoolName } = getActiveSchoolInfo();
+      const currentMonths = settings.activeMonths || ALL_MONTHS.map(m => m.code);
+      const key = `athnex_active_months_${schoolId || schoolName || 'default'}`;
+      localStorage.setItem(key, JSON.stringify(currentMonths));
+      localStorage.setItem('athnex_active_months', JSON.stringify(currentMonths));
+      window.dispatchEvent(new CustomEvent('active_months_updated', { detail: currentMonths }));
+    } catch (e) {}
     setTimeout(() => {
       setSaving(false);
       setShowSuccessModal(true);
@@ -321,6 +417,111 @@ const SessionConfigure = () => {
                 Loading default slots...
               </span>
             )}
+          </div>
+
+          {/* Compact Active Operating Months Selector */}
+          <div style={{
+            background: "#FFFFFF",
+            borderRadius: "14px",
+            border: "1px solid #E2E8F0",
+            padding: "16px 20px",
+            boxShadow: "0 1px 3px rgba(0, 0, 0, 0.03)",
+            display: "flex",
+            flexDirection: "column",
+            gap: "12px"
+          }}>
+            {/* Header: Title, Active Count Badge, and Presets */}
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: "10px"
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                <span style={{ fontSize: "16px" }}>🗓️</span>
+                <span style={{ fontFamily: "'Outfit', sans-serif", fontSize: "15px", fontWeight: 800, color: "#0F172A" }}>
+                  Active Operating Months
+                </span>
+                <span style={{
+                  fontSize: "11px",
+                  fontWeight: 800,
+                  padding: "2px 8px",
+                  borderRadius: "12px",
+                  background: (settings.activeMonths?.length || 12) === 12 ? "#F0FDF4" : "#F0FDFA",
+                  color: (settings.activeMonths?.length || 12) === 12 ? "#15803D" : "#0D9488",
+                  border: (settings.activeMonths?.length || 12) === 12 ? "1px solid #BBF7D0" : "1px solid #99F6E4"
+                }}>
+                  {settings.activeMonths?.length || 12} / 12 Months Active
+                </span>
+                <span style={{ fontSize: "12px", color: "#64748B" }}>
+                  (Select the months your school is active & open for sessions)
+                </span>
+              </div>
+
+              {/* Quick Presets */}
+              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                <button
+                  type="button"
+                  onClick={() => applyMonthPreset(ALL_MONTHS.map(m => m.code))}
+                  style={{
+                    background: (settings.activeMonths?.length || 0) === 12 ? "#0D9488" : "#F8FAFC",
+                    color: (settings.activeMonths?.length || 0) === 12 ? "#FFFFFF" : "#475569",
+                    border: "1px solid #CBD5E1",
+                    borderRadius: "6px",
+                    padding: "4px 10px",
+                    fontSize: "11.5px",
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    transition: "all 0.15s"
+                  }}
+                  title="Operate all 12 months"
+                >
+                  All Year
+                </button>
+              </div>
+            </div>
+
+            {/* Compact 12-Month Button Pill Selector (matching Mon/Tue/Wed style) */}
+            <div style={{
+              display: "flex",
+              gap: "8px",
+              flexWrap: "wrap",
+              alignItems: "center"
+            }}>
+              {ALL_MONTHS.map(month => {
+                const active = (settings.activeMonths || []).includes(month.code);
+                return (
+                  <button
+                    key={month.code}
+                    type="button"
+                    onClick={() => toggleMonth(month.code)}
+                    title={`${month.name} (${month.season}) - Click to toggle Active / Off-Season`}
+                    style={{
+                      minWidth: "54px",
+                      height: "34px",
+                      padding: "0 10px",
+                      borderRadius: "8px",
+                      border: active ? "1.5px solid #0D9488" : "1.5px solid #E2E8F0",
+                      background: active ? "#0D9488" : "#F8FAFC",
+                      color: active ? "#FFFFFF" : "#64748B",
+                      fontSize: "12.5px",
+                      fontWeight: 800,
+                      cursor: "pointer",
+                      transition: "all 0.15s ease",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: "4px",
+                      boxShadow: active ? "0 2px 6px rgba(13, 148, 136, 0.25)" : "none"
+                    }}
+                  >
+                    {active && <span style={{ fontSize: "10px", fontWeight: 900 }}>✓</span>}
+                    <span>{month.code}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           <div className="sc-card-slots">
@@ -473,7 +674,7 @@ const SessionConfigure = () => {
           <div className="sc-sticky-bar">
             <div className="sc-sb-left">
               <span className="sc-sb-info">
-                ⏰ {slots.filter(s => s.active !== false).length} Active Slot{slots.filter(s => s.active !== false).length === 1 ? '' : 's'} &bull; 🎯 Total Capacity: {slots.filter(s => s.active !== false).reduce((sum, s) => sum + (parseInt(s.maxStudents, 10) || 4), 0)} Students
+                🗓️ {settings.activeMonths?.length || 12} Active Month{(settings.activeMonths?.length || 12) === 1 ? '' : 's'} &bull; ⏰ {slots.filter(s => s.active !== false).length} Active Slot{slots.filter(s => s.active !== false).length === 1 ? '' : 's'} &bull; 🎯 Total Capacity: {slots.filter(s => s.active !== false).reduce((sum, s) => sum + (parseInt(s.maxStudents, 10) || 4), 0)} Students
               </span>
             </div>
 

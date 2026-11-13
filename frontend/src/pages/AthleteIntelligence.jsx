@@ -507,12 +507,20 @@ const AthleteIntelligence = () => {
   }, [allAthletes, selectedAthleteKey]);
 
   const normalizeLevel = (lvl) => {
-    if (!lvl) return 'Beginner';
-    const l = String(lvl).toLowerCase().trim();
-    if (l.includes('adv') && l.includes('beg')) return 'Advance Beginner';
-    if (l.includes('adv') && l.includes('int')) return 'Advance Intermediate';
-    if (l.includes('int')) return 'Intermediate';
-    if (l.includes('pro') || l.includes('adv') || l.includes('master')) return 'Pro';
+    const s = String(lvl || '').trim().toLowerCase();
+    if (!s) return 'Beginner';
+    // 1. Advance Intermediate
+    if ((s.includes('adv') && s.includes('int')) || s.includes('blue')) return 'Advance Intermediate';
+    // 2. Advance Beginner
+    if ((s.includes('adv') && s.includes('beg')) || s.includes('yellow')) return 'Advance Beginner';
+    // 3. Pro / Master / Elite / Red
+    if (s.includes('pro') || s.includes('master') || s.includes('elite') || s.includes('red')) return 'Pro';
+    // 4. Intermediate / Green
+    if (s.includes('int') || s.includes('green')) return 'Intermediate';
+    // 5. Standalone Advance / Advanced
+    if (s === 'advance' || s === 'advanced' || s.startsWith('adv')) return 'Advance Intermediate';
+    // 6. Beginner / Novice / White
+    if (s.includes('beg') || s.includes('novice') || s.includes('white')) return 'Beginner';
     return 'Beginner';
   };
 

@@ -373,8 +373,50 @@ const SchoolDashboard = () => {
         const totalGuestsCount = studentsList.reduce((sum, s) => sum + parseStudentGuestCount(s), 0);
         const totalPeopleCount = studentsList.length + totalGuestsCount;
 
+        // Exclude pending coaches from active_instructors count
+        const pendingCoachSet = (() => {
+          const set = new Set();
+          try {
+            const reqs = JSON.parse(localStorage.getItem('school_join_requests') || '[]');
+            reqs.forEach(r => {
+              if ((r.role || '').toLowerCase() === 'coach' || (r.role || '').toLowerCase() === 'instructor') {
+                if (r.status !== 'approved' && r.status !== 'rejected') {
+                  if (r.email) set.add(r.email.toLowerCase().trim());
+                  if (r.student_email) set.add(r.student_email.toLowerCase().trim());
+                  if (r.name) set.add(r.name.toLowerCase().trim());
+                  if (r.student_name) set.add(r.student_name.toLowerCase().trim());
+                  if (r.id) set.add(String(r.id));
+                }
+              }
+            });
+            const savedAccs = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
+            savedAccs.forEach(u => {
+              if (((u.role || '').toLowerCase() === 'coach' || (u.role || '').toLowerCase() === 'instructor') && (u.approval_status || '').toLowerCase() === 'pending') {
+                if (u.email) set.add(u.email.toLowerCase().trim());
+                if (u.name) set.add(u.name.toLowerCase().trim());
+                if (u.id) set.add(String(u.id));
+              }
+            });
+          } catch (e) {}
+          return set;
+        })();
+
+        const activeInstructorsList = instructorsList.filter(i => {
+          if ((i.approval_status || '').toLowerCase() === 'pending') return false;
+          if (i.is_active === false && (i.approval_status || '').toLowerCase() !== 'rejected') return false;
+          const iEmail = (i.email || '').toLowerCase().trim();
+          const iName = (i.name || '').toLowerCase().trim();
+          const iId = String(i.id);
+          const iUserId = i.user_id ? String(i.user_id) : '';
+          if (iEmail && pendingCoachSet.has(iEmail)) return false;
+          if (iName && pendingCoachSet.has(iName)) return false;
+          if (iId && pendingCoachSet.has(iId)) return false;
+          if (iUserId && pendingCoachSet.has(iUserId)) return false;
+          return true;
+        });
+
         setStats({
-          active_instructors: instructorsList.length,
+          active_instructors: activeInstructorsList.length,
           active_students: studentsList.length,
           total_guests: totalGuestsCount,
           total_people: totalPeopleCount,

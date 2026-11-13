@@ -2649,6 +2649,38 @@ const AuthPage = () => {
                           </small>
                         </div>
 
+                        {/* Coach Date of Birth & Gender */}
+                        <div className="auth-fields-row" style={{ marginBottom: '12px' }}>
+                          <div className="auth-field">
+                            <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span>Date of Birth (DOB) <span style={{ color: '#FF4D6D', fontWeight: 700 }}>*</span></span>
+                              {formData.dob && (
+                                <span style={{ color: '#00F2FE', fontSize: '11px', fontWeight: 700 }}>
+                                  Age: {calculateAge(formData.dob)} yrs
+                                </span>
+                              )}
+                            </label>
+                            <input
+                              type="date"
+                              name="dob"
+                              value={formData.dob || ''}
+                              onChange={handleChange}
+                              max={new Date().toISOString().split('T')[0]}
+                              style={{ colorScheme: 'dark' }}
+                              required
+                            />
+                          </div>
+
+                          <div className="auth-field">
+                            <label>Gender <span style={{ color: '#FF4D6D', fontWeight: 700 }}>*</span></label>
+                            <select name="gender" value={formData.gender || 'Male'} onChange={handleChange} required>
+                              <option value="Male">Male</option>
+                              <option value="Female">Female</option>
+                              <option value="Other">Other</option>
+                            </select>
+                          </div>
+                        </div>
+
                         {/* Coach Phone Number */}
                         <div className="auth-field" style={{ marginBottom: '12px' }}>
                           <label>Phone / WhatsApp Number <span style={{ color: '#FF4D6D', fontWeight: 700 }}>*</span></label>

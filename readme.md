@@ -1,3 +1,61 @@
+### Changes on 13-11-2026
+
+#### 1. Coach Registration Date of Birth (DOB) & Age Calculation (`InstructorRegistration.jsx`)
+- **Problem**:
+  - In the coach registration form, there was no Date of Birth (DOB) input field. When coaches registered, their age was automatically defaulted to 30 years old (`age: 30`).
+- **Resolution**:
+  - Added a dedicated Date of Birth (DOB) field with datepicker to the Coach Registration form.
+  - Dynamically calculates the coach's accurate age from the selected DOB and persists both `dob` and accurate `age` in the profile database.
+
+#### 2. Join Request Isolation & Active Instructors Metric Scoping (`InstructorManagement.jsx`, `SchoolDashboard.jsx`, `Sessions.jsx`)
+- **Problem**:
+  - When an instructor registered with an affiliation to a school, their profile entered the `"Pending School Approval"` state (`registration_status: "Pending School Approval"`).
+  - However, they were immediately counted in the school's **Active Instructors** count (e.g., showing 12 coaches instead of approved coaches), appeared as active cards in the instructor roster, and were listed in session instructor dropdowns before the school approved them.
+- **Resolution**:
+  - **`SchoolDashboard.jsx`**: Filtered active instructor statistics so that coaches with pending join requests (`registration_status === 'Pending School Approval'`) are excluded from the Active Certified Coaches count until approved.
+  - **`InstructorManagement.jsx`**: Isolated pending coaches from the main active roster cards. They appear exclusively under the **Join Requests** tab with one-click **Approve** and **Decline** actions.
+  - **`Sessions.jsx`**: Excluded pending instructors from session creation and filter dropdowns until approved by the school administrator.
+
+#### 3. Coach Calendar Session Scoping (`Sessions.jsx`)
+- **Problem**:
+  - In the sessions calendar view, coaches were seeing groups and slots assigned to other instructors rather than only their assigned groups.
+- **Resolution**:
+  - Enforced strict coach assignment scoping so instructors only see groups and time slots where they are specifically assigned as a coach or co-coach.
+
+#### 4. Session Status Real-Time Transition (`Sessions.jsx`)
+- **Problem**:
+  - Sessions whose date and time had already elapsed (e.g., Nov 13, 2026 06:30 AM – 08:30 AM) still displayed a badge of `UPCOMING` in session details modals.
+- **Resolution**:
+  - Implemented real-time timestamp comparison (`session_date` + `end_time` vs current datetime) to ensure completed time slots accurately transition to `COMPLETED` across modals and listings.
+
+#### 5. Dynamic Student Skill Level Resolution in Students List & Recent Activity (`InstructorProfile.jsx`)
+- **Problem**:
+  - In Coach Profile (`InstructorProfile.jsx`), athletes (e.g., Leo Muller, Jack Hill, arunn, Harish Babu) were initially showing their true verified levels, but then reverting to `BEGINNER` badges in both the **Students** list and **Recent Session Activity**.
+- **Root Cause**:
+  - When group sessions were created, the backend `sessions` table stored `type: "Beginner"` by default from slot templates.
+  - `InstructorProfile.jsx` was checking `s.type` directly; since it had `"Beginner"`, it bypassed profile lookups and rendered `"Beginner"` for everyone.
+- **Resolution**:
+  - In `fetchDynamicData`, session mapping now prioritizes `findStudentProfile(s.student_id, s.student || s.student_name)` to resolve the athlete's true level (`st.level`).
+  - In **Recent Session Activity** JSX rendering, added dynamic lookup against `assignedStudents` (`matchedStudent = assignedStudents.find(...)`) so each card dynamically renders the student's true verified level badge (`PRO` 🔴, `ADVANCE BEGINNER` 🟡, `INTERMEDIATE` 🟢, `ADVANCE INTERMEDIATE` 🔵) with corresponding badge color styling.
+
+#### 6. Standardized "Advance Beginner" Level Badge & Athlete Selector Deduplication (`Sessions.jsx`)
+- **Problem**:
+  - In the session detail hub under **Athletes in this Session**, some athlete cards displayed `"Advance Beginner"` while others displayed `"Advanced Beginner"` because the component rendered raw un-normalized database string values (`{currentLvl}`).
+  - Furthermore, duplicate student records (such as duplicate draft/published bookings for the same athlete) caused duplicate cards to appear.
+- **Resolution**:
+  - Standardized badge display text across the interactive athlete selector chips to always use `bMeta.label` (`Advance Beginner`, `Advance Intermediate`), ensuring consistent "Advance" terminology everywhere.
+  - Added non-guest athlete deduplication by `student_id` and student name to ensure each distinct athlete is presented once in the selector chip grid.
+
+#### 7. Inactive Coach Retention in Roster & Affiliation Schools Dropdown Fix (`InstructorManagement.jsx`, `InstructorProfile.jsx`, `UserProfileMenu.jsx`)
+- **Problem**:
+  - When an instructor was toggled to Inactive in Instructor Management, they were completely stripped and disappeared from the school's coaches roster as if deleted (`return false` inside the active filter).
+  - In the Coach Profile edit modal, the **Affiliation / Surf School** select dropdown only displayed *"Individual / Freelance Coach (Independent)"* because the options list was initialized empty without fallbacks.
+- **Resolution**:
+  - Removed the premature filter elimination in `InstructorManagement.jsx` so inactive coaches remain safely listed in the school roster with their distinctive Inactive status badge. Coaches are now only removed when explicitly deleted via the Delete action.
+  - Initialized and merged comprehensive surf school options (`DEFAULT_SURF_SCHOOLS`) across `InstructorProfile.jsx` and `UserProfileMenu.jsx`, ensuring `rpn tech ac` and all registered academies are persistently visible and selectable for coach affiliation.
+
+---
+
 ### Changes on 10-11-2026
 
 #### Fix Main Student & Accompanying Guest Selection After "Clear All" in Step 3 (`NewSession.jsx`)
@@ -1026,7 +1084,7 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
       - **Visual Badge Icons on Chips**: Updated all athlete selector chips to display their badge icon dot (`⚪`, `🟡`, `🟢`, `🔵`, `🔴`) next to their level name, updating live as changes are made.
       - **Upgrade & Downgrade Controls**:
         - Added dedicated **`▲ Upgrade Level`** and **`▼ Downgrade`** buttons with boundary checks (disabled at Rank 1 Beginner or Rank 5 Pro).
-        - Added 5 interactive level selector cards (⚪ Beginner, 🟡 Advance Beginner, 🟢 Intermediate, 🔵 Advance Intermediate, 🔴 Pro) with active glow, rank pill (`Lvl X`, `✓ Earned`, `Current`), and 1-click level switching.
+        - Added 5 interactive level selector cards ( Beginner,  Advance Beginner,  Intermediate, 🔵 Advance Intermediate, 🔴 Pro) with active glow, rank pill (`Lvl X`, `✓ Earned`, `Current`), and 1-click level switching.
       - **Immediate Analytics & Database Reflection**:
         - Updated `backend/main.py` (`PUT /api/sessions/{session_id}` and `PUT /api/students/{student_id}`) so that when a coach saves, the updated level is persisted to both the session and student record, and automatically synchronizes the `badges` table (deletes old and inserts earned badges up to current rank).
         - Updated `Analytics.jsx` to prioritize the updated level rank, ensuring the top badge cards (WHITE, YELLOW, GREEN, BLUE, RED), the Retention Funnel, and active student list table reflect the upgraded or downgraded level immediately upon saving.
@@ -2197,3 +2255,326 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
   - In [MyAchievements.jsx](file:///d:/surfing/ai/frontend/src/pages/MyAchievements.jsx#L1162-L1178), updated label to `<span>Share Achievement with Friends</span>`.
   - Replaced low-contrast pale mint background (`#F0FDF4`) with an eye-catching ocean gradient (`linear-gradient(135deg, #0D9488 0%, #0284C7 100%)`), bold white typography (`#FFFFFF`, `font-weight: 800`), sleek pill border radius (`9999px`), and depth shadow (`box-shadow: 0 4px 14px rgba(13, 148, 136, 0.35)`).
   - **Verification**: Production build (`npm --prefix frontend run build`) compiled successfully with 0 errors in 2.60s.
+
+#### 5. Session Milestone Card Redesign: 4 Prominent Metric Box Cards & Footer Meta Strip (`MyAchievements.jsx`)
+- **Requirement**:
+  - Restructure session share preview card: move `Date & Time` and `Surf Spot` to the lower section, and display the primary metrics (Waves Caught, Training Time, Technique Score, Coach) in large, prominent metric boxes.
+- **Resolution**:
+  - In [MyAchievements.jsx](file:///d:/surfing/ai/frontend/src/pages/MyAchievements.jsx):
+    - Replaced the vertical list inside the single session share card with a 2x2 grid of prominent frosted glass metric boxes (`ach-card-metrics-grid` with `ach-card-metric-cell`):
+      1. `🌊 Waves Caught` (`{getSessionWaves} Waves`)
+      2. `⏱️ Training Duration` (`{getSessionDuration}`)
+      3. `⭐ Technique Rating` (`{score}/100`)
+      4. `🏄 Coach / Instructor` (`{instructor}`)
+    - Placed `📅 Date & Time` and `📍 Surf Spot` in a sleek meta details strip directly beneath the 4 metric boxes.
+    - Added `max-height: 94vh; overflow-y: auto;` to `.ach-modal-box` for seamless responsiveness on all device screen sizes.
+  - **Verification**: Clean Vite production build (`npm --prefix frontend run build`) compiled successfully with 0 errors in 1.75s.
+
+#### 6. "Our Services" Modal & Custom Milestone Poster Photo Setup (`UserProfileMenu.jsx`, `MyAchievements.jsx`, `backend/main.py`)
+- **Requirement**:
+  - Add an `"Our Services"` item in the user profile menu dropdown for School Admins.
+  - Inside that modal, allow the admin to manually upload or select a custom surf photo for the official Milestone Story Poster background.
+  - Remove unwanted course list packages and keep the modal focused strictly on the Milestone Poster Photo customizer.
+  - When students or coaches download or share the story poster in My Achievements, the custom photo is used as the canvas background with all milestone metrics and student details branded on top.
+- **Resolution**:
+  - **Backend (`main.py`)**:
+    - Added `poster_url VARCHAR(500)` column to `School` model with automatic SQLite/PostgreSQL safe migration checks.
+    - Created `GET /api/schools/poster` and `POST /api/schools/poster` endpoints for fetching and persisting the academy's custom poster photo.
+    - Included `poster_url` in `/api/schools` response.
+  - **Profile Menu & Poster Modal (`UserProfileMenu.jsx`)**:
+    - Added dedicated `"Our Services"` menu button with `Poster Photo` badge right below `Edit Profile`.
+    - Created modal focused exclusively on the Milestone Story Poster photo: live Story Card Preview, device file upload button (`POST /api/upload-image`), 5 HD curated surf action presets, and quick Save. Removed the package programs list.
+  - **Milestone Poster Integration (`MyAchievements.jsx`)**:
+    - Subscribed `MyAchievements` to school's custom `poster_url` with dynamic caching and real-time cross-tab storage sync.
+    - Dynamically applied the custom poster photo to both the live card preview and the exported high-resolution canvas poster so all student details overlay directly on the custom photo.
+  - **Verification**: Production bundle compiled cleanly (`npm --prefix frontend run build`) with 0 errors in 1.73s.
+
+#### 7. Active Operating Months (Season Schedule) Configuration (`SessionConfigure.jsx`, `Sessions.jsx`)
+- **Requirement**:
+  - In `Session Configuration` (`SessionConfigure.jsx`), add an **"Active Operating Months"** configuration section where surf schools can set which months of the year they operate (e.g. October to May for core surf season, or Jan to Dec year-round).
+  - The school should be active only in those selected months.
+  - Reflect off-season / inactive months in the Sessions calendar and scheduling workflows.
+- **Resolution**:
+  - **Interactive Compact 12-Month Season Selector (`SessionConfigure.jsx`)**:
+    - Replaced the bulky multi-line card layout with a sleek, compact, single-strip month pill selector (matching the `AVAILABLE DAYS` button style in the time slots table).
+    - 12 compact clickable month pills (`JAN` through `DEC`):
+      - Selected/Active: Solid teal `#0D9488` with white text and `✓` checkmark.
+      - Unselected/Off-Season: Light slate `#F8FAFC` with `#64748B` text.
+      - 1-click toggle to add/remove months with instant state and storage sync.
+    - Inline header with `🗓️ Active Operating Months`, live badge `{activeMonths} / 12 Months Active`, and quick preset buttons (`All Year`, `Oct – May`, `Nov – Mar`).
+    - Sticky bottom bar shows active months count alongside active slots and total student capacity: `🗓️ X Active Months • ⏰ Y Active Slots • 🎯 Total Capacity: Z Students`.
+  - **Off-Season Indicators in Sessions Calendar (`Sessions.jsx`)**:
+    - Loaded `activeOperatingMonths` from API settings and local storage.
+    - Added off-season notification banner when viewing an inactive month in the Interactive Calendar: `🏖️ Off-Season Notice: [School Name] is configured as off-season / closed during [Month Name]. Active Operating Months: [Oct, Nov, Dec, Jan, ...].`
+    - Added seasonal badge (`✓ Active Season` vs `🏖️ Off-Season`) to the calendar month title.
+    - Individual calendar day cells display an `Off-Season` tag for days falling in an off-season month.
+  - **Verification**: Built production bundle with `npm --prefix frontend run build` — 0 errors in 2.83s.
+
+#### 8. Privacy & Role Isolation Fixes for Sessions Calendar & Day Roster Modal (`Sessions.jsx`)
+- **Requirement**:
+  - **Issue 1**: In the student view, clicking calendar dates was opening the full coach/admin attendance & roster drawer (`selectedDayDetailsModal`) displaying all enrolled students of other groups, attendance markings ("Mark All Present", "Call", "Present", "Absent"), and contact numbers. Students should never see other students' attendance rosters or coach management tools.
+  - **Issue 2**: Coaches who were not assigned to a session (or sessions assigned to different coaches) were leaking across the calendar and the Day Roster modal for all coaches in the academy.
+- **Resolution**:
+  - **Role-Gated Day Details Modal**:
+    - Restricted `selectedDayDetailsModal` strictly to non-students (`!isStudent`). Students will never trigger or see the attendance modal.
+    - When a student clicks on a date in the calendar, it now directly resolves and opens their own personal session report card (`setSelectedHubSession(mySession)`).
+    - Switched `targetDaySessions` in `selectedDayDetailsModal` from the raw global `sessions` array to `roleScopedSessions`, ensuring that even when a coach opens the modal, they ONLY see groups and students assigned specifically to them.
+  - **Strict Coach Session Scoping (`roleScopedSessions`)**:
+    - Expanded coach identification beyond raw `currentUser.id` to match against both Instructor primary key (`instructors.id`) and linked user ID (`instructors.user_id`), plus verified instructor names.
+    - Coaches now strictly view ONLY the sessions they are assigned to. For unassigned coaches, `roleScopedSessions` cleanly resolves to an empty roster (`[]`), preventing cross-coach session leaks in both the monthly calendar grid and date roster drawer.
+  - **Verification**: Built production bundle cleanly (`npm --prefix frontend run build`) with 0 errors in 1.76s.
+
+#### 9. Removed 1-to-10 Scoring Buttons from Session Evaluation Feedback Cards (`Sessions.jsx`)
+- **Requirement**:
+  - In the Session Detail & Evaluation modal (`Sessions.jsx`), remove the 1-to-10 scoring buttons and rating score badges (`Score (1 to 10):`, buttons `1` to `10`, `Rate 1 to 10`) from both **"What You did Well"** and **"What to Improve"** cards.
+  - Keep the text observation input areas so coaches can freely enter qualitative coaching notes and tips.
+  - Remove score pills from the student report card view and prevent formatting `[X out of 10]` into saved coach notes.
+- **Resolution**:
+  - **Coach Evaluation Mode (`Sessions.jsx`)**:
+    - Removed `Rate 1 to 10` / `★ Score:` headers and the 1-to-10 score button grids (`[1, 2, ..., 10]`) from Card 2 (*"What You did Well"*) and Card 3 (*"What to Improve"*).
+    - Preserved the clean text input boxes (`e.g. Good Take off (Pop Up), clean bottom turn...` and `e.g. Paddling Strength, head position, wave anticipation...`).
+  - **Coach Note Formatting (`formatCoachNotes`)**:
+    - Updated `formatCoachNotes` so it no longer appends `[wellScore out of 10]` or `[impScore out of 10]` to the saved notes payload.
+  - **Student View Report Card**:
+    - Removed score badges (`★ Score: {hubWhatDidWellScore} / 10` and `Score: {hubWhatToImproveScore} / 10`) from the student session report card view.
+  - **Verification**: Built production bundle with `npm --prefix frontend run build` — 0 errors in 2.05s.
+
+#### 10. Added 0–100 Technique Scoring & End-to-End Share Card Integration (`Sessions.jsx`, `MyAchievements.jsx`, `backend/main.py`)
+- **Requirement**:
+  - Coaches need to score athletes out of 100 in the Session Evaluation modal (`Sessions.jsx`).
+  - This 0–100 technique score must directly reflect in the student's Milestone Share card, HD canvas poster export, and social share text (WhatsApp/X/Facebook).
+- **Resolution**:
+  - **Coach Evaluation Modal (`Sessions.jsx`)**:
+    - Added dedicated **"Coach Technique Score"** card positioned directly above *Wave Count* (directly under *Surfing Level*).
+    - Provides a direct number input box `[ 85 ] / 100` (allowing any score from 0 to 100), step adjustment buttons (`−` and `+` by 5 points), and 1-click preset badges (`60`, `70`, `75`, `80`, `85`, `90`, `95`, `100`).
+    - Stored and formatted into session notes as `Coach Rating: {score}/100`.
+  - **Student View (`Sessions.jsx`)**:
+    - Displayed verified Coach Score (`{score} / 100`) directly beside Waves Caught in the student's personal session report card view.
+  - **Backend Parser (`backend/main.py`)**:
+    - Enhanced `session_to_dict` to automatically parse `wave_count` and `score` (0–100) from `notes`, populating `score`, `technique_score`, and `wave_count` in API responses.
+  - **Student Portal & Milestone Sharing (`MyAchievements.jsx`)**:
+    - Added `getSessionScore` and `getSessionWaves` with smart regex fallbacks for session notes.
+    - Milestone statistics (`stats.avgScore` and `stats.totalWaves`) dynamically compute from verified session scores.
+    - Single session share cards, WhatsApp / X / Facebook share text, and the downloadable HD Story Poster dynamically render the exact coach score (`⭐ {score} / 100`).
+  - **Verification**: Production build (`npm --prefix frontend run build`) compiled cleanly with 0 errors in 1.93s.
+
+#### 11. Unified Skill Level Normalization & Fixed Count Mismatch Between Students and New Session (`StudentsManagement.jsx`, `NewSession.jsx`, `Sessions.jsx`, `AthleteIntelligence.jsx`, `Analytics.jsx`)
+- **Problem**:
+  - In `StudentsManagement.jsx`, the Beginner card showed **8 Beginners** and Adv. Intermediate showed **3**, whereas in `NewSession.jsx` (Available Students Pool) it showed **7 Beginners** and **4 Adv. Intermediate** for the exact same active student cohort (21 total).
+- **Root Cause**:
+  1. `StudentsManagement.jsx` and `NewSession.jsx` had divergent `normalizeLevel` functions. In `StudentsManagement.jsx`, standalone `"Advance"` or abbreviated `"Adv. Intermediate"` strings failed strict `.includes('advance intermediate')` and `.includes('advanced')` checks, mistakenly falling all the way through to `'Beginner'`. In `NewSession.jsx`, `l === 'advance'` mapped to `'advance_intermediate'`.
+  2. In `StudentsManagement.jsx`, accompanying guests without an explicit `g.level` evaluated `normalizeLevel(g.level)` to `'Beginner'`, whereas in `NewSession.jsx`, accompanying guests inherited the primary student's level (`g.level || s.level`).
+- **Resolution**:
+  - **Standardized Unified `normalizeLevel`**:
+    - Created an authoritative, multi-tier normalizer implemented consistently across `StudentsManagement.jsx`, `NewSession.jsx`, `Sessions.jsx`, `AthleteIntelligence.jsx`, and `Analytics.jsx`:
+      - **Advance Intermediate**: `(s.includes('adv') && s.includes('int')) || s.includes('blue') || s === 'advance' || s === 'advanced' || s.startsWith('adv')`.
+      - **Advance Beginner**: `(s.includes('adv') && s.includes('beg')) || s.includes('yellow')`.
+      - **Pro**: `s.includes('pro') || s.includes('master') || s.includes('elite') || s.includes('red')`.
+      - **Intermediate**: `s.includes('int') || s.includes('green')`.
+      - **Beginner**: `s.includes('beg') || s.includes('novice') || s.includes('white')` (default fallback).
+  - **Guest Level Inheritance**:
+    - Updated guest level tallying in `StudentsManagement.jsx` to `normalizeLevel(g.level || s.level)`, guaranteeing that guests without explicit levels inherit the parent student's level identically to `NewSession.jsx`.
+  - **Result**:
+    - Student counts across all skill levels (Beginner: 7, Adv. Beginner: 4, Intermediate: 1, Adv. Intermediate: 4, Pro: 5; Total: 21) now match 100% identically between Students page, New Session available student pool, Session group builders, and Athlete Intelligence.
+  - **Verification**: Built production bundle with `npm --prefix frontend run build` — 0 errors in 2.19s.
+
+#### 12. Added Missing Highlight Styles for PRO Level Badges in Coach Profile (`InstructorProfile.jsx`)
+- **Problem**:
+  - In the Coach Profile page (`InstructorProfile.jsx`) under the *Active Today* / *Total Students* list, student level badges for `ADVANCED BEGINNER` (purple/yellow) and `INTERMEDIATE` (green) had highlight background pills, but `PRO` rendered as plain unhighlighted black text without styling.
+- **Root Cause**:
+  - In `InstructorProfile.jsx` CSS, only `.level-beginner`, `.level-intermediate`, and `.level-advanced` were defined. `.level-pro` was completely missing from the stylesheet.
+  - Furthermore, student level badges did not use the application's unified badge normalization, leaving raw lowercase string concatenations vulnerable to missing classes.
+- **Resolution**:
+  - **Comprehensive Badge Styling**:
+    - Added complete badge rendering matching Athnex design system:
+      - **🔴 Pro**: Soft red background (`#FFE4E6`), crimson text (`#BE123C`), and red border (`#F43F5E`).
+      - **🔵 Advance Intermediate**: Soft blue background (`#DBEAFE`), cobalt text (`#1D4ED8`), and blue border (`#3B82F6`).
+      - **🟢 Intermediate**: Soft green background (`#D1FAE5`), emerald text (`#047857`), and green border (`#10B981`).
+      - **🟡 Advance Beginner**: Soft amber background (`#FEF3C7`), bronze text (`#B45309`), and amber border (`#F59E0B`).
+      - **⚪ Beginner**: Soft slate background (`#F8FAFC`), dark slate text (`#475569`), and slate border (`#CBD5E1`).
+    - Added corresponding CSS classes (`.level-pro`, `.level-advance-intermediate`, `.level-advance-beginner`, etc.) to `InstructorProfile.jsx`.
+  - **Verification**: Built production bundle cleanly (`npm --prefix frontend run build`) with 0 errors in 1.61s.
+
+#### 13. View Admin Read-Only Lockdown in Session Hub & Evaluation Modal (`Sessions.jsx`)
+- **Problem & Requirement**:
+  - In `Sessions.jsx`, when a View Admin (`role === 'guest_admin'` and `guest_role === 'view_admin'`) opened a session's details and evaluation modal, they were able to edit feedback notes, adjust wave counts, change technique scores, downgrade/upgrade surfing levels, mutate the session status via the top dropdown (`Upcoming` / `Completed`), and click "Save Changes".
+  - The requirement was strict: View Admin should **ONLY VIEW** notes, feedback, and session evaluations. They must NOT be able to edit notes, alter scoring, change levels, mutate session status, or save changes.
+- **Root Cause**:
+  - The Session Hub modal only differentiated between `isStudent` (read-only student report card) and `!isStudent` (full interactive coaching/admin mode).
+  - Because `isViewAdmin` was not checked in the status dropdown, the notes tab conditional, and the modal footer, View Admin fell into the interactive coach editing mode by default.
+- **Resolution**:
+  - **Status Change Locked Down**:
+    - Replaced the interactive `<select>` dropdown with a static, read-only status pill (`<span className="ses-status-pill">`) when `isViewAdmin` is true (matching student view).
+    - Guarded `handleHubStatusChange` to reject any status mutations with a toast warning (`"Status changes are restricted for View Admin (Read-Only Mode)"`).
+  - **Read-Only Performance & Feedback Report View**:
+    - Expanded the notes tab conditional from `isStudent ? (...) : (...)` to `{isStudent || isViewAdmin ? (...) : (...)}`.
+    - View Admin now sees the clean, non-editable Performance & Feedback Report Card displaying:
+      - Certified Surfing Level Badge.
+      - Waves Caught metric box.
+      - Coach Technique Score (`⭐ {score} / 100`).
+      - "What You Did Well" (Read-only coach remarks).
+      - "What to Improve" (Read-only coaching advice).
+      - Dynamic Athlete selector for group sessions to easily inspect each student's feedback without editable inputs.
+    - Added an `"👁️ View-Only Mode"` badge pill in the Notes tab header.
+  - **Mutation Controls & Buttons Hidden / Disabled**:
+    - Hid the `"Save Changes"` button completely when `isViewAdmin` is true (`{!isStudent && !isViewAdmin && <button>Save Changes</button>}`).
+    - Guarded `handleSaveHubChanges`, `handleUpdateNotesField`, `handleSetStudentLevel`, `handleUpgradeStudentLevel`, and `handleDowngradeStudentLevel` to prevent any state changes when `isViewAdmin` is active.
+  - **Verification**: Built production bundle with `npm --prefix frontend run build` — 0 errors in 1.64s.
+
+#### 14. Filtered Edit Session Student Pool to Strictly Active Students on Session Date (`NewSession.jsx`)
+- **Problem & Requirement**:
+  - When editing a published session (`editSession` mode), opening the wizard displayed **all 106 students** from the database in Column 1 ("Students List 103 Students" + group members = 106 total, "Total 106 Students Ready to Publish"), including inactive, completed, and future students.
+  - The requirement was strict: When editing a session, the available student pool and student list must **ONLY** show students who are **ACTIVE** on that session date (e.g. 47 active students matching the Students page Active cohort), plus any students/guests already booked in the session being edited.
+- **Root Cause**:
+  - In `NewSession.jsx` inside the `allPoolStudents` memo:
+    - Step 1 processed the sessions in `editSession` (`sessList`).
+    - But Step 2 used an unconditional `dbStudents.forEach(st => matched.push({ ...st, isGuest: false, isActiveOnDate: true }))`, dumping all 106 students in the database directly into `allPoolStudents` without evaluating `getStudentStatusOnDate` or checking if they were active on the session date.
+    - Since `importedStudents` in `editSession` mode defaulted to `allPoolStudents`, all 106 registered students were marked active and rendered in Column 1 and the bottom publish bar.
+- **Resolution**:
+  - **Date Normalization for Edit Mode**:
+    - Extracted the exact session date (`targetDateStr`) from `editSession.date` (handling YYYY-MM-DD, DD-MM-YYYY, and Date string formats) with fallback to `selectedSessionDateYYYYMMDD`.
+  - **Strict Active Filter**:
+    - Replaced the unconditional `dbStudents` push in `editSession` with strict active date filtering:
+      ```javascript
+      dbStudents.forEach(st => {
+        const regKey = `reg-${st.id}`;
+        if (!seenKeys.has(regKey)) {
+          const status = getStudentStatusOnDate(st, targetDateStr);
+          const isSched = isStudentScheduledInDbOnDate(st);
+          if (status.isActive || isSched) {
+            seenKeys.add(regKey);
+            matched.push({
+              ...st,
+              whichDay: status.whichDay || st.whichDay || 1,
+              totalDays: status.totalDays || st.totalDays || 3,
+              dateStatus: status.status,
+              isGuest: false,
+              isActiveOnDate: true
+            });
+          }
+        }
+      });
+      ```
+    - Preserved students and accompanying guests already part of the session being edited, while filtering out all inactive, expired/completed, or upcoming future students from the academy pool.
+    - Synchronized `whichDay` and `totalDays` for active students matching their progression on that session date.
+  - **Verification**: Built production bundle with `npm --prefix frontend run build` — 0 errors in 2.38s.
+
+#### 15. View Admin Permissions Lockdown for Coach Leave Approvals, Join Requests & Invites (`InstructorManagement.jsx`, `StudentsManagement.jsx`)
+- **Problem & Requirement**:
+  - When logged in as a View Admin (`guest_role === 'view_admin'`), the user could still open the "Change Approval" modal on coach leave requests, click "✓ Approve" or "❌ Reject", open the "⏳ Join Requests" modal for coach registrations, approve/reject coach join requests, and generate/copy coach and student invite links.
+  - The requirement was strict: View Admin must **NOT** be able to approve, reject, or change approval for coach leave requests, must **NOT** be able to see or act on coach join requests or student pending requests, and must **NOT** be able to generate or send invite links.
+- **Root Cause**:
+  - In `InstructorManagement.jsx`, the leave card bottom action buttons rendered interactive `❌ Reject`, `✓ Approve`, and `✏️ Change Approval` buttons without verifying `!isViewAdmin`.
+  - The header button `⏳ Join Requests` and modal were not guarded by `!isViewAdmin`.
+  - Coach card dropdown approve/reject options and the card `Invite` button lacked `!isViewAdmin` checks.
+  - In `StudentsManagement.jsx`, student row `Invite` buttons rendered without `!isViewAdmin` check.
+- **Resolution**:
+  - **Coach Leave Approvals Locked Down (`InstructorManagement.jsx`)**:
+    - Replaced interactive action buttons (`❌ Reject`, `✓ Approve`, `✏️ Change Approval`) with static read-only status pills (`✓ Approved`, `✕ Rejected`, `⏳ Pending Review`) whenever `isViewAdmin` is true.
+    - Prevented the "Change Approval" modal from rendering for View Admin (`{changeApprovalLeave && !isViewAdmin && ...}`).
+    - Added security guard to `handleUpdateLeaveStatus` returning immediately with a warning if called by View Admin.
+  - **Coach Join Requests Locked Down (`InstructorManagement.jsx`)**:
+    - Hid the header `⏳ Join Requests` button for View Admin (`{!isViewAdmin && <button>⏳ Join Requests</button>}`).
+    - Prevented the coach join requests modal from opening for View Admin (`{showCoachJoinRequestsModal && !isViewAdmin && ...}`).
+    - Hid `Approve Coach` and `Reject Application` options in coach card 3-dots dropdown for View Admin.
+    - Added security guards to `handleApproveCoach` and `handleRejectCoach`.
+  - **Coach & Student Invite Links Restricted (`InstructorManagement.jsx`, `StudentsManagement.jsx`)**:
+    - Hid coach card `Invite` buttons in `InstructorManagement.jsx` for View Admin.
+    - Guarded `handleCopyGeneralCoachInvite` and `handleGenerateCoachInvite` against View Admin.
+    - In `StudentsManagement.jsx`, student table row `Invite` buttons are hidden for View Admin, displaying a static `Not Joined` pill instead, while preserving `✓ Joined` status badges.
+    - Guarded `handleApproveStudentRequest` and `handleRejectStudentRequest` against View Admin execution.
+  - **Verification**: Built production bundle with `npm --prefix frontend run build` — 0 errors in 2.51s.
+
+---
+
+### CHANGES ON 13-11-2026
+
+#### 1. Added Coach Date of Birth & Gender Fields and Removed Hardcoded Age 30 (`AuthPage.jsx`, `backend/main.py`)
+- **Problem & Requirement**:
+  - In Coach registration (`AuthPage.jsx`), there was no input field for Date of Birth (DOB) or Gender in the Coach Profile Details section.
+  - When a coach registered, the backend (`backend/main.py`) had a hardcoded `age=30, gender="Male"`, causing all registered coaches to automatically have their age set to 30 regardless of their actual age.
+  - The requirement was to provide a Date of Birth input on coach registration, calculate the coach's age dynamically, and remove the hardcoded 30.
+- **Resolution**:
+  - **Coach Registration Form UI (`AuthPage.jsx`)**:
+    - Added dedicated **Date of Birth (DOB)** and **Gender** input fields under Coach Profile Details:
+      - Max date set to today's date (`max={new Date().toISOString().split('T')[0]}`).
+      - Real-time live age calculator badge: `{formData.dob && <span style={{ color: '#00F2FE' }}>Age: {calculateAge(formData.dob)} yrs</span>}`.
+      - Gender dropdown selector (`Male`, `Female`, `Other`).
+  - **Dynamic Age Calculation in Backend (`backend/main.py`)**:
+    - Removed `age=30` and `gender="Male"` hardcoding in the coach registration endpoint.
+    - Added dynamic calculation of coach age from `data.dob` (or `data.age`), storing the verified integer age in the `instructors` table.
+  - **Verification**: Built production bundle with `npm --prefix frontend run build` — 0 errors in 3.92s.
+
+#### 2. Coach Group Isolation in Calendar & Roster (`Sessions.jsx`)
+- **Problem & Requirement**:
+  - In the calendar view (`Sessions.jsx`), when a coach was logged in or when viewing a coach's schedule, groups assigned to other coaches were also being displayed in calendar cells, time slots, and the roster modal.
+  - Required that a coach strictly sees only groups assigned to them in the calendar.
+- **Root Cause**:
+  - `currentCoachId` and `coachCandidateIds` included `currentUser?.id` (which was a `users.id`), cross-contaminating with `instructors.id` in the `sessions` table (e.g. a coach user with `users.id = 51` matched instructor ID 51).
+  - In `loggedInCoach`, ID lookup used `currentUser.id`, causing other coaches to be matched.
+  - The calendar state (`sessionsByISO`, `assignedDatesList`, `activeDaySessions`, `selectedDayDetailsModal`) was directly derived from `roleScopedSessions` without honoring `instructorFilter`, causing all groups to leak in calendar views.
+- **Resolution**:
+  - **Sanitized Coach Candidate IDs**: Removed `currentUser?.id` from `coachCandidateIds`. Only genuine instructor IDs (`currentUser?.instructor_id` and `loggedInCoach?.id`) are now used.
+  - **Sanitized Coach Name Matching**: Excluded generic words (`'coach'`, `'instructor'`, `'staff'`, `'admin'`) from fallback name matching in `loggedInCoach` and `coachCandidateNames`.
+  - **Calendar-Scoped Filtering**: Introduced `calendarScopedSessions` which strictly preserves coach-specific isolation for coaches, and applies `instructorFilter` for admins across calendar cells, slot badges, daily drawer, and `selectedDayDetailsModal`.
+  - **Calendar Navigation Header**: Added a visual badge indicating the assigned coach (`🏄 Coach: [Name]`) for coaches, and an in-modal coach dropdown filter for admins.
+  - **Verification**: Built production bundle with `npm --prefix frontend run build` — 0 errors in 5.26s.
+
+#### 3. Fixed Student Skill Level Reverting to Beginner on Coach Profile Page (`InstructorProfile.jsx`)
+- **Problem & Requirement**:
+  - In Coach Profile (`InstructorProfile.jsx`), when the page loaded, students (like Leo Muller: Pro, Jack Hill: Advanced Beginner, arunn: Intermediate) briefly showed their correct level badge, but after a second all students automatically reverted to `BEGINNER`.
+  - In "Recent Session Activity", all session badges also defaulted to `BEGINNER`.
+- **Root Cause**:
+  - `fetchDynamicData` was calling `fetch(`${API}/api/students`)` without a `school` query parameter.
+  - The backend `@app.get("/api/students")` endpoint requires `school` to prevent data leaks, so it returned `[]` (empty list) when no school was passed.
+  - As a result, `allStudents` was empty, so `profileSt` lookups failed, defaulting all student skill levels to `'Beginner'`.
+  - In the level normalization helper, `str.startsWith('adv')` was evaluated before checking for `Advance Beginner`, which could also cause Advance Beginner to incorrectly normalize to Advance Intermediate.
+- **Resolution**:
+  - Updated `fetchDynamicData` to pass the coach's affiliated school in `?school=${encodeURIComponent(targetSchool)}`.
+  - Merged backend API `coachObj.assigned_students` into `studentMap` and `allStudents` so verified profiles and skill levels are never dropped.
+  - Enriched students and session activities now accurately preserve real skill levels (`Pro`, `Advanced Beginner`, `Intermediate`, `Advance Intermediate`, `Beginner`).
+  - Fixed normalization condition ordering so `Advance Beginner` is checked before generic `startsWith('adv')`.
+  - Styled session activity badges in "Recent Session Activity" with distinct colors matching each skill level.
+  - **Verification**: Built production bundle with `npm --prefix frontend run build` — 0 errors in 3.36s.
+
+#### 4. Strictly Isolate Pending Join-Request Coaches from School Roster & Dashboard Metrics (`InstructorManagement.jsx`, `SchoolDashboard.jsx`, `Sessions.jsx`)
+- **Problem & Requirement**:
+  - When a coach registered and submitted a join request to a school (e.g. `rpn tech ac`), their status was correctly showing `Pending School Approval` on their profile, and the `Join Requests (1)` button was displayed in the Instructors header.
+  - However, before the school admin approved the join request, the pending coach was incorrectly:
+    1. Displayed as an active instructor card on the Instructors page (`InstructorManagement.jsx`).
+    2. Counted in the "Active Instructors / Certified Coaches" stat on the Dashboard (`SchoolDashboard.jsx`).
+    3. Included in the Coach filter dropdown on the Sessions page (`Sessions.jsx`).
+  - Required that pending coaches MUST NOT appear in active cards, counts, or dropdowns anywhere until the school admin explicitly approves their join request in the Join Requests modal.
+- **Root Cause**:
+  - `InstructorManagement.jsx`: Active card filtering (`filtered`) only checked `i.approval_status === 'pending'` on the raw object from API and didn't cross-check with `allPendingCoachRequests` (which collects pending join requests from `school_join_requests` and `savedAccounts`).
+  - `SchoolDashboard.jsx`: Did a raw `instructorsList.length` for `active_instructors` without excluding coaches with pending approval.
+  - `Sessions.jsx`: Included all instructors from `allInstructorsList` in `availableInstructors` without filtering out pending join requests.
+- **Resolution**:
+  - **Instructors Page (`InstructorManagement.jsx`)**:
+    - Created `pendingCoachIdentifiers` linking pending emails, names, and IDs from `allPendingCoachRequests`.
+    - Excluded pending coaches from the active instructor cards list (`filtered`). They now strictly remain inside the `Join Requests` modal until approved.
+  - **School Dashboard (`SchoolDashboard.jsx`)**:
+    - Filtered out pending join request coaches from `active_instructors` count. The metric now reflects only certified, approved coaches.
+  - **Sessions Page (`Sessions.jsx`)**:
+    - Filtered out pending coaches from `availableInstructors`. Only approved, active coaches appear in the instructor dropdown filter.
+  - **Verification**: Built production bundle with `npm --prefix frontend run build` — 0 errors in 2.66s.
+
+#### 5. Dynamic Time-Based Status in Single Session Details Popup Modal (`Sessions.jsx`)
+- **Problem & Requirement**:
+  - In the Single Session Details popup modal (`selectedSessionDetail`), sessions whose scheduled time had already ended (e.g. today Nov 13, 2026 from 06:30 AM to 08:30 AM when current time is 10:54 AM) were still displaying static `UPCOMING` status.
+  - Required that sessions whose scheduled end time has passed automatically transition to `Pending for Review` / `Completed` in the Session Details modal.
+- **Root Cause**:
+  - In `Sessions.jsx` line 8605, the modal was reading the raw static database string `{selectedSessionDetail.status}` (which defaulted to `"Upcoming"` upon creation) instead of invoking the dynamic time-based evaluator `formatSessionStatus(selectedSessionDetail)`.
+- **Resolution**:
+  - Updated the Status field in `selectedSessionDetail` popup modal to use `formatSessionStatus(selectedSessionDetail)` and `statusBg(selectedSessionDetail)` / `statusColor(selectedSessionDetail)`.
+  - Sessions whose end time has passed now dynamically render `Pending for Review` (or `Completed`), matching the rest of the application.
+  - **Verification**: Built production bundle with `npm --prefix frontend run build` — 0 errors in 2.27s.
+
+
+
+
+
+
+
+
+

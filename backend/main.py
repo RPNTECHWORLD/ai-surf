@@ -101,7 +101,11 @@ try:
                     test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS image VARCHAR DEFAULT '';"))
                     test_conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR DEFAULT '';"))
                     test_conn.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS logo VARCHAR DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS poster_url VARCHAR(500) DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS services_json TEXT DEFAULT '[]';"))
                     test_conn.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
+                    test_conn.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS dob VARCHAR DEFAULT '';"))
+                    test_conn.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS age INTEGER;"))
                     test_conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS attendance VARCHAR DEFAULT '';"))
                     test_conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS instructor_ids VARCHAR DEFAULT '[]';"))
                     test_conn.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS group_name VARCHAR DEFAULT '';"))
@@ -323,6 +327,8 @@ class School(Base):
     instructor_count = Column(String)
     website = Column(String)
     logo = Column(String, nullable=True, default="")
+    poster_url = Column(String(500), nullable=True, default="")
+    services_json = Column(Text, nullable=True, default="[]")
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -793,6 +799,18 @@ try:
         db_migrate.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_plain VARCHAR(255)"))
         db_migrate.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"))
         db_migrate.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"))
+        db_migrate.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS poster_url VARCHAR(500) DEFAULT ''"))
+        db_migrate.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS services_json TEXT DEFAULT '[]'"))
+        try:
+            db_migrate.execute(text("ALTER TABLE schools ADD COLUMN poster_url VARCHAR(500) DEFAULT ''"))
+            db_migrate.commit()
+        except Exception:
+            db_migrate.rollback()
+        try:
+            db_migrate.execute(text("ALTER TABLE schools ADD COLUMN services_json TEXT DEFAULT '[]'"))
+            db_migrate.commit()
+        except Exception:
+            db_migrate.rollback()
         try:
             db_migrate.execute(text("UPDATE users SET is_active = TRUE WHERE is_active IS NULL"))
             db_migrate.execute(text("UPDATE schools SET is_active = TRUE WHERE is_active IS NULL"))
@@ -2302,6 +2320,23 @@ def session_to_dict(s: SurfSession, db: Optional[OrmSession] = None):
     resolved_start_date = getattr(st_obj, 'start_date', '') if st_obj else ''
     resolved_course_duration = getattr(st_obj, 'course_duration', '') if st_obj else ''
 
+    # Parse wave count and technique score from notes if present
+    parsed_wave_count = None
+    parsed_score = None
+    if s.notes:
+        try:
+            import re
+            wm = re.search(r"Wave Count:\s*(\d+)", s.notes, re.IGNORECASE)
+            if wm:
+                parsed_wave_count = int(wm.group(1))
+            sm = re.search(r"(?:Coach (?:Rating|Score)|Technique Score|Score):\s*(\d+)", s.notes, re.IGNORECASE)
+            if not sm:
+                sm = re.search(r"\[\s*(\d+)\s*(?:out of|/)\s*100\s*\]", s.notes, re.IGNORECASE)
+            if sm:
+                parsed_score = int(sm.group(1))
+        except Exception:
+            pass
+
     return {
         "id": s.id,
         "date": s.date,
@@ -2330,6 +2365,11 @@ def session_to_dict(s: SurfSession, db: Optional[OrmSession] = None):
         "start_date": resolved_start_date or "",
         "course_duration": resolved_course_duration or "",
         "attendance": getattr(s, 'attendance', '') or "",
+        "score": parsed_score if parsed_score is not None else getattr(s, 'score', None),
+        "technique_score": parsed_score if parsed_score is not None else getattr(s, 'score', None),
+        "wave_count": parsed_wave_count,
+        "waves_caught": parsed_wave_count,
+        "waves_ridden": parsed_wave_count,
     }
 
 
@@ -2828,14 +2868,30 @@ def auth_signup(data: UserSignup, request: Request, db: OrmSession = Depends(get
         # Coach Bio (do NOT hardcode mock text)
         coach_bio = (getattr(data, 'bio', '') or '').strip()
 
+        # Parse coach DOB, age and gender
+        coach_dob = (getattr(data, 'dob', '') or '').strip()
+        coach_age = getattr(data, 'age', None)
+        if coach_dob:
+            try:
+                from datetime import datetime
+                b_date = datetime.strptime(coach_dob[:10], '%Y-%m-%d')
+                today = datetime.today()
+                coach_age = today.year - b_date.year - ((today.month, today.day) < (b_date.month, b_date.day))
+            except Exception:
+                pass
+        if not coach_age or coach_age <= 0:
+            coach_age = None
+
+        coach_gender = (getattr(data, 'gender', 'Male') or 'Male').strip()
+
         instructor = Instructor(
             user_id=user.id,
             name=data.name,
             email=email_clean,
             phone=coach_phone,
-            dob=data.dob or "",
-            age=30,
-            gender="Male",
+            dob=coach_dob,
+            age=coach_age,
+            gender=coach_gender,
             fitness_level="Advanced",
             experience="3 Years",
             certifications=json.dumps(saved_certs),
@@ -7044,6 +7100,9 @@ def get_schools(db: OrmSession = Depends(get_db)):
             "city": s.city,
             "instructor_count": s.instructor_count,
             "website": s.website,
+            "logo": s.logo or "",
+            "poster_url": getattr(s, 'poster_url', '') or "",
+            "services_json": getattr(s, 'services_json', '[]') or "[]",
             "is_active": is_active,
             "created_at": created_str,
             "user_id": user.id if user else None,
@@ -7164,6 +7223,74 @@ def delete_school(school_id: int, db: OrmSession = Depends(get_db)):
     db.delete(school)
     db.commit()
     return {"message": f"School '{name}' deleted successfully"}
+
+
+class SchoolPosterRequest(BaseModel):
+    school: Optional[str] = None
+    school_id: Optional[int] = None
+    poster_url: Optional[str] = ""
+    services: Optional[List[Any]] = None
+
+@app.get("/api/schools/poster")
+def get_school_poster(school: Optional[str] = None, school_id: Optional[int] = None, db: OrmSession = Depends(get_db)):
+    query = db.query(School)
+    target = None
+    if school_id:
+        target = query.filter(School.id == school_id).first()
+    if not target and school:
+        target = query.filter(func.lower(School.name) == school.strip().lower()).first()
+    if not target:
+        target = query.first()
+
+    poster_url = getattr(target, 'poster_url', '') or '' if target else ''
+    services = []
+    if target and getattr(target, 'services_json', None):
+        try:
+            services = json.loads(target.services_json) if isinstance(target.services_json, str) else target.services_json
+        except Exception:
+            services = []
+
+    return {
+        "status": "success",
+        "school": target.name if target else (school or ""),
+        "poster_url": poster_url or "/surf-milestone-bg.jpg",
+        "services": services
+    }
+
+@app.post("/api/schools/poster")
+def update_school_poster(data: SchoolPosterRequest, db: OrmSession = Depends(get_db)):
+    query = db.query(School)
+    target = None
+    if data.school_id:
+        target = query.filter(School.id == data.school_id).first()
+    if not target and data.school:
+        target = query.filter(func.lower(School.name) == data.school.strip().lower()).first()
+    if not target:
+        target = query.first()
+
+    if not target:
+        raise HTTPException(status_code=404, detail="School not found")
+
+    if data.poster_url is not None:
+        target.poster_url = data.poster_url.strip()
+    if data.services is not None:
+        target.services_json = json.dumps(data.services)
+
+    db.commit()
+    db.refresh(target)
+
+    services_list = []
+    try:
+        services_list = json.loads(target.services_json or "[]")
+    except Exception:
+        pass
+
+    return {
+        "status": "success",
+        "school": target.name,
+        "poster_url": target.poster_url or "",
+        "services": services_list
+    }
 
 
 # ─── Landing Stats / Features ─────────────────────────────────────────────────
