@@ -1165,9 +1165,11 @@ const Sessions = () => {
     const wellBlockMatch = raw.match(/What You did Well:\s*\n?([\s\S]*?)(?=(?:What to Improve:|$))/i);
     if (wellBlockMatch) {
       const block = wellBlockMatch[1];
+      const wellSm = block.match(/(?:\[|\()\s*(\d+(?:\.\d+)?)\s*(?:out of|\/)\s*10\s*(?:\]|\))/i);
+      if (wellSm) whatDidWellScore = wellSm[1];
       whatDidWell = block
-        .replace(/\[\s*\d+\s*(?:out of|\/)\s*10\s*\]\.?/gi, '')
-        .replace(/\(\s*\d+\s*(?:out of|\/)\s*10\s*\)\.?/gi, '')
+        .replace(/\[\s*\d+(?:\.\d+)?\s*(?:out of|\/)\s*10\s*\]\.?/gi, '')
+        .replace(/\(\s*\d+(?:\.\d+)?\s*(?:out of|\/)\s*10\s*\)\.?/gi, '')
         .replace(/^-\s*/gm, '')
         .trim();
     }
@@ -1177,11 +1179,32 @@ const Sessions = () => {
     const impBlockMatch = raw.match(/What to Improve:\s*\n?([\s\S]*?)$/i);
     if (impBlockMatch) {
       const block = impBlockMatch[1];
+      const impSm = block.match(/(?:\[|\()\s*(\d+(?:\.\d+)?)\s*(?:out of|\/)\s*10\s*(?:\]|\))/i);
+      if (impSm) whatToImproveScore = impSm[1];
       whatToImprove = block
-        .replace(/\[\s*\d+\s*(?:out of|\/)\s*10\s*\]\.?/gi, '')
-        .replace(/\(\s*\d+\s*(?:out of|\/)\s*10\s*\)\.?/gi, '')
+        .replace(/\[\s*\d+(?:\.\d+)?\s*(?:out of|\/)\s*10\s*\]\.?/gi, '')
+        .replace(/\(\s*\d+(?:\.\d+)?\s*(?:out of|\/)\s*10\s*\)\.?/gi, '')
         .replace(/^-\s*/gm, '')
         .trim();
+    }
+
+    // Derive score dynamically from points in notes if not explicit
+    if (!score) {
+      const pts = [];
+      if (whatDidWellScore !== '') pts.push(parseFloat(whatDidWellScore));
+      if (whatToImproveScore !== '') pts.push(parseFloat(whatToImproveScore));
+      if (pts.length > 0) {
+        const avg = pts.reduce((a, b) => a + b, 0) / pts.length;
+        score = String(Math.round(avg * 10));
+      } else {
+        const any10 = [...raw.matchAll(/(?:\[|\()?\s*(\d+(?:\.\d+)?)\s*(?:out of|\/)\s*10\s*(?:\]|\))?/gi)];
+        if (any10.length > 0) {
+          const rawPts = any10.map(m => parseFloat(m[1])).filter(v => !isNaN(v) && v >= 0 && v <= 10);
+          if (rawPts.length > 0) {
+            score = String(Math.round((rawPts.reduce((a, b) => a + b, 0) / rawPts.length) * 10));
+          }
+        }
+      }
     }
 
     return { waveCount, score, whatDidWell, whatDidWellScore, whatToImprove, whatToImproveScore };
@@ -1816,10 +1839,9 @@ const Sessions = () => {
             const sNotesFormatted = sObj
               ? formatCoachNotes(
                 sObj.waveCount,
+                sObj.score,
                 sObj.whatDidWell,
-                sObj.whatDidWellScore,
-                sObj.whatToImprove,
-                sObj.whatToImproveScore
+                sObj.whatToImprove
               )
               : s.notes;
             return {
@@ -1859,10 +1881,9 @@ const Sessions = () => {
             const sNotesFormatted = sObj
               ? formatCoachNotes(
                 sObj.waveCount,
+                sObj.score,
                 sObj.whatDidWell,
-                sObj.whatDidWellScore,
-                sObj.whatToImprove,
-                sObj.whatToImproveScore
+                sObj.whatToImprove
               )
               : s.notes;
             return {

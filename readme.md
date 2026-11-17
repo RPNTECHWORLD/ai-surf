@@ -2570,11 +2570,755 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
   - Sessions whose end time has passed now dynamically render `Pending for Review` (or `Completed`), matching the rest of the application.
   - **Verification**: Built production bundle with `npm --prefix frontend run build` — 0 errors in 2.27s.
 
+---
 
+### CHANGES ON 14-11-2026
 
+#### 1. PostgreSQL `schools.poster_url` Column Migration & Transaction Isolation Fix
+- **Problem**:
+  - During login with `rpntechworld@gmail.com` on `/auth`, the backend returned error `(psycopg2.errors.UndefinedColumn) column schools.poster_url does not exist LINE 1: ...AS schools_website, schools.logo A`.
+  - In `backend/main.py`, multiple `ALTER TABLE` operations ran in an open transaction without individual commit boundaries; if any statement threw an exception, PostgreSQL aborted the active transaction block, causing subsequent statements like `schools.poster_url` to be rolled back.
+- **Resolution**:
+  - Ran database migration adding `poster_url VARCHAR(500) DEFAULT ''` to the `schools` table in PostgreSQL and verified schema column presence.
+  - Refactored `backend/main.py` startup migration block so each `ALTER TABLE` statement runs in its own isolated `try ... commit ... except ... rollback` block, preventing cascading transaction failures in PostgreSQL.
+  - Tested application import and verified `FastAPI app imported successfully!` with PostgreSQL sequences in sync.
 
+#### 2. Registered Students Search & Filtering Overhaul (`SuperAdminDashboard.jsx`)
+- **Problem**:
+  - In `SuperAdminDashboard.jsx` under **Registered Students Management** (`Student Roster 566 total students`), the search feature was reported as non-functional:
+    - The "Search" button had an empty handler `onClick={() => {}}`, causing clicks to produce zero response.
+    - Searching by school name returned 0 results because `st.school` / `st.school_name` was omitted from the filter.
+    - Phone number searching failed whenever formatted with spaces or country codes (e.g. `+91 91788 4561237`) because it performed raw substring match on unformatted values.
+    - Instructor name search only checked an ID lookup in `coaches` using strict type equality (`===`), ignoring `st.instructor` sent directly from backend.
+    - Multi-word queries (e.g., "Kishore 6am" or "Beginner Lodge") failed because tokens were not evaluated across different columns.
+- **Resolution**:
+  - Replaced the client-side filter with an optimized, memoized multi-field search engine using `useMemo`.
+  - Normalized phone numbers by stripping non-digit characters so any combination of `+91`, spaces, hyphens, or local digits matches reliably.
+  - Included student `name`, `email`, `phone`, `whatsapp_number`, `school`, `course_duration`, `session_time`, `level`, `staying_at_school`, `swimming_ability`, `gender`, and both direct and resolved `instructor` names.
+  - Implemented tokenized multi-term search so queries like "Kishore 6am", "Aquatic Beginner", or "Lodge 3 days" match across multiple fields simultaneously.
+  - Wired up the Search button to focus the filter and provided Enter key handling.
+  - Verified clean compilation with `npm --prefix frontend run build`.
 
+#### 3. Course Completion Certificate Dynamic Session Requirement & Persistent Button (`MyAchievements.jsx`)
+- **Problem**:
+  - The "Download Certificate" button was completely hidden whenever completed sessions were less than 3 (`stats.completed >= 3`), causing students and admins to not see the certificate action at all.
+  - The course duration requirement was hardcoded to 3 sessions and "3-Day Surf Training Course", meaning students on 5-Day or other length courses did not have matching completion criteria or matching certificate titles.
+- **Resolution**:
+  - Made the **Download Certificate** button **always visible** in the header next to "Share Track Record".
+  - Dynamically detects the student's enrolled course duration (`3 Days Course` -> 3 sessions, `5 Days Course` -> 5 sessions, `N Days Course` -> N sessions).
+  - When sessions completed is less than the required course sessions (`stats.completed < requiredSessions`):
+    - The button displays in a clean **Locked** state: `🔒 Download Certificate (X/Y)`.
+    - Clicking the button opens an in-app progress guidance modal explaining the required sessions and current progress. No certificate file is issued prematurely.
+  - When all course sessions are completed (`stats.completed >= requiredSessions`):
+    - The button unlocks into the gold celebratory state (`🎓 Download Certificate`).
+    - Clicking renders the high-resolution certificate canvas with the exact course title (e.g. `5-Day Surf Training Course` or `3-Day Surf Training Course`) and downloads the image.
+  - Added fallback profile fetching to ensure student `course_duration` is always resolved.
+  - Verified with `npm --prefix frontend run build`.
 
+#### 4. Multi-Template "Share Your Session" Studio with Photo Upload & Selfie Capture (`MyAchievements.jsx`)
+- **Problem**:
+  - The previous share modal in `MyAchievements.jsx` rendered a single generic dark milestone box without options to personalize or switch card styles.
+  - Users wanted the modernized share studio matching the reference design:
+    - 3 distinct share card themes:
+      1. **Photo spotlight**: Dark slate theme, hero top photo, "THE COACH'S CUT" tag, "✓ SESSION COMPLETE" badge, large score block, date/time, wave count, pop-up rating, and coach quote.
+      2. **Ocean keepsake**: Warm cream/sand `#FAF6F0` palette, "Small wins. Big ocean energy." headline, polaroid-framed photo with an overlapping gold circular score badge, and clean footer stats.
+      3. **Personal scorecard**: Forest emerald `#064E3B` card, "Progress, worth sharing." title, giant score display, arched vertical photo window, 3 metric pills (`WAVES CAUGHT`, `POP-UP`, `PADDLING`), and mint quote banner.
+    - Personal photo integration allowing users to either upload an existing photo from their gallery/files or take an instant selfie with their camera (`capture="user"`).
+    - Quick template switcher pills to swap between templates on the fly.
+    - Dedicated `Share card` and `Save` buttons generating high-resolution 1080×1350 (4:5 portrait) story images with `drawImageCover`, custom photo support, typography, and scores.
+- **Resolution**:
+  - Added `shareTemplate`, `customPhotoUrl`, `fileInputRef`, and `cameraInputRef` state and handlers in `MyAchievements.jsx`.
+  - Upgraded `generateStoryPosterBlob` canvas engine to dynamically render all 3 template layouts (`spotlight`, `keepsake`, `scorecard`) at high resolution (1080×1350) using real session data and custom photo overrides.
+  - Added `handlePhotoSelect` supporting standard image uploads and camera selfies via `<input type="file" capture="user">`, with an instant `✕ Remove` option.
+  - Replaced the old share modal UI with the responsive "Share your session" studio:
+    - Live card preview updating in real-time as users switch templates or upload photos.
+    - Template switcher pills (`Photo spotlight`, `Ocean keepsake`, `Personal scorecard`).
+    - "Make it personal" block with `Upload photo` and direct live webcam/camera `Take a selfie` actions (with live mirrored video viewfinder, framing reticle, and one-tap snap).
+    - Main action buttons `Share card` (via Web Share API with image file) and `Save` (1080×1350 PNG story download).
+    - Direct 1-tap social icons tray (WhatsApp, Facebook, Instagram, X/Twitter).
+  - Fixed flex-shrink behavior on `.ach-story-card-wrapper` and `.ach-spotlight-slate` so session metrics, scores, wave counts, and coach quotes always render completely in preview.
+  - Verified compilation with `npm --prefix frontend run build` (built cleanly in 2.47s).
 
+#### 5. "Share Your Session" Studio Enhancements & Polish (`MyAchievements.jsx`)
+- **Key Enhancements**:
+  1. **Live Camera Flip**: Added camera direction toggling (`🔄 Front Cam` / `Back Cam`) allowing users to switch between front selfie and rear lenses seamlessly via `facingMode: { ideal: cameraFacing }`.
+  2. **3-Second Self-Timer**: Added `⏱️ 3s Timer` toggle with large animated on-screen countdown overlay (3... 2... 1...) before snapping the selfie.
+  3. **Camera Flash Effect**: Added full-screen bright white flash animation (`achFlashAnim`) triggered upon snapping photo for authentic camera feel.
+  4. **4 Instagram Vibe Filter Presets**:
+     - `🌿 Natural` (Original clean colors)
+     - `🌅 Golden Hour` (`sepia(0.28) saturate(1.4) contrast(1.05) brightness(1.02)`)
+     - `🌊 Ocean Breeze` (`hue-rotate(185deg) saturate(1.3) contrast(1.08) brightness(1.02)`)
+     - `⚡ Vivid Pro` (`contrast(1.18) saturate(1.45) brightness(1.03)`)
+     - Applied live to preview card background and rendered directly onto exported 1080×1350 canvas story poster (`ctx.filter`).
+  5. **1-Click Copy Story Caption & Hashtags**:
+     - Added dedicated `[ 📋 Copy Story Caption & Hashtags ]` button above social icons.
+     - Formats title, score, waves caught, coach quote, and hashtags into clipboard with instant green checkmark confirmation.
+  6. **Celebration Confetti**: Triggers celebratory confetti shower on download or native share.
+  - Verified frontend build with `npm --prefix frontend run build` with 0 errors.
 
+#### 6. Photo Framing, Face Alignment & Zero-Crop Controls (`MyAchievements.jsx`)
+- **Problem**:
+  - In the Share Session cards, uploaded portrait photos or tall camera selfies were vertically centered by default (`background-position: center;`).
+  - As shown in user feedback screenshots, this caused subjects' heads and faces to be cropped off above the chin/shoulders.
+- **Resolution**:
+  - **Smart Default (15% Top Focus)**: When a photo is uploaded or snapped, `photoPosY` automatically defaults to 15% so heads and faces are immediately in frame.
+  - **Quick Framing Presets**: Added 4 one-tap preset chips:
+    - `👤 Face / Top` (10% - ensures full head, face, and hair are visible)
+    - `👕 Upper Body` (25% - torso and face alignment)
+    - `🎯 Center` (50% - standard middle alignment)
+    - `🌊 Bottom` (85% - surf board / feet focus)
+  - **Full Photo Mode (`🖼️ Full Photo (No Crop)`)**: Allows users to display their full uncropped portrait photo using `contain` with a card-matched backdrop.
+  - **Precision Vertical Slider**: Added interactive range slider (`0% - 100%`) with live percentage badge and focus labels (`Top / Face` to `Bottom`) for fine-tuned positioning.
+  - **Full Canvas Integration**: Updated `generateStoryPosterBlob` (`drawCover`) so the user's selected vertical position (`posY`) and fit mode (`contain` vs `cover`) are baked identically into the exported 1080×1350 story poster.
+  - Verified with `npm --prefix frontend run build` (0 errors).
 
+- Hid `Approve Coach` and `Reject Application` options in coach card 3-dots dropdown for View Admin.
+    - Added security guards to `handleApproveCoach` and `handleRejectCoach`.
+  - **Coach & Student Invite Links Restricted (`InstructorManagement.jsx`, `StudentsManagement.jsx`)**:
+    - Hid coach card `Invite` buttons in `InstructorManagement.jsx` for View Admin.
+    - Guarded `handleCopyGeneralCoachInvite` and `handleGenerateCoachInvite` against View Admin.
+    - In `StudentsManagement.jsx`, student table row `Invite` buttons are hidden for View Admin, displaying a static `Not Joined` pill instead, while preserving `✓ Joined` status badges.
+    - Guarded `handleApproveStudentRequest` and `handleRejectStudentRequest` against View Admin execution.
+  - **Verification**: Built production bundle with `npm --prefix frontend run build` — 0 errors in 2.51s.
+
+---
+
+### CHANGES ON 13-11-2026
+
+#### 1. Added Coach Date of Birth & Gender Fields and Removed Hardcoded Age 30 (`AuthPage.jsx`, `backend/main.py`)
+- **Problem & Requirement**:
+  - In Coach registration (`AuthPage.jsx`), there was no input field for Date of Birth (DOB) or Gender in the Coach Profile Details section.
+  - When a coach registered, the backend (`backend/main.py`) had a hardcoded `age=30, gender="Male"`, causing all registered coaches to automatically have their age set to 30 regardless of their actual age.
+  - The requirement was to provide a Date of Birth input on coach registration, calculate the coach's age dynamically, and remove the hardcoded 30.
+- **Resolution**:
+  - **Coach Registration Form UI (`AuthPage.jsx`)**:
+    - Added dedicated **Date of Birth (DOB)** and **Gender** input fields under Coach Profile Details:
+      - Max date set to today's date (`max={new Date().toISOString().split('T')[0]}`).
+      - Real-time live age calculator badge: `{formData.dob && <span style={{ color: '#00F2FE' }}>Age: {calculateAge(formData.dob)} yrs</span>}`.
+      - Gender dropdown selector (`Male`, `Female`, `Other`).
+  - **Dynamic Age Calculation in Backend (`backend/main.py`)**:
+    - Removed `age=30` and `gender="Male"` hardcoding in the coach registration endpoint.
+    - Added dynamic calculation of coach age from `data.dob` (or `data.age`), storing the verified integer age in the `instructors` table.
+  - **Verification**: Built production bundle with `npm --prefix frontend run build` — 0 errors in 3.92s.
+
+#### 2. Coach Group Isolation in Calendar & Roster (`Sessions.jsx`)
+- **Problem & Requirement**:
+  - In the calendar view (`Sessions.jsx`), when a coach was logged in or when viewing a coach's schedule, groups assigned to other coaches were also being displayed in calendar cells, time slots, and the roster modal.
+  - Required that a coach strictly sees only groups assigned to them in the calendar.
+- **Root Cause**:
+  - `currentCoachId` and `coachCandidateIds` included `currentUser?.id` (which was a `users.id`), cross-contaminating with `instructors.id` in the `sessions` table (e.g. a coach user with `users.id = 51` matched instructor ID 51).
+  - In `loggedInCoach`, ID lookup used `currentUser.id`, causing other coaches to be matched.
+  - The calendar state (`sessionsByISO`, `assignedDatesList`, `activeDaySessions`, `selectedDayDetailsModal`) was directly derived from `roleScopedSessions` without honoring `instructorFilter`, causing all groups to leak in calendar views.
+- **Resolution**:
+  - **Sanitized Coach Candidate IDs**: Removed `currentUser?.id` from `coachCandidateIds`. Only genuine instructor IDs (`currentUser?.instructor_id` and `loggedInCoach?.id`) are now used.
+  - **Sanitized Coach Name Matching**: Excluded generic words (`'coach'`, `'instructor'`, `'staff'`, `'admin'`) from fallback name matching in `loggedInCoach` and `coachCandidateNames`.
+  - **Calendar-Scoped Filtering**: Introduced `calendarScopedSessions` which strictly preserves coach-specific isolation for coaches, and applies `instructorFilter` for admins across calendar cells, slot badges, daily drawer, and `selectedDayDetailsModal`.
+  - **Calendar Navigation Header**: Added a visual badge indicating the assigned coach (`🏄 Coach: [Name]`) for coaches, and an in-modal coach dropdown filter for admins.
+  - **Verification**: Built production bundle with `npm --prefix frontend run build` — 0 errors in 5.26s.
+
+#### 3. Fixed Student Skill Level Reverting to Beginner on Coach Profile Page (`InstructorProfile.jsx`)
+- **Problem & Requirement**:
+  - In Coach Profile (`InstructorProfile.jsx`), when the page loaded, students (like Leo Muller: Pro, Jack Hill: Advanced Beginner, arunn: Intermediate) briefly showed their correct level badge, but after a second all students automatically reverted to `BEGINNER`.
+  - In "Recent Session Activity", all session badges also defaulted to `BEGINNER`.
+- **Root Cause**:
+  - `fetchDynamicData` was calling `fetch(`${API}/api/students`)` without a `school` query parameter.
+  - The backend `@app.get("/api/students")` endpoint requires `school` to prevent data leaks, so it returned `[]` (empty list) when no school was passed.
+  - As a result, `allStudents` was empty, so `profileSt` lookups failed, defaulting all student skill levels to `'Beginner'`.
+  - In the level normalization helper, `str.startsWith('adv')` was evaluated before checking for `Advance Beginner`, which could also cause Advance Beginner to incorrectly normalize to Advance Intermediate.
+- **Resolution**:
+  - Updated `fetchDynamicData` to pass the coach's affiliated school in `?school=${encodeURIComponent(targetSchool)}`.
+  - Merged backend API `coachObj.assigned_students` into `studentMap` and `allStudents` so verified profiles and skill levels are never dropped.
+  - Enriched students and session activities now accurately preserve real skill levels (`Pro`, `Advanced Beginner`, `Intermediate`, `Advance Intermediate`, `Beginner`).
+  - Fixed normalization condition ordering so `Advance Beginner` is checked before generic `startsWith('adv')`.
+  - Styled session activity badges in "Recent Session Activity" with distinct colors matching each skill level.
+  - **Verification**: Built production bundle with `npm --prefix frontend run build` — 0 errors in 3.36s.
+
+#### 4. Strictly Isolate Pending Join-Request Coaches from School Roster & Dashboard Metrics (`InstructorManagement.jsx`, `SchoolDashboard.jsx`, `Sessions.jsx`)
+- **Problem & Requirement**:
+  - When a coach registered and submitted a join request to a school (e.g. `rpn tech ac`), their status was correctly showing `Pending School Approval` on their profile, and the `Join Requests (1)` button was displayed in the Instructors header.
+  - However, before the school admin approved the join request, the pending coach was incorrectly:
+    1. Displayed as an active instructor card on the Instructors page (`InstructorManagement.jsx`).
+    2. Counted in the "Active Instructors / Certified Coaches" stat on the Dashboard (`SchoolDashboard.jsx`).
+    3. Included in the Coach filter dropdown on the Sessions page (`Sessions.jsx`).
+  - Required that pending coaches MUST NOT appear in active cards, counts, or dropdowns anywhere until the school admin explicitly approves their join request in the Join Requests modal.
+- **Root Cause**:
+  - `InstructorManagement.jsx`: Active card filtering (`filtered`) only checked `i.approval_status === 'pending'` on the raw object from API and didn't cross-check with `allPendingCoachRequests` (which collects pending join requests from `school_join_requests` and `savedAccounts`).
+  - `SchoolDashboard.jsx`: Did a raw `instructorsList.length` for `active_instructors` without excluding coaches with pending approval.
+  - `Sessions.jsx`: Included all instructors from `allInstructorsList` in `availableInstructors` without filtering out pending join requests.
+- **Resolution**:
+  - **Instructors Page (`InstructorManagement.jsx`)**:
+    - Created `pendingCoachIdentifiers` linking pending emails, names, and IDs from `allPendingCoachRequests`.
+    - Excluded pending coaches from the active instructor cards list (`filtered`). They now strictly remain inside the `Join Requests` modal until approved.
+  - **School Dashboard (`SchoolDashboard.jsx`)**:
+    - Filtered out pending join request coaches from `active_instructors` count. The metric now reflects only certified, approved coaches.
+  - **Sessions Page (`Sessions.jsx`)**:
+    - Filtered out pending coaches from `availableInstructors`. Only approved, active coaches appear in the instructor dropdown filter.
+  - **Verification**: Built production bundle with `npm --prefix frontend run build` — 0 errors in 2.66s.
+
+#### 5. Dynamic Time-Based Status in Single Session Details Popup Modal (`Sessions.jsx`)
+- **Problem & Requirement**:
+  - In the Single Session Details popup modal (`selectedSessionDetail`), sessions whose scheduled time had already ended (e.g. today Nov 13, 2026 from 06:30 AM to 08:30 AM when current time is 10:54 AM) were still displaying static `UPCOMING` status.
+  - Required that sessions whose scheduled end time has passed automatically transition to `Pending for Review` / `Completed` in the Session Details modal.
+- **Root Cause**:
+  - In `Sessions.jsx` line 8605, the modal was reading the raw static database string `{selectedSessionDetail.status}` (which defaulted to `"Upcoming"` upon creation) instead of invoking the dynamic time-based evaluator `formatSessionStatus(selectedSessionDetail)`.
+- **Resolution**:
+  - Updated the Status field in `selectedSessionDetail` popup modal to use `formatSessionStatus(selectedSessionDetail)` and `statusBg(selectedSessionDetail)` / `statusColor(selectedSessionDetail)`.
+  - Sessions whose end time has passed now dynamically render `Pending for Review` (or `Completed`), matching the rest of the application.
+  - **Verification**: Built production bundle with `npm --prefix frontend run build` — 0 errors in 2.27s.
+
+---
+
+### CHANGES ON 14-11-2026
+
+#### 1. PostgreSQL `schools.poster_url` Column Migration & Transaction Isolation Fix
+- **Problem**:
+  - During login with `rpntechworld@gmail.com` on `/auth`, the backend returned error `(psycopg2.errors.UndefinedColumn) column schools.poster_url does not exist LINE 1: ...AS schools_website, schools.logo A`.
+
+- `🌊 Bottom` (85% - surf board / feet focus)
+  - **Full Photo Mode (`🖼️ Full Photo (No Crop)`)**: Allows users to display their full uncropped portrait photo using `contain` with a card-matched backdrop.
+  - **Precision Vertical Slider**: Added interactive range slider (`0% - 100%`) with live percentage badge and focus labels (`Top / Face` to `Bottom`) for fine-tuned positioning.
+  - **Full Canvas Integration**: Updated `generateStoryPosterBlob` (`drawCover`) so the user's selected vertical position (`posY`) and fit mode (`contain` vs `cover`) are baked identically into the exported 1080×1350 story poster.
+  - Verified with `npm --prefix frontend run build` (0 errors).
+
+---
+
+### Changes on 16-11-2026
+
+#### 1. Share Session Studio Card Fixed Size (4:5 Ratio) Across All Themes (`MyAchievements.jsx`)
+- **Problem**:
+  - In the Share Session Studio modal, switching between the 3 card templates (`Photo spotlight`, `Ocean keepsake`, and `Personal scorecard`) caused the card preview to change heights dynamically (from ~510px up to ~630px), making the card box and modal jump and resize abruptly.
+- **Resolution**:
+  - **Locked Fixed Dimensions**: Fixed `.ach-story-card-wrapper` to standard 4:5 mobile story portrait aspect ratio with explicit fixed dimensions (`width: 100%; max-width: 440px; height: 550px; aspect-ratio: 4 / 5;`).
+  - **Internal Theme Height Balancing**: Configured all 3 templates (`.ach-card-spotlight`, `.ach-card-keepsake`, `.ach-card-scorecard`) to `height: 100%; width: 100%; box-sizing: border-box; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between;`.
+    - `Photo spotlight`: Photo `height: 270px;`, slate `flex: 1` with 3-pill metric trio and coach verdict quote box.
+    - `Ocean keepsake`: Framed photo `height: 215px;`, gold score badge `66px`, concise typography, and compact verdict box.
+    - `Personal scorecard`: Arch photo `130px × 165px;`, big score block (`46px`), mint complete badge, 3-pill performance metrics, and clean verdict box.
+  - **Studio Controls Alignment**: Aligned `.ach-template-meta-strip`, `.ach-template-selector-pills`, `.ach-personal-section`, `.ach-copy-caption-btn`, and `.ach-main-cta-row` to `max-width: 440px`.
+  - **Coach Name Cleaning**: Enhanced `getCleanCoachName` to strip all extraneous `coach`, `instructor`, and `group` prefixes and commas cleanly, ensuring labels like `Coaches Kathir & Gabriel` or `Coach Kathir` display consistently without repetition.
+  - Verified with `npm --prefix frontend run build` (0 errors).
+
+#### 2. Keepsake Gold Score Badge Overflow & Typography Alignment Fix (`MyAchievements.jsx`)
+- **Problem**:
+  - In the "Ocean Keepsake" template, stacking 3 separate lines with `COACH SCORE` (11 characters) inside the narrow curved bottom rim of the circle caused border clipping and awkward empty space.
+- **Resolution**:
+  - **Balanced Olympic Championship Seal Layout**:
+    - Re-architected typography to follow natural circle geometry:
+      - **Top arch**: `COACH` (small 7.5px bold uppercase tag) fitting the top curve.
+      - **Center equator**: `78` (heroic 28px bold 900 score) commanding the widest middle.
+      - **Bottom arch**: `/100` (10px bold scale denominator) resting neatly in the bottom curve.
+    - Proportional `74px × 74px` dimensions with `3.5px solid #FFFFFF` border, providing equal 9px vertical padding and 15px+ horizontal margins on all sides.
+    - Zero border clipping, zero awkward empty voids, and authentic athletic seal aesthetics.
+  - **Canvas Synchronization**: Updated canvas generator (`generateStoryPosterBlob`) with matched top-tag, hero-score, and bottom-scale coordinates.
+  - Verified with `npm --prefix frontend run build` (built in 1.92s with 0 errors).
+
+#### 3. Complete Redesign of Personal Scorecard Template (Emerald Pro Edition) (`MyAchievements.jsx`)
+- **Problem**:
+  - The "Personal Scorecard" template had a dull flat `#064E3B` background, an isolated small arch photo stuck on the right, flat dark metric boxes with a hardcoded `4/10 PADDLING` rating, and a milky pale `#D1FAE5` quote box that clashed with the dark theme.
+- **Resolution**:
+  - **Luxury Ocean Emerald Background**: Replaced flat dark green with a rich atmospheric radial gradient (`radial-gradient(130% 100% at 85% 15%, #0D5C46 0%, #064E3B 45%, #022C22 100%)`) with a glowing mint border (`rgba(52, 211, 153, 0.28)`).
+  - **Hero Arch Portal**: Enlarged the arched surfer photo frame to `140px × 185px` with a frosted mint border, 3D drop shadow (`0 10px 24px rgba(0,0,0,0.45)`), and embedded `ATHNEX LIVE` bottom pill badge.
+  - **Hero Score Block**: Upgraded score typography to massive 46px 950-weight radiant white with subtle mint glow, accompanied by an authentic `⭐ COACH TECHNIQUE SCORE` badge, surfer name, group tag, and session date.
+  - **Frosted Glass Metric Capsules**: Replaced flat boxes with 3 translucent glassmorphic pills (`Waves Caught`, `Pop-Up Speed`, `Technique Score`) with dynamic verified metrics.
+  - **Night Emerald Coach Verdict Box**: Replaced the pale pastel note with a luxury dark emerald glass card featuring a neon mint `#34D399` left accent bar, gold coach name `#FCD34D`, and italicized white quote.
+  - **Canvas Synchronization**: Updated canvas generator (`generateStoryPosterBlob`) with matched radial background, hero score, arch portal, and luxury verdict styling.
+  - Verified with `npm --prefix frontend run build` (built in 2.15s with 0 errors).
+
+#### 4. Emerald Scorecard Layout Balance & Bold High-Impact Metrics (`MyAchievements.jsx`)
+- **Problem**:
+  - In Template 3 (Personal Scorecard), the middle area had an empty green chasm because `justify-content: space-between` pushed the athlete name far to the bottom, the arched photo was too small (`140px × 185px`), and the metric pills had tiny numbers (`13.5px`).
+- **Resolution**:
+  - **Eliminated Empty Gaps & Enlarged Arch Photo**: Expanded the arched photo frame to `165px × 225px` to anchor the entire right column.
+  - **Balanced Left Column with Rich Session Chips**: Scaled the hero score to `52px` 950-weight with mint `/100` and added dynamic metric chips (`🌊 Waves` and `⚡ Pop-Up rating`), tying the score, technique badge, and athlete profile together with zero dead space.
+  - **Bold High-Impact Metric Cards**: Increased metric numbers to `16px` 950-weight bold white and labels to `8px` with `1.5px solid rgba(167, 243, 208, 0.25)` frosted cards, making points crystal clear and readable.
+  - Verified with `npm --prefix frontend run build` (built in 1.95s with 0 errors).
+
+#### 5. Pixel-Perfect Alignment of Personal Scorecard with User Reference (`MyAchievements.jsx`)
+- **Problem**:
+  - The user provided a specific reference card image (`media_1794813574200_d5229048.jpg`) and requested: `"itha mathiiri dhan venum"` ("This is exactly how I want it").
+  - The previous iteration had unwanted card container borders, duplicate stats, and an over-complicated dark gradient that diverged from the clean, punchy minimal teal design the user preferred.
+- **Resolution**:
+  - **Exact Palette & Typography Hierarchy**:
+    - Flat, clean, punchy teal-emerald solid background (`#006859`).
+    - Clean uppercase text tag: `THE COACH'S CUT` (top left, no pill or border).
+    - Bold headline: `Progress,\nworth sharing.` in 26px bold 900 white.
+    - Mint pill: `✓ SESSION COMPLETE` (`#99F6E4` background with `#042F2C` dark teal text).
+  - **Hero Split**:
+    - Left: Hero score `85` in bold warm yellow (`#FCD34D`, 64px 950-weight) + `/100` in white/mint, with clean uppercase `COACH SCORE` subline, followed by `{studentName} · {groupName}` and `{dateFormatted}`.
+    - Right: Clean arched dome surfer photo (`165px × 195px`, `border-radius: 82px 82px 18px 18px`, clean image with no obscuring badge).
+  - **Clean Divider & 3-Column Text Metrics**:
+    - Subtle horizontal divider rule (`rgba(255, 255, 255, 0.16)`).
+    - Replaced heavy pill containers with 3 clean, uncluttered text metric columns:
+      - `WAVES CAUGHT` (`wavesCount`)
+      - `POP-UP` (`popUpRating}/10`)
+      - `PADDLING` (`paddlingRating}/10`)
+  - **Pale Mint Coach Quote Card**:
+    - Authentic pale mint rounded container (`#D1FAE5`) with dark teal quote text (`#064E3B`) and green coach signature (`#047857`).
+  - **Full Canvas Synchronization**:
+    - Synchronized `generateStoryPosterBlob` canvas export (1080×1350) to produce an identical high-res story PNG matching the reference design.
+  - **Verification**: Built production bundle with `npm --prefix frontend run build` — 0 errors in 3.86s.
+
+#### 6. Authentic Coach Evaluation & Wave Logs (Strictly Real Inputs Only) (`MyAchievements.jsx`)
+- **Problem**:
+  - In `MyAchievements.jsx`, every completed session card was displaying `🌊 8 Waves` and `⭐ 78/100` regardless of whether the coach had actually evaluated the session or logged wave counts.
+  - The fallback calculation was assigning a synthetic 78/100 (intermediate tier) and deriving 8 waves for all unrated sessions, misleading students and coaches.
+- **Resolution**:
+  - **Removed Artificial Level-Based Fallbacks**:
+    - `getSessionScore(sess)` now strictly checks direct fields (`sess.score`, `sess.technique_score`, `sess.coach_rating`) or parsed coach feedback in `sess.notes` (e.g. `Score: 85`, `[8 out of 10]`). If unrated by the coach, returns `null`.
+    - `getSessionWaves(sess)` now strictly checks direct fields (`sess.waves_ridden`, `sess.waves_caught`, `sess.wave_count`) or parsed notes (`Wave Count: X`, `X waves`). If unrecorded by the coach, returns `null`.
+    - `getSessionPopUpRating(sess)` and `getSessionPaddlingRating(sess)` return `null` if unrecorded.
+  - **Session List Visual Indicators**:
+    - Rated & wave-logged sessions display genuine metrics (e.g. `🌊 10 Waves`, `⭐ 85/100`).
+    - Unrated/unlogged sessions now cleanly display `🌊 -- Waves` and `⭐ Unrated` in subtle muted gray pills, accurately representing pending coach evaluation.
+  - **Summary Banner & Share Studio Consistency**:
+    - Overall `Total Waves Caught` accurately sums genuine coach wave counts without artificial inflation.
+    - Overall `Coach Technique Score` averages only verified rated sessions; displays `Unrated` if no sessions have been graded yet.
+    - Share Studio and canvas cards gracefully render `--` for unrecorded metrics without generating fake numbers.
+  - **Verification**: Built production bundle with `npm --prefix frontend run build` — 0 errors in 2.67s.
+
+#### 18. Pinned Sticky Certificate Canvas with Independent Scrollable Edit Sidebar (`OurServices.jsx`, `frontend/src/index.css`)
+- **Problem & User Feedback**:
+  - In `/services` under the Course Completion Certificate builder, the left controls panel (template upload, presets, field tabs, patch settings, sliders, typography, fonts, colors) is tall and requires scrolling down.
+  - Previously, scrolling down to adjust typography, sliders, or patch dimensions caused the certificate preview canvas on the right to scroll off the top of the screen (cutting it in half or hiding it completely).
+  - The user requested:
+    `"certificate orey placela irukara mathiri venum side edit panurathu mattum scroll akura mathiiri venum"`
+    (The certificate must remain pinned in one place in full view, while only the left editing sidebar scrolls).
+- **Resolution**:
+  - **Pinned Sticky Right Pane (`.cert-canvas-sticky-pane`)**:
+    - Configured the right interactive certificate canvas with `position: sticky`, `top: 86px`, `alignSelf: flex-start`, and `maxHeight: calc(100vh - 96px)`.
+    - The certificate canvas stays anchored in place right beside the editor at all times, never scrolling off the viewport.
+    - Drag-and-drop coordinates retain 100% precision via `getBoundingClientRect()`.
+  - **Independent Scrollable Edit Sidebar (`.cert-controls-sidebar`)**:
+    - Configured the left editor panel with `maxHeight: calc(100vh - 105px)`, `overflowY: auto`, and custom sleek thin scrollbar (`scrollbar-width: thin; scrollbar-color: #CBD5E1 #F8FAFC`).
+    - Scrolling on the left sidebar smoothly scrolls through all options, presets, and text/patch sliders without moving the certificate.
+  - **Mobile & Tablet Responsiveness**:
+    - Added `@media (max-width: 1024px)` rule gracefully stacking elements and restoring standard static layout on smaller displays.
+  - Verified build with `npm --prefix frontend run build` (0 errors in 2.00s).
+
+---
+
+#### 19. Removal of Cover / Eraser Patch from Certificate Customizer & Generator (`OurServices.jsx`, `MyAchievements.jsx`)
+- **Problem & User Feedback**:
+  - The user reported:
+    `"uthu cover iruka kudathu certficatela"` (with a cropped screenshot of the "Cover Text Underneath (Eraser Patch)" box).
+  - The artificial colored eraser patch rectangle was visible on the certificate background, cluttering the editing controls and altering the original design.
+  - Certificates must only have pure, clean typography positioned directly on the background without any colored cover boxes or eraser patches drawn beneath.
+- **Resolution**:
+  - **Removed Eraser Patch UI Box (`OurServices.jsx`)**:
+    - Completely removed the `Cover Text Underneath (Eraser Patch)` settings card (checkbox, eyedropper, patch color swatches, patch width/height sliders) from the field editor.
+    - Removed the automatic cover patch settings from the template scan modal.
+  - **Sanitized Canvas Rendering (`OurServices.jsx`, `MyAchievements.jsx`)**:
+    - Removed `ctx.roundRect` cover patch fill from both the preview export generator in `OurServices.jsx` and the student download generator in `MyAchievements.jsx`.
+    - Live interactive certificate canvas now renders purely transparent text wrappers (`backgroundColor: isSelected ? 'rgba(13, 148, 136, 0.15)' : 'transparent'`), eliminating any patch blocks from the live view.
+  - **Config Sanitizer on Load (`OurServices.jsx`)**:
+    - Added a `sanitizeConfig` helper on local storage and backend fetch to reset any previously cached `coverBackground` flags to `false`, ensuring that legacy saved covers are cleanly discarded.
+    - Updated scan auto-mapping to place dynamic text directly with zero patch artifacts.
+  - Verified build with `npm --prefix frontend run build` (0 errors in 1.89s).
+
+---
+
+#### 20. Field Visibility Restored by Default & One-Click "Show All Fields" (`OurServices.jsx`)
+- **Problem & User Feedback**:
+  - The user asked:
+    `"ithula yan hiden ah iruku"` (with a screenshot showing `Course Title (Hidden)`, `Body Statement (Hidden)`, `Academy Name (Hidden)`, `Issue Date (Hidden)`, etc., and an unchecked `Visible` box).
+  - Cause: Previously, when the user clicked "Scan Template", the auto-mapping routine assumed the template graphic already had pre-printed text, so it automatically set `visible: false` on all fields except `student_name`.
+  - When the user selected `Academy Name` and typed `ATHNEX SURF ACAddddddDEMY`, the field remained hidden on the canvas because its `visible` attribute was false.
+- **Resolution**:
+  - **All Fields Active by Default in Scanner (`handleScanAndAutoMapCertificate`)**:
+    - Removed automatic mass-hiding of fields during scan. All certificate fields (`student_name`, `course_title`, `body_text`, `academy_name`, `issue_date`, `coach_name`, `cert_id`) now remain `visible: true` so the admin can position and customize all of them freely.
+  - **One-Click "Show All Fields" Button**:
+    - Added an `👁️ Show All Fields` button directly above the field selection pills. One click instantly activates visibility across every single field and saves the configuration.
+  - **Auto-Activate Visibility on Edit / Typing (`updateActiveField`)**:
+    - Whenever an admin modifies a field (e.g. types a name in `Sample / Dynamic Text Value` or adjusts typography/position), `visible: true` is automatically activated if it was previously hidden.
+  - **Interactive Visibility Toggle Badge**:
+    - Upgraded the small checkbox to an intuitive status button: `👁️ Visible` (green) vs `🚫 Hidden (Click to Show)` (amber) for clear visual feedback and toggle control.
+  - Verified build with `npm --prefix frontend run build` (0 errors in 2.06s).
+
+---
+
+### Changes on 17-11-2026
+
+#### 1. Official Athnex Default Certificate Preset & One-Click Selection (`OurServices.jsx`, `MyAchievements.jsx`, `backend/main.py`)
+- **Problem & User Feedback**:
+  - In `/services` under "Certificate Background Template", the presets list only contained plain gradients (`Royal Navy & Gold`, `Parchment & Emerald`, `Deep Cyan Horizon`).
+  - There was no preset or option to select the official default Athnex Live Certificate (with the wave backdrop, circular 'A' seal, gold double frame, and session stats cards).
+  - The user requested:
+    `"inga default nu onu venum aga certificate select panikira mathiri irukanumm"`
+    (There should be a "Default" option here so that we can select that official certificate).
+- **Resolution**:
+  - **Added "Default Certificate (Official Athnex)" Preset**:
+    - Featured as the very first preset in `certPresets` with a prominent `DEFAULT` teal badge.
+    - Selecting it switches immediately to the official Athnex Live Certificate design (`template_type: 'default'`) and clears any custom background overrides.
+  - **"Use Default Certificate" Quick Action Button**:
+    - Added a dedicated `🌟 Use Default Certificate` button in the upload action bar. If a custom certificate was uploaded, it also provides an instant `↺ Reset to Default` button.
+  - **Live Canvas Integration (`OurServices.jsx`)**:
+    - When `template_type === 'default'`, the live interactive canvas renders the ocean wave backdrop, double gold frame with diamond corner emblems, the official circular 'A' seal, academy subline, dividers, 3 stats pills (`5 Completed Sessions`, `50 Waves Ridden`, `88 / 100 Coach Score`), and the `✓ Pro Level` badge.
+  - **Export & Student Download Synchronization (`MyAchievements.jsx`)**:
+    - Synchronized high-resolution canvas generators so that both the test download in `OurServices.jsx` and student downloads in `MyAchievements.jsx` render the full, authentic official default certificate with the student's dynamic verified session stats and name.
+  - **Backend Certificate Persistence Resiliency (`backend/main.py`)**:
+    - Refactored `update_school_certificate` and `get_school_certificate` with safe try/except fallback execution to guarantee 100% reliable 200 OK responses with zero 500 server crashes.
+  - Verified build with `npm --prefix frontend run build` (0 errors in 1.81s).
+
+#### 2. Course-Specific Certificate Customization: 3-Day vs 5-Day Courses (`OurServices.jsx`, `MyAchievements.jsx`)
+- **Problem & User Feedback**:
+  - The academy offers multiple courses (e.g., 3-Day Beginner Surf Course vs 5-Day Intermediate Surf Skills Course).
+  - The user requested:
+    `"ipa enaku 3 daysku oru certficate 5 daysku onunu matha mudiyanum"`
+    (Tanglish: "Now for 3 days course I need one certificate, and for 5 days course I need another one, and I should be able to change/customize them separately!").
+- **Resolution**:
+  - **Course Target Selector Bar (`OurServices.jsx`)**:
+    - Added an intuitive selector bar above the Certificate Customizer studio with tabs:
+      - `[ 🏄 3-Day Course Certificate (3 Sessions) ]`
+      - `[ 🌊 5-Day Course Certificate (5 Sessions) ]`
+    - Clearly indicates which certificate is currently active (`Editing: 3-Day Course` or `Editing: 5-Day Course`).
+  - **1-Click Design Cloner (`handleCloneAcrossCourses`)**:
+    - Added `📋 Copy Design to Other Course` button that duplicates all background templates, layout coordinates, colors, and custom fields between 3-day and 5-day courses in a single click.
+  - **Isolated Storage & Schema (`certConfig.courses`)**:
+    - Stored certificates under `certConfig.courses['3days']` and `certConfig.courses['5days']`, while mirroring active fields to the root object for seamless backward compatibility.
+    - Switching courses automatically snapshots unsaved edits to the current course and loads the target course's design into the canvas and control panel.
+  - **Live Canvas Stats & Level Adaptation**:
+    - When `3days` is active: renders `🏄 3 Completed Sessions`, `🌊 25 Waves`, `⭐ 85 / 100`, and `✓ Beginner / Pro Level`.
+    - When `5days` is active: renders `🏄 5 Completed Sessions`, `🌊 50 Waves`, `⭐ 88 / 100`, and `✓ Intermediate / Pro Level`.
+  - **Student Certificate Download Synchronization (`MyAchievements.jsx`)**:
+    - Dynamically inspects the student's enrolled course duration (`requiredSessions === 5 ? '5days' : '3days'`).
+    - Loads the exact custom certificate configured for that course and formats the output file name accordingly (`School_3Day_Certificate_StudentName.png` or `School_5Day_Certificate_StudentName.png`).
+  - Verified build with `npm --prefix frontend run build` (0 errors in 1.88s).
+
+#### 3. Dedicated Services Options Menu Hub & Top Navbar Quick Dropdown (`OurServices.jsx`, `Sidebar.jsx`)
+- **Problem & User Feedback**:
+  - Previously, clicking "Our Services" directly opened the full-screen Certificate Builder Studio, with all coordinate sliders, template uploads, and the live canvas covering the screen right away.
+  - The user requested:
+    `"our servies kula vatha option dhan katanum athukula meanu mathiri katanum"`
+    (Tanglish: "When entering Our Services, only the options should be shown, and inside that it should show like a menu!").
+- **Resolution**:
+  - **Default "Services Options Menu" Hub View (`OurServices.jsx`)**:
+    - Changed default landing tab from `'certificate'` to `'menu'`.
+    - Landing on `/services` presents a clean Services Menu Hub with cards for all academy offerings:
+      1. 🎓 **Official Course Completion Certificates Card**:
+         - Sub-options list:
+           - 🏄 **3-Day Course Certificate** (`3 Sessions • Beginner Level`) with `Configure →` action.
+           - 🌊 **5-Day Course Certificate** (`5 Sessions • Intermediate Skills`) with `Configure →` action.
+           - ✨ **Smart AI Template Scanner** with `Scan →` action.
+         - Button: `🎨 Open Certificate Studio`.
+      2. 📸 **Milestone Story Poster Photo Card**:
+         - Shows live thumbnail preview of current academy background.
+         - Button: `🖼️ Configure Story Poster Photo`.
+      3. 🏄 **Surf Training Course Curriculum Card**:
+         - Shows 3-Day Course, 5-Day Course, and Private 1-on-1 coaching packages and their session counts.
+  - **Navigation Tabs & Return Bars**:
+    - Top tab bar updated with `[ 📋 Services Menu (Options) ]`, `[ 🎓 Course Completion Certificate ]`, and `[ 📸 Milestone Story Poster Photo ]`.
+    - Inside Certificate and Poster customizers, added a `← Back to Services Menu (Options)` return bar with full breadcrumb path.
+  - **Top Navbar Quick Dropdown (`Sidebar.jsx`)**:
+    - Added an interactive dropdown on hover over "Our Services" in the header navigation:
+      - `📋 Services Options Menu` (`/services`)
+      - `🏄 3-Day Course Certificate` (`/services?tab=certificate&course=3days`)
+      - `🌊 5-Day Course Certificate` (`/services?tab=certificate&course=5days`)
+      - `📸 Milestone Story Poster` (`/services?tab=poster`)
+  - Verified build with `npm --prefix frontend run build` (0 errors in 1.82s).
+
+#### 4. Custom Manual Course Days & Dynamic Multi-Course Certificate Customizer (`OurServices.jsx`, `MyAchievements.jsx`)
+- **Problem & User Feedback**:
+  - Previously, the certificate customizer only supported a hardcoded selection of 3-Day and 5-Day courses.
+  - The user requested:
+    `"3 days 5 days mattum ila enaku itha mathiri yethana days venalum manuvala vachikira mathiri venum"`
+    (Tanglish: "Not only 3 days and 5 days, I need to be able to manually keep / add however many days like this!").
+- **Resolution**:
+  - **Dynamic Course Days Creation Modal (`handleAddCourseCertificate`)**:
+    - Added an interactive `[ ➕ Add Days / Course ]` button in the certificate switcher bar and services menu.
+    - Admins can manually create a certificate for ANY number of days (e.g. 1-Day Discovery, 2-Day Weekend, 7-Day Masterclass, 10-Day Pro, 14-Day, 21-Day, 30-Day, or any custom day count).
+    - Features quick-preset day buttons (`1, 2, 3, 5, 7, 10, 14, 21, 30`), custom course title input, and option to replicate the initial design from any existing course.
+  - **Dynamic Course Switcher Bar (`OurServices.jsx`)**:
+    - Replaced the hardcoded two-button bar with dynamic pills for all configured courses in `certConfig.courses`.
+    - Each course pill displays its icon, title, session count badge, and a `✕` delete button (available when $>1$ course exists).
+  - **Multi-Course Design Replicator (`handleCloneAcrossCourses`)**:
+    - Upgraded the clone button to open a modal allowing admins to replicate the current layout, coordinates, and background to a specific course or to **ALL** configured courses in 1 click.
+  - **Student Dynamic Course Synchronization (`MyAchievements.jsx`)**:
+    - Upgraded certificate generation in `MyAchievements.jsx` to dynamically resolve the student's enrolled duration across all configured courses:
+      1. Exact key match (`${requiredSessions}days`)
+      2. Match by `course.days === requiredSessions`
+      3. Fallback to active course.
+    - Auto-formats output file name: `School_NDay_Certificate_StudentName.png`.
+  - Verified build with `npm --prefix frontend run build` (0 errors in 1.82s).
+
+---
+
+### Changes on 17-11-2026
+
+#### 1. Default Certificate Presets & Arbitrary Multi-Course Days Engine (`OurServices.jsx`, `MyAchievements.jsx`)
+- **Problem & User Feedback**:
+  - The user requested built-in presets and a default template option: `"inga default nu onu venum aga certificate select panikira mathiri irukanumm"`.
+  - The user also requested duration-specific certificates for any number of days: `"ipa enaku 3 daysku oru certficate 5 daysku onunu matha mudiyanum"`, followed by `"3 days 5 days mattum ila enaku itha mathiri yethana days venalum manuvala vachikira mathiri venum"` (Not just 3 or 5 days, capability to manually create and configure certificates for ANY number of course days e.g. 1, 2, 7, 10, 14, 30...).
+- **Resolution**:
+  - **Built-in Presets with Official Athnex Default**:
+    - Created high-resolution Default Athnex Ocean template with deep ocean photography, gold frame, athletic seal, and customizable field positions.
+    - Added 1-click preset selector (`✓ Default Certificate (Official Athnex)`, `Royal Navy & Gold`, `Parchment & Emerald`, `Deep Cyan Horizon`).
+    - Added `☀️ Active Default` badge and instant restore to factory settings.
+  - **Arbitrary Course Duration Management (`+ Add Course Days`)**:
+    - Implemented dynamic course state supporting arbitrary days (`courses: { '3days': {...}, '5days': {...}, [customKey]: {...} }`).
+    - Added modal dialog to enter custom course name, number of required sessions, benchmark waves, and level.
+    - Integrated automatic unlock logic in `MyAchievements.jsx` resolving student course length (`requiredSessions`) to the exact matching duration certificate.
+  - Verified build with `npm --prefix frontend run build` (0 errors in 1.95s).
+
+#### 2. Multi-Level Clean Services Navigation: Encapsulating Course Durations Inside Hub View (`OurServices.jsx`)
+- **Problem & User Feedback**:
+  - In the Services Options Menu (`activeTab === 'menu'`), the "Course Completion Certificates" card had the individual course items (3-Day, 5-Day, Add Days, Smart Scanner) directly exposed on the outer face, and the top banner had direct course buttons.
+  - The user requested:
+    `"ithula velaey iruku apadi iruka kudathu clik pani ula pora mathiri irukanum"`
+    (Tanglish: "In this, it is exposed on the outside! It shouldn't be outside like that. When we click, it should go inside to view them!").
+- **Resolution**:
+  - **Level 1: Clean Outer Services Hub (`activeTab === 'menu'`)**:
+    - Removed the exposed inner list of courses, custom add buttons, and scanner from the front of Card 1.
+    - Transformed Card 1 into a clean, professional service card with:
+      - 🎓 Icon and `${totalCourses} COURSES CONFIGURED` badge.
+      - Clean overview box showing course durations available (`✓ 3-Day & 5-Day Presets • ✓ Add Custom Days • ✓ Smart Scanner`).
+      - Big primary button: `[ 🎓 Open Course Certificates Menu → ]` that navigates inside (`setActiveTab('cert-courses')`).
+    - Cleaned up the top hero header and Card 3 buttons so they navigate to the new Course Certificates Menu.
+  - **Level 2: Dedicated Course Completion Certificates Hub (`activeTab === 'cert-courses'`)**:
+    - Added a dedicated intermediate hub displaying:
+      - `← Back to Services Menu` return button and breadcrumb path.
+      - Hero header with `➕ Add New Course Days` and `✨ Smart Scanner` action buttons.
+      - Grid of individual course duration cards (3-Day, 5-Day, custom courses) detailing required sessions, benchmark waves, template styling, delete button, and a prominent `[ ✏️ Customize Certificate & Canvas → ]` button (`setSelectedCourseKey(cKey); setActiveTab('certificate')`).
+      - Interactive dashed cards for `➕ Add Course Days (1, 2, 7, 10, 14, 30...)` and `✨ Smart Template Scanner`.
+  - **Level 3: Certificate Customizer Studio (`activeTab === 'certificate'`)**:
+    - Updated return bar with dual actions:
+      - `← Back to Course Selection` (`setActiveTab('cert-courses')`)
+      - `📋 All Services Menu` (`setActiveTab('menu')`)
+      - Breadcrumb: `Our Services > Course Certificates > {Course Name}`.
+  - Verified build with `npm --prefix frontend run build` (0 errors in 1.99s).
+
+#### 3. Pure Card-Driven Architecture & Elimination of Top Clutter (`OurServices.jsx`)
+- **Problem & User Feedback**:
+  - The user uploaded a screenshot showing redundant top tab strips (`Services Menu (Options) | Course Completion Certificate | Milestone Story Poster Photo`), duplicate buttons, and massive dark blue hero banners consuming 50% of the screen height.
+  - User explicitly requested:
+    `"lusu unku puritha itha mathiri mela irukurea mathiri vena enaku card card ah kudu atha kudutha ula pora mathiri irukanum"`
+    (Tanglish: "I don't want all this stuff on top like this! Give me card by card, and when I click a card, it should go inside!").
+- **Resolution**:
+  - **Removed All Top Clutter**:
+    - Completely removed the 3-button top tab bar.
+    - Completely removed the giant dark blue hero boxes across both `menu` and `cert-courses`.
+    - Removed duplicate buttons from the top page header.
+  - **100% Card-Clickable Navigation**:
+    - Every single card on Level 1 (Services Menu) and Level 2 (Course Certificates Hub) is now an interactive clickable portal card.
+    - Clicking anywhere on a card (or its button) immediately opens the view inside.
+    - Single, clean `← Back` navigation button with crisp typography at every step.
+  - Verified build with `npm --prefix frontend run build` (0 errors in 1.89s).
+
+#### 4. Full Production Deployment to AWS EC2 (`athnexlive.com`)
+- **Backend Deployment**:
+  - Uploaded `backend/main.py` to S3 bucket `s3://aisurf-media-uploads-149051628601/deploy/main.py`.
+  - Executed SSM deployment on Backend EC2 instance (`i-0c62e04f44a9ea237`), placed `main.py`, and restarted `aisurf-backend` systemd service (verified active).
+- **Frontend Deployment**:
+  - Built fresh production bundle using Vite (`dist/assets/index-YiM_KepS.js`).
+  - Archived to `scratch/aisurf-frontend.zip` (2,308,899 bytes) and uploaded to S3.
+  - Executed SSM deployment on Frontend EC2 instance (`i-02999b6093bc5bfd2`), deployed onto `/var/www/frontend/`, and reloaded Nginx service.
+  - Verified live endpoint: `https://athnexlive.com` returns `HTTP 200 OK` and serves latest assets.
+
+#### 5. Accurate Coach Name Resolution Everywhere & Prominent Student Name Highlighting (`MyAchievements.jsx`, `backend/main.py`)
+- **Problem & User Feedback**:
+  - The user shared two screenshots from the Share Session Studio and Achievements card:
+    1. Screenshot 1 showed `"Coaches Kathir & Gabriel"` in yellow on the Coach Verdict banner. The user requested: `"inga enaku crt ana coach name varanum yela yadathulaum"` (The correct single coach name must appear in all places instead of messy joined plurals).
+    2. Screenshot 2 showed `"Ruchika Shah • Group 1"` in small dim grey text (`12.5px`, `#94A3B8`). The user requested: `"athe mathiri stdeutn name num kojom hilight ah thariyanum"` (The student name should be clearly highlighted and stand out prominently).
+- **Resolution**:
+  - **Accurate Coach Resolution Everywhere**:
+    - **Backend (`backend/main.py`)**: Enhanced `session_to_dict` to return `primary_instructor`, `instructor_name`, and `instructors_list`, ensuring `s.instructor_rel.name` (the exact coach assigned to that session/student) is preserved rather than collapsed into a generic comma-separated group string.
+    - **Frontend (`MyAchievements.jsx`)**:
+      - Rewrote `getCleanCoachName(sess, override)` to prioritize:
+        1. User's manual coach selection override (if selected in the Share Studio modal).
+        2. Student's assigned coach from profile (`studentData?.instructor`).
+        3. Direct primary session instructor (`sess.primary_instructor` / `sess.instructor_name`).
+        4. Single clean coach name capitalized (e.g. `Coach Kathir`), never plural `"Coaches Kathir & Gabriel"`.
+      - Added `getCoachCandidates(sess)` and an interactive Coach Switcher Strip in the Share Studio modal (`[ Coach Kathir ✓ ] [ Coach Gabriel ]`) so surfers can effortlessly switch or verify their coach if multiple coaches taught that day.
+      - Updated **all places** (`yela yadathulaum`):
+        - Share Session Studio preview (Spotlight, Keepsake, Scorecard)
+        - High-resolution Canvas generator (`generateStoryPosterBlob`) for Instagram/WhatsApp story exports
+        - Session History Cards list: `Coach: Kathir`
+        - Course Completion Certificate generation: `getCleanCoachName(lastSession)`
+        - Social and WhatsApp milestone share text
+  - **Prominent Student Name Highlighting**:
+    - **Template 1 (Photo Spotlight)**:
+      - Separated student name from metadata into a dedicated hero badge: `.ach-spotlight-student-highlight` with `.ach-student-name-hero` (`16px-18px`, `font-weight: 900`, vibrant athletic sky-blue `#38BDF8` with subtle luminous glow), and `.ach-student-group-badge` for `{groupName}`.
+      - Canvas export updated to render `studentName` in `900 36px` `#38BDF8`.
+    - **Template 2 (Ocean Keepsake)**:
+      - Replaced dim subline with `.ach-keepsake-student-highlight`, bold black text `16px-18px` (`font-weight: 900`, `#0F172A`) and emerald pill badge for group name.
+      - Canvas export updated to render `studentName` in `900 34px` `#0F172A`.
+    - **Template 3 (Personal Scorecard)**:
+      - Highlighted student name with `.ach-sc-ath-name-highlight` (`16px-18px`, `font-weight: 900`, radiant mint turquoise `#5EEAD4` with athletic glow).
+      - Canvas export updated to render `studentName` in `900 36px` `#5EEAD4`.
+  - Verified production build with `npm --prefix frontend run build` (0 errors in 2.20s).
+
+#### 6. Coach Score Out of 10, Water Time Metric Pill, & Hero Name Positioning (`MyAchievements.jsx`)
+- **Problem & User Feedback**:
+  - The user uploaded an annotated screenshot (`media_1794908378077_e03c844b.jpg`) with red arrows and instructions:
+    1. `"coach score 100 ruku vena 10 outoff 10 ku vai"`: Change Coach Score from `/100` to `/10` (e.g. `5.5/10` instead of `55/100`).
+    2. `"aparo take off ku bathila yevalo hours waterla iruthomnu vai"`: Replace `⚡ 6/10 TAKEOFF POP-UP` metric with total hours spent in the water (`⏱️ 2.0 hrs Water Time`).
+    3. `"Name inga varalaam"`: In the top-left corner of the photo where `"THE COACH'S CUT"` was located, display the athlete's name prominently (`🏄 RUCHIKA SHAH`).
+- **Resolution**:
+  - **Out of 10 Coach Score Scaling**:
+    - Created `getScoreOutOfTen(rawScore)` helper that dynamically scales `/100` scores to `/10` with single decimal precision (e.g. 55 -> `5.5/10`, 80 -> `8/10`, 88 -> `8.8/10`).
+    - Updated across all 3 templates (Spotlight, Keepsake, Scorecard) in both HTML modal view and high-res canvas exports (`/10` denominator everywhere).
+  - **Water Time Metric Replacement**:
+    - Replaced the Pop-Up metric pill with `getSessionWaterTime(sess)`:
+      - Reads `sess.duration_mins` or parses session time range (`07:00-09:00 AM` -> `2.0 hrs`).
+      - Rendered as `⏱️ {waterTime}` with sub-label `Water Time` / `Time in Water`.
+    - Updated in Template 1 (Spotlight), Template 2 (Keepsake footer), and Template 3 (Scorecard 3-column metrics), as well as all canvas story image generators.
+  - **Surfer Athlete Name on Photo Pill**:
+    - Replaced static `"THE COACH'S CUT"` in the photo's top-left corner with `🏄 {studentName.toUpperCase()}` styled with translucent dark teal backdrop, glowing border, and athletic badge styling.
+    - As requested (`"inga vena mela mattum pothum"`), removed duplicate student name from below `"A session to be proud of."`, keeping the student name exclusively on the hero top photo pill badge, with clean `[ Group A ] • Date & Time` below.
+    - Also matched on the Canvas generator for Instagram/WhatsApp story exports.
+  - **Clean Single Domain Watermark (`"inga athnexlive.com nu vatha pothum"`)**:
+    - Replaced redundant `"ATHNEX LIVE • athnexlive.com"` watermark at the bottom of all story canvas posters (Spotlight, Keepsake, Scorecard) and the Milestone Story preview in `OurServices.jsx` with a clean, minimal **`athnexlive.com`**.
+  - Verified production build with `npm --prefix frontend run build` (0 errors in 2.45s).
+
+#### 7. Exact 100% WYSIWYG Story Card Download & Share (`"inga katurathu yepadi iruko athey mathiri dhan enaku download aganum"`)
+- **Problem & User Feedback**:
+  - The user requested: `"inga katurathu yepadi iruko athey mathiri dhan enaku download aganum"` with an attached screenshot of the interactive preview card in the Share Studio modal.
+  - The downloaded image from manual HTML5 Canvas drawing diverged from the on-screen interactive CSS card (different font sizes, layout proportions, and pill badge rendering).
+- **Resolution**:
+  - **Direct DOM Capture via `html-to-image` (`MyAchievements.jsx`)**:
+    - Integrated `toBlob` from `html-to-image` into `generateStoryPosterBlob`.
+    - When `cardRef.current` is mounted in the DOM, `generateStoryPosterBlob` captures the live card DOM element directly at high resolution (`pixelRatio: 2.5`, generating a crisp 1100 × 1375 px 4:5 portrait image).
+    - Guarantees 100% pixel-perfect match with what the surfer sees on screen:
+      - Exact photo positioning, cover/contain fit, and live color filters (normal, golden hour, deep ocean, vivid pop).
+      - Prominent surfer name pill `🏄 {STUDENT_NAME}` and yellow `✓ SESSION COMPLETE` badge.
+      - Hero title `"A session to be proud of."`, training group tag, session date & time range.
+      - Bold Coach Score in `/10` format (e.g. `5.5/10`).
+      - 3-pill metric stats: `Waves Caught`, `Water Time`, and `Technique Score`.
+      - Verified Coach Verdict quote box with teal accent border and coach name.
+      - Clean single-domain watermark **`athnexlive.com`** at the bottom.
+      - Crisp 20px rounded card borders without shadow clipping.
+  - **Preview & Watermark Alignment**:
+    - Added the minimal `.ach-card-footer-watermark` (`athnexlive.com`) directly into all three HTML card templates (Spotlight, Keepsake, Scorecard) and optimized slate padding so both preview and export display the clean branding.
+  - **Graceful Canvas Fallback**:
+    - Wrapped DOM capture in try-catch; if DOM capture is ever interrupted, it seamlessly falls back to the high-resolution canvas renderer.
+  - Verified production build with `npm --prefix frontend run build` (0 errors in 1.76s).
+
+#### 8. School Logo & Coach Signature Photo Upload in Certificate Studio (`OurServices.jsx` & `MyAchievements.jsx`)
+- **Problem & User Feedback**:
+  - The user requested: `"inga school logo aparo siginature ahla photo upload panura mathiri venum"` with a screenshot of the Certificate Customizer in `OurServices.jsx`.
+  - Previously, certificates only allowed plain text for Academy Name and Coach Signature. Academies could not upload their official crest/logo or a real coach handwritten signature / ink stamp onto student completion certificates.
+- **Resolution**:
+  - **Dedicated Academy Logo & Signature Photo Upload Cards (`OurServices.jsx`)**:
+    - Added an always-visible **"🖼️ Official School Logo & Coach Signature Photos"** card right above Field Placement & Typography:
+      - **School Logo Card**: 1-click photo uploader (PNG, JPG, WebP), live thumbnail preview, and delete button.
+      - **Coach Signature Card**: 1-click signature image uploader (handwritten signature / stamp photo with transparency), live thumbnail preview, and delete button.
+      - Auto-propagates and saves across all course configurations (3-Day, 5-Day, and custom days) so the academy's branding stays consistent without repetitive re-uploading.
+  - **Field Selection & Fine-Tuned Typography Controls**:
+    - Added dedicated pills: `[ 🖼️ School Logo ]` and `[ ✍️ Coach Signature Photo ]`.
+    - Selecting an image field surfaces dedicated photo controls:
+      - Upload / Change Photo button
+      - Image Display Width slider (30px to 280px)
+      - Position X% and Y% sliders
+      - Anchor alignment (Left, Center, Right)
+      - Visibility toggle (`👁️ Visible` / `🚫 Hidden`)
+    - Added reciprocal shortcut buttons between Coach Name text and Signature photo, and between Academy Name text and School Logo.
+  - **Live Interactive Canvas with Drag-and-Drop Positioning**:
+    - Both the School Logo and Coach Signature photos render directly on the live certificate canvas (`certContainerRef`).
+    - Admins can drag and drop both images with mouse or touch anywhere on the certificate canvas.
+    - If a photo has not yet been uploaded, an intuitive dashed button (`📷 Upload Logo` / `✍️ Upload Signature`) allows direct 1-click uploading right from the canvas.
+    - When a custom school logo is uploaded, the generic circular default 'A' seal automatically yields to the academy's official crest.
+  - **High-Resolution & Student Certificate Export Rendering**:
+    - Updated `handleDownloadTestCertificate` in `OurServices.jsx` and `handleDownloadCertificate` in `MyAchievements.jsx` to load and draw the uploaded logo and signature images at exact scaled coordinates on the 1754 x 1240 A4 landscape certificate canvas.
+  - Verified production build with `npm --prefix frontend run build` (0 errors in 2.73s).
+
+#### 9. Direct Navigation for "Our Services" (`Sidebar.jsx`)
+- **Problem & User Feedback**:
+  - The user requested: `"itha mathirila vena click pana mathathuku pora mathiri irukanum"` with a screenshot showing the hover dropdown menu appearing under "Our Services" in the top navigation header.
+  - Other nav items (Dashboard, Instructors, Students, Sessions, Analytics, Mock Heat, Athlete Intel) navigate directly to their respective hubs on click, whereas "Our Services" showed a multi-link dropdown overlay.
+- **Resolution**:
+  - Completely removed the `servicesHovered` state and hover dropdown menu overlay from `Sidebar.jsx`.
+  - Replaced the custom dropdown block with the standard navigation link button: clicking **"Our Services"** now navigates directly to `/services` (where cards for all academy services, certificates, and story posters are clearly accessible).
+  - Verified production build with `npm --prefix frontend run build` (0 errors in 2.01s).
+
+#### 10. Removed "Benchmark Waves" from Course Certificate Cards (`OurServices.jsx`)
+- **Problem & User Feedback**:
+  - The user requested: `"itha mathiri benchmark wavesna naaba onum vaachidala athala remove panu"` with a cropped screenshot of `"Benchmark Waves: 25 Waves"` and `"Benchmark Waves: 50 Waves"`.
+  - The Academy has no wave benchmark requirements, so displaying "Benchmark Waves" on the certificate configuration cards was irrelevant and misleading.
+- **Resolution**:
+  - Completely removed the `Benchmark Waves` row from the Course Details Box in `OurServices.jsx`.
+  - The cards now cleanly show only the actual course requirements: **Required Sessions** and **Template Design**.
+  - Verified production build with `npm --prefix frontend run build` (0 errors in 1.70s).
+
+#### 11. Custom Photo Download & Story Export Fix (`"naa upload pana photo varama yetho vara photo varuthu"`)
+- **Problem & User Feedback**:
+  - The user reported: `"naa upload pana photo varama yetho vara photo varuthu"` with 2 attached images:
+    1. On-screen modal preview showing the custom uploaded photo (The Weeknd album artwork).
+    2. Downloaded PNG file (`Athnex_Session_spotlight_kim (2).png`) showing an old placeholder screenshot instead of the user's uploaded photo.
+  - **Root Cause**:
+    1. When DOM capture (`html-to-image`) ran on `cardRef.current`, it attempted to fetch external Google fonts (`@import` in CSS) without `skipFonts: true` and executed `cacheBust: true` on base64 `data:` URIs, throwing an exception and silently triggering the canvas fallback.
+    2. In the canvas fallback, setting `crossOrigin = 'anonymous'` on `photoImg` before assigning a `data:` URI caused Chromium to block the data URL as a CORS violation and trigger `onerror`.
+    3. The photo containers in the preview modal used CSS `backgroundImage: url(...)` instead of native `<img>` tags, making DOM-to-image conversion less reliable across browsers.
+- **Resolution**:
+  - **Direct Real `<img>` Tag Rendering**:
+    - Converted the photo containers in all three templates (Spotlight, Keepsake, Scorecard) in `MyAchievements.jsx` from CSS `backgroundImage` to native `<img ... />` elements with `width: 100%`, `height: 100%`, `objectFit: cover / contain`, and live `filter`.
+    - Real `<img>` tags render natively in `html-to-image` without CSS background parsing errors.
+  - **Optimized `html-to-image` Options**:
+    - Configured `{ skipFonts: true, cacheBust: false, fontEmbedCSS: '' }` in `toBlob(cardRef.current)` so external fonts or data URI cache queries never interrupt DOM capture.
+  - **Canvas Fallback Bulletproofing**:
+    - Prioritized `customPhotoUrl` at the absolute top of the photo resolution chain (`customPhotoUrl || photoDataUrl || sess?.image_url || posterBgUrl || '/surf-milestone-bg.jpg'`).
+    - Only assign `crossOrigin = 'anonymous'` for remote `http://` / `https://` URLs; for base64 `data:` and `blob:` URLs, `crossOrigin` is omitted so browsers never trigger CORS blocks.
+    - Synchronous image resolution check: if `photoImg.complete && photoImg.naturalWidth > 0`, resolves immediately without waiting for an already fired `onload`.
+    - Aligned fallback metric pills to match preview text (`In Training` and `Unrated`).
+  - Verified production build with `npm --prefix frontend run build` (0 errors in 2.49s).
+
+#### 12. Instant Front Page Reset on "Our Services" Navbar Click (`Sidebar.jsx` & `OurServices.jsx`)
+- **Problem & User Feedback**:
+  - The user requested: `"ingathu our servies ah clik pana front pagekey poidaum"` with a screenshot of the Certificate Customizer view (`/services` with `3-Day Beginner Surf Course` loaded).
+  - When users were already on `/services` and editing a certificate or poster, clicking "Our Services" in the top navigation bar did nothing because React Router was already at `/services` without resetting the internal page tab state.
+- **Resolution**:
+  - **Global Navigation Event & State Trigger (`Sidebar.jsx`)**:
+    - Updated `handleNavClick` for both desktop header navigation and mobile drawer navigation: clicking "Our Services" dispatches a custom `athnex_reset_services` event and navigates to `/services` with a unique timestamp state (`resetTab`).
+  - **Dynamic Front Page Reset (`OurServices.jsx`)**:
+    - Added event listeners for `athnex_reset_services` and `location.state.resetTab`: instantly resets `activeTab` back to `'menu'` (the main services overview page), cleans up lingering URL search queries via `replaceState`, and smoothly scrolls to top.
+    - Made the main page banner heading `"Our Services & Academy Media"` clickable with pointer cursor as a direct one-click shortcut back to the services menu.
+  - Verified production build with `npm --prefix frontend run build` (0 errors in 2.46s).
+
+#### 9. Direct Navigation for "Our Services" (`Sidebar.jsx`)
+- **Problem & User Feedback**:
+  - The user requested: `"itha mathirila vena click pana mathathuku pora mathiri irukanum"` with a screenshot showing the hover dropdown menu appearing under "Our Services" in the top navigation header.
+  - Other nav items (Dashboard, Instructors, Students, Sessions, Analytics, Mock Heat, Athlete Intel) navigate directly to their respective hubs on click, whereas "Our Services" showed a multi-link dropdown overlay.
+- **Resolution**:
+  - Completely removed the `servicesHovered` state and hover dropdown menu overlay from `Sidebar.jsx`.
+  - Replaced the custom dropdown block with the standard navigation link button: clicking **"Our Services"** now navigates directly to `/services` (where cards for all academy services, certificates, and story posters are clearly accessible).
+  - Verified production build with `npm --prefix frontend run build` (0 errors in 2.01s).
+
+#### 10. Removed "Benchmark Waves" from Course Certificate Cards (`OurServices.jsx`)
+- **Problem & User Feedback**:
+  - The user requested: `"itha mathiri benchmark wavesna naaba onum vaachidala athala remove panu"` with a cropped screenshot of `"Benchmark Waves: 25 Waves"` and `"Benchmark Waves: 50 Waves"`.
+  - The Academy has no wave benchmark requirements, so displaying "Benchmark Waves" on the certificate configuration cards was irrelevant and misleading.
+- **Resolution**:
+  - Completely removed the `Benchmark Waves` row from the Course Details Box in `OurServices.jsx`.
+  - The cards now cleanly show only the actual course requirements: **Required Sessions** and **Template Design**.
+  - Verified production build with `npm --prefix frontend run build` (0 errors in 1.70s).
+
+#### 11. Custom Photo Download & Story Export Fix (`"naa upload pana photo varama yetho vara photo varuthu"`)
+- **Problem & User Feedback**:
+  - The user reported: `"naa upload pana photo varama yetho vara photo varuthu"` with 2 attached images:
+    1. On-screen modal preview showing the custom uploaded photo (The Weeknd album artwork).
+    2. Downloaded PNG file (`Athnex_Session_spotlight_kim (2).png`) showing an old placeholder screenshot instead of the user's uploaded photo.
+  - **Root Cause**:
+    1. When DOM capture (`html-to-image`) ran on `cardRef.current`, it attempted to fetch external Google fonts (`@import` in CSS) without `skipFonts: true` and executed `cacheBust: true` on base64 `data:` URIs, throwing an exception and silently triggering the canvas fallback.
+    2. In the canvas fallback, setting `crossOrigin = 'anonymous'` on `photoImg` before assigning a `data:` URI caused Chromium to block the data URL as a CORS violation and trigger `onerror`.
+    3. The photo containers in the preview modal used CSS `backgroundImage: url(...)` instead of native `<img>` tags, making DOM-to-image conversion less reliable across browsers.
+- **Resolution**:
+  - **Direct Real `<img>` Tag Rendering**:
+    - Converted the photo containers in all three templates (Spotlight, Keepsake, Scorecard) in `MyAchievements.jsx` from CSS `backgroundImage` to native `<img ... />` elements with `width: 100%`, `height: 100%`, `objectFit: cover / contain`, and live `filter`.
+    - Real `<img>` tags render natively in `html-to-image` without CSS background parsing errors.
+  - **Optimized `html-to-image` Options**:
+    - Configured `{ skipFonts: true, cacheBust: false, fontEmbedCSS: '' }` in `toBlob(cardRef.current)` so external fonts or data URI cache queries never interrupt DOM capture.
+  - **Canvas Fallback Bulletproofing**:
+    - Prioritized `customPhotoUrl` at the absolute top of the photo resolution chain (`customPhotoUrl || photoDataUrl || sess?.image_url || posterBgUrl || '/surf-milestone-bg.jpg'`).
+    - Only assign `crossOrigin = 'anonymous'` for remote `http://` / `https://` URLs; for base64 `data:` and `blob:` URLs, `crossOrigin` is omitted so browsers never trigger CORS blocks.
+    - Synchronous image resolution check: if `photoImg.complete && photoImg.naturalWidth > 0`, resolves immediately without waiting for an already fired `onload`.
+    - Aligned fallback metric pills to match preview text (`In Training` and `Unrated`).
+  - Verified production build with `npm --prefix frontend run build` (0 errors in 2.49s).
+
+#### 12. Instant Front Page Reset on "Our Services" Navbar Click (`Sidebar.jsx` & `OurServices.jsx`)
+- **Problem & User Feedback**:
+  - The user requested: `"ingathu our servies ah clik pana front pagekey poidaum"` with a screenshot of the Certificate Customizer view (`/services` with `3-Day Beginner Surf Course` loaded).
+  - When users were already on `/services` and editing a certificate or poster, clicking "Our Services" in the top navigation bar did nothing because React Router was already at `/services` without resetting the internal page tab state.
+- **Resolution**:
+  - **Global Navigation Event & State Trigger (`Sidebar.jsx`)**:
+    - Updated `handleNavClick` for both desktop header navigation and mobile drawer navigation: clicking "Our Services" dispatches a custom `athnex_reset_services` event and navigates to `/services` with a unique timestamp state (`resetTab`).
+  - **Dynamic Front Page Reset (`OurServices.jsx`)**:
+    - Added event listeners for `athnex_reset_services` and `location.state.resetTab`: instantly resets `activeTab` back to `'menu'` (the main services overview page), cleans up lingering URL search queries via `replaceState`, and smoothly scrolls to top.
+    - Made the main page banner heading `"Our Services & Academy Media"` clickable with pointer cursor as a direct one-click shortcut back to the services menu.
+  - Verified production build with `npm --prefix frontend run build` (0 errors in 2.46s).

@@ -1533,7 +1533,7 @@ export default function UserProfileMenu({ user, school, onLogout }) {
                 type="button"
                 onClick={() => {
                   setIsOpen(false);
-                  openServicesModal();
+                  navigate('/services?tab=poster');
                 }}
                 style={{
                   width: '100%',

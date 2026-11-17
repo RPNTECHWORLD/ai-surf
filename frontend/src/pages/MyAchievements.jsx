@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
+import { toBlob } from 'html-to-image';
 
 const API = import.meta.env.VITE_API_URL || '';
 
@@ -14,12 +15,42 @@ export default function MyAchievements() {
   
   // Social Share Modal State
   const [shareModalSession, setShareModalSession] = useState(null); // session object or 'overall'
+  const [shareTemplate, setShareTemplate] = useState('spotlight'); // 'spotlight' | 'keepsake' | 'scorecard'
+  const [customPhotoUrl, setCustomPhotoUrl] = useState(null);
+  const [selectedCoachOverride, setSelectedCoachOverride] = useState(null);
+  const fileInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
+  const [cameraModalOpen, setCameraModalOpen] = useState(false);
+  const [cameraLoading, setCameraLoading] = useState(false);
+  const [cameraError, setCameraError] = useState(null);
+  const videoRef = useRef(null);
+  const cameraStreamRef = useRef(null);
+  const [cameraFacing, setCameraFacing] = useState('user'); // 'user' | 'environment'
+  const [cameraTimer, setCameraTimer] = useState(0); // 0 or 3
+  const [cameraCountdown, setCameraCountdown] = useState(null);
+  const [cameraFlash, setCameraFlash] = useState(false);
+  const [photoFilter, setPhotoFilter] = useState('normal'); // 'normal' | 'golden' | 'ocean' | 'vivid'
+  const [photoPosY, setPhotoPosY] = useState(15); // 0 (top) to 100 (bottom) - default 15% focuses on head/face
+  const [photoFit, setPhotoFit] = useState('cover'); // 'cover' | 'contain'
+  const [captionCopied, setCaptionCopied] = useState(false);
+  const [shareCardBusy, setShareCardBusy] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState(false);
   const [downloadingImg, setDownloadingImg] = useState(false);
   const [downloadingCert, setDownloadingCert] = useState(false);
+  const [certLockModal, setCertLockModal] = useState(false);
   const [confettiActive, setConfettiActive] = useState(false);
   const [posterBgUrl, setPosterBgUrl] = useState(() => {
     return localStorage.getItem('athnex_milestone_poster_bg') || '/surf-milestone-bg.jpg';
+  });
+  const [schoolCertConfig, setSchoolCertConfig] = useState(() => {
+    try {
+      const sch = localStorage.getItem('activeSchool');
+      const schoolName = sch ? JSON.parse(sch)?.name : '';
+      const cached = schoolName ? localStorage.getItem(`athnex_cert_${schoolName}`) : null;
+      return cached ? JSON.parse(cached) : null;
+    } catch (e) {
+      return null;
+    }
   });
   const confettiCanvasRef = useRef(null);
   const animFrameRef = useRef(null);
@@ -54,6 +85,30 @@ export default function MyAchievements() {
             }
           } catch (e) {
             console.warn('Could not fetch student detail:', e);
+          }
+        }
+
+        if (!fetchedProfile) {
+          try {
+            const fallbackRes = await fetch(`${API}/api/students?school=all`);
+            if (fallbackRes.ok) {
+              const allStds = await fallbackRes.json();
+              if (Array.isArray(allStds)) {
+                const uEmail = (loggedUser?.email || '').toLowerCase().trim();
+                const uName = (loggedUser?.name || '').toLowerCase().trim();
+                const matched = allStds.find(s =>
+                  (studentId && (String(s.id) === String(studentId) || String(s.user_id) === String(studentId))) ||
+                  (uEmail && s.email && s.email.toLowerCase().trim() === uEmail) ||
+                  (uName && s.name && s.name.toLowerCase().trim() === uName)
+                );
+                if (matched) {
+                  fetchedProfile = matched;
+                  setStudentData(matched);
+                }
+              }
+            }
+          } catch (e) {
+            console.warn('Fallback student fetch error:', e);
           }
         }
 
@@ -124,6 +179,10 @@ export default function MyAchievements() {
             localStorage.setItem('athnex_milestone_poster_bg', data.poster_url);
             if (sch) localStorage.setItem(`athnex_poster_${sch}`, data.poster_url);
           }
+          if (data.certificate && typeof data.certificate === 'object' && Object.keys(data.certificate).length > 0) {
+            setSchoolCertConfig(data.certificate);
+            if (sch) localStorage.setItem(`athnex_cert_${sch}`, JSON.stringify(data.certificate));
+          }
         }
       } catch (err) {
         console.warn('Failed to load custom poster image', err);
@@ -154,32 +213,107 @@ export default function MyAchievements() {
     return false;
   };
 
-  // Derive verified coach technique score out of 100
+  // Derive verified coach technique score out of 100 dynamically from coach notes
   const getSessionScore = (sess) => {
-    if (!sess) return 85;
+    if (!sess) return null;
+    
+    // 1. Direct explicit score field
     const direct = parseInt(sess.score || sess.technique_score || sess.coach_rating, 10);
-    if (!isNaN(direct) && direct > 0) return direct;
+    if (!isNaN(direct) && direct > 0) return Math.min(100, direct);
+
+    // 2. Extract score or points from notes
     if (sess.notes) {
-      const sm = sess.notes.match(/(?:Coach (?:Rating|Score)|Technique Score|Score):\s*(\d+)/i) || sess.notes.match(/\[\s*(\d+)\s*(?:out of|\/)\s*100\s*\]/i);
-      if (sm) return parseInt(sm[1], 10);
+      const notes = String(sess.notes);
+
+      // A. Direct score out of 100 in notes (e.g. "Coach Rating: 85/100", "[85 out of 100]", "Score: 82")
+      const sm100 = notes.match(/(?:Coach (?:Rating|Score)|Technique Score|Score):\s*(\d+(?:\.\d+)?)/i)
+        || notes.match(/\[\s*(\d+(?:\.\d+)?)\s*(?:out of|\/)\s*100\s*\]/i)
+        || notes.match(/\(\s*(\d+(?:\.\d+)?)\s*(?:out of|\/)\s*100\s*\)/i);
+      if (sm100) {
+        const val = parseFloat(sm100[1]);
+        if (!isNaN(val) && val > 0) return Math.min(100, Math.round(val));
+      }
+
+      // B. Points out of 10 in "What You did Well" / "What to Improve" / general notes
+      // e.g. "[6 out of 10]", "[5/10]", "(7 out of 10)", "pop up [6 out of 10]"
+      const matches10 = [...notes.matchAll(/(?:\[|\()?\s*(\d+(?:\.\d+)?)\s*(?:out of|\/)\s*10\s*(?:\]|\))?/gi)];
+      if (matches10.length > 0) {
+        const points = matches10
+          .map(m => parseFloat(m[1]))
+          .filter(v => !isNaN(v) && v >= 0 && v <= 10);
+        if (points.length > 0) {
+          const avgOutOf10 = points.reduce((sum, v) => sum + v, 0) / points.length;
+          return Math.min(100, Math.max(10, Math.round(avgOutOf10 * 10)));
+        }
+      }
+
+      // C. Standalone points/rating e.g. "Rating: 8" or "Points: 7"
+      const smStandalone = notes.match(/(?:Rating|Points|Score|Grade)\s*[:=-]\s*(\d+(?:\.\d+)?)/i);
+      if (smStandalone) {
+        const val = parseFloat(smStandalone[1]);
+        if (!isNaN(val) && val > 0) {
+          return val <= 10 ? Math.round(val * 10) : Math.min(100, Math.round(val));
+        }
+      }
     }
-    return 85;
+
+    // Real coach inputs only: do not invent artificial fallbacks
+    return null;
   };
 
-  // Derive session waves caught / ridden
+  // Derive pop-up rating out of 10 from coach notes or score
+  const getSessionPopUpRating = (sess, fallbackScore = null) => {
+    if (sess && sess.notes) {
+      const match = sess.notes.match(/pop[- ]?up.*?\[?(\d+(?:\.\d+)?)\s*(?:out of|\/)\s*10/i)
+        || sess.notes.match(/What You did Well:.*?\[?(\d+(?:\.\d+)?)\s*(?:out of|\/)\s*10/i);
+      if (match) {
+        const p = parseFloat(match[1]);
+        if (!isNaN(p) && p >= 1 && p <= 10) return Math.round(p);
+      }
+    }
+    const realScore = fallbackScore !== null ? fallbackScore : getSessionScore(sess);
+    if (realScore !== null) {
+      return Math.min(10, Math.max(1, Math.round(realScore / 10)));
+    }
+    return null;
+  };
+
+  // Derive paddling rating out of 10 from notes or score
+  const getSessionPaddlingRating = (sess, fallbackScore = null) => {
+    if (sess && sess.notes) {
+      const match = sess.notes.match(/paddl(?:e|ing).*?\[?(\d+(?:\.\d+)?)\s*(?:out of|\/)\s*10/i)
+        || sess.notes.match(/paddling\s*:\s*(\d+(?:\.\d+)?)/i);
+      if (match) {
+        const p = parseFloat(match[1]);
+        if (!isNaN(p) && p >= 1 && p <= 10) return Math.round(p);
+      }
+    }
+    if (sess && (sess.paddling_score || sess.paddling)) {
+      const p = parseFloat(sess.paddling_score || sess.paddling);
+      if (!isNaN(p)) return Math.min(10, Math.max(1, Math.round(p > 10 ? p / 10 : p)));
+    }
+    const realScore = fallbackScore !== null ? fallbackScore : getSessionScore(sess);
+    if (realScore !== null) {
+      return Math.min(10, Math.max(1, Math.round((realScore / 10) * 0.85)));
+    }
+    return null;
+  };
+
+  // Derive session waves caught / ridden (real coach inputs only)
   const getSessionWaves = (sess) => {
-    if (!sess) return 6;
+    if (!sess) return null;
     const direct = parseInt(sess.waves_ridden || sess.waves_caught || sess.wave_count, 10);
     if (!isNaN(direct) && direct > 0) return direct;
     if (sess.notes) {
-      const wm = sess.notes.match(/Wave Count:\s*(\d+)/i);
-      if (wm) return parseInt(wm[1], 10);
+      const wm = sess.notes.match(/Wave Count:\s*(\d+)/i)
+        || sess.notes.match(/(\d+)\s*waves?(?:\s*caught|\s*ridden)?/i);
+      if (wm) {
+        const count = parseInt(wm[1], 10);
+        if (!isNaN(count) && count > 0) return count;
+      }
     }
-    const sc = getSessionScore(sess);
-    if (sc > 0) {
-      return Math.max(4, Math.min(12, Math.round(sc / 10) + 1));
-    }
-    return 6;
+    // Real coach inputs only: do not invent wave numbers
+    return null;
   };
 
   // Compute milestone statistics from session history
@@ -189,15 +323,17 @@ export default function MyAchievements() {
 
     const totalWaves = completedList.reduce((sum, s) => {
       const count = getSessionWaves(s);
-      return sum + (isNaN(count) ? 0 : count);
-    }, 0) || (completedList.length * 6); // Realistic average if count unrecorded
+      return sum + (count !== null && !isNaN(count) ? count : 0);
+    }, 0);
 
     const totalHours = (completedList.length * 2.0).toFixed(1);
 
     const scores = completedList
       .map(s => getSessionScore(s))
-      .filter(sc => !isNaN(sc) && sc > 0);
-    const avgScore = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 85;
+      .filter(sc => sc !== null && !isNaN(sc) && sc > 0);
+    const avgScore = scores.length > 0 
+      ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) 
+      : null;
 
     return {
       total: sessions.length,
@@ -208,6 +344,19 @@ export default function MyAchievements() {
       avgScore
     };
   }, [sessions]);
+
+  // Derive course duration requirements (e.g. 3 Days Course requires 3 sessions, 5 Days Course requires 5 sessions)
+  const requiredSessions = useMemo(() => {
+    const durStr = studentData?.course_duration || loggedUser?.course_duration || studentData?.course || '';
+    const match = String(durStr).match(/(\d+)\s*Day/i);
+    if (match) return parseInt(match[1], 10);
+    if (studentData?.total_days && !isNaN(parseInt(studentData.total_days, 10)) && parseInt(studentData.total_days, 10) > 0) {
+      return parseInt(studentData.total_days, 10);
+    }
+    return 3; // Default standard course
+  }, [studentData, loggedUser]);
+
+  const isCertificateUnlocked = (stats.completed >= requiredSessions);
 
   // Filtered sessions based on active tab and search query
   const displayedSessions = useMemo(() => {
@@ -283,14 +432,14 @@ export default function MyAchievements() {
         `👤 Surfer: *${studentName}*\n` +
         `🏆 Skill Level: *${studentLevel}*\n` +
         `✅ Sessions Completed: *${stats.completed} Sessions*\n` +
-        `🌊 Waves Ridden: *${stats.totalWaves} Waves*\n` +
+        `🌊 Waves Ridden: *${stats.totalWaves > 0 ? `${stats.totalWaves} Waves` : 'In Training'}*\n` +
         `⏱️ Ocean Training: *${stats.totalHours} hrs*\n` +
-        `⭐ Coach Score: *${stats.avgScore}/100*\n` +
+        (stats.avgScore !== null ? `⭐ Coach Score: *${stats.avgScore}/100*\n` : '') +
         `📍 Academy: *${studentSchool}*\n\n` +
         `Track verified surf progress & AI video analysis on https://athnexlive.com 🤙`
       );
     }
-    const coachName = sess.instructor || sess.instructor_name || 'Coach';
+    const coachName = getCleanCoachName(sess, selectedCoachOverride);
     const loc = sess.location || studentSchool || 'Surf Spot';
     const duration = getSessionDuration(sess);
     const waves = getSessionWaves(sess);
@@ -300,8 +449,8 @@ export default function MyAchievements() {
       `👤 Surfer: *${studentName}*\n` +
       `📅 Date: *${sess.date}* (${sess.time || 'Morning Session'})\n` +
       `⏱️ Training Time: *${duration}*\n` +
-      `🌊 Waves Caught: *${waves} Waves*\n` +
-      `⭐ Technique Score: *${scoreVal}/100*\n` +
+      (waves !== null ? `🌊 Waves Caught: *${waves} Waves*\n` : '') +
+      (scoreVal !== null ? `⭐ Technique Score: *${scoreVal}/100*\n` : '') +
       `📍 Spot: *${loc}*\n` +
       `🏄 Coach: *${coachName}*\n` +
       `🔥 Level: *${sess.level || sess.type || studentLevel}*\n` +
@@ -309,177 +458,857 @@ export default function MyAchievements() {
     );
   };
 
-  // High-Resolution Story Poster Blob Generator
-  const generateStoryPosterBlob = async (sess) => {
+  const handlePhotoSelect = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      setCustomPhotoUrl(event.target.result);
+      setPhotoPosY(15); // Auto-position near top so faces & heads are never cropped
+      setPhotoFit('cover');
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  const getFilterCss = (filter = photoFilter) => {
+    if (filter === 'golden') return 'brightness(1.05) saturate(1.25) sepia(0.15)';
+    if (filter === 'ocean') return 'contrast(1.08) saturate(1.2) hue-rotate(-8deg)';
+    if (filter === 'vivid') return 'contrast(1.15) saturate(1.3)';
+    return 'none';
+  };
+
+  const startCamera = async (facing = cameraFacing) => {
+    setCameraModalOpen(true);
+    setCameraLoading(true);
+    setCameraError(null);
+
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
+    }
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setCameraError('Direct camera not supported on this device. Opening file capture.');
+      setCameraLoading(false);
+      setTimeout(() => {
+        setCameraModalOpen(false);
+        cameraInputRef.current?.click();
+      }, 1200);
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: facing },
+          width: { ideal: 1280 },
+          height: { ideal: 960 }
+        },
+        audio: false
+      });
+      cameraStreamRef.current = stream;
+      setCameraLoading(false);
+      setTimeout(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play().catch(e => console.warn('Video play error:', e));
+        }
+      }, 80);
+    } catch (err) {
+      console.warn('getUserMedia error:', err);
+      setCameraLoading(false);
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        setCameraError('Camera access permission was denied. Please allow camera permissions in your browser or select an image.');
+        setTimeout(() => {
+          stopCamera();
+          cameraInputRef.current?.click();
+        }, 1500);
+      } else {
+        setCameraError('Could not start live camera. Falling back to camera/file capture.');
+        setTimeout(() => {
+          stopCamera();
+          cameraInputRef.current?.click();
+        }, 1200);
+      }
+    }
+  };
+
+  const toggleCameraFacing = () => {
+    const nextFacing = cameraFacing === 'user' ? 'environment' : 'user';
+    setCameraFacing(nextFacing);
+    startCamera(nextFacing);
+  };
+
+  const stopCamera = () => {
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setCameraModalOpen(false);
+    setCameraLoading(false);
+    setCameraError(null);
+    setCameraCountdown(null);
+    setCameraFlash(false);
+  };
+
+  const handleSnapClick = () => {
+    if (cameraTimer > 0) {
+      let count = cameraTimer;
+      setCameraCountdown(count);
+      const timerInt = setInterval(() => {
+        count -= 1;
+        if (count <= 0) {
+          clearInterval(timerInt);
+          setCameraCountdown(null);
+          triggerSnap();
+        } else {
+          setCameraCountdown(count);
+        }
+      }, 1000);
+    } else {
+      triggerSnap();
+    }
+  };
+
+  const triggerSnap = () => {
+    setCameraFlash(true);
+    setTimeout(() => {
+      setCameraFlash(false);
+      captureSelfiePhoto();
+    }, 200);
+  };
+
+  const captureSelfiePhoto = () => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) {
+      stopCamera();
+      return;
+    }
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      // Mirror horizontally if front user camera
+      if (cameraFacing === 'user') {
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+      }
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+      setCustomPhotoUrl(dataUrl);
+      setPhotoPosY(15); // Auto-focus on face/head
+      setPhotoFit('cover');
+    } catch (e) {
+      console.error('Failed to capture from video:', e);
+    } finally {
+      stopCamera();
+    }
+  };
+
+  const handleCopyCaption = async (sess) => {
+    const isOverall = sess === 'overall';
+    const wavesVal = isOverall ? stats.totalWaves : getSessionWaves(sess);
+    const scoreVal = isOverall ? stats.avgScore : getSessionScore(sess);
+    const coach = getCleanCoachName(sess);
+    const spot = sess?.location || studentSchool || 'Athnex Surf Academy';
+    
+    const wavesPart = wavesVal !== null ? `🌊 ${wavesVal} Waves Caught` : '🌊 Ocean Training Complete';
+    const scorePart = scoreVal !== null ? ` | ⭐ ${scoreVal}/100 Coach Technique Score` : '';
+    const caption = `Pushing limits in the ocean! 🏄‍♂️✨\n` +
+      `${wavesPart}${scorePart}\n` +
+      `📍 ${spot} • Coached by ${coach}\n\n` +
+      `#AthnexSurfing #SurfLife #OceanAthlete #PushYourLimits #SurfingIndia`;
+    
+    try {
+      await navigator.clipboard.writeText(caption);
+      setCaptionCopied(true);
+      setTimeout(() => setCaptionCopied(false), 2500);
+    } catch (e) {
+      console.warn('Copy caption failed', e);
+    }
+  };
+
+  const getSessionGroupName = (sess) => {
+    if (!sess || sess === 'overall') return 'Group I';
+    return sess.group_name || 'Group I';
+  };
+
+  const getSessionFormattedDate = (sess) => {
+    if (!sess || sess === 'overall') return new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+    if (!sess.date) return 'Wed, Nov 4, 2026';
+    try {
+      const d = new Date(sess.date);
+      if (!isNaN(d.getTime())) {
+        return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+      }
+    } catch (e) {}
+    return sess.date;
+  };
+
+  const getSessionWaterTime = (sess) => {
+    if (!sess || sess === 'overall') return `${stats.totalHours || 2.0} hrs`;
+    if (sess.duration_mins && !isNaN(sess.duration_mins) && Number(sess.duration_mins) > 0) {
+      const hrs = Math.round((Number(sess.duration_mins) / 60) * 10) / 10;
+      return `${hrs} ${hrs === 1 ? 'hr' : 'hrs'}`;
+    }
+    if (sess.time && typeof sess.time === 'string' && sess.time.includes('-')) {
+      try {
+        const [startStr, endStr] = sess.time.split('-').map(t => t.trim());
+        const parseH = (s) => {
+          const m = s.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+          if (!m) return null;
+          let h = parseInt(m[1], 10);
+          const min = parseInt(m[2], 10);
+          const ampm = m[3] ? m[3].toUpperCase() : null;
+          if (ampm === 'PM' && h < 12) h += 12;
+          if (ampm === 'AM' && h === 12) h = 0;
+          return h + min / 60;
+        };
+        const h1 = parseH(startStr);
+        const h2 = parseH(endStr);
+        if (h1 !== null && h2 !== null && h2 > h1) {
+          const diff = Math.round((h2 - h1) * 10) / 10;
+          return `${diff} ${diff === 1 ? 'hr' : 'hrs'}`;
+        }
+      } catch (e) {}
+    }
+    return '2.0 hrs';
+  };
+
+  const getScoreOutOfTen = (rawScore) => {
+    if (rawScore === null || rawScore === undefined || rawScore === '' || rawScore === '--') return '--';
+    const num = Number(rawScore);
+    if (isNaN(num)) return '--';
+    if (num <= 10) return num;
+    return (num % 10 === 0) ? (num / 10) : (num / 10).toFixed(1);
+  };
+
+  const getCoachCandidates = (sess) => {
+    if (!sess || sess === 'overall') {
+      const sCoach = studentData?.instructor || '';
+      return sCoach ? [sCoach.trim().replace(/\b(coaches|coach|instructors|instructor)\b/gi, '').trim()] : [];
+    }
+    const list = [];
+    if (Array.isArray(sess.instructors_list)) {
+      sess.instructors_list.forEach(c => {
+        if (c && typeof c === 'string' && c.trim()) {
+          const clean = c.trim().replace(/\b(coaches|coach|instructors|instructor)\b/gi, '').trim();
+          if (clean && !list.some(x => x.toLowerCase() === clean.toLowerCase())) {
+            list.push(clean.charAt(0).toUpperCase() + clean.slice(1));
+          }
+        }
+      });
+    }
+    const raw = sess.instructor || sess.instructor_name || sess.coach || '';
+    if (raw) {
+      const clean = raw.replace(/^group\s+[a-z0-9]+[^:]*:\s*/i, '').replace(/\s*-\s*\d+\s*students.*/i, '');
+      clean.split(/[,&/]+/).forEach(p => {
+        const c = p.trim().replace(/\b(coaches|coach|instructors|instructor|instruc)\b/gi, '').trim();
+        if (c.length > 1 && !/^\d+$/.test(c) && !list.some(x => x.toLowerCase() === c.toLowerCase())) {
+          list.push(c.charAt(0).toUpperCase() + c.slice(1));
+        }
+      });
+    }
+    if (studentData?.instructor) {
+      const si = studentData.instructor.trim().replace(/\b(coaches|coach|instructors|instructor)\b/gi, '').trim();
+      if (si.length > 1 && !list.some(x => x.toLowerCase() === si.toLowerCase())) {
+        list.unshift(si.charAt(0).toUpperCase() + si.slice(1));
+      }
+    }
+    return list;
+  };
+
+  const getCleanCoachName = (sess, overrideCoach = null) => {
+    if (overrideCoach && typeof overrideCoach === 'string' && overrideCoach.trim()) {
+      const clean = overrideCoach.trim().replace(/\b(coaches|coach|instructors|instructor)\b/gi, '').trim();
+      return clean ? `Coach ${clean.charAt(0).toUpperCase() + clean.slice(1)}` : 'Certified Ocean Coach';
+    }
+    if (!sess || sess === 'overall') {
+      const sCoach = studentData?.instructor || '';
+      if (sCoach && sCoach.trim()) {
+        const clean = sCoach.trim().replace(/\b(coaches|coach|instructors|instructor)\b/gi, '').trim();
+        return `Coach ${clean.charAt(0).toUpperCase() + clean.slice(1)}`;
+      }
+      return 'Certified Ocean Coach';
+    }
+
+    // 1. Direct single instructor field if provided
+    if (sess.primary_instructor && typeof sess.primary_instructor === 'string') {
+      const pi = sess.primary_instructor.trim().replace(/\b(coaches|coach|instructors|instructor)\b/gi, '').trim();
+      if (pi) return `Coach ${pi.charAt(0).toUpperCase() + pi.slice(1)}`;
+    }
+
+    let raw = sess.instructor_name || sess.assigned_coach || sess.instructor || sess.coach || '';
+    if (!raw || !raw.trim()) {
+      if (studentData?.instructor) {
+        raw = studentData.instructor;
+      }
+    }
+    if (!raw || !raw.trim()) return 'Certified Ocean Coach';
+
+    // Remove group/schedule prefixes e.g. "Group A (02:00 PM - 04:00 PM) - Coaches: "
+    raw = raw.replace(/^group\s+[a-z0-9]+[^:]*:\s*/i, '');
+    raw = raw.replace(/\s*-\s*\d+\s*students.*/i, '');
+    const parts = raw
+      .split(/[,&/]+/)
+      .map(p => p.trim().replace(/\b(coaches|coach|instructors|instructor|instruc)\b/gi, '').trim())
+      .filter(p => p.length > 1 && !/^\d+$/.test(p));
+
+    if (parts.length === 0) {
+      if (studentData?.instructor) {
+        const si = studentData.instructor.trim().replace(/\b(coaches|coach|instructors|instructor)\b/gi, '').trim();
+        if (si) return `Coach ${si.charAt(0).toUpperCase() + si.slice(1)}`;
+      }
+      return 'Certified Ocean Coach';
+    }
+
+    // 2. If student has an assigned instructor that matches one of the coaches in parts, prioritize that coach!
+    const stdCoach = (studentData?.instructor || '').toLowerCase().trim();
+    if (stdCoach) {
+      const matched = parts.find(p => p.toLowerCase() === stdCoach || stdCoach.includes(p.toLowerCase()) || p.toLowerCase().includes(stdCoach));
+      if (matched) {
+        return `Coach ${matched.charAt(0).toUpperCase() + matched.slice(1)}`;
+      }
+    }
+
+    // 3. Fallback to the single primary coach name, never plural joined list
+    const primary = parts[0];
+    const cap = primary.charAt(0).toUpperCase() + primary.slice(1);
+    return `Coach ${cap}`;
+  };
+
+  const getCoachQuote = (sess) => {
+    if (!sess || sess === 'overall') return 'Small wins. Big ocean energy.';
+    const notes = sess.notes || sess.coach_notes || sess.feedback || '';
+
+    // Check if notes contains genuine coach technique feedback
+    if (notes) {
+      const wellMatch = notes.match(/What You did Well:\s*([^.\n;\-]+)/i) || notes.match(/Well:\s*([^.\n;\-]+)/i);
+      if (wellMatch && wellMatch[1].trim()) {
+        const text = wellMatch[1].replace(/\[\d+\s*out of\s*10\]/gi, '').replace(/\s*-\s*/g, '').trim();
+        if (text && text.length > 3) {
+          return text.charAt(0).toUpperCase() + text.slice(1);
+        }
+      }
+
+      // Check if notes has real human commentary not matching admin templates
+      const isAdminTemplate = /Group\s+[A-Z]/i.test(notes) || 
+                              /Coaches:/i.test(notes) || 
+                              /\d+\s*students/i.test(notes) || 
+                              /^\s*\d{1,2}:\d{2}\s*(?:AM|PM)/i.test(notes);
+
+      if (!isAdminTemplate) {
+        const firstLine = notes.split('\n')[0].replace(/^Coach Notes:\s*/i, '').replace(/^Wave Count:\s*\d+/i, '').trim();
+        const clean = firstLine.replace(/\[\d+\s*out of\s*10\]/gi, '').trim();
+        if (clean && clean.length > 5) {
+          return clean.slice(0, 80);
+        }
+      }
+    }
+
+    // Dynamic authentic Coach Technique Praise based on score and performance
+    const score = getSessionScore(sess);
+    const waves = getSessionWaves(sess);
+
+    if (score >= 85) {
+      return 'Explosive takeoff speed, confident wave positioning & fluid ocean control!';
+    } else if (score >= 75) {
+      return 'Solid pop-up stance, balanced weight distribution & clean wave face riding.';
+    } else if (score >= 65) {
+      return 'Great paddle commitment, smooth pop-up timing & steady technique gains!';
+    } else if (waves >= 6) {
+      return 'Relentless ocean stamina, fearless wave entry & great wave count today!';
+    } else {
+      return 'Every wave caught is a boundary pushed. Master the ocean with confidence!';
+    }
+  };
+
+  // High-Resolution Story Poster Generator (WYSIWYG DOM Capture with Canvas Fallback)
+  const generateStoryPosterBlob = async (sess, template = shareTemplate, photoDataUrl = customPhotoUrl, filter = photoFilter, posY = photoPosY, fit = photoFit) => {
+    // 1. WYSIWYG DOM Capture: If the active preview card is mounted, capture it directly so the
+    // downloaded image matches 100% what the user sees on screen (typography, badges, colors, layout).
+    if (cardRef.current) {
+      try {
+        const domBlob = await toBlob(cardRef.current, {
+          pixelRatio: 2.5,
+          cacheBust: false,
+          skipFonts: true,
+          fontEmbedCSS: '',
+          style: {
+            boxShadow: 'none',
+            transform: 'none',
+            margin: '0',
+          },
+        });
+        if (domBlob && domBlob.size > 2000) {
+          return domBlob;
+        }
+      } catch (domErr) {
+        console.warn('DOM card capture fallback to canvas:', domErr);
+      }
+    }
+
+    // 2. Fallback: High-Resolution Story Poster Canvas Generator (1080x1350, 4:5 portrait)
     const canvas = document.createElement('canvas');
     canvas.width = 1080;
     canvas.height = 1350; // Standard 4:5 mobile story / portrait ratio
     const ctx = canvas.getContext('2d');
     const isOverall = sess === 'overall';
 
-    const bgImg = new Image();
-    bgImg.crossOrigin = 'anonymous';
-    bgImg.src = posterBgUrl || '/surf-milestone-bg.jpg';
+    // Prioritize user's uploaded custom photo first and foremost!
+    const activePhoto = customPhotoUrl || photoDataUrl || (sess && sess.image_url) || posterBgUrl || '/surf-milestone-bg.jpg';
+
+    const photoImg = new Image();
+    const isDataOrBlob = typeof activePhoto === 'string' && (activePhoto.startsWith('data:') || activePhoto.startsWith('blob:'));
+    if (!isDataOrBlob) {
+      photoImg.crossOrigin = 'anonymous';
+    }
+    photoImg.src = activePhoto;
 
     await new Promise((resolve) => {
-      bgImg.onload = resolve;
-      bgImg.onerror = resolve; // fallback gracefully if image load interrupted
+      if (photoImg.complete && photoImg.naturalWidth > 0) {
+        return resolve();
+      }
+      photoImg.onload = resolve;
+      photoImg.onerror = () => {
+        console.warn('Poster image failed to load, falling back to default ocean image');
+        if (photoImg.src !== '/surf-milestone-bg.jpg') {
+          photoImg.removeAttribute('crossorigin');
+          photoImg.src = '/surf-milestone-bg.jpg';
+          photoImg.onload = resolve;
+          photoImg.onerror = resolve;
+        } else {
+          resolve();
+        }
+      };
     });
 
-    // 1. Draw Background AI Surfing Image
-    if (bgImg.complete && bgImg.naturalWidth > 0) {
-      const imgRatio = bgImg.naturalWidth / bgImg.naturalHeight;
-      const targetRatio = canvas.width / canvas.height;
-      let sWidth = bgImg.naturalWidth;
-      let sHeight = bgImg.naturalHeight;
-      let sx = 0;
-      let sy = 0;
-
-      if (imgRatio > targetRatio) {
-        sWidth = bgImg.naturalHeight * targetRatio;
-        sx = (bgImg.naturalWidth - sWidth) / 2;
+    const drawCover = (dx, dy, dw, dh) => {
+      if (!photoImg.complete || !photoImg.naturalWidth) return;
+      ctx.save();
+      if (filter === 'golden') {
+        ctx.filter = 'brightness(1.05) saturate(1.25) sepia(0.15)';
+      } else if (filter === 'ocean') {
+        ctx.filter = 'contrast(1.08) saturate(1.2) hue-rotate(-8deg)';
+      } else if (filter === 'vivid') {
+        ctx.filter = 'contrast(1.15) saturate(1.3)';
       } else {
-        sHeight = bgImg.naturalWidth / targetRatio;
-        sy = (bgImg.naturalHeight - sHeight) / 2;
+        ctx.filter = 'none';
       }
-      ctx.drawImage(bgImg, sx, sy, sWidth, sHeight, 0, 0, canvas.width, canvas.height);
-    } else {
-      const bgGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-      bgGrad.addColorStop(0, '#0F172A');
-      bgGrad.addColorStop(0.5, '#042F2E');
-      bgGrad.addColorStop(1, '#022C22');
-      ctx.fillStyle = bgGrad;
+
+      if (fit === 'contain') {
+        // Subtle dark backdrop behind contained full image
+        ctx.fillStyle = template === 'keepsake' ? '#E2E8F0' : template === 'scorecard' ? '#064E3B' : '#0B1120';
+        ctx.fillRect(dx, dy, dw, dh);
+        const scale = Math.min(dw / photoImg.naturalWidth, dh / photoImg.naturalHeight);
+        const cw = photoImg.naturalWidth * scale;
+        const ch = photoImg.naturalHeight * scale;
+        const cx = dx + (dw - cw) / 2;
+        const cy = dy + (dh - ch) / 2;
+        ctx.drawImage(photoImg, 0, 0, photoImg.naturalWidth, photoImg.naturalHeight, cx, cy, cw, ch);
+      } else {
+        const iR = photoImg.naturalWidth / photoImg.naturalHeight;
+        const tR = dw / dh;
+        let sx = 0, sy = 0, sw = photoImg.naturalWidth, sh = photoImg.naturalHeight;
+        if (iR > tR) {
+          sw = photoImg.naturalHeight * tR;
+          sx = (photoImg.naturalWidth - sw) / 2;
+          sy = 0;
+        } else {
+          sh = photoImg.naturalWidth / tR;
+          sx = 0;
+          const maxSy = photoImg.naturalHeight - sh;
+          sy = Math.max(0, Math.min(maxSy, maxSy * (posY / 100)));
+        }
+        ctx.drawImage(photoImg, sx, sy, sw, sh, dx, dy, dw, dh);
+      }
+      ctx.restore();
+    };
+
+    const rawWaves = isOverall ? stats.totalWaves : getSessionWaves(sess);
+    const rawScore = isOverall ? stats.avgScore : getSessionScore(sess);
+    const wavesCount = rawWaves !== null ? rawWaves : '--';
+    const scoreVal = rawScore !== null ? rawScore : '--';
+    const scoreOutOf10 = getScoreOutOfTen(scoreVal);
+    const waterTime = getSessionWaterTime(sess);
+    const rawPopUp = isOverall ? (rawScore ? Math.round(rawScore / 10) : null) : getSessionPopUpRating(sess, rawScore);
+    const rawPaddling = isOverall ? (rawScore ? Math.round(rawScore / 12) : null) : getSessionPaddlingRating(sess, rawScore);
+    const popUpRating = rawPopUp !== null ? `${rawPopUp}/10` : '--';
+    const paddlingRating = rawPaddling !== null ? `${rawPaddling}/10` : '--';
+    const coachName = getCleanCoachName(sess, selectedCoachOverride);
+    const groupName = getSessionGroupName(sess);
+    const dateFormatted = getSessionFormattedDate(sess);
+    const quoteText = getCoachQuote(sess);
+    const shortDuration = isOverall ? `${stats.totalHours} hrs` : (sess && sess.duration_mins ? `${Math.round(sess.duration_mins / 60 * 10) / 10} hrs` : '2.0 hrs');
+    const sessionLoc = isOverall ? studentSchool : ((sess && sess.location) || studentSchool || 'Surf Beach');
+
+    if (template === 'keepsake') {
+      // ══════ TEMPLATE 2: OCEAN KEEPSAKE (Warm Cream / Minimal Sand) ══════
+      ctx.fillStyle = '#FAF6F0';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
-    }
 
-    // 2. Cinematic Gradient Overlay
-    const overlayGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-    overlayGrad.addColorStop(0, 'rgba(15, 23, 42, 0.78)');
-    overlayGrad.addColorStop(0.3, 'rgba(15, 23, 42, 0.45)');
-    overlayGrad.addColorStop(0.65, 'rgba(15, 23, 42, 0.75)');
-    overlayGrad.addColorStop(1, 'rgba(2, 6, 23, 0.96)');
-    ctx.fillStyle = overlayGrad;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+      // Header Tag
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#0D9488';
+      ctx.font = '800 22px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText("THE COACH'S CUT  /  SESSION KEEPSAKE", 90, 105);
 
-    // 3. Borders
-    ctx.lineWidth = 10;
-    ctx.strokeStyle = '#2DD4BF';
-    ctx.strokeRect(36, 36, canvas.width - 72, canvas.height - 72);
+      // Headline
+      ctx.fillStyle = '#0F172A';
+      ctx.font = '900 58px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText('Small wins.', 90, 175);
+      ctx.fillText('Big ocean energy.', 90, 235);
 
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-    ctx.strokeRect(50, 50, canvas.width - 100, canvas.height - 100);
+      // Highlighted Student Name on Canvas
+      ctx.fillStyle = '#0F172A';
+      ctx.font = '900 34px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText(studentName, 90, 282);
 
-    // 4. Header Branding
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#2DD4BF';
-    ctx.font = 'bold 36px "Plus Jakarta Sans", sans-serif';
-    ctx.fillText('⚡ ATHNEX LIVE', 80, 115);
+      // Subline
+      ctx.fillStyle = '#64748B';
+      ctx.font = '600 21px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText(`${groupName}  •  ${dateFormatted}`, 90, 318);
 
-    ctx.textAlign = 'right';
-    ctx.fillStyle = '#FCD34D';
-    ctx.font = 'bold 24px "Plus Jakarta Sans", sans-serif';
-    ctx.fillText('🏆 VERIFIED ATHLETE', canvas.width - 80, 115);
+      // Framed Photo in Center
+      const frameX = 80, frameY = 340, frameW = 920, frameH = 570;
+      ctx.save();
+      ctx.shadowColor = 'rgba(15, 23, 42, 0.12)';
+      ctx.shadowBlur = 30;
+      ctx.shadowOffsetY = 12;
+      ctx.fillStyle = '#FFFFFF';
+      ctx.beginPath();
+      ctx.roundRect(frameX, frameY, frameW, frameH, 20);
+      ctx.fill();
+      ctx.restore();
 
-    // 5. Motivational Header Slogan
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#2DD4BF';
-    ctx.font = '800 26px "Plus Jakarta Sans", sans-serif';
-    ctx.fillText('🌊 PUSH YOUR LIMITS  •  MASTER THE OCEAN', canvas.width / 2, 215);
+      // Inner Photo
+      const pad = 16;
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(frameX + pad, frameY + pad, frameW - pad * 2, frameH - pad * 2, 14);
+      ctx.clip();
+      drawCover(frameX + pad, frameY + pad, frameW - pad * 2, frameH - pad * 2);
+      ctx.restore();
 
-    // 6. Surfer Name & Title
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = '900 64px "Plus Jakarta Sans", sans-serif';
-    ctx.fillText(studentName.toUpperCase(), canvas.width / 2, 305);
+      // Floating Circular Gold Badge pinned at bottom-right of photo
+      const badgeR = 66;
+      const badgeCX = frameX + frameW - 78;
+      const badgeCY = frameY + frameH - 18;
+      ctx.save();
+      ctx.shadowColor = 'rgba(245, 158, 11, 0.45)';
+      ctx.shadowBlur = 24;
+      ctx.shadowOffsetY = 8;
+      const goldGrad = ctx.createLinearGradient(badgeCX - badgeR, badgeCY - badgeR, badgeCX + badgeR, badgeCY + badgeR);
+      goldGrad.addColorStop(0, '#FDE68A');
+      goldGrad.addColorStop(1, '#F59E0B');
+      ctx.fillStyle = goldGrad;
+      ctx.beginPath();
+      ctx.arc(badgeCX, badgeCY, badgeR, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.lineWidth = 6;
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.stroke();
+      ctx.restore();
 
-    ctx.fillStyle = '#E2E8F0';
-    ctx.font = '600 28px "Plus Jakarta Sans", sans-serif';
-    ctx.fillText(`${studentSchool}  •  ${studentLevel} Surfer`, canvas.width / 2, 355);
+      ctx.save();
+      ctx.textAlign = 'center';
+      // Top: COACH
+      ctx.fillStyle = '#78350F';
+      ctx.font = '900 13px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText('COACH', badgeCX, badgeCY - 22);
+      // Center: scoreOutOf10
+      ctx.font = '900 48px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText(`${scoreOutOf10}`, badgeCX, badgeCY + 14);
+      // Bottom: /10
+      ctx.fillStyle = '#92400E';
+      ctx.font = '800 18px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText('/10', badgeCX, badgeCY + 36);
+      ctx.restore();
 
-    // 7. Metric Blocks (6 high-impact metrics)
-    const boxW = 440;
-    const boxH = 122;
-    const startY = 425;
-    const gapX = 40;
-    const gapY = 20;
-    const col1X = (canvas.width / 2) - boxW - (gapX / 2);
-    const col2X = (canvas.width / 2) + (gapX / 2);
+      // Quote & Notes Below
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#64748B';
+      ctx.font = 'italic 500 22px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText('A little salt. A lot of progress.', 90, 950);
 
-    const wavesCount = getSessionWaves(sess);
-    const durationText = getSessionDuration(sess);
+      ctx.fillStyle = '#0F172A';
+      ctx.font = '800 36px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText(`“${quoteText}”`, 90, 1015);
 
-    const metrics = isOverall ? [
-      { label: 'COMPLETED SESSIONS', val: `${stats.completed}`, sub: 'Verified On Water', icon: '🏄‍♂️' },
-      { label: 'TOTAL WAVES RIDDEN', val: `${stats.totalWaves}`, sub: 'Ocean Logged', icon: '🌊' },
-      { label: 'WATER TRAINING', val: `${stats.totalHours} hrs`, sub: 'Coached Direct', icon: '⏱️' },
-      { label: 'TECHNIQUE SCORE', val: `${stats.avgScore} / 100`, sub: 'Coach Verified', icon: '⭐' },
-      { label: 'TRAINING SPOT', val: `${studentSchool}`, sub: 'Official Academy', icon: '📍' },
-      { label: 'ATHLETE STATUS', val: `${studentLevel}`, sub: 'Certified Surfer', icon: '🏆' }
-    ] : [
-      { label: 'SESSION DATE', val: `${sess.date || 'Today'}`, sub: `${sess.time || 'Morning Slot'}`, icon: '📅' },
-      { label: 'TRAINING TIME', val: `${durationText}`, sub: 'Ocean Water Time', icon: '⏱️' },
-      { label: 'WAVES CAUGHT', val: `${wavesCount} Waves`, sub: 'Successfully Ridden', icon: '🌊' },
-      { label: 'TECHNIQUE SCORE', val: `${getSessionScore(sess)} / 100`, sub: 'Coach Verified', icon: '⭐' },
-      { label: 'SURF SPOT', val: `${sess.location || studentSchool || 'Surf Spot'}`, sub: 'Tidal Swell Spot', icon: '📍' },
-      { label: 'COACH', val: `${sess.instructor || sess.instructor_name || 'Coach'}`, sub: 'ISA Certified', icon: '🏄' }
-    ];
+      ctx.fillStyle = '#0D9488';
+      ctx.font = '700 22px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText(coachName, 90, 1065);
 
-    const drawBox = (x, y, data) => {
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.84)';
-      ctx.strokeStyle = 'rgba(45, 212, 191, 0.45)';
+      // Bottom Stats Row
+      ctx.fillStyle = '#E2E8F0';
+      ctx.fillRect(90, 1115, 900, 2);
+
+      ctx.fillStyle = '#059669';
+      ctx.font = '800 22px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText('✓ Completed', 90, 1165);
+
+      ctx.fillStyle = '#334155';
+      ctx.font = '700 22px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText(`${wavesCount} waves caught`, 380, 1165);
+      ctx.fillText(`⏱️ ${waterTime} in water`, 720, 1165);
+
+      // Watermark
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#94A3B8';
+      ctx.font = '600 18px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText('athnexlive.com', canvas.width / 2, 1285);
+
+    } else if (template === 'scorecard') {
+      // ══════ TEMPLATE 3: PERSONAL SCORECARD (Exact Reference Match) ══════
+      ctx.fillStyle = '#006859';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Top Tag: THE COACH'S CUT
+      ctx.textAlign = 'left';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+      ctx.font = '800 22px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText("THE COACH'S CUT", 80, 95);
+
+      // Headline
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '900 62px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText('Progress,', 80, 170);
+      ctx.fillText('worth sharing.', 80, 240);
+
+      // Pill: ✓ SESSION COMPLETE
+      ctx.fillStyle = '#99F6E4';
+      ctx.beginPath();
+      ctx.roundRect(80, 285, 290, 48, 24);
+      ctx.fill();
+
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#042F2C';
+      ctx.font = '900 18px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText('✓ SESSION COMPLETE', 225, 316);
+
+      // Middle Section - Left Column
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#FCD34D';
+      ctx.font = '950 145px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText(`${scoreOutOf10}`, 80, 520);
+      const scoreW = ctx.measureText(`${scoreOutOf10}`).width;
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+      ctx.font = '800 36px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText('/10', 80 + scoreW + 12, 490);
+
+      // Score Label
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+      ctx.font = '800 20px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText('COACH SCORE', 80, 565);
+
+      // Athlete Details (Highlighted Hero)
+      ctx.fillStyle = '#5EEAD4';
+      ctx.font = '900 36px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText(studentName, 80, 655);
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+      ctx.font = '700 22px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText(`${groupName}  •  ${dateFormatted}`, 80, 695);
+
+      // Right Column: Arched Surfer Photo Frame (Expanded to utilize space)
+      const archX = 560, archY = 240, archW = 440, archH = 620;
+      ctx.save();
+      ctx.beginPath();
+      ctx.roundRect(archX, archY, archW, archH, [220, 220, 44, 44]);
+      ctx.clip();
+      drawCover(archX, archY, archW, archH);
+      ctx.restore();
+
+      // Divider Line
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(80, 900);
+      ctx.lineTo(1000, 900);
+      ctx.stroke();
+
+      // Bottom Row: 3 Metrics Columns (Plain text, no boxes)
+      const metrics = [
+        { x: 80, val: `${wavesCount}`, lbl: 'WAVES CAUGHT' },
+        { x: 400, val: waterTime, lbl: 'WATER TIME' },
+        { x: 740, val: `${scoreOutOf10}/10`, lbl: 'COACH SCORE' }
+      ];
+
+      metrics.forEach((m) => {
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 52px "Plus Jakarta Sans", sans-serif';
+        ctx.fillText(m.val, m.x, 975);
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
+        ctx.font = '800 18px "Plus Jakarta Sans", sans-serif';
+        ctx.fillText(m.lbl, m.x, 1018);
+      });
+
+      // Coach Quote Box at Bottom (Pale Mint Rounded Box)
+      const qBoxY = 1070;
+      ctx.fillStyle = '#D1FAE5';
+      ctx.beginPath();
+      ctx.roundRect(80, qBoxY, 920, 155, 24);
+      ctx.fill();
+
+      // Quote Text
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#064E3B';
+      ctx.font = '750 26px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText(`“${quoteText}”`, 120, qBoxY + 65);
+
+      // Coach Signature
+      ctx.fillStyle = '#047857';
+      ctx.font = '650 21px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText(coachName, 120, qBoxY + 115);
+
+      // Watermark
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+      ctx.font = '600 18px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText('athnexlive.com', canvas.width / 2, 1295);
+
+    } else {
+      // ══════ TEMPLATE 1: PHOTO SPOTLIGHT (Dark Slate Theme / Big Hero Photo) ══════
+      ctx.fillStyle = '#0F172A';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Hero Photo occupying top half (0 to 760)
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, canvas.width, 760);
+      ctx.clip();
+      drawCover(0, 0, canvas.width, 760);
+      ctx.restore();
+
+      // Smooth Bottom Gradient on Photo
+      const fGrad = ctx.createLinearGradient(0, 520, 0, 765);
+      fGrad.addColorStop(0, 'rgba(15, 23, 42, 0)');
+      fGrad.addColorStop(1, '#0F172A');
+      ctx.fillStyle = fGrad;
+      ctx.fillRect(0, 520, canvas.width, 245);
+
+      // Top-Left Pill: Athlete Surfer Name ("Name inga varalaam")
+      ctx.font = '800 16px "Plus Jakarta Sans", sans-serif';
+      const pillText = `🏄 ${studentName.toUpperCase()}`;
+      const pillTextW = ctx.measureText(pillText).width;
+      const pillW = Math.max(200, Math.min(380, pillTextW + 36));
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+      ctx.beginPath();
+      ctx.roundRect(70, 70, pillW, 48, 10);
+      ctx.fill();
+      ctx.fillStyle = '#2DD4BF';
+      ctx.textAlign = 'center';
+      ctx.fillText(pillText, 70 + pillW / 2, 100);
+
+      // Photo Bottom-Left Pill: "✓ SESSION COMPLETE"
+      ctx.fillStyle = '#FEF3C7';
+      ctx.beginPath();
+      ctx.roundRect(70, 670, 220, 42, 8);
+      ctx.fill();
+      ctx.fillStyle = '#92400E';
+      ctx.font = '800 15px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText('✓ SESSION COMPLETE', 70 + 110, 696);
+
+      // Lower Section (780 to 1350)
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '900 58px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText('A session to be', 70, 840);
+      ctx.fillText('proud of.', 70, 910);
+
+      // Right Side Score Box
+      const scBoxX = 770, scBoxY = 780;
+      ctx.fillStyle = 'rgba(30, 41, 59, 0.9)';
+      ctx.strokeStyle = '#FCD34D';
       ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.roundRect(x, y, boxW, boxH, 16);
+      ctx.roundRect(scBoxX, scBoxY, 240, 130, 18);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#FCD34D';
+      ctx.font = '900 64px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText(`${scoreOutOf10}`, scBoxX + 90, scBoxY + 70);
+
+      ctx.fillStyle = '#94A3B8';
+      ctx.font = '700 24px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText('/10', scBoxX + 175, scBoxY + 68);
+
+      ctx.font = '800 13px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText('COACH SCORE', scBoxX + 120, scBoxY + 106);
+
+      // Subline
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#94A3B8';
+      ctx.font = '700 24px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText(`${groupName}  •  ${dateFormatted}`, 70, 985);
+
+      // Divider
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+      ctx.fillRect(70, 1045, 940, 2);
+
+      // Metrics Trio on Canvas
+      const pY = 1055, pW = 290, pH = 75, pGap = 35;
+      const spotPills = [
+        { val: wavesCount !== '--' ? `${wavesCount} Waves` : 'In Training', lbl: 'WAVES CAUGHT' },
+        { val: waterTime, lbl: 'WATER TIME' },
+        { val: scoreOutOf10 !== '--' ? `${scoreOutOf10}/10` : 'Unrated', lbl: 'TECHNIQUE SCORE' },
+      ];
+      spotPills.forEach((p, i) => {
+        const px = 70 + i * (pW + pGap);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+        ctx.beginPath();
+        ctx.roundRect(px, pY, pW, pH, 14);
+        ctx.fill();
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 24px "Plus Jakarta Sans", sans-serif';
+        ctx.fillText(p.val, px + pW / 2, pY + 36);
+        ctx.fillStyle = '#2DD4BF';
+        ctx.font = '700 12px "Plus Jakarta Sans", sans-serif';
+        ctx.fillText(p.lbl, px + pW / 2, pY + 60);
+      });
+
+      // Coach Verdict Banner on Canvas
+      const qBoxY = 1145;
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+      ctx.strokeStyle = 'rgba(45, 212, 191, 0.35)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(70, qBoxY, 940, 90, 14);
       ctx.fill();
       ctx.stroke();
 
       ctx.textAlign = 'left';
-      ctx.fillStyle = '#94A3B8';
-      ctx.font = '700 18px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText(`${data.icon} ${data.label}`, x + 22, y + 34);
-
       ctx.fillStyle = '#2DD4BF';
-      ctx.font = '900 34px "Plus Jakarta Sans", sans-serif';
-      let displayVal = String(data.val);
-      if (displayVal.length > 20) displayVal = displayVal.slice(0, 18) + '...';
-      ctx.fillText(displayVal, x + 22, y + 78);
+      ctx.font = '800 14px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText('COACH VERDICT', 95, qBoxY + 30);
 
-      ctx.fillStyle = '#E2E8F0';
-      ctx.font = '600 16px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText(data.sub, x + 22, y + 107);
-    };
+      ctx.textAlign = 'right';
+      ctx.fillStyle = '#FCD34D';
+      ctx.font = '700 16px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText(coachName, 985, qBoxY + 30);
 
-    drawBox(col1X, startY, metrics[0]);
-    drawBox(col2X, startY, metrics[1]);
-    drawBox(col1X, startY + boxH + gapY, metrics[2]);
-    drawBox(col2X, startY + boxH + gapY, metrics[3]);
-    drawBox(col1X, startY + (boxH + gapY) * 2, metrics[4]);
-    drawBox(col2X, startY + (boxH + gapY) * 2, metrics[5]);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#F1F5F9';
+      ctx.font = 'italic 600 20px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText(`“${quoteText}”`, 95, qBoxY + 66);
 
-    // 8. Motivational Quote Box
-    const quoteY = startY + (boxH + gapY) * 3 + 15;
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
-    ctx.strokeStyle = 'rgba(252, 211, 77, 0.45)';
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.roundRect(80, quoteY, canvas.width - 160, 135, 18);
-    ctx.fill();
-    ctx.stroke();
-
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#FCD34D';
-    ctx.font = 'italic 800 26px "Plus Jakarta Sans", sans-serif';
-    ctx.fillText('“Every wave caught is a boundary pushed.”', canvas.width / 2, quoteY + 54);
-
-    ctx.fillStyle = '#CBD5E1';
-    ctx.font = '500 20px "Plus Jakarta Sans", sans-serif';
-    ctx.fillText('Conquer your athletic surfing journey on Athnex Live', canvas.width / 2, quoteY + 98);
-
-    // 9. Footer Watermark
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#94A3B8';
-    ctx.font = '700 20px "Plus Jakarta Sans", sans-serif';
-    ctx.fillText('ATHNEX LIVE  •  athnexlive.com  •  OFFICIAL SURF ATHLETE RECORD', canvas.width / 2, canvas.height - 75);
+      // Watermark
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#64748B';
+      ctx.font = '600 18px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText('athnexlive.com', canvas.width / 2, 1290);
+    }
 
     return new Promise((resolve) => {
       canvas.toBlob((blob) => resolve(blob), 'image/png');
@@ -545,7 +1374,7 @@ export default function MyAchievements() {
     const isOverall = sess === 'overall';
     const tweetText = isOverall
       ? `Stoked! Just hit ${stats.completed} surf sessions and ${stats.totalWaves} waves logged on @athnexlive! 🏄‍♂️🌊 #Surfing #AthnexLive #SurfTraining`
-      : `Stoked on my surf session at ${sess.location || 'the coast'} with Coach ${sess.instructor || 'Coach'}! 🏄‍♂️🌊 Verified on @athnexlive #Surfing #WaveRider`;
+      : `Stoked on my surf session at ${sess.location || 'the coast'} with ${getCleanCoachName(sess)}! 🏄‍♂️🌊 Verified on @athnexlive #Surfing #WaveRider`;
     window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetText)}&url=${encodeURIComponent('https://athnexlive.com')}`, '_blank');
   };
 
@@ -611,13 +1440,14 @@ export default function MyAchievements() {
   const handleDownloadStoryCard = async (sess) => {
     try {
       setDownloadingImg(true);
-      const blob = await generateStoryPosterBlob(sess);
+      const blob = await generateStoryPosterBlob(sess, shareTemplate, customPhotoUrl, photoFilter, photoPosY, photoFit);
       if (!blob) return;
+      launchConfetti();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       const cleanName = studentName.replace(/\s+/g, '_');
-      a.download = `Athnex_Surfing_Milestone_${cleanName}.png`;
+      a.download = `Athnex_Session_${shareTemplate}_${cleanName}.png`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -626,6 +1456,45 @@ export default function MyAchievements() {
       console.error('Failed to generate story image card:', err);
     } finally {
       setDownloadingImg(false);
+    }
+  };
+
+  const handleNativeShareCard = async (sess) => {
+    try {
+      setShareCardBusy(true);
+      const blob = await generateStoryPosterBlob(sess, shareTemplate, customPhotoUrl, photoFilter, photoPosY, photoFit);
+      if (!blob) return;
+      launchConfetti();
+      const cleanName = studentName.replace(/\s+/g, '_');
+      const file = new File([blob], `Athnex_Session_${shareTemplate}_${cleanName}.png`, { type: 'image/png' });
+      const text = buildShareText(sess);
+
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: `Athnex Surf Session - ${studentName}`,
+          text: text
+        });
+        return;
+      }
+
+      if (navigator.share) {
+        await navigator.share({
+          title: `Athnex Surf Session - ${studentName}`,
+          text: text,
+          url: 'https://athnexlive.com'
+        });
+        return;
+      }
+
+      handleShareWhatsApp(sess);
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        console.warn('Native share error, falling back:', err);
+        handleShareWhatsApp(sess);
+      }
+    } finally {
+      setShareCardBusy(false);
     }
   };
 
@@ -716,6 +1585,7 @@ export default function MyAchievements() {
   }, []);
 
   const openShareModal = (target) => {
+    setSelectedCoachOverride(null);
     setShareModalSession(target);
     // Trigger confetti slightly after modal mount for high impact
     setTimeout(() => {
@@ -725,6 +1595,10 @@ export default function MyAchievements() {
 
   // ── Certificate Generator (HTML5 Canvas, A4 Landscape) ───────────────────
   const handleDownloadCertificate = async () => {
+    if (!isCertificateUnlocked) {
+      setCertLockModal(true);
+      return;
+    }
     try {
       setDownloadingCert(true);
       const W = 1754, H = 1240; // A4 landscape @150dpi
@@ -733,7 +1607,285 @@ export default function MyAchievements() {
       canvas.height = H;
       const ctx = canvas.getContext('2d');
 
-      // ─ Background gradient (deep ocean navy) ─
+      const completedSessions = sessions.filter(isSessionCompleted);
+      const lastSession = completedSessions[0];
+      const certDate = lastSession?.date
+        ? new Date(lastSession.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })
+        : new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
+      const coachNameCert = getCleanCoachName(lastSession) || 'Certified Ocean Coach';
+
+      // Check if the academy has a customized certificate template configured
+      const rawCertConfig = schoolCertConfig || (() => {
+        try {
+          const cached = studentSchool ? localStorage.getItem(`athnex_cert_${studentSchool}`) : null;
+          return cached ? JSON.parse(cached) : null;
+        } catch (e) {
+          return null;
+        }
+      })();
+
+      // Resolve course-specific certificate dynamically for ANY number of days (1, 2, 3, 5, 7, 10, 14, 30, etc.)
+      const targetCourseKey = (() => {
+        if (!rawCertConfig?.courses) return null;
+        // 1. Direct key match (e.g. '7days', '10days', '3days')
+        const directKey = `${requiredSessions}days`;
+        if (rawCertConfig.courses[directKey]) return directKey;
+
+        // 2. Match by course.days property
+        const matchedEntry = Object.entries(rawCertConfig.courses).find(
+          ([_, c]) => c && (c.days === requiredSessions || c.stats?.completed === requiredSessions)
+        );
+        if (matchedEntry) return matchedEntry[0];
+
+        // 3. Fallback to active course key or first configured course
+        return rawCertConfig.activeCourseKey || Object.keys(rawCertConfig.courses)[0] || null;
+      })();
+
+      const activeCertConfig = (targetCourseKey && rawCertConfig?.courses?.[targetCourseKey])
+        ? rawCertConfig.courses[targetCourseKey]
+        : (rawCertConfig?.courses?.[rawCertConfig.activeCourseKey] || rawCertConfig);
+
+      if (activeCertConfig && (activeCertConfig.custom_bg_url || activeCertConfig.fields)) {
+        // ── CUSTOM ACADEMY CERTIFICATE RENDERER ──
+        if (activeCertConfig.template_type === 'custom' && activeCertConfig.custom_bg_url) {
+          const bgImg = new Image();
+          bgImg.crossOrigin = 'anonymous';
+          bgImg.src = activeCertConfig.custom_bg_url;
+          await new Promise(r => { bgImg.onload = r; bgImg.onerror = r; });
+          if (bgImg.naturalWidth > 0) {
+            ctx.drawImage(bgImg, 0, 0, W, H);
+          } else {
+            ctx.fillStyle = '#FAFBFD';
+            ctx.fillRect(0, 0, W, H);
+          }
+        } else if (activeCertConfig.template_type === 'minimal_emerald') {
+          const bgGrad = ctx.createLinearGradient(0, 0, W, H);
+          bgGrad.addColorStop(0, '#FAFBFD');
+          bgGrad.addColorStop(1, '#F1F5F9');
+          ctx.fillStyle = bgGrad;
+          ctx.fillRect(0, 0, W, H);
+
+          ctx.lineWidth = 12;
+          ctx.strokeStyle = '#0D9488';
+          ctx.strokeRect(36, 36, W - 72, H - 72);
+          ctx.lineWidth = 2.5;
+          ctx.strokeStyle = 'rgba(13, 148, 136, 0.4)';
+          ctx.strokeRect(52, 52, W - 104, H - 104);
+        } else if (activeCertConfig.template_type === 'ocean_wave') {
+          const bgGrad = ctx.createLinearGradient(0, 0, W, H);
+          bgGrad.addColorStop(0, '#042F2E');
+          bgGrad.addColorStop(0.5, '#115E59');
+          bgGrad.addColorStop(1, '#064E3B');
+          ctx.fillStyle = bgGrad;
+          ctx.fillRect(0, 0, W, H);
+
+          ctx.lineWidth = 10;
+          ctx.strokeStyle = '#5EEAD4';
+          ctx.strokeRect(36, 36, W - 72, H - 72);
+          ctx.lineWidth = 2.5;
+          ctx.strokeStyle = 'rgba(94, 234, 212, 0.4)';
+          ctx.strokeRect(52, 52, W - 104, H - 104);
+        } else {
+          // navy_gold or default preset
+          const bgGrad = ctx.createLinearGradient(0, 0, W, H);
+          bgGrad.addColorStop(0, '#0A1628');
+          bgGrad.addColorStop(0.5, '#0D2240');
+          bgGrad.addColorStop(1, '#071020');
+          ctx.fillStyle = bgGrad;
+          ctx.fillRect(0, 0, W, H);
+
+          if (activeCertConfig.template_type === 'default' || !activeCertConfig.template_type) {
+            const bgImg = new Image();
+            bgImg.crossOrigin = 'anonymous';
+            bgImg.src = posterBgUrl || '/surf-milestone-bg.jpg';
+            await new Promise(r => { bgImg.onload = r; bgImg.onerror = r; });
+            if (bgImg.naturalWidth > 0) {
+              ctx.globalAlpha = 0.16;
+              ctx.drawImage(bgImg, 0, 0, W, H);
+              ctx.globalAlpha = 1;
+            }
+          }
+
+          ctx.lineWidth = 12;
+          ctx.strokeStyle = '#D4AF37';
+          ctx.strokeRect(36, 36, W - 72, H - 72);
+          ctx.lineWidth = 2.5;
+          ctx.strokeStyle = 'rgba(212, 175, 55, 0.45)';
+          ctx.strokeRect(52, 52, W - 104, H - 104);
+
+          const drawDiamond = (cx, cy, size) => {
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.rotate(Math.PI / 4);
+            ctx.fillStyle = '#D4AF37';
+            ctx.fillRect(-size / 2, -size / 2, size, size);
+            ctx.restore();
+          };
+          [44, W - 44].forEach(x => [44, H - 44].forEach(y => drawDiamond(x, y, 22)));
+
+          if (activeCertConfig.template_type === 'default' || !activeCertConfig.template_type) {
+            // Circular A Badge (only draw if school hasn't uploaded custom school logo)
+            if (!activeCertConfig.fields?.school_logo?.image_url) {
+              ctx.textAlign = 'center';
+              ctx.beginPath();
+              ctx.arc(W / 2, 115, 42, 0, Math.PI * 2);
+              ctx.fillStyle = '#2DD4BF';
+              ctx.fill();
+              ctx.fillStyle = '#0A1628';
+              ctx.font = 'bold 42px Arial, sans-serif';
+              ctx.fillText('A', W / 2, 130);
+            }
+
+            ctx.fillStyle = 'rgba(212,175,55,0.7)';
+            ctx.font = '18px Arial, sans-serif';
+            ctx.fillText('OFFICIAL SURF ACADEMY • athnexlive.com', W / 2, 215);
+
+            const drawDivider = (y) => {
+              const grad = ctx.createLinearGradient(200, y, W - 200, y);
+              grad.addColorStop(0, 'transparent');
+              grad.addColorStop(0.3, '#D4AF37');
+              grad.addColorStop(0.7, '#D4AF37');
+              grad.addColorStop(1, 'transparent');
+              ctx.strokeStyle = grad;
+              ctx.lineWidth = 1.5;
+              ctx.beginPath();
+              ctx.moveTo(200, y);
+              ctx.lineTo(W - 200, y);
+              ctx.stroke();
+            };
+            drawDivider(240);
+
+            ctx.fillStyle = '#FEF3C7';
+            ctx.font = 'italic 22px Georgia, serif';
+            ctx.fillText('This is to certify that', W / 2, 290);
+
+            drawDivider(600);
+            const pills = [
+              { icon: '🏄', label: 'SESSIONS', val: `${completedSessions.length} Completed` },
+              { icon: '🌊', label: 'WAVES RIDDEN', val: `${totalWaves || 50} Waves` },
+              { icon: '⭐', label: 'COACH SCORE', val: `${stats.avgScore || 88} / 100` },
+            ];
+            const pillW = 360, pillH = 90, pillGap = 60;
+            const totalPillW = pills.length * pillW + (pills.length - 1) * pillGap;
+            const pillStartX = (W - totalPillW) / 2;
+
+            pills.forEach((p, i) => {
+              const px = pillStartX + i * (pillW + pillGap);
+              const py = 630;
+              ctx.fillStyle = 'rgba(45,212,191,0.08)';
+              ctx.strokeStyle = 'rgba(45,212,191,0.35)';
+              ctx.lineWidth = 1.5;
+              ctx.beginPath();
+              ctx.roundRect(px, py, pillW, pillH, 14);
+              ctx.fill();
+              ctx.stroke();
+              ctx.textAlign = 'center';
+              ctx.fillStyle = '#2DD4BF';
+              ctx.font = 'bold 30px Arial, sans-serif';
+              ctx.fillText(`${p.icon} ${p.val}`, px + pillW / 2, py + 40);
+              ctx.fillStyle = '#94A3B8';
+              ctx.font = '17px Arial, sans-serif';
+              ctx.fillText(p.label, px + pillW / 2, py + 70);
+            });
+
+            drawDivider(760);
+          }
+        }
+
+        // Render each configured field at exact coordinates
+        const allFields = [
+          ...Object.entries(activeCertConfig.fields || {}).map(([k, f]) => ({ ...f, key: k })),
+          ...(activeCertConfig.custom_fields || []).map((f, i) => ({ ...f, key: `custom_${i}` }))
+        ];
+
+        for (const field of allFields) {
+          if (field.visible === false) continue;
+          const fx = (field.x / 100) * W;
+          const fy = (field.y / 100) * H;
+          const scaleFactor = W / 800;
+
+          // Image Field Rendering (School Logo or Coach Signature Photo)
+          if (field.type === 'image' || field.key === 'school_logo' || field.key === 'coach_signature') {
+            if (field.image_url) {
+              const img = new Image();
+              img.crossOrigin = 'anonymous';
+              img.src = field.image_url;
+              await new Promise(r => { img.onload = r; img.onerror = r; });
+              if (img.naturalWidth > 0) {
+                const imgW = (field.width || (field.key === 'school_logo' ? 80 : 130)) * scaleFactor;
+                const imgH = (img.naturalHeight / img.naturalWidth) * imgW;
+                let drawX = fx - imgW / 2;
+                if (field.align === 'left') drawX = fx;
+                else if (field.align === 'right') drawX = fx - imgW;
+                const drawY = fy - imgH / 2;
+                ctx.drawImage(img, drawX, drawY, imgW, imgH);
+              }
+            }
+            continue;
+          }
+
+          const fSize = Math.round((field.fontSize || 20) * scaleFactor);
+
+          // Draw Dynamic Text directly onto certificate
+          ctx.textAlign = field.align || 'center';
+          ctx.fillStyle = field.color || '#FFFFFF';
+          ctx.font = `${field.fontWeight || 'normal'} ${fSize}px ${field.fontFamily || 'Georgia, serif'}`;
+
+          let textToDraw = '';
+          if (field.key === 'student_name') {
+            textToDraw = studentName;
+          } else if (field.key === 'course_title') {
+            textToDraw = field.sample || `${requiredSessions}-Day Surf Training Course`;
+          } else if (field.key === 'body_text') {
+            textToDraw = field.sample || 'has successfully completed the comprehensive ocean surfing and safety training course.';
+          } else if (field.key === 'academy_name') {
+            textToDraw = studentSchool || field.sample || 'Athnex Surf Academy';
+          } else if (field.key === 'issue_date') {
+            textToDraw = `Date: ${certDate}`;
+          } else if (field.key === 'coach_name') {
+            textToDraw = coachNameCert || field.sample || 'Certified Head Coach';
+          } else if (field.key === 'cert_id') {
+            textToDraw = `ATHNEX-CERT-${requiredSessions}D-${Date.now().toString().slice(-4)}`;
+          } else {
+            textToDraw = field.sample || field.label || '';
+          }
+
+          ctx.fillText(textToDraw, fx, fy + (fSize * 0.32));
+
+          if (field.underline) {
+            const textW = ctx.measureText(textToDraw).width;
+            let startX = fx - textW / 2;
+            if (field.align === 'left') startX = fx;
+            else if (field.align === 'right') startX = fx - textW;
+
+            ctx.beginPath();
+            ctx.strokeStyle = field.color || '#FFFFFF';
+            ctx.lineWidth = 2 * scaleFactor;
+            ctx.moveTo(startX, fy + fSize * 0.42);
+            ctx.lineTo(startX + textW, fy + fSize * 0.42);
+            ctx.stroke();
+          }
+        }
+
+        // Trigger download
+        canvas.toBlob((blob) => {
+          if (!blob) return;
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          const cleanName = studentName.replace(/\s+/g, '_');
+          const courseTag = requiredSessions === 5 ? '5Day' : '3Day';
+          a.download = `${studentSchool.replace(/\s+/g, '_')}_${courseTag}_Certificate_${cleanName}.png`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          setDownloadingCert(false);
+        }, 'image/png');
+        return;
+      }
+
+      // ─ FALLBACK DEFAULT ATHNEX CERTIFICATE GENERATOR ─
       const bgGrad = ctx.createLinearGradient(0, 0, W, H);
       bgGrad.addColorStop(0, '#0A1628');
       bgGrad.addColorStop(0.5, '#0D2240');
@@ -741,10 +1893,10 @@ export default function MyAchievements() {
       ctx.fillStyle = bgGrad;
       ctx.fillRect(0, 0, W, H);
 
-      // ─ Surf action image background (subtle, low opacity) ─
+      // Surf action image background
       const bgImg = new Image();
       bgImg.crossOrigin = 'anonymous';
-      bgImg.src = '/surf-milestone-bg.jpg';
+      bgImg.src = posterBgUrl || '/surf-milestone-bg.jpg';
       await new Promise(r => { bgImg.onload = r; bgImg.onerror = r; });
       if (bgImg.naturalWidth > 0) {
         ctx.globalAlpha = 0.12;
@@ -757,7 +1909,7 @@ export default function MyAchievements() {
         ctx.globalAlpha = 1;
       }
 
-      // ─ Outer gold border (double frame) ─
+      // Outer gold border (double frame)
       ctx.lineWidth = 10;
       ctx.strokeStyle = '#D4AF37';
       ctx.strokeRect(28, 28, W - 56, H - 56);
@@ -765,7 +1917,6 @@ export default function MyAchievements() {
       ctx.strokeStyle = 'rgba(212,175,55,0.5)';
       ctx.strokeRect(44, 44, W - 88, H - 88);
 
-      // ─ Corner decorative diamonds ─
       const drawDiamond = (cx, cy, size) => {
         ctx.save();
         ctx.translate(cx, cy);
@@ -776,10 +1927,7 @@ export default function MyAchievements() {
       };
       [36, W - 36].forEach(x => [36, H - 36].forEach(y => drawDiamond(x, y, 18)));
 
-      // ─ Top academy logo area ─
       ctx.textAlign = 'center';
-
-      // Athnex logo circle
       ctx.beginPath();
       ctx.arc(W / 2, 115, 42, 0, Math.PI * 2);
       ctx.fillStyle = '#2DD4BF';
@@ -788,17 +1936,14 @@ export default function MyAchievements() {
       ctx.font = 'bold 42px Arial, sans-serif';
       ctx.fillText('A', W / 2, 130);
 
-      // Academy name
       ctx.fillStyle = '#2DD4BF';
       ctx.font = 'bold 28px Arial, sans-serif';
-      ctx.letterSpacing = '4px';
-      ctx.fillText('ATHNEX LIVE', W / 2, 185);
+      ctx.fillText(studentSchool.toUpperCase(), W / 2, 185);
 
       ctx.fillStyle = 'rgba(212,175,55,0.7)';
       ctx.font = '18px Arial, sans-serif';
-      ctx.fillText('OFFICIAL SURF ACADEMY  •  athnexlive.com', W / 2, 215);
+      ctx.fillText('OFFICIAL SURF ACADEMY • athnexlive.com', W / 2, 215);
 
-      // ─ Decorative gold divider line ─
       const drawDivider = (y) => {
         const grad = ctx.createLinearGradient(200, y, W - 200, y);
         grad.addColorStop(0, 'transparent');
@@ -814,17 +1959,14 @@ export default function MyAchievements() {
       };
       drawDivider(240);
 
-      // ─ "Certificate of Completion" title ─
       ctx.fillStyle = '#FEF3C7';
       ctx.font = 'italic 22px Georgia, serif';
       ctx.fillText('This is to certify that', W / 2, 290);
 
-      // ─ Student Name (the BIG hero) ─
       ctx.fillStyle = '#FFFFFF';
       ctx.font = 'bold 82px Georgia, serif';
       ctx.fillText(studentName, W / 2, 390);
 
-      // ─ Name underline ─
       const nameW = ctx.measureText(studentName).width;
       const grad2 = ctx.createLinearGradient(W / 2 - nameW / 2, 400, W / 2 + nameW / 2, 400);
       grad2.addColorStop(0, 'transparent');
@@ -837,14 +1979,13 @@ export default function MyAchievements() {
       ctx.lineTo(W / 2 + nameW / 2, 405);
       ctx.stroke();
 
-      // ─ Achievement text ─
       ctx.fillStyle = '#E2E8F0';
       ctx.font = '26px Georgia, serif';
       ctx.fillText('has successfully completed the', W / 2, 455);
 
       ctx.fillStyle = '#FCD34D';
       ctx.font = 'bold 46px Georgia, serif';
-      ctx.fillText('3-Day Surf Training Course', W / 2, 515);
+      ctx.fillText(`${requiredSessions}-Day Surf Training Course`, W / 2, 515);
 
       ctx.fillStyle = '#94A3B8';
       ctx.font = '22px Arial, sans-serif';
@@ -852,11 +1993,10 @@ export default function MyAchievements() {
 
       drawDivider(600);
 
-      // ─ Stats row (3 pills) ─
       const pills = [
-        { icon: '\uD83C\uDFC4', label: 'Sessions', val: `${stats.completed} Completed` },
-        { icon: '\uD83C\uDF0A', label: 'Waves Ridden', val: `${stats.totalWaves} Waves` },
-        { icon: '\u2B50', label: 'Coach Score', val: `${stats.avgScore} / 100` },
+        { icon: '🏄', label: 'Sessions', val: `${stats.completed} Completed` },
+        { icon: '🌊', label: 'Waves Ridden', val: `${stats.totalWaves} Waves` },
+        { icon: '⭐', label: 'Coach Score', val: `${stats.avgScore} / 100` },
       ];
 
       const pillW = 360, pillH = 90, pillGap = 60;
@@ -866,7 +2006,6 @@ export default function MyAchievements() {
       pills.forEach((p, i) => {
         const px = pillStartX + i * (pillW + pillGap);
         const py = 630;
-        // box
         ctx.fillStyle = 'rgba(45,212,191,0.1)';
         ctx.strokeStyle = 'rgba(45,212,191,0.4)';
         ctx.lineWidth = 1.5;
@@ -874,7 +2013,6 @@ export default function MyAchievements() {
         ctx.roundRect(px, py, pillW, pillH, 14);
         ctx.fill();
         ctx.stroke();
-        // icon + val
         ctx.textAlign = 'center';
         ctx.fillStyle = '#2DD4BF';
         ctx.font = 'bold 30px Arial, sans-serif';
@@ -886,15 +2024,6 @@ export default function MyAchievements() {
 
       drawDivider(760);
 
-      // ─ Completion date + coach row ─
-      const completedSessions = sessions.filter(isSessionCompleted);
-      const lastSession = completedSessions[0];
-      const certDate = lastSession?.date
-        ? new Date(lastSession.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })
-        : new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
-      const coachNameCert = lastSession?.instructor || lastSession?.instructor_name || 'Athnex Coach';
-
-      // Two columns: Date | Coach
       ctx.textAlign = 'center';
       ctx.fillStyle = '#94A3B8';
       ctx.font = '18px Arial, sans-serif';
@@ -910,7 +2039,6 @@ export default function MyAchievements() {
       ctx.font = 'bold 22px Arial, sans-serif';
       ctx.fillText(coachNameCert, W / 2 + 300, 850);
 
-      // Centre vertical separator
       ctx.strokeStyle = 'rgba(255,255,255,0.15)';
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -918,7 +2046,6 @@ export default function MyAchievements() {
       ctx.lineTo(W / 2, 870);
       ctx.stroke();
 
-      // Skill level badge
       ctx.textAlign = 'center';
       ctx.fillStyle = 'rgba(45,212,191,0.15)';
       ctx.strokeStyle = '#2DD4BF';
@@ -929,21 +2056,19 @@ export default function MyAchievements() {
       ctx.stroke();
       ctx.fillStyle = '#2DD4BF';
       ctx.font = 'bold 20px Arial, sans-serif';
-      ctx.fillText(`\u2713 ${studentLevel} Level`, W / 2, 923);
+      ctx.fillText(`✓ ${studentLevel} Level`, W / 2, 923);
 
-      // ─ Bottom seal ─
       ctx.fillStyle = '#D4AF37';
       ctx.font = 'bold 15px Arial, sans-serif';
-      ctx.fillText('ATHNEX LIVE  •  OFFICIAL SURF ACADEMY CERTIFICATE  •  athnexlive.com', W / 2, H - 55);
+      ctx.fillText('ATHNEX LIVE • OFFICIAL SURF ACADEMY CERTIFICATE • athnexlive.com', W / 2, H - 55);
 
-      // ─ Trigger download ─
       canvas.toBlob((blob) => {
         if (!blob) return;
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
         const cleanName = studentName.replace(/\s+/g, '_');
-        a.download = `Athnex_Certificate_${cleanName}.png`;
+        a.download = `Athnex_${requiredSessions}Day_Certificate_${cleanName}.png`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -974,31 +2099,41 @@ export default function MyAchievements() {
           </div>
 
           <div className="ach-header-actions">
-            {/* Certificate Download — visible when 3+ sessions completed */}
-            {stats.completed >= 3 && (
-              <button
-                type="button"
-                className="ach-btn-certificate"
-                onClick={handleDownloadCertificate}
-                disabled={downloadingCert}
-                title="Download your 3-Day Surf Course Completion Certificate"
-              >
-                {downloadingCert ? (
-                  <>
-                    <span className="ach-spinner-sm-dark"></span>
-                    <span>Generating...</span>
-                  </>
-                ) : (
-                  <>
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round">
-                      <circle cx="12" cy="8" r="6"></circle>
-                      <path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11"></path>
-                    </svg>
-                    <span>Download Certificate</span>
-                  </>
-                )}
-              </button>
-            )}
+            {/* Certificate Download Button — ALWAYS visible; unlocked only upon completing course sessions */}
+            <button
+              type="button"
+              className={`ach-btn-certificate ${!isCertificateUnlocked ? 'locked' : ''}`}
+              onClick={isCertificateUnlocked ? handleDownloadCertificate : () => setCertLockModal(true)}
+              disabled={downloadingCert}
+              title={
+                isCertificateUnlocked
+                  ? `Download your official ${requiredSessions}-Day Course Completion Certificate`
+                  : `Certificate Locked: Complete all ${requiredSessions} sessions to unlock (${stats.completed}/${requiredSessions} completed)`
+              }
+            >
+              {downloadingCert ? (
+                <>
+                  <span className="ach-spinner-sm-dark"></span>
+                  <span>Generating...</span>
+                </>
+              ) : isCertificateUnlocked ? (
+                <>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="8" r="6"></circle>
+                    <path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11"></path>
+                  </svg>
+                  <span>Download Certificate</span>
+                </>
+              ) : (
+                <>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                  </svg>
+                  <span>Download Certificate ({stats.completed}/{requiredSessions})</span>
+                </>
+              )}
+            </button>
 
             <button
               type="button"
@@ -1032,9 +2167,9 @@ export default function MyAchievements() {
           <div className="ach-stat-card card-emerald">
             <div className="ach-stat-icon">🌊</div>
             <div className="ach-stat-body">
-              <span className="ach-stat-num">{stats.totalWaves}</span>
+              <span className="ach-stat-num">{stats.totalWaves > 0 ? stats.totalWaves : '--'}</span>
               <span className="ach-stat-label">Total Waves Caught</span>
-              <span className="ach-stat-hint">Across verified sessions</span>
+              <span className="ach-stat-hint">{stats.totalWaves > 0 ? 'Across verified sessions' : 'Pending coach wave log'}</span>
             </div>
           </div>
 
@@ -1050,9 +2185,9 @@ export default function MyAchievements() {
           <div className="ach-stat-card card-purple">
             <div className="ach-stat-icon">⭐</div>
             <div className="ach-stat-body">
-              <span className="ach-stat-num">{stats.avgScore}/100</span>
+              <span className="ach-stat-num">{stats.avgScore !== null ? `${stats.avgScore}/100` : 'Unrated'}</span>
               <span className="ach-stat-label">Coach Technique Score</span>
-              <span className="ach-stat-hint">{studentLevel} Level</span>
+              <span className="ach-stat-hint">{stats.avgScore !== null ? `${studentLevel} Level` : 'Awaiting coach review'}</span>
             </div>
           </div>
         </div>
@@ -1139,7 +2274,7 @@ export default function MyAchievements() {
             <div className="ach-sessions-list">
               {displayedSessions.map((sess, idx) => {
                 const completed = isSessionCompleted(sess);
-                const coachName = sess.instructor || sess.instructor_name || 'Assigned Surf Coach';
+                const coachName = getCleanCoachName(sess);
                 const spot = sess.location || studentSchool || 'Surf Academy Spot';
                 const levelTag = sess.level || sess.type || studentLevel;
 
@@ -1186,7 +2321,7 @@ export default function MyAchievements() {
 
                         <span className="ach-meta-item">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                          <span>Coach: <strong>{coachName}</strong></span>
+                          <span>Coach: <strong>{coachName.replace(/^Coach\s+/i, '')}</strong></span>
                         </span>
                       </div>
 
@@ -1201,14 +2336,29 @@ export default function MyAchievements() {
                     {/* Right Performance Metrics & Share Actions */}
                     <div className="ach-session-actions-col">
                       <div className="ach-metric-pills">
-                        <div className="ach-pill" title="Estimated waves caught in this session">
-                          <span className="ach-pill-icon">🌊</span>
-                          <span className="ach-pill-val">{getSessionWaves(sess)} Waves</span>
-                        </div>
-                        <div className="ach-pill" title="Verified technique assessment score">
-                          <span className="ach-pill-icon">⭐</span>
-                          <span className="ach-pill-val">{getSessionScore(sess)}/100</span>
-                        </div>
+                        {getSessionWaves(sess) !== null ? (
+                          <div className="ach-pill" title="Verified waves caught in this session">
+                            <span className="ach-pill-icon">🌊</span>
+                            <span className="ach-pill-val">{getSessionWaves(sess)} Waves</span>
+                          </div>
+                        ) : (
+                          <div className="ach-pill ach-pill-unrecorded" title="Wave count pending coach entry">
+                            <span className="ach-pill-icon" style={{ opacity: 0.55 }}>🌊</span>
+                            <span className="ach-pill-val" style={{ color: '#94A3B8', fontWeight: 600 }}>-- Waves</span>
+                          </div>
+                        )}
+
+                        {getSessionScore(sess) !== null ? (
+                          <div className="ach-pill" title="Verified technique assessment score">
+                            <span className="ach-pill-icon">⭐</span>
+                            <span className="ach-pill-val">{getSessionScore(sess)}/100</span>
+                          </div>
+                        ) : (
+                          <div className="ach-pill ach-pill-unrated" title="Technique score pending coach evaluation">
+                            <span className="ach-pill-icon" style={{ opacity: 0.55 }}>⭐</span>
+                            <span className="ach-pill-val" style={{ color: '#94A3B8', fontWeight: 600 }}>Unrated</span>
+                          </div>
+                        )}
                       </div>
 
                       <div className="ach-btn-row">
@@ -1236,176 +2386,584 @@ export default function MyAchievements() {
           )}
         </section>
 
-        {/* ── Social Media Share Modal ────────────────────────────────────── */}
-        {shareModalSession && (
-          <div className="ach-modal-backdrop" onClick={() => setShareModalSession(null)}>
-            <div className="ach-modal-box" onClick={(e) => e.stopPropagation()}>
-              {/* Modal Header */}
-              <div className="ach-modal-header">
-                <div>
-                  <h3 className="ach-modal-title">
-                    {shareModalSession === 'overall' ? 'Share Surfing Track Record' : 'Share Surf Session Milestone'}
-                  </h3>
-                  <p className="ach-modal-sub">
-                    Post your achievement to WhatsApp, Instagram Stories, Twitter, or copy formatted text!
-                  </p>
+        {/* ── Certificate Locked Guidance Modal ───────────────────────────── */}
+        {certLockModal && (
+          <div className="ach-modal-backdrop" onClick={() => setCertLockModal(false)}>
+            <div className="ach-modal-box" style={{ maxWidth: '440px' }} onClick={(e) => e.stopPropagation()}>
+              <div className="ach-modal-header" style={{ paddingBottom: '12px', borderBottom: '1px solid #E2E8F0' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <div style={{
+                    width: '38px',
+                    height: '38px',
+                    borderRadius: '10px',
+                    background: '#FEF3C7',
+                    color: '#D97706',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '18px',
+                    flexShrink: 0
+                  }}>
+                    🔒
+                  </div>
+                  <div>
+                    <h3 className="ach-modal-title" style={{ fontSize: '17px', margin: 0 }}>Certificate Locked</h3>
+                    <p className="ach-modal-sub" style={{ fontSize: '12px', margin: '2px 0 0' }}>
+                      {requiredSessions}-Day Course Completion Requirement
+                    </p>
+                  </div>
                 </div>
                 <button
                   type="button"
                   className="ach-modal-close"
-                  onClick={() => setShareModalSession(null)}
+                  onClick={() => setCertLockModal(false)}
                 >
                   ✕
                 </button>
               </div>
 
-              {/* Visual Shareable Milestone Card Preview (AI Surfing Action Poster) */}
-              <div
-                className="ach-share-preview-card"
-                ref={cardRef}
-                style={{
-                  backgroundImage: `linear-gradient(180deg, rgba(15, 23, 42, 0.74) 0%, rgba(15, 23, 42, 0.92) 100%), url(${posterBgUrl || '/surf-milestone-bg.jpg'})`
-                }}
-              >
-                <div className="ach-card-glow-bg"></div>
-
-                <div className="ach-card-top-branding">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <div style={{ width: '28px', height: '28px', borderRadius: '8px', background: '#2DD4BF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, color: '#0F172A', fontSize: '14px', boxShadow: '0 0 12px rgba(45,212,191,0.6)' }}>
-                      A
-                    </div>
-                    <span style={{ fontSize: '13px', fontWeight: 900, letterSpacing: '0.08em', color: '#FFFFFF', textTransform: 'uppercase' }}>
-                      ATHNEX LIVE
+              <div style={{ padding: '20px 24px', textAlign: 'center' }}>
+                <div style={{
+                  background: '#F8FAFC',
+                  border: '1px solid #E2E8F0',
+                  borderRadius: '12px',
+                  padding: '16px',
+                  marginBottom: '16px'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', fontSize: '13px', fontWeight: 700, color: '#0F172A' }}>
+                    <span>Course Progress</span>
+                    <span style={{ color: stats.completed >= requiredSessions ? '#059669' : '#D97706' }}>
+                      {stats.completed} of {requiredSessions} Sessions
                     </span>
                   </div>
-                  <span className="ach-card-verified-badge">
-                    🏆 VERIFIED SURF ATHLETE
-                  </span>
-                </div>
-
-                {/* Motivational Header Tagline */}
-                <div className="ach-card-motivational-banner">
-                  🌊 PUSH YOUR LIMITS • MASTER THE OCEAN
-                </div>
-
-                <div className="ach-card-surfer-info">
-                  <div className="ach-card-avatar">
-                    {(studentName || 'S')[0].toUpperCase()}
+                  <div style={{ width: '100%', height: '10px', background: '#E2E8F0', borderRadius: '999px', overflow: 'hidden' }}>
+                    <div style={{
+                      width: `${Math.min(100, Math.round((stats.completed / Math.max(1, requiredSessions)) * 100))}%`,
+                      height: '100%',
+                      background: 'linear-gradient(90deg, #0284C7 0%, #0D9488 100%)',
+                      borderRadius: '999px',
+                      transition: 'width 0.4s ease'
+                    }} />
                   </div>
-                  <div>
-                    <h4 className="ach-card-surfer-name">{studentName}</h4>
-                    <span className="ach-card-surfer-sub">
-                      {studentSchool} • <strong style={{ color: '#2DD4BF' }}>{studentLevel} Surfer</strong>
-                    </span>
+                  <div style={{ fontSize: '11px', color: '#64748B', marginTop: '6px', textAlign: 'right' }}>
+                    {Math.max(0, requiredSessions - stats.completed)} session{requiredSessions - stats.completed === 1 ? '' : 's'} remaining
                   </div>
                 </div>
 
-                {shareModalSession === 'overall' ? (
-                  <div className="ach-card-metrics-grid">
-                    <div className="ach-card-metric-cell">
-                      <span className="ach-card-m-val">🏄‍♂️ {stats.completed}</span>
-                      <span className="ach-card-m-lbl">Completed Sessions</span>
-                    </div>
-                    <div className="ach-card-metric-cell">
-                      <span className="ach-card-m-val">🌊 {stats.totalWaves}</span>
-                      <span className="ach-card-m-lbl">Waves Ridden</span>
-                    </div>
-                    <div className="ach-card-metric-cell">
-                      <span className="ach-card-m-val">⏱️ {stats.totalHours} hrs</span>
-                      <span className="ach-card-m-lbl">Water Training</span>
-                    </div>
-                    <div className="ach-card-metric-cell">
-                      <span className="ach-card-m-val">⭐ {stats.avgScore}/100</span>
-                      <span className="ach-card-m-lbl">Technique Score</span>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    {/* Big Prominent Metric Boxes */}
-                    <div className="ach-card-metrics-grid">
-                      <div className="ach-card-metric-cell">
-                        <span className="ach-card-m-val" style={{ color: '#2DD4BF' }}>
-                          🌊 {getSessionWaves(shareModalSession)} Waves
-                        </span>
-                        <span className="ach-card-m-lbl">Waves Caught</span>
-                      </div>
-                      <div className="ach-card-metric-cell">
-                        <span className="ach-card-m-val" style={{ color: '#38BDF8' }}>
-                          ⏱️ {getSessionDuration(shareModalSession)}
-                        </span>
-                        <span className="ach-card-m-lbl">Training Duration</span>
-                      </div>
-                      <div className="ach-card-metric-cell">
-                        <span className="ach-card-m-val" style={{ color: '#FCD34D' }}>
-                          ⭐ {getSessionScore(shareModalSession)} / 100
-                        </span>
-                        <span className="ach-card-m-lbl">Technique Rating</span>
-                      </div>
-                      <div className="ach-card-metric-cell">
-                        <span className="ach-card-m-val" style={{ color: '#FFFFFF', fontSize: '13.5px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={shareModalSession.instructor || shareModalSession.instructor_name || 'Coach'}>
-                          🏄 {shareModalSession.instructor || shareModalSession.instructor_name || 'Coach'}
-                        </span>
-                        <span className="ach-card-m-lbl">Assigned Coach</span>
-                      </div>
-                    </div>
+                <p style={{ fontSize: '13.5px', color: '#475569', lineHeight: 1.5, margin: '0 0 18px' }}>
+                  You are enrolled in the <strong>{requiredSessions}-Day Surf Training Course</strong>. Your official verified completion certificate will be automatically unlocked and ready to download once you complete all <strong>{requiredSessions} sessions</strong>!
+                </p>
 
-                    {/* Date, Time & Surf Spot placed below */}
-                    <div className="ach-card-session-meta-strip">
-                      <div className="ach-card-detail-item">
-                        <span className="ach-card-detail-lbl">📅 Date & Time</span>
-                        <span className="ach-card-detail-val">{shareModalSession.date} ({shareModalSession.time || 'Morning'})</span>
-                      </div>
-                      <div className="ach-card-detail-item">
-                        <span className="ach-card-detail-lbl">📍 Surf Spot</span>
-                        <span className="ach-card-detail-val">{shareModalSession.location || studentSchool}</span>
-                      </div>
-                    </div>
-                  </>
-                )}
-
-                {/* Motivational Quote Banner */}
-                <div className="ach-card-quote-banner">
-                  “Every wave caught is a boundary pushed.”
-                </div>
-
-                <div className="ach-card-bottom-footer">
-                  <span>🌊 Athnex Live • athnexlive.com</span>
-                  <span>Official Athlete Record</span>
-                </div>
-              </div>
-
-              {/* Download Story Poster + Direct Social Icons */}
-              <div className="ach-share-link-section">
-                {/* Download Button */}
                 <button
                   type="button"
-                  className="ach-download-main-btn"
-                  onClick={() => handleDownloadStoryCard(shareModalSession)}
-                  disabled={downloadingImg}
+                  onClick={() => setCertLockModal(false)}
+                  style={{
+                    width: '100%',
+                    padding: '10px 16px',
+                    borderRadius: '10px',
+                    border: 'none',
+                    background: '#0F172A',
+                    color: '#FFFFFF',
+                    fontSize: '13.5px',
+                    fontWeight: 700,
+                    cursor: 'pointer'
+                  }}
                 >
-                  {downloadingImg ? (
-                    <>
-                      <span className="ach-spinner-sm"></span>
-                      <span>Generating Poster...</span>
-                    </>
-                  ) : (
-                    <>
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                        <polyline points="7 10 12 15 17 10"></polyline>
-                        <line x1="12" y1="15" x2="12" y2="3"></line>
-                      </svg>
-                      <span>Download Story Poster</span>
-                    </>
-                  )}
+                  Understood 👍
                 </button>
+              </div>
+            </div>
+          </div>
+        )}
 
-                {/* Divider */}
+        {/* ── Social Media Share Modal ────────────────────────────────────── */}
+        {shareModalSession && (() => {
+          const isOverall = shareModalSession === 'overall';
+          const rawWaves = isOverall ? stats.totalWaves : getSessionWaves(shareModalSession);
+          const rawScore = isOverall ? stats.avgScore : getSessionScore(shareModalSession);
+          const wavesCount = rawWaves !== null ? rawWaves : '--';
+          const scoreVal = rawScore !== null ? rawScore : '--';
+          const scoreOutOf10 = getScoreOutOfTen(scoreVal);
+          const waterTime = getSessionWaterTime(shareModalSession);
+          const rawPopUp = isOverall ? (rawScore ? Math.round(rawScore / 10) : null) : getSessionPopUpRating(shareModalSession, rawScore);
+          const rawPaddling = isOverall ? (rawScore ? Math.round(rawScore / 12) : null) : getSessionPaddlingRating(shareModalSession, rawScore);
+          const popUpRating = rawPopUp !== null ? `${rawPopUp}/10` : '--';
+          const paddlingRating = rawPaddling !== null ? `${rawPaddling}/10` : '--';
+          const coachCandidates = getCoachCandidates(shareModalSession);
+          const coachName = getCleanCoachName(shareModalSession, selectedCoachOverride);
+          const groupName = getSessionGroupName(shareModalSession);
+          const dateFormatted = getSessionFormattedDate(shareModalSession);
+          const quoteText = getCoachQuote(shareModalSession);
+          const previewPhoto = customPhotoUrl || posterBgUrl || '/surf-milestone-bg.jpg';
+          const shortDuration = isOverall ? `${stats.totalHours} hrs` : (shareModalSession.duration_mins ? `${Math.round(shareModalSession.duration_mins / 60 * 10) / 10} hrs` : '2.0 hrs');
+          const sessionLoc = isOverall ? studentSchool : (shareModalSession.location || studentSchool || 'Surf Beach');
+
+          return (
+            <div className="ach-modal-backdrop" onClick={() => setShareModalSession(null)}>
+              <div className="ach-modal-box ach-share-studio-box" onClick={(e) => e.stopPropagation()}>
+                {/* Modal Header */}
+                <div className="ach-modal-header" style={{ marginBottom: '14px', alignItems: 'flex-start' }}>
+                  <div>
+                    <h3 className="ach-modal-title" style={{ fontSize: '20px', fontWeight: 800, color: '#0F172A', margin: 0 }}>
+                      Share your session
+                    </h3>
+                    <p className="ach-modal-sub" style={{ margin: '3px 0 0', fontSize: '12px', color: '#64748B' }}>
+                      {groupName} • {dateFormatted}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="ach-modal-close"
+                    onClick={() => setShareModalSession(null)}
+                    title="Close"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {/* Optional Coach Selector if multiple coaches are on record */}
+                {coachCandidates.length > 1 && (
+                  <div className="ach-coach-switcher-strip">
+                    <span className="ach-coach-switcher-label">Assigned Coach:</span>
+                    {coachCandidates.map(c => {
+                      const isAct = coachName === `Coach ${c}` || coachName === c;
+                      return (
+                        <button
+                          key={c}
+                          type="button"
+                          className={`ach-coach-pill-btn ${isAct ? 'active' : ''}`}
+                          onClick={() => setSelectedCoachOverride(`Coach ${c}`)}
+                        >
+                          {isAct ? '✓ ' : ''}Coach {c}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* ── Active Story Card Preview ────────────────────────────────────── */}
+                <div className="ach-story-card-wrapper" ref={cardRef}>
+                  {/* Template 1: Photo spotlight */}
+                  {shareTemplate === 'spotlight' && (
+                    <div className="ach-card-spotlight">
+                      <div
+                        className="ach-spotlight-photo"
+                        style={{
+                          position: 'relative',
+                          overflow: 'hidden',
+                          backgroundColor: photoFit === 'contain' ? '#0F172A' : 'transparent',
+                        }}
+                      >
+                        <img
+                          src={previewPhoto}
+                          alt="Surfer spotlight"
+                          crossOrigin={previewPhoto && !previewPhoto.startsWith('data:') && !previewPhoto.startsWith('blob:') ? 'anonymous' : undefined}
+                          style={{
+                            width: '100%',
+                            height: '100%',
+                            objectFit: photoFit === 'contain' ? 'contain' : 'cover',
+                            objectPosition: `center ${photoPosY}%`,
+                            filter: getFilterCss(photoFilter),
+                            display: 'block',
+                          }}
+                        />
+                        <span className="ach-cut-pill" style={{ zIndex: 2 }}>🏄 {studentName.toUpperCase()}</span>
+                        <span className="ach-session-badge-yellow" style={{ zIndex: 2 }}>✓ SESSION COMPLETE</span>
+                      </div>
+                      <div className="ach-spotlight-slate">
+                        <div className="ach-spotlight-slate-top">
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <h4 className="ach-spotlight-title">A session to be proud of.</h4>
+                            <div className="ach-spotlight-sub-line" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '4px' }}>
+                              <span className="ach-student-group-badge">{groupName}</span>
+                              <span style={{ color: '#94A3B8', fontSize: '11.5px', fontWeight: 600 }}>
+                                {dateFormatted}{!isOverall && shareModalSession.time ? ` • ${shareModalSession.time}` : ' • 07:00-09:00 AM'}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="ach-spotlight-score-block">
+                            <div className="ach-spotlight-score-val">
+                              {scoreOutOf10}<span>/10</span>
+                            </div>
+                            <div className="ach-spotlight-score-lbl">COACH SCORE</div>
+                          </div>
+                        </div>
+
+                        <div className="ach-spotlight-divider"></div>
+
+                        {/* 3-Pill Performance Metric Trio */}
+                        <div className="ach-spotlight-metric-trio">
+                          <div className="ach-spot-metric-pill">
+                            <span className="ach-spot-metric-val">🌊 {wavesCount !== '--' ? `${wavesCount} Waves` : 'In Training'}</span>
+                            <span className="ach-spot-metric-sub">Waves Caught</span>
+                          </div>
+                          <div className="ach-spot-metric-pill">
+                            <span className="ach-spot-metric-val">⏱️ {waterTime}</span>
+                            <span className="ach-spot-metric-sub">Water Time</span>
+                          </div>
+                          <div className="ach-spot-metric-pill">
+                            <span className="ach-spot-metric-val">⭐ {scoreOutOf10 !== '--' ? `${scoreOutOf10}/10` : 'Unrated'}</span>
+                            <span className="ach-spot-metric-sub">Technique Score</span>
+                          </div>
+                        </div>
+
+                        {/* Verified Coach Verdict Banner */}
+                        <div className="ach-spotlight-quote-box">
+                          <div className="ach-spotlight-quote-head">
+                            <span className="ach-spotlight-verdict-tag">COACH VERDICT</span>
+                            <span className="ach-spotlight-coach">{coachName}</span>
+                          </div>
+                          <p className="ach-spotlight-quote">“{quoteText}”</p>
+                        </div>
+
+                        {/* Clean Watermark */}
+                        <div className="ach-card-footer-watermark">
+                          athnexlive.com
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Template 2: Ocean keepsake */}
+                  {shareTemplate === 'keepsake' && (
+                    <div className="ach-card-keepsake">
+                      <div className="ach-keepsake-tag">THE COACH'S CUT / SESSION KEEPSAKE</div>
+                      <h4 className="ach-keepsake-title">
+                        Small wins.<br />Big ocean energy.
+                      </h4>
+                      <div className="ach-keepsake-student-highlight">
+                        <span className="ach-keepsake-student-name">{studentName}</span>
+                        <span className="ach-keepsake-group-badge">{groupName}</span>
+                      </div>
+                      <div className="ach-keepsake-date-sub">{dateFormatted}</div>
+
+                      <div className="ach-keepsake-frame-outer">
+                        <div
+                          className="ach-keepsake-photo"
+                          style={{
+                            position: 'relative',
+                            overflow: 'hidden',
+                            backgroundColor: photoFit === 'contain' ? '#CBD5E1' : 'transparent',
+                          }}
+                        >
+                          <img
+                            src={previewPhoto}
+                            alt="Surfer keepsake"
+                            crossOrigin={previewPhoto && !previewPhoto.startsWith('data:') && !previewPhoto.startsWith('blob:') ? 'anonymous' : undefined}
+                            style={{
+                              width: '100%',
+                              height: '100%',
+                              objectFit: photoFit === 'contain' ? 'contain' : 'cover',
+                              objectPosition: `center ${photoPosY}%`,
+                              filter: getFilterCss(photoFilter),
+                              display: 'block',
+                            }}
+                          />
+                        </div>
+                        <div className="ach-keepsake-gold-badge">
+                          <span className="ach-gold-top-lbl">COACH</span>
+                          <span className="ach-gold-score">{scoreOutOf10}</span>
+                          <span className="ach-gold-den">/10</span>
+                        </div>
+                      </div>
+
+                      <div className="ach-keepsake-caption">A little salt. A lot of progress.</div>
+
+                      <div className="ach-keepsake-quote-box">
+                        <div className="ach-keepsake-quote-head">
+                          <span className="ach-keepsake-verdict-tag">COACH VERDICT</span>
+                          <span className="ach-keepsake-coach">{coachName}</span>
+                        </div>
+                        <div className="ach-keepsake-quote">“{quoteText}”</div>
+                      </div>
+
+                      <div className="ach-keepsake-footer-row">
+                        <span>✓ Completed</span>
+                        <span>{wavesCount !== '--' ? `${wavesCount} waves caught` : 'Session completed'}</span>
+                        <span>⏱️ {waterTime} in water</span>
+                      </div>
+
+                      {/* Clean Watermark */}
+                      <div className="ach-card-footer-watermark ach-keepsake-watermark">
+                        athnexlive.com
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Template 3: Personal scorecard (Exact Reference Match) */}
+                  {shareTemplate === 'scorecard' && (
+                    <div className="ach-card-scorecard">
+                      {/* Top Section with Content on Left & Expanded Arch Photo on Right */}
+                      <div className="ach-sc-top-section">
+                        <div className="ach-sc-left-col">
+                          <div className="ach-sc-tag">THE COACH'S CUT</div>
+
+                          <h4 className="ach-sc-title">
+                            Progress,<br />worth sharing.
+                          </h4>
+
+                          <div className="ach-sc-pill">
+                            ✓ SESSION COMPLETE
+                          </div>
+
+                          <div className="ach-sc-score-block">
+                            <div className="ach-sc-score-line">
+                              <span className="ach-sc-score-num">{scoreOutOf10}</span>
+                              <span className="ach-sc-score-den">/10</span>
+                            </div>
+                            <div className="ach-sc-score-lbl">COACH SCORE</div>
+                          </div>
+
+                          <div className="ach-sc-ath-info">
+                            <div className="ach-sc-ath-name-highlight">{studentName}</div>
+                            <div className="ach-sc-ath-sub">{groupName} · {dateFormatted}</div>
+                          </div>
+                        </div>
+
+                        <div className="ach-sc-right-col">
+                          <div
+                            className="ach-sc-arch-photo"
+                            style={{
+                              position: 'relative',
+                              overflow: 'hidden',
+                              backgroundColor: photoFit === 'contain' ? '#005548' : 'transparent',
+                            }}
+                          >
+                            <img
+                              src={previewPhoto}
+                              alt="Surfer scorecard"
+                              crossOrigin={previewPhoto && !previewPhoto.startsWith('data:') && !previewPhoto.startsWith('blob:') ? 'anonymous' : undefined}
+                              style={{
+                                width: '100%',
+                                height: '100%',
+                                objectFit: photoFit === 'contain' ? 'contain' : 'cover',
+                                objectPosition: `center ${photoPosY}%`,
+                                filter: getFilterCss(photoFilter),
+                                display: 'block',
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Thin Divider Line */}
+                      <div className="ach-sc-divider" />
+
+                      {/* 3 Metric Stats Columns */}
+                      <div className="ach-sc-metrics-grid">
+                        <div className="ach-sc-metric-col">
+                          <div className="ach-sc-metric-val">{wavesCount}</div>
+                          <div className="ach-sc-metric-lbl">WAVES CAUGHT</div>
+                        </div>
+                        <div className="ach-sc-metric-col">
+                          <div className="ach-sc-metric-val">{waterTime}</div>
+                          <div className="ach-sc-metric-lbl">WATER TIME</div>
+                        </div>
+                        <div className="ach-sc-metric-col">
+                          <div className="ach-sc-metric-val">{scoreOutOf10 !== '--' ? `${scoreOutOf10}/10` : '--'}</div>
+                          <div className="ach-sc-metric-lbl">COACH SCORE</div>
+                        </div>
+                      </div>
+
+                      {/* Coach Quote Box at Bottom */}
+                      <div className="ach-sc-quote-box">
+                        <div className="ach-sc-quote-msg">“{quoteText}”</div>
+                        <div className="ach-sc-quote-by">{coachName}</div>
+                      </div>
+
+                      {/* Clean Watermark */}
+                      <div className="ach-card-footer-watermark ach-scorecard-watermark">
+                        athnexlive.com
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* ── Template Switcher & Dimension Indicator ─────────────────────── */}
+                <div className="ach-template-meta-strip">
+                  <span className="ach-template-label-active">
+                    {shareTemplate === 'spotlight' ? 'Photo spotlight' : shareTemplate === 'keepsake' ? 'Ocean keepsake' : 'Personal scorecard'}
+                  </span>
+                  <span className="ach-template-ratio">4:5 portrait • 1080 × 1350</span>
+                </div>
+
+                {/* 3 Template Selection Buttons */}
+                <div className="ach-template-selector-pills">
+                  <button
+                    type="button"
+                    className={`ach-tmpl-btn ${shareTemplate === 'spotlight' ? 'active' : ''}`}
+                    onClick={() => setShareTemplate('spotlight')}
+                  >
+                    Photo spotlight
+                  </button>
+                  <button
+                    type="button"
+                    className={`ach-tmpl-btn ${shareTemplate === 'keepsake' ? 'active' : ''}`}
+                    onClick={() => setShareTemplate('keepsake')}
+                  >
+                    Ocean keepsake
+                  </button>
+                  <button
+                    type="button"
+                    className={`ach-tmpl-btn ${shareTemplate === 'scorecard' ? 'active' : ''}`}
+                    onClick={() => setShareTemplate('scorecard')}
+                  >
+                    Personal scorecard
+                  </button>
+                </div>
+
+                {/* ── "Make it personal" Section ───────────────────────────────────── */}
+                <div className="ach-personal-section">
+                  <div className="ach-personal-head">
+                    <span className="ach-personal-title">Make it personal</span>
+                    <span className="ach-personal-opt">Optional</span>
+                  </div>
+                  <p className="ach-personal-sub">
+                    Add a photo or selfie from this session.
+                  </p>
+
+                  <div className="ach-personal-btn-row">
+                    <button
+                      type="button"
+                      className="ach-personal-upload-btn"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                        <circle cx="8.5" cy="8.5" r="1.5"/>
+                        <polyline points="21 15 16 10 5 21"/>
+                      </svg>
+                      <span>Upload photo</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="ach-personal-upload-btn"
+                      onClick={startCamera}
+                    >
+                      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                        <circle cx="12" cy="13" r="4"/>
+                      </svg>
+                      <span>Take a selfie</span>
+                    </button>
+
+                    {customPhotoUrl && (
+                      <button
+                        type="button"
+                        className="ach-personal-remove-btn"
+                        onClick={() => setCustomPhotoUrl(null)}
+                        title="Reset to default surfing photo"
+                      >
+                        ✕ Remove
+                      </button>
+                    )}
+                  </div>
+
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    onChange={handlePhotoSelect}
+                  />
+                  <input
+                    ref={cameraInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="user"
+                    style={{ display: 'none' }}
+                    onChange={handlePhotoSelect}
+                  />
+
+                  <div className="ach-personal-note">
+                    Your photo appears only inside the share-card preview.
+                  </div>
+                </div>
+
+                {/* ── Main Action Buttons: Share card & Save ────────────────────────── */}
+                <div className="ach-main-cta-row">
+                  <button
+                    type="button"
+                    className="ach-cta-share-btn"
+                    onClick={() => handleNativeShareCard(shareModalSession)}
+                    disabled={shareCardBusy || downloadingImg}
+                  >
+                    {shareCardBusy ? (
+                      <>
+                        <span className="ach-spinner-sm" style={{ borderTopColor: '#FFFFFF' }}></span>
+                        <span>Preparing Share...</span>
+                      </>
+                    ) : (
+                      <>
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
+                          <polyline points="16 6 12 2 8 6"/>
+                          <line x1="12" y1="2" x2="12" y2="15"/>
+                        </svg>
+                        <span>Share card</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="ach-cta-save-btn"
+                    onClick={() => handleDownloadStoryCard(shareModalSession)}
+                    disabled={downloadingImg || shareCardBusy}
+                  >
+                    {downloadingImg ? (
+                      <>
+                        <span className="ach-spinner-sm" style={{ borderTopColor: '#0F172A' }}></span>
+                        <span>Saving...</span>
+                      </>
+                    ) : (
+                      <>
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                          <polyline points="7 10 12 15 17 10"></polyline>
+                          <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                        <span>Save</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* 1-Click Copy Story Caption Button */}
+                <div style={{ marginTop: '10px' }}>
+                  <button
+                    type="button"
+                    className="ach-copy-caption-btn"
+                    onClick={() => handleCopyCaption(shareModalSession)}
+                    title="Copy formatted story caption with surf score and hashtags"
+                  >
+                    {captionCopied ? (
+                      <>
+                        <span style={{ color: '#059669', fontSize: '15px' }}>✓</span>
+                        <span style={{ color: '#065F46', fontWeight: 700 }}>Caption & Hashtags Copied to Clipboard!</span>
+                      </>
+                    ) : (
+                      <>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                        </svg>
+                        <span>Copy Story Caption & Hashtags</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                <div className="ach-preview-disclaimer">
+                  Preview • Example photo and illustrative session data.
+                </div>
+
+                {/* ── Direct 1-Tap Social Icons Row ─────────────────────────────────── */}
                 <div className="ach-share-divider">
                   <span>Or Share Directly Via</span>
                 </div>
 
-                {/* Round Social Icon Buttons */}
                 <div className="ach-share-icons-row">
                   {/* WhatsApp */}
                   <button
@@ -1461,6 +3019,134 @@ export default function MyAchievements() {
                     ✓ High-Res Story Poster Downloaded & Copied! Ready to paste (Ctrl+V) in WhatsApp
                   </div>
                 )}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ── Live Selfie Camera Viewfinder Modal ─────────────────────────── */}
+        {cameraModalOpen && (
+          <div className="ach-modal-backdrop" style={{ zIndex: 10001 }} onClick={stopCamera}>
+            <div className="ach-modal-box ach-camera-box" onClick={(e) => e.stopPropagation()}>
+              <div className="ach-camera-header">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '20px' }}>📸</span>
+                  <div>
+                    <h4 style={{ margin: 0, fontSize: '16px', fontWeight: 800, color: '#0F172A' }}>
+                      Take a Surf Selfie
+                    </h4>
+                    <span style={{ fontSize: '11px', color: '#64748B' }}>
+                      Look at the camera and snap your achievement selfie!
+                    </span>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <button
+                    type="button"
+                    className="ach-cam-control-btn"
+                    onClick={toggleCameraFacing}
+                    title="Flip between front and rear camera"
+                  >
+                    🔄 {cameraFacing === 'user' ? 'Front Cam' : 'Back Cam'}
+                  </button>
+                  <button
+                    type="button"
+                    className={`ach-cam-control-btn ${cameraTimer > 0 ? 'active' : ''}`}
+                    onClick={() => setCameraTimer(t => t === 3 ? 0 : 3)}
+                    title="Toggle 3-second countdown timer"
+                  >
+                    ⏱️ {cameraTimer > 0 ? '3s Timer' : 'Timer Off'}
+                  </button>
+                  <button
+                    type="button"
+                    className="ach-modal-close"
+                    onClick={stopCamera}
+                    title="Close Camera"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+
+              <div className="ach-camera-viewfinder-wrap">
+                {cameraLoading && (
+                  <div className="ach-camera-loading-overlay">
+                    <div className="ach-spinner"></div>
+                    <span style={{ marginTop: '12px', fontSize: '13px', color: '#F8FAFC', fontWeight: 700 }}>
+                      Starting Camera...
+                    </span>
+                  </div>
+                )}
+
+                {cameraError && (
+                  <div className="ach-camera-error-banner">
+                    <p style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: '#DC2626', textAlign: 'center' }}>
+                      {cameraError}
+                    </p>
+                  </div>
+                )}
+
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="ach-camera-video-preview"
+                />
+
+                {/* Reticle Focus Corners */}
+                <div className="ach-camera-reticle">
+                  <span className="ach-reticle-corner top-left"></span>
+                  <span className="ach-reticle-corner top-right"></span>
+                  <span className="ach-reticle-corner bottom-left"></span>
+                  <span className="ach-reticle-corner bottom-right"></span>
+                </div>
+
+                {/* 3s Countdown Overlay */}
+                {cameraCountdown !== null && (
+                  <div className="ach-camera-countdown-overlay">
+                    <span className="ach-countdown-digit">{cameraCountdown}</span>
+                  </div>
+                )}
+
+                {/* Screen Flash Animation */}
+                {cameraFlash && <div className="ach-camera-flash-overlay" />}
+              </div>
+
+              <div className="ach-camera-actions">
+                <button
+                  type="button"
+                  className="ach-camera-snap-btn"
+                  onClick={handleSnapClick}
+                  disabled={cameraLoading || !!cameraError || cameraCountdown !== null}
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                    <circle cx="12" cy="13" r="4"/>
+                  </svg>
+                  <span>{cameraCountdown !== null ? `Snapping in ${cameraCountdown}...` : cameraTimer > 0 ? 'Snap (3s Timer)' : 'Snap Selfie'}</span>
+                </button>
+
+                <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    className="ach-camera-sub-link"
+                    onClick={() => {
+                      stopCamera();
+                      cameraInputRef.current?.click();
+                    }}
+                  >
+                    Switch to File / Photo Upload
+                  </button>
+                  <span style={{ color: '#CBD5E1' }}>•</span>
+                  <button
+                    type="button"
+                    className="ach-camera-sub-link"
+                    onClick={stopCamera}
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -1550,11 +3236,24 @@ export default function MyAchievements() {
           border-radius: 10px;
           cursor: pointer;
           box-shadow: 0 4px 14px rgba(245, 158, 11, 0.35);
-          transition: transform 0.15s ease, box-shadow 0.15s ease;
+          transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.2s ease;
         }
         .ach-btn-certificate:hover {
           transform: translateY(-1px);
           box-shadow: 0 6px 20px rgba(245, 158, 11, 0.5);
+        }
+        .ach-btn-certificate.locked {
+          background: #F1F5F9;
+          color: #475569;
+          border: 1px solid #CBD5E1;
+          box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05);
+        }
+        .ach-btn-certificate.locked:hover {
+          background: #E2E8F0;
+          color: #0F172A;
+          border-color: #94A3B8;
+          transform: translateY(-1px);
+          box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
         }
         .ach-btn-certificate:disabled {
           opacity: 0.7;
@@ -2081,191 +3780,984 @@ export default function MyAchievements() {
           color: #0F172A;
         }
 
-        .ach-share-preview-card {
-          position: relative;
-          background: linear-gradient(180deg, rgba(15, 23, 42, 0.74) 0%, rgba(15, 23, 42, 0.92) 100%),
-                      url('/surf-milestone-bg.jpg') center/cover no-repeat;
-          border: 1.5px solid rgba(45, 212, 191, 0.45);
-          border-radius: 16px;
-          padding: 20px;
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-          box-shadow: 0 16px 36px rgba(0,0,0,0.65), inset 0 0 25px rgba(45, 212, 191, 0.12);
-          overflow: hidden;
+        /* ── New "Share your session" Multi-Template Studio Styles ─── */
+        .ach-share-studio-box {
+          max-width: 500px !important;
+          width: 95% !important;
+          max-height: 92vh !important;
+          overflow-y: auto !important;
+          padding: 20px 22px !important;
+          border-radius: 22px !important;
+          background: #FFFFFF !important;
+          box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28) !important;
+          display: flex !important;
+          flex-direction: column !important;
+          gap: 12px !important;
         }
 
-        .ach-card-glow-bg {
-          position: absolute;
-          top: -20px;
-          right: -20px;
-          width: 160px;
-          height: 160px;
-          background: radial-gradient(circle, rgba(45,212,191,0.3) 0%, transparent 70%);
-          pointer-events: none;
-        }
-
-        .ach-card-top-branding {
+        .ach-coach-switcher-strip {
           display: flex;
           align-items: center;
-          justify-content: space-between;
-          position: relative;
-          z-index: 1;
+          gap: 8px;
+          margin: 0 0 4px;
+          flex-wrap: wrap;
+          padding: 6px 12px;
+          background: #F8FAFC;
+          border-radius: 12px;
+          border: 1px solid #E2E8F0;
         }
-
-        .ach-card-verified-badge {
-          background: rgba(252, 211, 77, 0.15);
-          border: 1px solid rgba(252, 211, 77, 0.5);
-          color: #FCD34D;
-          font-size: 10.5px;
-          font-weight: 800;
-          padding: 3px 10px;
-          border-radius: 20px;
-          letter-spacing: 0.04em;
-          box-shadow: 0 0 12px rgba(252, 211, 77, 0.2);
-        }
-
-        .ach-card-motivational-banner {
-          background: rgba(45, 212, 191, 0.12);
-          border: 1px dashed rgba(45, 212, 191, 0.4);
-          border-radius: 8px;
-          padding: 7px 12px;
-          text-align: center;
-          color: #2DD4BF;
+        .ach-coach-switcher-label {
           font-size: 11px;
           font-weight: 800;
-          letter-spacing: 0.06em;
-          text-transform: uppercase;
-          position: relative;
-          z-index: 1;
-        }
-
-        .ach-card-surfer-info {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          position: relative;
-          z-index: 1;
-        }
-
-        .ach-card-avatar {
-          width: 48px;
-          height: 48px;
-          border-radius: 50%;
-          background: linear-gradient(135deg, #2DD4BF 0%, #0D9488 100%);
-          color: #0F172A;
-          font-size: 20px;
-          font-weight: 900;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          border: 2px solid rgba(255,255,255,0.3);
-          box-shadow: 0 0 14px rgba(45, 212, 191, 0.4);
-        }
-
-        .ach-card-surfer-name {
-          font-size: 17px;
-          font-weight: 800;
-          color: #FFFFFF;
-          margin: 0;
-          letter-spacing: -0.01em;
-        }
-
-        .ach-card-surfer-sub {
-          font-size: 11.5px;
-          color: #94A3B8;
-        }
-
-        .ach-card-metrics-grid {
-          display: grid;
-          grid-template-columns: repeat(2, 1fr);
-          gap: 8px;
-          position: relative;
-          z-index: 1;
-        }
-
-        .ach-card-metric-cell {
-          background: rgba(15, 23, 42, 0.82);
-          backdrop-filter: blur(10px);
-          border: 1px solid rgba(45, 212, 191, 0.28);
-          border-radius: 11px;
-          padding: 10px 12px;
-          display: flex;
-          flex-direction: column;
-          justify-content: center;
-          min-height: 56px;
-        }
-
-        .ach-card-m-val {
-          font-size: 15px;
-          font-weight: 800;
-          color: #2DD4BF;
-          line-height: 1.25;
-        }
-        .ach-card-m-lbl {
-          font-size: 10px;
-          color: #94A3B8;
+          color: #64748B;
           text-transform: uppercase;
           letter-spacing: 0.05em;
-          margin-top: 3px;
-          font-weight: 600;
+        }
+        .ach-coach-pill-btn {
+          padding: 4px 11px;
+          border-radius: 999px;
+          font-size: 11.5px;
+          font-weight: 700;
+          cursor: pointer;
+          border: 1px solid #CBD5E1;
+          background: #FFFFFF;
+          color: #334155;
+          transition: all 0.15s ease;
+        }
+        .ach-coach-pill-btn:hover {
+          border-color: #0D9488;
+          color: #0D9488;
+        }
+        .ach-coach-pill-btn.active {
+          border-color: #0D9488;
+          background: #0D9488;
+          color: #FFFFFF;
+          box-shadow: 0 2px 6px rgba(13, 148, 136, 0.25);
         }
 
-        .ach-card-session-details,
-        .ach-card-session-meta-strip {
-          background: rgba(15, 23, 42, 0.78);
-          backdrop-filter: blur(10px);
-          border: 1px solid rgba(255, 255, 255, 0.12);
-          border-radius: 10px;
-          padding: 9px 12px;
+        .ach-story-card-wrapper {
+          width: 100%;
+          max-width: 440px;
+          height: 550px;
+          aspect-ratio: 4 / 5;
+          margin: 0 auto;
+          border-radius: 20px;
+          overflow: hidden;
+          box-shadow: 0 20px 48px rgba(0,0,0,0.26);
+          transition: transform 0.2s ease;
+          flex-shrink: 0;
+          position: relative;
+        }
+
+        /* ── Template 1: Photo spotlight ── */
+        .ach-card-spotlight {
           display: flex;
           flex-direction: column;
-          gap: 6px;
-          position: relative;
-          z-index: 1;
+          background: #0E1B2A;
+          border-radius: 20px;
+          overflow: hidden;
+          flex-shrink: 0;
+          width: 100%;
+          height: 100%;
+          box-sizing: border-box;
+          justify-content: space-between;
         }
-
-        .ach-card-detail-item {
+        .ach-spotlight-photo {
+          height: 270px;
+          position: relative;
+          background-size: cover;
+          background-position: center;
+          flex-shrink: 0;
+        }
+        .ach-cut-pill {
+          position: absolute;
+          top: 12px;
+          left: 14px;
+          background: rgba(15, 23, 42, 0.78);
+          backdrop-filter: blur(6px);
+          color: #2DD4BF;
+          font-size: 10.5px;
+          font-weight: 850;
+          letter-spacing: 0.05em;
+          padding: 5px 12px;
+          border-radius: 999px;
+          border: 1px solid rgba(45, 212, 191, 0.4);
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+          max-width: 80%;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .ach-session-badge-yellow {
+          position: absolute;
+          bottom: 12px;
+          left: 14px;
+          background: #FDE047;
+          color: #1E293B;
+          font-size: 9px;
+          font-weight: 800;
+          letter-spacing: 0.04em;
+          padding: 4px 10px;
+          border-radius: 999px;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+        .ach-spotlight-slate {
+          background: #0E1B2A;
+          padding: 13px 18px 8px 18px;
+          color: #FFFFFF;
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+          flex: 1;
+          box-sizing: border-box;
+        }
+        .ach-spotlight-slate-top {
           display: flex;
           justify-content: space-between;
+          align-items: flex-start;
+          gap: 12px;
+        }
+        .ach-spotlight-title {
+          font-size: 21px;
+          font-weight: 850;
+          color: #FFFFFF;
+          margin: 0 0 3px 0;
+          line-height: 1.2;
+        }
+        .ach-spotlight-student-highlight {
+          display: flex;
           align-items: center;
-          font-size: 11.5px;
+          gap: 7px;
+          margin: 3px 0 2px;
+          flex-wrap: wrap;
         }
-        .ach-card-detail-lbl {
-          color: #94A3B8;
+        .ach-student-name-hero {
+          font-size: 16px;
+          font-weight: 900;
+          color: #38BDF8;
+          letter-spacing: -0.01em;
+          text-shadow: 0 1px 4px rgba(56, 189, 248, 0.25);
         }
-        .ach-card-detail-val {
-          color: #F8FAFC;
+        .ach-student-group-badge {
+          background: rgba(255, 255, 255, 0.12);
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          color: #F1F5F9;
+          font-size: 10px;
           font-weight: 700;
+          padding: 2px 7px;
+          border-radius: 4px;
+          letter-spacing: 0.02em;
         }
-
-        .ach-card-quote-banner {
-          background: rgba(255, 255, 255, 0.05);
-          border-left: 3px solid #FCD34D;
-          border-radius: 0 8px 8px 0;
-          padding: 8px 12px;
-          color: #E2E8F0;
-          font-size: 11.5px;
-          font-style: italic;
+        .ach-spotlight-meta-line {
+          font-size: 12.5px;
+          color: #94A3B8;
           font-weight: 600;
-          text-align: center;
-          position: relative;
-          z-index: 1;
         }
-
-        .ach-card-bottom-footer {
+        .ach-spotlight-sub-line {
+          font-size: 11px;
+          color: #94A3B8;
+          margin-top: 2px;
+        }
+        .ach-spotlight-score-block {
+          text-align: right;
+          min-width: 80px;
+        }
+        .ach-spotlight-score-val {
+          font-size: 36px;
+          font-weight: 900;
+          color: #FDE047;
+          line-height: 1;
+        }
+        .ach-spotlight-score-val span {
+          font-size: 13px;
+          font-weight: 600;
+          color: #94A3B8;
+          margin-left: 2px;
+        }
+        .ach-spotlight-score-lbl {
+          font-size: 8.5px;
+          font-weight: 800;
+          color: #94A3B8;
+          letter-spacing: 0.06em;
+          margin-top: 3px;
+        }
+        .ach-spotlight-divider {
+          height: 1px;
+          background: rgba(255, 255, 255, 0.12);
+          margin: 2px 0;
+        }
+        .ach-spotlight-metric-trio {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 7px;
+          margin: 1px 0;
+        }
+        .ach-spot-metric-pill {
+          background: rgba(255, 255, 255, 0.06);
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          border-radius: 9px;
+          padding: 7px 5px;
+          text-align: center;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 2px;
+        }
+        .ach-spot-metric-val {
+          font-size: 12.5px;
+          font-weight: 850;
+          color: #FFFFFF;
+        }
+        .ach-spot-metric-sub {
+          font-size: 8px;
+          font-weight: 700;
+          color: #94A3B8;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+        }
+        .ach-spotlight-quote-box {
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid rgba(45, 212, 191, 0.25);
+          border-left: 3px solid #2DD4BF;
+          border-radius: 10px;
+          padding: 8px 12px;
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+        }
+        .ach-spotlight-quote-head {
           display: flex;
           justify-content: space-between;
           align-items: center;
+        }
+        .ach-spotlight-verdict-tag {
+          font-size: 8px;
+          font-weight: 850;
+          color: #2DD4BF;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        }
+        .ach-spotlight-quote {
+          font-size: 12px;
+          font-style: italic;
+          color: #F1F5F9;
+          line-height: 1.35;
+          margin: 0;
+        }
+        .ach-spotlight-coach {
+          font-size: 10.5px;
+          font-weight: 700;
+          color: #FCD34D;
+          text-align: right;
+        }
+
+        .ach-card-footer-watermark {
+          text-align: center;
+          font-size: 11px;
+          font-weight: 700;
+          letter-spacing: 0.05em;
+          color: rgba(255, 255, 255, 0.42);
+          margin-top: 4px;
+          padding-bottom: 2px;
+          text-transform: lowercase;
+        }
+        .ach-card-footer-watermark.ach-keepsake-watermark {
+          color: #64748B;
+          margin-top: 6px;
+        }
+        .ach-card-footer-watermark.ach-scorecard-watermark {
+          color: rgba(255, 255, 255, 0.45);
+          margin-top: 5px;
+        }
+
+        /* ── Template 2: Ocean keepsake ── */
+        .ach-card-keepsake {
+          background: #FAF6F0;
+          border: 1.5px solid #EBE4DA;
+          border-radius: 20px;
+          padding: 18px 20px 14px 20px;
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+          color: #1E293B;
+          flex-shrink: 0;
+          width: 100%;
+          height: 100%;
+          box-sizing: border-box;
+          overflow: hidden;
+        }
+        .ach-keepsake-tag {
+          color: #0D9488;
+          font-size: 9.5px;
+          font-weight: 800;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        }
+        .ach-keepsake-title {
+          font-size: 21px;
+          font-weight: 850;
+          color: #0F172A;
+          line-height: 1.15;
+          letter-spacing: -0.02em;
+          margin: 3px 0 1px 0;
+        }
+        .ach-keepsake-student-highlight {
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          margin: 4px 0 1px 0;
+          flex-wrap: wrap;
+        }
+        .ach-keepsake-student-name {
+          font-size: 16px;
+          font-weight: 900;
+          color: #0F172A;
+          letter-spacing: -0.01em;
+        }
+        .ach-keepsake-group-badge {
+          background: #0D9488;
+          color: #FFFFFF;
+          font-size: 10px;
+          font-weight: 700;
+          padding: 2px 7px;
+          border-radius: 999px;
+        }
+        .ach-keepsake-date-sub {
+          font-size: 11px;
+          color: #78716C;
+          font-weight: 600;
+          margin-bottom: 2px;
+        }
+        .ach-keepsake-meta {
+          font-size: 11.5px;
+          color: #78716C;
+          font-weight: 600;
+        }
+        .ach-keepsake-frame-outer {
+          background: #FFFFFF;
+          padding: 8px;
+          border-radius: 15px;
+          box-shadow: 0 6px 20px rgba(0,0,0,0.06);
+          position: relative;
+          margin: 2px 0 4px 0;
+        }
+        .ach-keepsake-photo {
+          height: 215px;
+          border-radius: 10px;
+          background-size: cover;
+          background-position: center;
+        }
+        .ach-keepsake-gold-badge {
+          position: absolute;
+          bottom: -15px;
+          right: 14px;
+          width: 76px;
+          height: 76px;
+          border-radius: 50%;
+          background: linear-gradient(135deg, #FFE895 0%, #F59E0B 50%, #D97706 100%);
+          color: #78350F;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          box-shadow: 0 6px 20px rgba(217, 119, 6, 0.45);
+          border: 3.5px solid #FFFFFF;
+          box-sizing: border-box;
+          z-index: 2;
+          padding: 2px;
+          overflow: hidden;
+        }
+        .ach-gold-top-lbl {
+          font-size: 7.5px;
+          font-weight: 900;
+          letter-spacing: 0.1em;
+          text-transform: uppercase;
+          color: #78350F;
+          line-height: 1;
+          margin-bottom: 2px;
+          opacity: 0.95;
+        }
+        .ach-gold-score {
+          font-size: 28px;
+          font-weight: 950;
+          line-height: 0.95;
+          color: #78350F;
+          letter-spacing: -0.02em;
+          margin: 0;
+        }
+        .ach-gold-den {
+          font-size: 9.5px;
+          font-weight: 850;
+          color: #92400E;
+          opacity: 0.9;
+          line-height: 1;
+          margin-top: 2px;
+        }
+        .ach-keepsake-caption {
+          font-size: 11px;
+          font-style: italic;
+          color: #78716C;
+          text-align: center;
+          margin-top: 4px;
+          font-weight: 500;
+        }
+        .ach-keepsake-quote-box {
+          background: #FFFFFF;
+          border-radius: 11px;
+          padding: 9px 13px;
+          border: 1px solid #EAE3D7;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+        }
+        .ach-keepsake-quote-head {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 3px;
+        }
+        .ach-keepsake-verdict-tag {
+          font-size: 8px;
+          font-weight: 850;
+          color: #0D9488;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        }
+        .ach-keepsake-quote {
+          font-size: 12.5px;
+          font-weight: 800;
+          color: #1E293B;
+          line-height: 1.35;
+        }
+        .ach-keepsake-coach {
+          font-size: 10.5px;
+          font-weight: 700;
+          color: #0D9488;
+        }
+        .ach-keepsake-footer-row {
+          display: flex;
+          justify-content: space-between;
+          font-size: 11.5px;
+          font-weight: 800;
+          color: #57534E;
+          border-top: 1px solid #E7E0D6;
+          padding-top: 8px;
+        }
+
+        /* ── Template 3: Personal scorecard (Exact Reference Match) ── */
+        .ach-card-scorecard {
+          background: #006859;
+          border-radius: 20px;
+          padding: 22px 24px 18px 24px;
+          color: #FFFFFF;
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+          flex-shrink: 0;
+          width: 100%;
+          height: 100%;
+          box-sizing: border-box;
+          overflow: hidden;
+          position: relative;
+          box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+        .ach-sc-top-section {
+          display: flex;
+          align-items: stretch;
+          justify-content: space-between;
+          gap: 16px;
+          flex: 1;
+          min-height: 0;
+          margin-bottom: 4px;
+        }
+        .ach-sc-left-col {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+          min-width: 0;
+          padding-bottom: 2px;
+        }
+        .ach-sc-tag {
+          font-size: 10px;
+          font-weight: 800;
+          letter-spacing: 0.08em;
+          color: rgba(255, 255, 255, 0.8);
+          text-transform: uppercase;
+          line-height: 1;
+        }
+        .ach-sc-title {
+          font-size: 24px;
+          font-weight: 900;
+          line-height: 1.15;
+          color: #FFFFFF;
+          letter-spacing: -0.02em;
+          margin: 6px 0 8px 0;
+        }
+        .ach-sc-pill {
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          background: #99F6E4;
+          color: #042F2C;
+          font-size: 9px;
+          font-weight: 850;
+          letter-spacing: 0.04em;
+          padding: 3.5px 11px;
+          border-radius: 999px;
+          width: fit-content;
+          margin-bottom: 12px;
+        }
+        .ach-sc-score-block {
+          margin-top: auto;
+          margin-bottom: 8px;
+        }
+        .ach-sc-score-line {
+          display: flex;
+          align-items: baseline;
+          line-height: 1;
+        }
+        .ach-sc-score-num {
+          font-size: 58px;
+          font-weight: 950;
+          color: #FCD34D;
+          letter-spacing: -0.03em;
+          line-height: 0.95;
+        }
+        .ach-sc-score-den {
+          font-size: 17px;
+          font-weight: 750;
+          color: rgba(255, 255, 255, 0.85);
+          margin-left: 4px;
+        }
+        .ach-sc-score-lbl {
+          font-size: 9px;
+          font-weight: 800;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: rgba(255, 255, 255, 0.8);
+          margin-top: 5px;
+        }
+        .ach-sc-ath-info {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+        .ach-sc-ath-name-highlight {
+          font-size: 16px;
+          font-weight: 900;
+          color: #5EEAD4;
+          letter-spacing: -0.01em;
+          text-shadow: 0 1px 4px rgba(94, 234, 212, 0.2);
+        }
+        .ach-sc-ath-sub {
+          font-size: 11px;
+          color: rgba(255, 255, 255, 0.85);
+          font-weight: 600;
+          margin-top: 2px;
+        }
+        .ach-sc-ath-name {
+          font-size: 13.5px;
+          font-weight: 800;
+          color: #FFFFFF;
+        }
+        .ach-sc-ath-date {
+          font-size: 11px;
+          font-weight: 500;
+          color: rgba(255, 255, 255, 0.75);
+        }
+        .ach-sc-right-col {
+          flex-shrink: 0;
+          display: flex;
+          align-items: flex-end;
+          justify-content: flex-end;
+        }
+        .ach-sc-arch-photo {
+          width: 205px;
+          height: 280px;
+          border-radius: 102px 102px 22px 22px;
+          background-size: cover;
+          background-position: center;
+          box-shadow: 0 10px 25px rgba(0, 0, 0, 0.28);
+        }
+        .ach-sc-divider {
+          width: 100%;
+          height: 1px;
+          background: rgba(255, 255, 255, 0.16);
+          margin: 14px 0 12px 0;
+        }
+        .ach-sc-metrics-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 8px;
+          margin-bottom: 12px;
+        }
+        .ach-sc-metric-col {
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+        }
+        .ach-sc-metric-val {
+          font-size: 24px;
+          font-weight: 900;
+          color: #FFFFFF;
+          line-height: 1;
+        }
+        .ach-sc-metric-lbl {
+          font-size: 8.5px;
+          font-weight: 750;
+          letter-spacing: 0.05em;
+          color: rgba(255, 255, 255, 0.75);
+          text-transform: uppercase;
+          margin-top: 4px;
+        }
+        .ach-sc-quote-box {
+          background: #D1FAE5;
+          border-radius: 12px;
+          padding: 10px 14px;
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+        }
+        .ach-sc-quote-msg {
+          font-size: 12px;
+          font-weight: 750;
+          color: #064E3B;
+          line-height: 1.35;
+        }
+        .ach-sc-quote-by {
+          font-size: 10.5px;
+          font-weight: 650;
+          color: #047857;
+        }
+
+        /* ── Template Switcher & Dimension Indicator ── */
+        .ach-template-meta-strip {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin: 10px auto 4px auto;
+          max-width: 440px;
+          width: 100%;
+          font-size: 11.5px;
+          color: #64748B;
+          flex-shrink: 0;
+        }
+        .ach-template-label-active {
+          font-weight: 700;
+          color: #0F172A;
+          font-size: 12.5px;
+        }
+        .ach-template-ratio {
+          color: #94A3B8;
+          font-size: 11px;
+        }
+        .ach-template-selector-pills {
+          display: flex;
+          gap: 8px;
+          max-width: 440px;
+          margin: 4px auto 10px auto;
+          width: 100%;
+          flex-shrink: 0;
+        }
+        .ach-tmpl-btn {
+          flex: 1;
+          padding: 9px 10px;
+          border-radius: 9px;
+          border: 1px solid #E2E8F0;
+          background: #F8FAFC;
+          color: #475569;
+          font-size: 11.5px;
+          font-weight: 700;
+          cursor: pointer;
+          transition: all 0.15s ease;
+          text-align: center;
+        }
+        .ach-tmpl-btn:hover {
+          border-color: #CBD5E1;
+          color: #0F172A;
+        }
+        .ach-tmpl-btn.active {
+          background: #0D9488;
+          color: #FFFFFF;
+          border-color: #0D9488;
+          box-shadow: 0 2px 8px rgba(13, 148, 136, 0.3);
+        }
+
+        /* ── "Make it personal" Section ── */
+        .ach-personal-section {
+          max-width: 440px;
+          width: 100%;
+          margin: 0 auto 10px auto;
+          background: #F8FAFC;
+          border: 1px solid #E2E8F0;
+          border-radius: 14px;
+          padding: 12px 14px;
+          flex-shrink: 0;
+        }
+        .ach-personal-head {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .ach-personal-title {
+          font-size: 13.5px;
+          font-weight: 800;
+          color: #0F172A;
+        }
+        .ach-personal-opt {
           font-size: 10px;
           color: #94A3B8;
-          border-top: 1px solid rgba(255,255,255,0.1);
-          padding-top: 8px;
-          margin-top: 2px;
-          position: relative;
-          z-index: 1;
+          font-weight: 600;
+          text-transform: uppercase;
+        }
+        .ach-personal-sub {
+          font-size: 11.5px;
+          color: #64748B;
+          margin: 3px 0 10px 0;
+        }
+        .ach-personal-btn-row {
+          display: flex;
+          gap: 10px;
+        }
+        .ach-personal-upload-btn {
+          flex: 1;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 7px;
+          padding: 9px 12px;
+          border-radius: 9px;
+          border: 1px solid #CBD5E1;
+          background: #FFFFFF;
+          color: #1E293B;
+          font-size: 12px;
+          font-weight: 700;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+        .ach-personal-upload-btn:hover {
+          border-color: #0D9488;
+          color: #0D9488;
+          background: #F0FDFA;
+        }
+        .ach-personal-remove-btn {
+          padding: 9px 12px;
+          border-radius: 9px;
+          border: 1px solid #FCA5A5;
+          background: #FEF2F2;
+          color: #DC2626;
+          font-size: 11.5px;
+          font-weight: 700;
+          cursor: pointer;
+        }
+        .ach-personal-note {
+          font-size: 10.5px;
+          color: #94A3B8;
+          margin-top: 8px;
+          text-align: center;
         }
 
+        /* ── Photo Vibe Filters ── */
+        .ach-vibe-filter-row {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-top: 10px;
+          flex-wrap: wrap;
+        }
+        .ach-vibe-label {
+          font-size: 11px;
+          font-weight: 700;
+          color: #64748B;
+        }
+        .ach-vibe-chips {
+          display: flex;
+          gap: 6px;
+          flex-wrap: wrap;
+        }
+        .ach-vibe-chip {
+          padding: 4px 9px;
+          border-radius: 999px;
+          font-size: 11px;
+          font-weight: 700;
+          background: #F1F5F9;
+          border: 1px solid #CBD5E1;
+          color: #475569;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+        .ach-vibe-chip:hover {
+          border-color: #0D9488;
+          color: #0D9488;
+          background: #F0FDFA;
+        }
+        .ach-vibe-chip.active {
+          background: #065F46;
+          border-color: #065F46;
+          color: #FFFFFF;
+          box-shadow: 0 2px 6px rgba(6, 95, 70, 0.25);
+        }
+
+        /* ── Photo Framing & Position Adjuster ── */
+        .ach-photo-adjust-box {
+          margin-top: 10px;
+          padding: 10px 12px;
+          background: #F8FAFC;
+          border: 1px solid #E2E8F0;
+          border-radius: 10px;
+        }
+        .ach-photo-adjust-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 7px;
+        }
+        .ach-pos-badge {
+          font-size: 10px;
+          font-weight: 800;
+          background: #065F46;
+          color: #FFFFFF;
+          padding: 1px 6px;
+          border-radius: 5px;
+        }
+        .ach-pos-chips {
+          display: flex;
+          gap: 6px;
+          flex-wrap: wrap;
+        }
+        .ach-pos-chip {
+          padding: 4px 8px;
+          border-radius: 7px;
+          font-size: 11px;
+          font-weight: 700;
+          background: #FFFFFF;
+          border: 1px solid #CBD5E1;
+          color: #334155;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+        .ach-pos-chip:hover {
+          border-color: #0D9488;
+          color: #0D9488;
+          background: #F0FDFA;
+        }
+        .ach-pos-chip.active {
+          background: #0D9488;
+          border-color: #0D9488;
+          color: #FFFFFF;
+          box-shadow: 0 2px 6px rgba(13, 148, 136, 0.25);
+        }
+        .ach-slider-row {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-top: 8px;
+          padding-top: 6px;
+          border-top: 1px dashed #E2E8F0;
+        }
+        .ach-slider-hint {
+          font-size: 10px;
+          color: #64748B;
+          font-weight: 700;
+          white-space: nowrap;
+        }
+        .ach-pos-slider {
+          flex: 1;
+          accent-color: #0D9488;
+          cursor: pointer;
+          height: 6px;
+        }
+
+        /* ── Copy Story Caption Button ── */
+        .ach-copy-caption-btn {
+          width: 100%;
+          max-width: 440px;
+          margin: 0 auto;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 7px;
+          padding: 10px 14px;
+          border-radius: 10px;
+          background: #F0FDF4;
+          border: 1px dashed #059669;
+          color: #065F46;
+          font-size: 12.5px;
+          font-weight: 700;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+        .ach-copy-caption-btn:hover {
+          background: #DCFCE7;
+          border-style: solid;
+          transform: translateY(-1px);
+        }
+
+        /* ── Main Action Buttons: Share card & Save ── */
+        .ach-main-cta-row {
+          display: flex;
+          gap: 10px;
+          max-width: 440px;
+          width: 100%;
+          margin: 0 auto 6px auto;
+          flex-shrink: 0;
+        }
+        .ach-cta-share-btn {
+          flex: 1.4;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          padding: 12px 16px;
+          border-radius: 10px;
+          border: none;
+          background: #065F46;
+          color: #FFFFFF;
+          font-size: 13.5px;
+          font-weight: 800;
+          cursor: pointer;
+          box-shadow: 0 4px 12px rgba(6, 95, 70, 0.3);
+          transition: transform 0.15s ease, background 0.15s ease;
+        }
+        .ach-cta-share-btn:hover:not(:disabled) {
+          background: #047857;
+          transform: translateY(-1px);
+        }
+        .ach-cta-share-btn:disabled {
+          opacity: 0.7;
+          cursor: not-allowed;
+        }
+        .ach-cta-save-btn {
+          flex: 1;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          padding: 12px 16px;
+          border-radius: 10px;
+          border: 1.5px solid #065F46;
+          background: #FFFFFF;
+          color: #065F46;
+          font-size: 13.5px;
+          font-weight: 800;
+          cursor: pointer;
+          transition: all 0.15s ease;
+        }
+        .ach-cta-save-btn:hover:not(:disabled) {
+          background: #ECFDF5;
+          transform: translateY(-1px);
+        }
+        .ach-cta-save-btn:disabled {
+          opacity: 0.7;
+          cursor: not-allowed;
+        }
+        .ach-preview-disclaimer {
+          font-size: 9.5px;
+          color: #94A3B8;
+          text-align: center;
+          max-width: 440px;
+          margin: 4px auto 12px auto;
+        }
+        
         .ach-modal-channels-list {
           display: grid;
           grid-template-columns: 1fr 1fr;
@@ -2434,6 +4926,208 @@ export default function MyAchievements() {
           font-weight: 700;
           text-align: center;
           line-height: 1.4;
+        }
+
+        /* ── Live Selfie Camera Modal Styles ── */
+        .ach-camera-box {
+          max-width: 420px !important;
+          width: 95% !important;
+          background: #FFFFFF !important;
+          border-radius: 20px !important;
+          padding: 18px 20px !important;
+          display: flex !important;
+          flex-direction: column !important;
+          gap: 14px !important;
+          box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35) !important;
+        }
+        .ach-camera-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .ach-camera-viewfinder-wrap {
+          position: relative;
+          width: 100%;
+          height: 380px;
+          background: #0F172A;
+          border-radius: 16px;
+          overflow: hidden;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          box-shadow: inset 0 0 25px rgba(0,0,0,0.6);
+        }
+        .ach-camera-video-preview {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          transform: scaleX(-1); /* mirror selfie view */
+        }
+        .ach-camera-reticle {
+          position: absolute;
+          inset: 24px;
+          border-radius: 14px;
+          pointer-events: none;
+        }
+        .ach-reticle-corner {
+          position: absolute;
+          width: 22px;
+          height: 22px;
+          border-color: #2DD4BF;
+          border-style: solid;
+        }
+        .ach-reticle-corner.top-left {
+          top: 0;
+          left: 0;
+          border-width: 3px 0 0 3px;
+          border-top-left-radius: 8px;
+        }
+        .ach-reticle-corner.top-right {
+          top: 0;
+          right: 0;
+          border-width: 3px 3px 0 0;
+          border-top-right-radius: 8px;
+        }
+        .ach-reticle-corner.bottom-left {
+          bottom: 0;
+          left: 0;
+          border-width: 0 0 3px 3px;
+          border-bottom-left-radius: 8px;
+        }
+        .ach-reticle-corner.bottom-right {
+          bottom: 0;
+          right: 0;
+          border-width: 0 3px 3px 0;
+          border-bottom-right-radius: 8px;
+        }
+        .ach-camera-loading-overlay {
+          position: absolute;
+          inset: 0;
+          background: rgba(15, 23, 42, 0.9);
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          z-index: 5;
+        }
+        .ach-camera-error-banner {
+          position: absolute;
+          inset: 20px;
+          background: rgba(254, 242, 242, 0.95);
+          border: 1px solid #FCA5A5;
+          border-radius: 12px;
+          padding: 16px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 6;
+        }
+        .ach-camera-actions {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 12px;
+          margin-top: 2px;
+        }
+        .ach-camera-snap-btn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+          width: 100%;
+          padding: 13px 20px;
+          background: linear-gradient(135deg, #0D9488 0%, #065F46 100%);
+          color: #FFFFFF;
+          border: none;
+          border-radius: 12px;
+          font-size: 14.5px;
+          font-weight: 800;
+          cursor: pointer;
+          box-shadow: 0 4px 16px rgba(13, 148, 136, 0.35);
+          transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+        .ach-camera-snap-btn:hover:not(:disabled) {
+          transform: translateY(-2px);
+          box-shadow: 0 6px 20px rgba(13, 148, 136, 0.5);
+        }
+        .ach-camera-snap-btn:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+        }
+        .ach-camera-sub-link {
+          background: none;
+          border: none;
+          color: #64748B;
+          font-size: 12.5px;
+          font-weight: 600;
+          cursor: pointer;
+          padding: 2px 4px;
+          transition: color 0.15s ease;
+        }
+        .ach-camera-sub-link:hover {
+          color: #0F172A;
+          text-decoration: underline;
+        }
+
+        .ach-cam-control-btn {
+          padding: 5px 10px;
+          border-radius: 8px;
+          font-size: 11px;
+          font-weight: 700;
+          background: #F1F5F9;
+          border: 1px solid #CBD5E1;
+          color: #334155;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+          transition: all 0.15s ease;
+        }
+        .ach-cam-control-btn:hover {
+          background: #E2E8F0;
+          color: #0F172A;
+        }
+        .ach-cam-control-btn.active {
+          background: #0D9488;
+          border-color: #0D9488;
+          color: #FFFFFF;
+        }
+
+        .ach-camera-countdown-overlay {
+          position: absolute;
+          inset: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: rgba(0, 0, 0, 0.4);
+          z-index: 8;
+          pointer-events: none;
+        }
+        .ach-countdown-digit {
+          font-size: 88px;
+          font-weight: 900;
+          color: #FFFFFF;
+          text-shadow: 0 4px 20px rgba(0, 0, 0, 0.8), 0 0 40px #2DD4BF;
+          animation: achCountdownPop 1s ease-out infinite;
+        }
+        @keyframes achCountdownPop {
+          0% { transform: scale(1.4); opacity: 0; }
+          40% { transform: scale(1); opacity: 1; }
+          90% { transform: scale(0.9); opacity: 0.9; }
+          100% { transform: scale(0.8); opacity: 0; }
+        }
+
+        .ach-camera-flash-overlay {
+          position: absolute;
+          inset: 0;
+          background: #FFFFFF;
+          z-index: 10;
+          pointer-events: none;
+          animation: achFlashAnim 0.35s ease-out forwards;
+        }
+        @keyframes achFlashAnim {
+          0% { opacity: 0.95; }
+          100% { opacity: 0; }
         }
 
         @media (max-width: 900px) {

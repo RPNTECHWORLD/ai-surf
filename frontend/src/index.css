@@ -358,7 +358,7 @@ h2 {
   .db-mobile-menu {
     top: 60px !important;
   }
-  .db-main, .im-main, .sm-main, .ses-main, .an-main, .cmp-main, .va-main, .ip-main, .sp-main, .ns-main, .ns-container, .cr-main, .ai-main, .ach-main {
+  .db-main, .im-main, .sm-main, .ses-main, .an-main, .cmp-main, .va-main, .ip-main, .sp-main, .ns-main, .ns-container, .cr-main, .ai-main, .ach-main, .our-services-main {
     margin-top: 60px !important;
   }
   .landing-footer {
@@ -618,6 +618,28 @@ h2 {
   height: 3px;
   background: #00D1B2;
   border-radius: 3px 3px 0 0;
+}
+.db-nav-subtitle {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 7.5px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: #64748B;
+  margin-top: 3px;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  transition: color 0.2s ease;
+}
+.db-header-nav-item:hover .db-nav-subtitle {
+  color: #CBD5E1;
+}
+.db-header-nav-item.active .db-nav-subtitle {
+  color: #00D1B2;
 }
 .db-header-right {
   display: flex;
@@ -1006,7 +1028,7 @@ h2 {
   .db-mobile-menu {
     top: 64px !important;
   }
-  .db-main, .im-main, .sm-main, .ses-main, .an-main, .cmp-main, .va-main, .ip-main, .sp-main, .ns-main, .ns-container, .cr-main, .ai-main {
+  .db-main, .im-main, .sm-main, .ses-main, .an-main, .cmp-main, .va-main, .ip-main, .sp-main, .ns-main, .ns-container, .cr-main, .ai-main, .our-services-main {
     margin-top: 64px !important;
   }
 }
@@ -1050,7 +1072,7 @@ h2 {
     grid-template-columns: repeat(2, 1fr) !important;
     gap: 12px !important;
   }
-  .db-main, .im-main, .sm-main, .ses-main, .an-main, .cmp-main, .va-main, .ip-main, .sp-main, .ns-main, .ns-container, .cr-main, .ai-main {
+  .db-main, .im-main, .sm-main, .ses-main, .an-main, .cmp-main, .va-main, .ip-main, .sp-main, .ns-main, .ns-container, .cr-main, .ai-main, .our-services-main {
     margin-left: 0 !important;
     margin-top: 64px !important;
     width: 100% !important;
@@ -1219,4 +1241,98 @@ input[style*="background-color: white"] {
 input[type="password"] {
   letter-spacing: 2px;
 }
+
+/* Certificate Laser Scanner Animations */
+@keyframes certLaserScan {
+  0% { top: 0%; opacity: 0; }
+  15% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}
+
+@keyframes certPulseGlow {
+  0%, 100% { box-shadow: 0 0 15px rgba(45, 212, 191, 0.4); }
+  50% { box-shadow: 0 0 30px rgba(45, 212, 191, 0.85); }
+}
+
+/* Certificate Studio Customizer Layout (Pinned Certificate Canvas & Scrollable Edit Sidebar) */
+.cert-studio-layout {
+  display: grid;
+  grid-template-columns: minmax(380px, 460px) 1fr;
+  gap: 24px;
+  align-items: flex-start;
+  position: relative;
+}
+
+.cert-controls-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-height: calc(100vh - 105px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 8px;
+  padding-bottom: 24px;
+  scrollbar-width: thin;
+  scrollbar-color: #CBD5E1 #F8FAFC;
+}
+
+.cert-controls-sidebar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.cert-controls-sidebar::-webkit-scrollbar-track {
+  background: #F8FAFC;
+  border-radius: 8px;
+}
+
+.cert-controls-sidebar::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 8px;
+}
+
+.cert-controls-sidebar::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}
+
+.cert-canvas-sticky-pane {
+  position: sticky;
+  top: 86px;
+  align-self: flex-start;
+  background: #FFFFFF;
+  border-radius: 16px;
+  padding: 22px;
+  border: 1px solid #E2E8F0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #CBD5E1 transparent;
+}
+
+.cert-canvas-sticky-pane::-webkit-scrollbar {
+  width: 6px;
+}
+
+.cert-canvas-sticky-pane::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 8px;
+}
+
+@media (max-width: 1024px) {
+  .cert-studio-layout {
+    grid-template-columns: 1fr;
+  }
+  .cert-controls-sidebar {
+    max-height: none;
+    overflow-y: visible;
+    padding-right: 0;
+  }
+  .cert-canvas-sticky-pane {
+    position: static;
+    max-height: none;
+    overflow-y: visible;
+  }
+}
+
 

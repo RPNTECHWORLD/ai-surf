@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 const API = import.meta.env.VITE_API_URL || '';
@@ -135,6 +135,7 @@ const SuperAdminDashboard = () => {
   // New Admin States
   const [studentsList, setStudentsList] = useState([]);
   const [studentSearch, setStudentSearch] = useState('');
+  const studentSearchInputRef = useRef(null);
   const [selectedStudentIds, setSelectedStudentIds] = useState([]);
   const [isStudentSelectMode, setIsStudentSelectMode] = useState(false);
   const [schoolsList, setSchoolsList] = useState([]);
@@ -417,28 +418,79 @@ const SuperAdminDashboard = () => {
     );
   };
 
-  const filteredStudents = studentsList.filter((st) => {
-    if (!studentSearch.trim()) return true;
-    const q = studentSearch.toLowerCase().trim();
-    const name = (st.name || '').toLowerCase();
-    const email = (st.email || '').toLowerCase();
-    const phone = (st.whatsapp_number || '').toLowerCase();
-    const course = (st.course_duration || '').toLowerCase();
-    const slot = (st.session_time || '').toLowerCase();
-    const level = (st.level || '').toLowerCase();
-    const stay = (st.staying_at_school === 'Yes' ? 'lodge' : 'off-site');
-    const coachName = (coaches.find(c => c.instructor_id === st.instructor_id)?.name || '').toLowerCase();
-    return (
-      name.includes(q) ||
-      email.includes(q) ||
-      phone.includes(q) ||
-      course.includes(q) ||
-      slot.includes(q) ||
-      level.includes(q) ||
-      stay.includes(q) ||
-      coachName.includes(q)
-    );
-  });
+  const filteredStudents = useMemo(() => {
+    if (!Array.isArray(studentsList)) return [];
+    const cleanDigits = (str) => (str ? String(str).replace(/\D+/g, '') : '');
+    const rawQ = (studentSearch || '').trim();
+    if (!rawQ) return studentsList;
+
+    const q = rawQ.toLowerCase();
+    const qDigits = cleanDigits(rawQ);
+    const tokens = q.split(/\s+/).filter(Boolean);
+
+    return studentsList.filter((st) => {
+      if (!st) return false;
+
+      const idStr = st.id ? String(st.id) : '';
+      const name = (st.name || st.student_name || '').toLowerCase();
+      const email = (st.email || '').toLowerCase();
+      const rawWa = st.whatsapp_number ? String(st.whatsapp_number) : '';
+      const rawPhone = st.phone ? String(st.phone) : '';
+      const waDigits = cleanDigits(rawWa);
+      const phoneDigits = cleanDigits(rawPhone);
+      const school = (st.school || st.school_name || '').toLowerCase();
+      const course = (st.course_duration || '').toLowerCase();
+      const slot = (st.session_time || '').toLowerCase();
+      const level = (st.level || '').toLowerCase();
+      const stay = (st.staying_at_school === 'Yes' ? 'lodge staying hotel yes' : 'off-site offsite no').toLowerCase();
+      const swim = (st.swimming_ability || '').toLowerCase();
+      const gender = (st.gender || '').toLowerCase();
+      const directInstructor = (st.instructor || '').toLowerCase();
+      const matchedCoach = coaches.find(c => c && (String(c.instructor_id) === String(st.instructor_id) || String(c.id) === String(st.instructor_id)));
+      const coachName = (matchedCoach?.name || '').toLowerCase();
+
+      // Combined text containing all student details for multi-term search
+      const combined = [
+        idStr ? `#${idStr} ${idStr}` : '',
+        name,
+        email,
+        rawWa,
+        rawPhone,
+        waDigits,
+        phoneDigits,
+        school,
+        course,
+        slot,
+        level,
+        stay,
+        swim,
+        gender,
+        directInstructor,
+        coachName
+      ].join(' ');
+
+      // 1. Direct match on full query
+      if (combined.includes(q)) return true;
+
+      // 2. Direct match on phone digits if user entered any digits
+      if (qDigits && qDigits.length >= 3 && (waDigits.includes(qDigits) || phoneDigits.includes(qDigits))) {
+        return true;
+      }
+
+      // 3. Multi-token match (all words must match)
+      if (tokens.length > 1) {
+        return tokens.every(tok => {
+          const tokDigits = cleanDigits(tok);
+          if (tokDigits && tokDigits.length >= 3 && (waDigits.includes(tokDigits) || phoneDigits.includes(tokDigits))) {
+            return true;
+          }
+          return combined.includes(tok);
+        });
+      }
+
+      return false;
+    });
+  }, [studentsList, studentSearch, coaches]);
 
   const toggleSelectAllStudents = () => {
     const allFilteredSelected = filteredStudents.length > 0 && filteredStudents.every(s => selectedStudentIds.includes(s.id));
@@ -1407,10 +1459,17 @@ const SuperAdminDashboard = () => {
                       }}>
                         <IconSearch size={15} color="#64748B" style={{ flexShrink: 0, marginRight: '8px' }} />
                         <input
+                          ref={studentSearchInputRef}
                           type="text"
-                          placeholder="Search student, email, phone, slot..."
+                          placeholder="Search student, email, phone, slot, school..."
                           value={studentSearch}
                           onChange={(e) => setStudentSearch(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              e.target.blur();
+                            }
+                          }}
                           style={{
                             border: 'none',
                             outline: 'none',
@@ -1425,7 +1484,10 @@ const SuperAdminDashboard = () => {
                         {studentSearch && (
                           <button
                             type="button"
-                            onClick={() => setStudentSearch('')}
+                            onClick={() => {
+                              setStudentSearch('');
+                              if (studentSearchInputRef.current) studentSearchInputRef.current.focus();
+                            }}
                             title="Clear search"
                             style={{
                               border: 'none',
@@ -1450,12 +1512,17 @@ const SuperAdminDashboard = () => {
                         )}
                         <button
                           type="button"
-                          onClick={() => {}}
+                          onClick={() => {
+                            if (studentSearchInputRef.current) {
+                              studentSearchInputRef.current.focus();
+                            }
+                          }}
+                          title="Click to search / focus filter"
                           style={{
                             padding: '6px 12px',
                             borderRadius: '6px',
                             border: 'none',
-                            background: '#0F172A',
+                            background: studentSearch.trim() ? '#0284C7' : '#0F172A',
                             color: '#FFFFFF',
                             fontSize: '12px',
                             fontWeight: '600',
@@ -1463,7 +1530,8 @@ const SuperAdminDashboard = () => {
                             display: 'flex',
                             alignItems: 'center',
                             gap: '4px',
-                            flexShrink: 0
+                            flexShrink: 0,
+                            transition: 'all 0.2s ease'
                           }}
                         >
                           Search

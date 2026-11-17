@@ -18,6 +18,7 @@ import AuthPage from './pages/AuthPage';
 import SuperAdminDashboard from './pages/SuperAdminDashboard';
 import AthleteIntelligence from './pages/AthleteIntelligence';
 import MyAchievements from './pages/MyAchievements';
+import OurServices from './pages/OurServices';
 import JudgeScoring from './pages/JudgeScoring';
 import StudentPortal from './pages/StudentPortal';
 import CoachPortal from './pages/CoachPortal';
@@ -56,8 +57,12 @@ function App() {
         <Route path="/sessions/configure" element={<PrivateRoute><SessionConfigure /></PrivateRoute>} />
         <Route path="/sessions/:id/edit" element={<PrivateRoute><NewSession /></PrivateRoute>} />
         <Route path="/competitions" element={<PrivateRoute><Competitions /></PrivateRoute>} />
+        <Route path="/mock-heat" element={<Navigate to="/competitions" replace />} />
+        <Route path="/mockheat" element={<Navigate to="/competitions" replace />} />
         <Route path="/achievements" element={<PrivateRoute><MyAchievements /></PrivateRoute>} />
         <Route path="/my-achievements" element={<Navigate to="/achievements" replace />} />
+        <Route path="/services" element={<PrivateRoute><OurServices /></PrivateRoute>} />
+        <Route path="/our-services" element={<Navigate to="/services" replace />} />
         <Route path="/analysis" element={<PrivateRoute><VideoAnalysis /></PrivateRoute>} />
         <Route path="/sessions/report" element={<PrivateRoute><CoachingReport /></PrivateRoute>} />
         <Route path="/athlete-intelligence" element={<PrivateRoute><AthleteIntelligence /></PrivateRoute>} />

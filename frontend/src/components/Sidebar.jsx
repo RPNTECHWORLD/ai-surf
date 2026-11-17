@@ -201,15 +201,28 @@ const Sidebar = () => {
       items.push({ label: 'Analytics', path: '/analytics' });
     }
     items.push(
-      { label: 'Competitions', path: '/competitions' },
-      { label: 'Athlete Intel', path: '/athlete-intelligence' }
+      { label: 'Mock Heat', subtitle: 'BETA VERSION', path: '/competitions' },
+      { label: 'Athlete Intel', subtitle: 'BETA VERSION', path: '/athlete-intelligence' }
     );
+
+    if (!isStudent) {
+      items.push({ label: 'Our Services', path: '/services' });
+    }
 
     return items;
   };
 
   const navItems = getNavItems();
   const isDashboard = location.pathname === '/dashboard';
+
+  const handleNavClick = (item) => {
+    if (item.path === '/services') {
+      window.dispatchEvent(new CustomEvent('athnex_reset_services'));
+      navigate('/services', { state: { resetTab: Date.now() } });
+    } else {
+      navigate(item.path);
+    }
+  };
 
   return (
     <>
@@ -233,9 +246,16 @@ const Sidebar = () => {
               <button
                 key={item.label}
                 className={`db-header-nav-item ${isActive ? 'active' : ''}`}
-                onClick={() => navigate(item.path)}
+                onClick={() => handleNavClick(item)}
               >
-                {item.label}
+                <span style={{ display: 'inline-block', position: 'relative' }}>
+                  {item.label}
+                  {item.subtitle && (
+                    <span className="db-nav-subtitle">
+                      {item.subtitle}
+                    </span>
+                  )}
+                </span>
               </button>
             );
           })}
@@ -281,11 +301,29 @@ const Sidebar = () => {
                 key={item.label}
                 className={`db-mobile-menu-item ${isActive ? 'active' : ''}`}
                 onClick={() => {
-                  navigate(item.path);
+                  handleNavClick(item);
                   setMobileMenuOpen(false);
                 }}
               >
-                {item.label}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                  <span>{item.label}</span>
+                  {item.subtitle && (
+                    <span
+                      style={{
+                        fontSize: '9px',
+                        fontWeight: 800,
+                        letterSpacing: '0.6px',
+                        padding: '2px 7px',
+                        borderRadius: '4px',
+                        background: isActive ? 'rgba(0, 209, 178, 0.15)' : 'rgba(100, 116, 139, 0.15)',
+                        color: isActive ? '#00D1B2' : '#94A3B8',
+                        textTransform: 'uppercase'
+                      }}
+                    >
+                      {item.subtitle}
+                    </span>
+                  )}
+                </div>
               </button>
             );
           })}

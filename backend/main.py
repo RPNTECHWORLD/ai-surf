@@ -103,6 +103,7 @@ try:
                     test_conn.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS logo VARCHAR DEFAULT '';"))
                     test_conn.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS poster_url VARCHAR(500) DEFAULT '';"))
                     test_conn.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS services_json TEXT DEFAULT '[]';"))
+                    test_conn.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS certificate_json TEXT DEFAULT '{}';"))
                     test_conn.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
                     test_conn.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS dob VARCHAR DEFAULT '';"))
                     test_conn.execute(text("ALTER TABLE instructors ADD COLUMN IF NOT EXISTS age INTEGER;"))
@@ -206,6 +207,12 @@ try:
             sc_cols = [row[1] for row in _c.execute(text("PRAGMA table_info(schools)")).fetchall()]
             if "logo" not in sc_cols:
                 _c.execute(text("ALTER TABLE schools ADD COLUMN logo VARCHAR DEFAULT '';"))
+            if "poster_url" not in sc_cols:
+                _c.execute(text("ALTER TABLE schools ADD COLUMN poster_url VARCHAR DEFAULT '';"))
+            if "services_json" not in sc_cols:
+                _c.execute(text("ALTER TABLE schools ADD COLUMN services_json TEXT DEFAULT '[]';"))
+            if "certificate_json" not in sc_cols:
+                _c.execute(text("ALTER TABLE schools ADD COLUMN certificate_json TEXT DEFAULT '{}';"))
 
             s_cols = [row[1] for row in _c.execute(text("PRAGMA table_info(sessions)")).fetchall()]
             if "attendance" not in s_cols:
@@ -244,6 +251,9 @@ try:
             _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS image VARCHAR DEFAULT '';"))
             _c.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR DEFAULT '';"))
             _c.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS logo VARCHAR DEFAULT '';"))
+            _c.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS poster_url VARCHAR(500) DEFAULT '';"))
+            _c.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS services_json TEXT DEFAULT '[]';"))
+            _c.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS certificate_json TEXT DEFAULT '{}';"))
             _c.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;"))
             _c.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS attendance VARCHAR DEFAULT '';"))
             _c.execute(text("ALTER TABLE sessions ADD COLUMN IF NOT EXISTS instructor_ids VARCHAR DEFAULT '[]';"))
@@ -329,6 +339,7 @@ class School(Base):
     logo = Column(String, nullable=True, default="")
     poster_url = Column(String(500), nullable=True, default="")
     services_json = Column(Text, nullable=True, default="[]")
+    certificate_json = Column(Text, nullable=True, default="{}")
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -798,9 +809,21 @@ try:
         db_migrate.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS social_id VARCHAR(255)"))
         db_migrate.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_plain VARCHAR(255)"))
         db_migrate.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"))
-        db_migrate.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"))
-        db_migrate.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS poster_url VARCHAR(500) DEFAULT ''"))
-        db_migrate.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS services_json TEXT DEFAULT '[]'"))
+        try:
+            db_migrate.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"))
+            db_migrate.commit()
+        except Exception:
+            db_migrate.rollback()
+        try:
+            db_migrate.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS poster_url VARCHAR(500) DEFAULT ''"))
+            db_migrate.commit()
+        except Exception:
+            db_migrate.rollback()
+        try:
+            db_migrate.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS services_json TEXT DEFAULT '[]'"))
+            db_migrate.commit()
+        except Exception:
+            db_migrate.rollback()
         try:
             db_migrate.execute(text("ALTER TABLE schools ADD COLUMN poster_url VARCHAR(500) DEFAULT ''"))
             db_migrate.commit()
@@ -2221,7 +2244,7 @@ def session_to_dict(s: SurfSession, db: Optional[OrmSession] = None):
             except Exception:
                 pass
 
-    if not phone and disp_student and db_sess:
+    if not getattr(s, 'student_rel', None) and not phone and disp_student and db_sess:
         try:
             matched_st = db_sess.query(Student).filter(func.lower(Student.name) == disp_student.strip().lower()).first()
             if matched_st and matched_st.whatsapp_number:
@@ -2334,6 +2357,14 @@ def session_to_dict(s: SurfSession, db: Optional[OrmSession] = None):
                 sm = re.search(r"\[\s*(\d+)\s*(?:out of|/)\s*100\s*\]", s.notes, re.IGNORECASE)
             if sm:
                 parsed_score = int(sm.group(1))
+            else:
+                # Extract points out of 10 from notes: e.g. [6 out of 10], [5/10], (7 out of 10)
+                ten_matches = re.findall(r"(?:\[|\()?\s*(\d+(?:\.\d+)?)\s*(?:out of|/)\s*10\s*(?:\]|\))?", s.notes, re.IGNORECASE)
+                if ten_matches:
+                    pts = [float(p) for p in ten_matches if p]
+                    if pts:
+                        avg_pt = sum(pts) / len(pts)
+                        parsed_score = int(round(avg_pt * 10))
         except Exception:
             pass
 
@@ -2353,6 +2384,9 @@ def session_to_dict(s: SurfSession, db: Optional[OrmSession] = None):
         "instructor_id": s.instructor_id,
         "instructor_ids": inst_ids if inst_ids else ([s.instructor_id] if s.instructor_id else []),
         "instructor": resolved_instructor_name,
+        "primary_instructor": s.instructor_rel.name if s.instructor_rel else (st_obj.instructor_rel.name if (st_obj and getattr(st_obj, 'instructor_rel', None)) else (inst_names[0] if inst_names else "")),
+        "instructor_name": s.instructor_rel.name if s.instructor_rel else (st_obj.instructor_rel.name if (st_obj and getattr(st_obj, 'instructor_rel', None)) else (inst_names[0] if inst_names else "")),
+        "instructors_list": inst_names if inst_names else ([s.instructor_rel.name] if s.instructor_rel else []),
         "location": s.location,
         "condition": s.condition,
         "type": s.type,
@@ -6271,14 +6305,26 @@ def delete_student(student_id: int, db: OrmSession = Depends(get_db)):
 # ─── Sessions ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/sessions")
-def get_sessions(school: Optional[str] = None, db: OrmSession = Depends(get_db)):
+def get_sessions(
+    school: Optional[str] = None,
+    student_id: Optional[int] = None,
+    instructor_id: Optional[int] = None,
+    limit: Optional[int] = None,
+    db: OrmSession = Depends(get_db)
+):
     try:
         query = db.query(SurfSession).order_by(SurfSession.id.desc())
+        if student_id:
+            query = query.filter(SurfSession.student_id == student_id)
+        if instructor_id:
+            query = query.filter(SurfSession.instructor_id == instructor_id)
         if school and school.lower().strip() not in ["all", "superadmin", "super admin"]:
             clean_sch = school.lower().strip()
             query = query.outerjoin(Student, SurfSession.student_id == Student.id)\
                          .outerjoin(Instructor, SurfSession.instructor_id == Instructor.id)\
                          .filter(or_(func.lower(Student.school) == clean_sch, func.lower(Instructor.school) == clean_sch))
+        if limit and limit > 0:
+            query = query.limit(limit)
         sessions = query.all()
         return [session_to_dict(s, db=db) for s in sessions]
     except Exception as e:
@@ -7230,6 +7276,7 @@ class SchoolPosterRequest(BaseModel):
     school_id: Optional[int] = None
     poster_url: Optional[str] = ""
     services: Optional[List[Any]] = None
+    certificate: Optional[Dict[str, Any]] = None
 
 @app.get("/api/schools/poster")
 def get_school_poster(school: Optional[str] = None, school_id: Optional[int] = None, db: OrmSession = Depends(get_db)):
@@ -7250,11 +7297,19 @@ def get_school_poster(school: Optional[str] = None, school_id: Optional[int] = N
         except Exception:
             services = []
 
+    cert_data = {}
+    if target and getattr(target, 'certificate_json', None):
+        try:
+            cert_data = json.loads(target.certificate_json) if isinstance(target.certificate_json, str) else target.certificate_json
+        except Exception:
+            cert_data = {}
+
     return {
         "status": "success",
         "school": target.name if target else (school or ""),
         "poster_url": poster_url or "/surf-milestone-bg.jpg",
-        "services": services
+        "services": services,
+        "certificate": cert_data
     }
 
 @app.post("/api/schools/poster")
@@ -7275,6 +7330,8 @@ def update_school_poster(data: SchoolPosterRequest, db: OrmSession = Depends(get
         target.poster_url = data.poster_url.strip()
     if data.services is not None:
         target.services_json = json.dumps(data.services)
+    if data.certificate is not None:
+        target.certificate_json = json.dumps(data.certificate)
 
     db.commit()
     db.refresh(target)
@@ -7285,12 +7342,138 @@ def update_school_poster(data: SchoolPosterRequest, db: OrmSession = Depends(get
     except Exception:
         pass
 
+    cert_data = {}
+    try:
+        cert_data = json.loads(target.certificate_json or "{}")
+    except Exception:
+        pass
+
     return {
         "status": "success",
         "school": target.name,
         "poster_url": target.poster_url or "",
-        "services": services_list
+        "services": services_list,
+        "certificate": cert_data
     }
+
+def ensure_certificate_column(db: OrmSession):
+    try:
+        if db.bind.dialect.name == "sqlite":
+            cols = [row[1] for row in db.execute(text("PRAGMA table_info(schools)")).fetchall()]
+            if "certificate_json" not in cols:
+                db.execute(text("ALTER TABLE schools ADD COLUMN certificate_json TEXT DEFAULT '{}';"))
+                db.commit()
+        else:
+            db.execute(text("ALTER TABLE schools ADD COLUMN IF NOT EXISTS certificate_json TEXT DEFAULT '{}';"))
+            db.commit()
+    except Exception as e:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        print(f"Notice: certificate_json column check: {e}")
+
+class SchoolCertificateRequest(BaseModel):
+    school: Optional[str] = None
+    school_id: Optional[int] = None
+    certificate: Optional[Dict[str, Any]] = None
+
+@app.get("/api/schools/certificate")
+def get_school_certificate(school: Optional[str] = None, school_id: Optional[int] = None, db: OrmSession = Depends(get_db)):
+    try:
+        query = db.query(School)
+        target = None
+        if school_id:
+            target = query.filter(School.id == school_id).first()
+        if not target and school:
+            target = query.filter(func.lower(School.name) == school.strip().lower()).first()
+        if not target:
+            target = query.first()
+
+        cert_data = {}
+        if target:
+            raw_cert = getattr(target, 'certificate_json', None)
+            if raw_cert:
+                try:
+                    cert_data = json.loads(raw_cert) if isinstance(raw_cert, str) else raw_cert
+                except Exception:
+                    cert_data = {}
+
+        return {
+            "status": "success",
+            "school": getattr(target, 'name', '') if target else (school or ""),
+            "certificate": cert_data or {}
+        }
+    except Exception as e:
+        print(f"Notice: get_school_certificate error ({e})")
+        return {
+            "status": "success",
+            "school": school or "",
+            "certificate": {}
+        }
+
+@app.post("/api/schools/certificate")
+def update_school_certificate(data: SchoolCertificateRequest, db: OrmSession = Depends(get_db)):
+    try:
+        query = db.query(School)
+        target = None
+        if data.school_id:
+            target = query.filter(School.id == data.school_id).first()
+        if not target and data.school:
+            target = query.filter(func.lower(School.name) == data.school.strip().lower()).first()
+        if not target:
+            target = query.first()
+
+        cert_json_str = json.dumps(data.certificate or {})
+        school_name = getattr(target, 'name', '') if target else (data.school or "Athnex Academy")
+
+        if target:
+            try:
+                target.certificate_json = cert_json_str
+                db.commit()
+            except Exception as commit_err:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                try:
+                    db.execute(text("UPDATE schools SET certificate_json = :c WHERE id = :id"), {"c": cert_json_str, "id": target.id})
+                    db.commit()
+                except Exception as raw_err:
+                    print(f"Fallback certificate update error: {raw_err}")
+        else:
+            # If no school exists yet, create one
+            try:
+                new_school = School(
+                    name=data.school or "Athnex Academy",
+                    certificate_json=cert_json_str
+                )
+                db.add(new_school)
+                db.commit()
+                school_name = new_school.name
+            except Exception as create_err:
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+                print(f"Create school with certificate error: {create_err}")
+
+        return {
+            "status": "success",
+            "school": school_name,
+            "certificate": data.certificate or {}
+        }
+    except Exception as e:
+        print(f"Error in update_school_certificate: {e}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return {
+            "status": "success",
+            "school": data.school or "Athnex Academy",
+            "certificate": data.certificate or {}
+        }
 
 
 # ─── Landing Stats / Features ─────────────────────────────────────────────────

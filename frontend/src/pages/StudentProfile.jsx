@@ -781,7 +781,7 @@ const StudentProfile = () => {
         }
         // Fetch sessions and sync coach even for fallback
         try {
-          const sessRes = await fetch(`${API}/api/sessions`);
+          const sessRes = await fetch(`${API}/api/sessions?student_id=${fallback.id}`);
           if (sessRes.ok) {
             const allSess = await sessRes.json();
             if (Array.isArray(allSess)) {
@@ -852,15 +852,21 @@ const StudentProfile = () => {
       let resolvedInstructor = data.instructor || '';
       let resolvedInstructorId = data.instructor_id || null;
 
-      try {
-        const sessRes = await fetch(`${API}/api/sessions`);
-        if (sessRes.ok) {
-          const allSess = await sessRes.json();
-          if (Array.isArray(allSess)) {
-            // Strictly filter by student_id — never by name alone.
-            // Same-name students must not see each other's sessions.
-            const mySess = allSess.filter(s => s.student_id === data.id);
-            if (mySess.length > 0) {
+      if (stSessions.length > 0) {
+        if (!resolvedInstructor) {
+          const sortedMySess = sortSessionsDescending(stSessions);
+          const coachSess = sortedMySess.find(s => s.instructor && !['—', 'Coach', 'Not Assigned Yet', 'Assigned Surf Coach'].includes(s.instructor));
+          if (coachSess) {
+            resolvedInstructor = coachSess.instructor;
+            resolvedInstructorId = coachSess.instructor_id;
+          }
+        }
+      } else {
+        try {
+          const sessRes = await fetch(`${API}/api/sessions?student_id=${data.id}`);
+          if (sessRes.ok) {
+            const mySess = await sessRes.json();
+            if (Array.isArray(mySess) && mySess.length > 0) {
               stSessions = mySess;
               const sortedMySess = sortSessionsDescending(mySess);
               const coachSess = sortedMySess.find(s => s.instructor && !['—', 'Coach', 'Not Assigned Yet', 'Assigned Surf Coach'].includes(s.instructor));
@@ -870,8 +876,8 @@ const StudentProfile = () => {
               }
             }
           }
-        }
-      } catch (e) {}
+        } catch (e) {}
+      }
 
       const cleanStudent = {
         ...data,
@@ -1007,6 +1013,7 @@ const StudentProfile = () => {
   };
 
   const handleEditClick = () => {
+    if (!isSchoolAdmin) return;
     setEditForm({
       name: student.name || '',
       bio: student.bio || '',
@@ -1047,6 +1054,10 @@ const StudentProfile = () => {
 
   const handleEditSubmit = async (e) => {
     e.preventDefault();
+    if (!isSchoolAdmin) {
+      alert("Only administrators can edit student profiles.");
+      return;
+    }
     setSaving(true);
     try {
       const token = sessionStorage.getItem('token');
@@ -1591,9 +1602,9 @@ const StudentProfile = () => {
           <div className="sp-hero-left">
             <div
               className="sp-avatar-wrapper"
-              onClick={() => isOwnProfile && avatarFileInputRef.current?.click()}
-              style={{ cursor: isOwnProfile ? 'pointer' : 'default' }}
-              title={isOwnProfile ? "Click to change profile photo" : ""}
+              onClick={() => isSchoolAdmin && avatarFileInputRef.current?.click()}
+              style={{ cursor: isSchoolAdmin ? 'pointer' : 'default' }}
+              title={isSchoolAdmin ? "Click to change profile photo" : ""}
             >
               {student.image && !student.image.includes('1500648767791') && !student.image.includes('unsplash.com') ? (
                 <img
@@ -1624,7 +1635,7 @@ const StudentProfile = () => {
               >
                 {student.name ? student.name.charAt(0).toUpperCase() : 'S'}
               </div>
-              {(isOwnProfile || isSchoolAdmin) && (
+              {isSchoolAdmin && (
                 <div className="sp-avatar-overlay">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
@@ -1637,7 +1648,7 @@ const StudentProfile = () => {
             <div className="sp-hero-info">
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <h1 className="sp-name">{student.name}</h1>
-                {(isOwnProfile || isSchoolAdmin) && (
+                {isSchoolAdmin && (
                   <button
                     type="button"
                     onClick={handleEditClick}
@@ -2719,7 +2730,7 @@ const StudentProfile = () => {
 
 
         {/* EDIT PROFILE MODAL */}
-        {showEditModal && (
+        {showEditModal && isSchoolAdmin && (
           <div className="sp-modal-overlay">
             <div className="sp-modal glass">
               <div className="sp-modal-header">
