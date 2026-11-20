@@ -631,8 +631,10 @@ const OurServices = () => {
 
       if (uploadedUrl) {
         setPosterUrl(uploadedUrl);
+        // Automatically save to backend and local storage so students see it immediately
+        await handleSaveChanges(uploadedUrl);
         setFeedback({
-          text: '✓ Photo uploaded! Click "Save Changes" to apply this as your official milestone background.',
+          text: '✓ Official milestone background photo uploaded & saved successfully!',
           type: 'success'
         });
       }
@@ -1095,6 +1097,7 @@ const OurServices = () => {
           localStorage.setItem(`athnex_cert_${schoolName}`, JSON.stringify(certConfig));
         }
         window.dispatchEvent(new Event('storage'));
+        window.dispatchEvent(new CustomEvent('athnex_poster_updated', { detail: payload.poster_url }));
         setFeedback({
           text: '✓ Milestone poster photo saved successfully!',
           type: 'success'
@@ -1788,8 +1791,8 @@ const OurServices = () => {
 
           const pills = [
             { icon: '🏄', label: 'SESSIONS', val: `${cSessions} Completed` },
-            { icon: '🌊', label: 'WAVES RIDDEN', val: `${cWaves} Waves` },
             { icon: '⭐', label: 'COACH SCORE', val: `${cScore} / 100` },
+            { icon: '🌊', label: 'WAVES RIDDEN', val: `${cWaves} Waves` },
           ];
           const pillW = 360, pillH = 90, pillGap = 60;
           const totalPillW = pills.length * pillW + (pills.length - 1) * pillGap;
@@ -2255,105 +2258,6 @@ const OurServices = () => {
                   }}
                 >
                   <span>🖼️</span> Configure Story Poster Photo
-                </button>
-              </div>
-
-              {/* Option 3: Academy Surf Course Curriculum Menu Card */}
-              <div
-                onClick={() => setActiveTab('cert-courses')}
-                style={{
-                  background: '#FFFFFF',
-                  borderRadius: '18px',
-                  padding: '24px',
-                  border: '1.5px solid #E2E8F0',
-                  boxShadow: '0 4px 18px rgba(0, 0, 0, 0.04)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'space-between',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s ease'
-                }}
-                onMouseOver={(e) => {
-                  e.currentTarget.style.borderColor = '#0D9488';
-                  e.currentTarget.style.transform = 'translateY(-3px)';
-                  e.currentTarget.style.boxShadow = '0 10px 28px rgba(13, 148, 136, 0.12)';
-                }}
-                onMouseOut={(e) => {
-                  e.currentTarget.style.borderColor = '#E2E8F0';
-                  e.currentTarget.style.transform = 'translateY(0)';
-                  e.currentTarget.style.boxShadow = '0 4px 18px rgba(0, 0, 0, 0.04)';
-                }}
-              >
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px' }}>
-                    <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: '#FEF3C7', color: '#D97706', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px' }}>
-                      🏄
-                    </div>
-                    <span style={{ background: '#FEF3C7', color: '#92400E', fontSize: '11px', fontWeight: 800, padding: '3px 10px', borderRadius: '999px', border: '1px solid #FDE68A' }}>
-                      TRAINING TIERS
-                    </span>
-                  </div>
-
-                  <h3 style={{ margin: '0 0 6px 0', fontSize: '18px', fontWeight: 800, color: '#0F172A' }}>
-                    Academy Surf Training Packages
-                  </h3>
-                  <p style={{ margin: '0 0 16px 0', fontSize: '12.5px', color: '#64748B', lineHeight: 1.5 }}>
-                    Verified training programs linked directly to the automated certificate issuance rules:
-                  </p>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' }}>
-                    <div style={{ padding: '10px 12px', borderRadius: '10px', background: '#F8FAFC', border: '1px solid #E2E8F0' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <strong style={{ fontSize: '12.5px', color: '#0F172A' }}>3-Day Beginner Surf Course</strong>
-                        <span style={{ fontSize: '11px', color: '#0D9488', fontWeight: 800 }}>3 Sessions</span>
-                      </div>
-                      <div style={{ fontSize: '11px', color: '#64748B', marginTop: '2px' }}>
-                        Ocean safety drills, paddle technique, pop-up mechanics.
-                      </div>
-                    </div>
-
-                    <div style={{ padding: '10px 12px', borderRadius: '10px', background: '#F8FAFC', border: '1px solid #E2E8F0' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <strong style={{ fontSize: '12.5px', color: '#0F172A' }}>5-Day Intermediate Skills</strong>
-                        <span style={{ fontSize: '11px', color: '#0D9488', fontWeight: 800 }}>5 Sessions</span>
-                      </div>
-                      <div style={{ fontSize: '11px', color: '#64748B', marginTop: '2px' }}>
-                        Lineup navigation, unbroken wave takeoffs, trimming & turns.
-                      </div>
-                    </div>
-
-                    <div style={{ padding: '10px 12px', borderRadius: '10px', background: '#F8FAFC', border: '1px solid #E2E8F0' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <strong style={{ fontSize: '12.5px', color: '#0F172A' }}>Private 1-on-1 Coaching</strong>
-                        <span style={{ fontSize: '11px', color: '#64748B', fontWeight: 700 }}>On Demand</span>
-                      </div>
-                      <div style={{ fontSize: '11px', color: '#64748B', marginTop: '2px' }}>
-                        Video analysis heat simulations & technique correction.
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={(e) => { e.stopPropagation(); setActiveTab('cert-courses'); }}
-                  style={{
-                    width: '100%',
-                    background: '#F0FDFA',
-                    color: '#0D9488',
-                    border: '1px solid #99F6E4',
-                    borderRadius: '10px',
-                    padding: '11px',
-                    fontSize: '12.5px',
-                    fontWeight: 800,
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    gap: '6px'
-                  }}
-                >
-                  <span>🎓</span> View Course Certificates →
                 </button>
               </div>
             </div>
@@ -4118,16 +4022,16 @@ const OurServices = () => {
                         <div style={{
                           flex: 1,
                           maxWidth: '170px',
-                          background: 'rgba(45, 212, 191, 0.08)',
-                          border: '1px solid rgba(45, 212, 191, 0.35)',
+                          background: 'rgba(252, 211, 77, 0.08)',
+                          border: '1px solid rgba(252, 211, 77, 0.35)',
                           borderRadius: '8px',
                           padding: '5px 8px',
                           textAlign: 'center'
                         }}>
-                          <div style={{ fontSize: '10.5px', fontWeight: 800, color: '#2DD4BF' }}>
-                            🌊 {activeCourse.stats?.waves || (activeCourse.days ? activeCourse.days * 10 : 30)} Waves
+                          <div style={{ fontSize: '10.5px', fontWeight: 800, color: '#FCD34D' }}>
+                            ⭐ {activeCourse.stats?.score || 88} / 100
                           </div>
-                          <div style={{ fontSize: '7.5px', fontWeight: 700, color: '#94A3B8', letterSpacing: '0.05em' }}>WAVES RIDDEN</div>
+                          <div style={{ fontSize: '7.5px', fontWeight: 700, color: '#94A3B8', letterSpacing: '0.05em' }}>COACH SCORE</div>
                         </div>
                         <div style={{
                           flex: 1,
@@ -4138,10 +4042,10 @@ const OurServices = () => {
                           padding: '5px 8px',
                           textAlign: 'center'
                         }}>
-                          <div style={{ fontSize: '10.5px', fontWeight: 800, color: '#FCD34D' }}>
-                            ⭐ {activeCourse.stats?.score || 88} / 100
+                          <div style={{ fontSize: '10.5px', fontWeight: 800, color: '#2DD4BF' }}>
+                            🌊 {activeCourse.stats?.waves || (activeCourse.days ? activeCourse.days * 10 : 30)} Waves
                           </div>
-                          <div style={{ fontSize: '7.5px', fontWeight: 700, color: '#94A3B8', letterSpacing: '0.05em' }}>COACH SCORE</div>
+                          <div style={{ fontSize: '7.5px', fontWeight: 700, color: '#94A3B8', letterSpacing: '0.05em' }}>WAVES RIDDEN</div>
                         </div>
                       </div>
 
@@ -4623,6 +4527,28 @@ const OurServices = () => {
 
                   <button
                     type="button"
+                    onClick={() => handleSaveChanges(posterUrl)}
+                    disabled={saving || uploading}
+                    style={{
+                      background: 'linear-gradient(135deg, #0D9488 0%, #059669 100%)',
+                      color: '#FFFFFF',
+                      border: 'none',
+                      borderRadius: '8px',
+                      padding: '8px 16px',
+                      fontSize: '12.5px',
+                      fontWeight: 800,
+                      cursor: saving || uploading ? 'not-allowed' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      boxShadow: '0 2px 8px rgba(13, 148, 136, 0.25)'
+                    }}
+                  >
+                    {saving ? '⏳ Saving...' : '💾 Save as Default'}
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={() => {
                       setPosterUrl('/surf-milestone-bg.jpg');
                       handleSaveChanges('/surf-milestone-bg.jpg');
@@ -4751,21 +4677,43 @@ const OurServices = () => {
 
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', margin: '14px 0' }}>
                     <div style={{ background: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(6px)', borderRadius: '10px', padding: '8px 4px', textAlign: 'center', border: '1px solid rgba(255,255,255,0.12)' }}>
-                      <div style={{ fontSize: '18px', fontWeight: 900, color: '#FFFFFF' }}>🌊 8</div>
-                      <div style={{ fontSize: '8px', fontWeight: 800, color: '#A7F3D0', marginTop: '2px' }}>WAVES CAUGHT</div>
+                      <div style={{ fontSize: '18px', fontWeight: 900, color: '#FCD34D' }}>⭐ 85/100</div>
+                      <div style={{ fontSize: '8px', fontWeight: 800, color: '#FCD34D', marginTop: '2px' }}>COACH SCORE</div>
                     </div>
                     <div style={{ background: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(6px)', borderRadius: '10px', padding: '8px 4px', textAlign: 'center', border: '1px solid rgba(255,255,255,0.12)' }}>
                       <div style={{ fontSize: '18px', fontWeight: 900, color: '#FFFFFF' }}>⚡ 8/10</div>
                       <div style={{ fontSize: '8px', fontWeight: 800, color: '#A7F3D0', marginTop: '2px' }}>POP-UP SPEED</div>
                     </div>
                     <div style={{ background: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(6px)', borderRadius: '10px', padding: '8px 4px', textAlign: 'center', border: '1px solid rgba(255,255,255,0.12)' }}>
-                      <div style={{ fontSize: '18px', fontWeight: 900, color: '#FCD34D' }}>⭐ 85/100</div>
-                      <div style={{ fontSize: '8px', fontWeight: 800, color: '#FCD34D', marginTop: '2px' }}>COACH SCORE</div>
+                      <div style={{ fontSize: '18px', fontWeight: 900, color: '#FFFFFF' }}>🌊 8</div>
+                      <div style={{ fontSize: '8px', fontWeight: 800, color: '#A7F3D0', marginTop: '2px' }}>WAVES CAUGHT</div>
                     </div>
                   </div>
 
                   <div style={{ background: 'rgba(2, 44, 34, 0.75)', backdropFilter: 'blur(6px)', borderLeft: '3px solid #34D399', borderRadius: '8px', padding: '8px 12px' }}>
-                    <div style={{ fontSize: '8.5px', fontWeight: 800, color: '#34D399', textTransform: 'uppercase' }}>COACH VERDICT</div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ fontSize: '8.5px', fontWeight: 800, color: '#34D399', textTransform: 'uppercase' }}>COACH VERDICT</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <div style={{
+                          width: '18px',
+                          height: '18px',
+                          borderRadius: '50%',
+                          background: '#047857',
+                          border: '1.5px solid #34D399',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: '9px',
+                          fontWeight: 800,
+                          color: '#FFFFFF',
+                          overflow: 'hidden',
+                          flexShrink: 0
+                        }}>
+                          A
+                        </div>
+                        <span style={{ fontSize: '9px', fontWeight: 700, color: '#FCD34D' }}>Coach Anbumani</span>
+                      </div>
+                    </div>
                     <div style={{ fontSize: '11px', color: '#F0FDF4', fontStyle: 'italic', marginTop: '2px' }}>
                       “Solid pop-up stance, balanced weight distribution & clean wave face riding.”
                     </div>

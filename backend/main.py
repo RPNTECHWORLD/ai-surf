@@ -1420,6 +1420,24 @@ with SessionLocal() as _db:
             log.video_url = new_url
     _db.commit()
 
+    # Clear legacy placeholder/dummy video URLs from sessions table
+    try:
+        from sqlalchemy import text
+        _db.execute(text("""
+            UPDATE sessions 
+            SET video_url = '' 
+            WHERE video_url LIKE '%c041fea3-b7ed-40d0-ad1e-2c1e14ee6e4d%' 
+               OR video_url LIKE '%watch?v=demo%' 
+               OR video_url LIKE '%mixkit%' 
+               OR video_url LIKE '%gtv-videos-bucket%'
+               OR video_url = 'none' 
+               OR video_url = 'null' 
+               OR video_url = 'undefined';
+        """))
+        _db.commit()
+    except Exception:
+        pass
+
 
 # ─── FastAPI App ──────────────────────────────────────────────────────────────
 
@@ -2474,6 +2492,13 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
             student_obj = session.query(Student).filter(func.lower(Student.email) == user.email.lower().strip()).first()
         if not student_obj and user.id:
             student_obj = session.query(Student).filter(Student.user_id == user.id).first()
+        if student_obj and not student_obj.user_id:
+            student_obj.user_id = user.id
+            try:
+                session.commit()
+                session.refresh(student_obj)
+            except Exception:
+                session.rollback()
         if not student_obj:
             st_name = getattr(user, "name", None) or (user.email.split("@")[0].replace(".", " ").title() if user.email else "Registered Surfer")
             student_obj = Student(
@@ -2498,6 +2523,13 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
             instructor_obj = session.query(Instructor).filter(Instructor.user_id == user.id).first()
         if not instructor_obj and user.email:
             instructor_obj = session.query(Instructor).filter(func.lower(Instructor.email) == user.email.lower().strip()).first()
+        if instructor_obj and not instructor_obj.user_id:
+            instructor_obj.user_id = user.id
+            try:
+                session.commit()
+                session.refresh(instructor_obj)
+            except Exception:
+                session.rollback()
 
     if student_obj:
         res["student_id"] = student_obj.id
@@ -2505,6 +2537,12 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
         res["image"] = student_obj.image or getattr(user, "image", None) or ""
         res["phone"] = student_obj.whatsapp_number or getattr(user, "phone", None) or ""
         res["whatsapp_number"] = student_obj.whatsapp_number or getattr(user, "phone", None) or ""
+        res["school"] = student_obj.school or getattr(user, "school_name", "") or ""
+        res["school_name"] = student_obj.school or getattr(user, "school_name", "") or ""
+        res["course_duration"] = student_obj.course_duration or "3 Days Course"
+        res["start_date"] = student_obj.start_date or ""
+        res["end_date"] = student_obj.end_date or ""
+        res["total_days"] = getattr(student_obj, "total_days", None) or 3
         # If student has no instructor directly, check their sessions
         inst_id = student_obj.instructor_id
         inst_name = student_obj.instructor_rel.name if student_obj.instructor_rel else ""
@@ -5055,7 +5093,12 @@ def get_superadmin_students(db: OrmSession = Depends(get_db)):
 
 
 @app.get("/api/students")
-def get_students(school: Optional[str] = None, instructor_id: Optional[int] = None, db: OrmSession = Depends(get_db)):
+def get_students(school: Optional[str] = None, instructor_id: Optional[int] = None, email: Optional[str] = None, db: OrmSession = Depends(get_db)):
+    if email:
+        clean_email = email.lower().strip()
+        query = db.query(Student).filter(func.lower(Student.email) == clean_email).order_by(Student.id.desc())
+        return [student_to_dict(s) for s in query.all()]
+
     query = db.query(Student).order_by(Student.id.desc())
     school_clean = (school or "").lower().strip()
 
@@ -5083,6 +5126,54 @@ def get_students(school: Optional[str] = None, instructor_id: Optional[int] = No
         # Return empty list — caller must always pass a school
         return []
     return [student_to_dict(s) for s in query.all()]
+
+
+@app.get("/api/students/me")
+def get_current_student(email: Optional[str] = None, user_id: Optional[int] = None, db: OrmSession = Depends(get_db)):
+    s = None
+    if user_id:
+        s = db.query(Student).filter(Student.user_id == user_id).first()
+    if not s and email:
+        candidates = db.query(Student).filter(func.lower(Student.email) == email.lower().strip()).all()
+        if candidates:
+            # Prefer candidate with active user_id or candidate with sessions
+            candidates_with_user = [c for c in candidates if c.user_id is not None]
+            if candidates_with_user:
+                s = candidates_with_user[0]
+            else:
+                s = max(candidates, key=lambda c: len(c.sessions) if c.sessions else 0)
+    if not s:
+        u = None
+        if email:
+            u = db.query(User).filter(func.lower(User.email) == email.lower().strip()).first()
+        elif user_id:
+            u = db.query(User).filter(User.id == user_id).first()
+        if u and u.role == "athlete":
+            st_name = getattr(u, "name", None) or (u.email.split("@")[0].replace(".", " ").title() if u.email else "Registered Surfer")
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            end_str = (datetime.now() + timedelta(days=2)).strftime("%Y-%m-%d")
+            s = Student(
+                user_id=u.id,
+                name=st_name,
+                email=u.email or "",
+                level="Beginner",
+                school=getattr(u, "school_name", "") or "",
+                approval_status=getattr(u, "approval_status", "approved") or "approved",
+                swimming_ability="Swimmer",
+                start_date=today_str,
+                end_date=end_str,
+                course_duration="3 Days Course",
+                session_time="06:30 AM - 08:30 AM"
+            )
+            db.add(s)
+            try:
+                db.commit()
+                db.refresh(s)
+            except Exception:
+                db.rollback()
+    if not s:
+        raise HTTPException(status_code=404, detail="Student profile not found")
+    return get_student(s.id, db=db)
 
 
 @app.get("/api/students/{student_id}")
@@ -5123,13 +5214,9 @@ def get_student(student_id: int, db: OrmSession = Depends(get_db)):
     d = student_to_dict(s)
     d["badges"] = [b.badge_level for b in s.badges]
     
-    # Query sessions strictly by student_id to avoid cross-contamination
-    # between students who share the same name but have different emails/IDs.
-    # Never match by name alone — student_id is the authoritative identifier.
-    all_sess = db.query(SurfSession).filter(
-        SurfSession.student_id == s.id
-    ).order_by(SurfSession.id.desc()).all()
-    
+    # Query sessions strictly belonging to this student ID
+    all_sess = db.query(SurfSession).filter(SurfSession.student_id == s.id).order_by(SurfSession.id.desc()).all()
+
     d["session_count"] = len(all_sess)
     d["sessions"] = [session_to_dict(sess) for sess in all_sess]
     
@@ -6315,7 +6402,17 @@ def get_sessions(
     try:
         query = db.query(SurfSession).order_by(SurfSession.id.desc())
         if student_id:
-            query = query.filter(SurfSession.student_id == student_id)
+            st_obj = db.query(Student).filter(Student.id == student_id).first()
+            if st_obj and st_obj.name:
+                query = query.filter(
+                    or_(
+                        SurfSession.student_id == student_id,
+                        func.lower(SurfSession.student_name) == st_obj.name.lower().strip(),
+                        func.lower(SurfSession.guest_name) == st_obj.name.lower().strip()
+                    )
+                )
+            else:
+                query = query.filter(SurfSession.student_id == student_id)
         if instructor_id:
             query = query.filter(SurfSession.instructor_id == instructor_id)
         if school and school.lower().strip() not in ["all", "superadmin", "super admin"]:

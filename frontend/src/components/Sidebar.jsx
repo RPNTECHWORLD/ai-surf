@@ -174,7 +174,7 @@ const Sidebar = () => {
     }
 
     if (role === 'athlete') {
-      const athleteId = user?.student_id || user?.id || user?._id || 1;
+      const athleteId = user?.student_id || 'me';
       items.push({ label: 'My Profile', path: `/students/${athleteId}` });
     } else if (isHeadCoach) {
       items.push(

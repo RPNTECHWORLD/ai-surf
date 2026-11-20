@@ -355,13 +355,17 @@ const AthleteIntelligence = () => {
 
     const myName = (currentUser?.name || '').toLowerCase().trim();
     const myEmail = (currentUser?.email || '').toLowerCase().trim();
-    const myUid = currentUser?.student_id || currentUser?.id;
+    const myStudentId = currentUser?.student_id;
+    const myUserId = currentUser?.id;
 
     // Source 1: students list from API (most authoritative)
     let meStudent = students.find(s => {
-      if (myUid && (String(s.id) === String(myUid) || String(s.user_id) === String(myUid))) return true;
       if (myEmail && (s.email || '').toLowerCase().trim() === myEmail) return true;
-      if (myName && (s.name || '').toLowerCase().trim() === myName) return true;
+      if (myStudentId && String(s.id) === String(myStudentId)) return true;
+      if (myUserId && String(s.user_id) === String(myUserId)) return true;
+      if (myName && (s.name || '').toLowerCase().trim() === myName) {
+        if (!s.email || !myEmail || s.email.toLowerCase().trim() === myEmail) return true;
+      }
       return false;
     });
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import { toBlob } from 'html-to-image';
 
@@ -7,6 +7,8 @@ const API = import.meta.env.VITE_API_URL || '';
 
 export default function MyAchievements() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const targetSessionParam = searchParams.get('session') || searchParams.get('openSession') || searchParams.get('sessionId');
   const [studentData, setStudentData] = useState(null);
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -18,6 +20,7 @@ export default function MyAchievements() {
   const [shareTemplate, setShareTemplate] = useState('spotlight'); // 'spotlight' | 'keepsake' | 'scorecard'
   const [customPhotoUrl, setCustomPhotoUrl] = useState(null);
   const [selectedCoachOverride, setSelectedCoachOverride] = useState(null);
+  const [instructorsList, setInstructorsList] = useState([]);
   const fileInputRef = useRef(null);
   const cameraInputRef = useRef(null);
   const [cameraModalOpen, setCameraModalOpen] = useState(false);
@@ -39,8 +42,45 @@ export default function MyAchievements() {
   const [downloadingCert, setDownloadingCert] = useState(false);
   const [certLockModal, setCertLockModal] = useState(false);
   const [confettiActive, setConfettiActive] = useState(false);
+
+  const loggedUser = useMemo(() => {
+    try {
+      return JSON.parse(sessionStorage.getItem('user') || localStorage.getItem('user') || '{}');
+    } catch (e) {
+      return {};
+    }
+  }, []);
+
+  const studentName = studentData?.name || loggedUser?.name || 'Athlete';
+  const studentSchool = studentData?.school || loggedUser?.school || 'Athnex Surf Academy';
+  const studentLevel = studentData?.level || loggedUser?.level || 'Beginner';
+
+  const effectiveSchool = useMemo(() => {
+    let sch = studentData?.school || loggedUser?.school || loggedUser?.school_name;
+    if (!sch || sch === 'Athnex Surf Academy') {
+      try {
+        const act = localStorage.getItem('activeSchool');
+        if (act) {
+          const p = JSON.parse(act);
+          if (p?.name) sch = p.name;
+        }
+      } catch (e) {}
+    }
+    return sch || '';
+  }, [studentData, loggedUser]);
+
   const [posterBgUrl, setPosterBgUrl] = useState(() => {
-    return localStorage.getItem('athnex_milestone_poster_bg') || '/surf-milestone-bg.jpg';
+    try {
+      let sch = '';
+      try {
+        const act = localStorage.getItem('activeSchool');
+        if (act) sch = JSON.parse(act)?.name || '';
+      } catch (e) {}
+      const cached = (sch && localStorage.getItem(`athnex_poster_${sch}`)) || localStorage.getItem('athnex_milestone_poster_bg');
+      return (cached && cached !== '/surf-milestone-bg.jpg') ? cached : (localStorage.getItem('athnex_milestone_poster_bg') || '/surf-milestone-bg.jpg');
+    } catch (e) {
+      return localStorage.getItem('athnex_milestone_poster_bg') || '/surf-milestone-bg.jpg';
+    }
   });
   const [schoolCertConfig, setSchoolCertConfig] = useState(() => {
     try {
@@ -56,59 +96,74 @@ export default function MyAchievements() {
   const animFrameRef = useRef(null);
   const cardRef = useRef(null);
 
-  const loggedUser = useMemo(() => {
-    try {
-      return JSON.parse(sessionStorage.getItem('user') || localStorage.getItem('user') || '{}');
-    } catch (e) {
-      return {};
-    }
-  }, []);
-
-  const studentName = studentData?.name || loggedUser?.name || 'Athlete';
-  const studentSchool = studentData?.school || loggedUser?.school || 'Athnex Surf Academy';
-  const studentLevel = studentData?.level || loggedUser?.level || 'Beginner';
-
   useEffect(() => {
     const fetchStudentAndSessions = async () => {
       setLoading(true);
       try {
-        const studentId = loggedUser?.student_id || loggedUser?.id;
+        const uEmail = (loggedUser?.email || '').toLowerCase().trim();
+        const uName = (loggedUser?.name || '').toLowerCase().trim();
+        let studentId = loggedUser?.student_id || null;
         let fetchedProfile = null;
 
-        // 1. Fetch student profile if available
-        if (studentId) {
+        // 1. Fetch all students to accurately match by email (100% unique), student_id, or name
+        try {
+          const fallbackRes = await fetch(`${API}/api/students?school=all`);
+          if (fallbackRes.ok) {
+            const allStds = await fallbackRes.json();
+            if (Array.isArray(allStds) && allStds.length > 0) {
+              const matched = allStds.find(s => {
+                const sEmail = (s.email || '').toLowerCase().trim();
+                const sName = (s.name || '').toLowerCase().trim();
+                const sUserId = s.user_id ? String(s.user_id) : '';
+                const sId = s.id ? String(s.id) : '';
+
+                // A. Exact Email match (highest priority, unique to account)
+                if (uEmail && sEmail && sEmail === uEmail) return true;
+                // B. student_id match
+                if (loggedUser?.student_id && sId === String(loggedUser.student_id)) return true;
+                // C. user_id match
+                if (sUserId && loggedUser?.id && sUserId === String(loggedUser.id)) return true;
+                // D. Exact Name match
+                if (uName && sName && (sName === uName || (sName.length >= 3 && uName === sName))) return true;
+                return false;
+              });
+
+              if (matched) {
+                fetchedProfile = matched;
+                setStudentData(matched);
+                studentId = matched.id;
+                // Sync session cache so loggedUser stays up-to-date with course duration
+                try {
+                  const currUserStr = sessionStorage.getItem('user');
+                  if (currUserStr) {
+                    const parsedUser = JSON.parse(currUserStr);
+                    parsedUser.student_id = matched.id;
+                    parsedUser.course_duration = matched.course_duration;
+                    sessionStorage.setItem('user', JSON.stringify(parsedUser));
+                  }
+                } catch (e) { }
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('Fallback student fetch error:', e);
+        }
+
+        // If not matched from list, try direct /api/students/${studentId} only if email/name aligns
+        if (!fetchedProfile && studentId) {
           try {
             const sRes = await fetch(`${API}/api/students/${studentId}`);
             if (sRes.ok) {
-              fetchedProfile = await sRes.json();
-              setStudentData(fetchedProfile);
-            }
-          } catch (e) {
-            console.warn('Could not fetch student detail:', e);
-          }
-        }
-
-        if (!fetchedProfile) {
-          try {
-            const fallbackRes = await fetch(`${API}/api/students?school=all`);
-            if (fallbackRes.ok) {
-              const allStds = await fallbackRes.json();
-              if (Array.isArray(allStds)) {
-                const uEmail = (loggedUser?.email || '').toLowerCase().trim();
-                const uName = (loggedUser?.name || '').toLowerCase().trim();
-                const matched = allStds.find(s =>
-                  (studentId && (String(s.id) === String(studentId) || String(s.user_id) === String(studentId))) ||
-                  (uEmail && s.email && s.email.toLowerCase().trim() === uEmail) ||
-                  (uName && s.name && s.name.toLowerCase().trim() === uName)
-                );
-                if (matched) {
-                  fetchedProfile = matched;
-                  setStudentData(matched);
-                }
+              const singleStd = await sRes.json();
+              const sEmail = (singleStd?.email || '').toLowerCase().trim();
+              const sName = (singleStd?.name || '').toLowerCase().trim();
+              if ((uEmail && sEmail && sEmail === uEmail) || (uName && sName && (sName === uName || sName.includes(uName)))) {
+                fetchedProfile = singleStd;
+                setStudentData(singleStd);
               }
             }
           } catch (e) {
-            console.warn('Fallback student fetch error:', e);
+            console.warn('Could not fetch student detail:', e);
           }
         }
 
@@ -129,9 +184,12 @@ export default function MyAchievements() {
           });
         }
 
-        // 3. Filter sessions belonging to this student
-        const targetName = (studentName || '').toLowerCase().trim();
+        // 3. Filter sessions belonging strictly to this student
+        const activeStudent = fetchedProfile || studentData;
+        const targetName = (activeStudent?.name || uName || '').toLowerCase().trim();
+        const studentSchool = (activeStudent?.school || effectiveSchool || loggedUser?.school || '').toLowerCase().trim();
         const studentCandidateIds = [
+          activeStudent?.id ? String(activeStudent.id) : null,
           studentId ? String(studentId) : null,
           loggedUser?.student_id ? String(loggedUser.student_id) : null,
         ].filter(Boolean);
@@ -139,10 +197,26 @@ export default function MyAchievements() {
         const matchedSessions = allSess.filter(s => {
           const sName = (s.student || s.guest_name || s.student_name || '').toLowerCase().trim();
           const sid = s.student_id ? String(s.student_id) : '';
+          const sSchool = (s.school || s.student_school || '').toLowerCase().trim();
 
-          const idMatch = sid && studentCandidateIds.includes(sid);
-          const nameMatch = targetName && (sName === targetName || (sName.length >= 3 && targetName.includes(sName)));
-          return idMatch || nameMatch;
+          // 1. Direct verified ID match
+          if (sid && studentCandidateIds.includes(sid)) {
+            return true;
+          }
+
+          // 2. Strict school scoping: sessions from other schools must NEVER match
+          if (studentSchool && sSchool && sSchool !== studentSchool && studentSchool !== 'all') {
+            return false;
+          }
+
+          // 3. Exact full name match only
+          const nameMatch = Boolean(targetName && (
+            sName === targetName ||
+            (s.student_name && s.student_name.toLowerCase().trim() === targetName) ||
+            (s.guest_name && s.guest_name.toLowerCase().trim() === targetName)
+          ));
+
+          return nameMatch;
         });
 
         // 4. Sort sessions: newest first
@@ -163,21 +237,41 @@ export default function MyAchievements() {
     fetchStudentAndSessions();
   }, [loggedUser, studentName]);
 
+  // Auto-open session milestone & remarks share modal if session query param is provided
+  useEffect(() => {
+    if (!targetSessionParam || sessions.length === 0) return;
+    const target = sessions.find(s => String(s.id) === String(targetSessionParam));
+    if (target) {
+      openShareModal(target);
+      setTimeout(() => {
+        const el = document.getElementById(`ach-session-${target.id}`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 300);
+    }
+  }, [targetSessionParam, sessions]);
+
   // Load custom school milestone poster background if configured
   useEffect(() => {
     const fetchPoster = async () => {
       try {
-        const sch = studentSchool || '';
+        const sch = effectiveSchool;
         const cached = (sch && localStorage.getItem(`athnex_poster_${sch}`)) || localStorage.getItem('athnex_milestone_poster_bg');
-        if (cached) setPosterBgUrl(cached);
+        if (cached && cached !== '/surf-milestone-bg.jpg') {
+          setPosterBgUrl(cached);
+        }
 
-        const res = await fetch(`${API}/api/schools/poster?school=${encodeURIComponent(sch)}`);
+        const url = sch ? `${API}/api/schools/poster?school=${encodeURIComponent(sch)}` : `${API}/api/schools/poster`;
+        const res = await fetch(url);
         if (res.ok) {
           const data = await res.json();
-          if (data.poster_url) {
+          if (data.poster_url && data.poster_url !== '/surf-milestone-bg.jpg') {
             setPosterBgUrl(data.poster_url);
             localStorage.setItem('athnex_milestone_poster_bg', data.poster_url);
             if (sch) localStorage.setItem(`athnex_poster_${sch}`, data.poster_url);
+          } else if (cached && cached !== '/surf-milestone-bg.jpg') {
+            setPosterBgUrl(cached);
           }
           if (data.certificate && typeof data.certificate === 'object' && Object.keys(data.certificate).length > 0) {
             setSchoolCertConfig(data.certificate);
@@ -191,12 +285,58 @@ export default function MyAchievements() {
     fetchPoster();
 
     const onStorageChange = () => {
-      const updated = localStorage.getItem('athnex_milestone_poster_bg');
-      if (updated) setPosterBgUrl(updated);
+      const sch = effectiveSchool;
+      const updated = (sch && localStorage.getItem(`athnex_poster_${sch}`)) || localStorage.getItem('athnex_milestone_poster_bg');
+      if (updated && updated !== '/surf-milestone-bg.jpg') setPosterBgUrl(updated);
+    };
+    const onPosterUpdate = (e) => {
+      if (e.detail && e.detail !== '/surf-milestone-bg.jpg') {
+        setPosterBgUrl(e.detail);
+      }
     };
     window.addEventListener('storage', onStorageChange);
-    return () => window.removeEventListener('storage', onStorageChange);
-  }, [studentSchool]);
+    window.addEventListener('athnex_poster_updated', onPosterUpdate);
+    return () => {
+      window.removeEventListener('storage', onStorageChange);
+      window.removeEventListener('athnex_poster_updated', onPosterUpdate);
+    };
+  }, [effectiveSchool]);
+
+  // Fetch coaches & instructors for matching coach avatars
+  useEffect(() => {
+    const fetchInstructors = async () => {
+      try {
+        const res = await fetch(`${API}/api/instructors`);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data)) setInstructorsList(data);
+        }
+      } catch (e) {
+        console.warn('Could not load instructors list:', e);
+      }
+    };
+    fetchInstructors();
+  }, []);
+
+  const getCoachAvatar = (cName) => {
+    if (!cName || !Array.isArray(instructorsList) || instructorsList.length === 0) return null;
+    const target = String(cName).replace(/^coach\s+/i, '').toLowerCase().trim();
+    const matched = instructorsList.find(inst => {
+      const instName = (inst.name || '').toLowerCase().trim();
+      return instName === target || instName.includes(target) || (target.length > 2 && target.includes(instName));
+    });
+    return matched?.image || matched?.avatar || matched?.photo_url || null;
+  };
+
+  const getCoachPhotoForSession = (sess, cName) => {
+    if (sess && typeof sess === 'object') {
+      if (sess.primary_instructor_image) return sess.primary_instructor_image;
+      if (sess.instructor_image) return sess.instructor_image;
+      if (sess.coach_image) return sess.coach_image;
+      if (sess.coach_avatar) return sess.coach_avatar;
+    }
+    return getCoachAvatar(cName);
+  };
 
   // Determine if a session is finished / completed
   const isSessionCompleted = (sess) => {
@@ -348,15 +488,23 @@ export default function MyAchievements() {
   // Derive course duration requirements (e.g. 3 Days Course requires 3 sessions, 5 Days Course requires 5 sessions)
   const requiredSessions = useMemo(() => {
     const durStr = studentData?.course_duration || loggedUser?.course_duration || studentData?.course || '';
-    const match = String(durStr).match(/(\d+)\s*Day/i);
+    const match = String(durStr).match(/(\d+)\s*-?\s*Day/i);
     if (match) return parseInt(match[1], 10);
+    const numOnly = parseInt(durStr, 10);
+    if (!isNaN(numOnly) && numOnly > 0 && numOnly <= 60) return numOnly;
     if (studentData?.total_days && !isNaN(parseInt(studentData.total_days, 10)) && parseInt(studentData.total_days, 10) > 0) {
       return parseInt(studentData.total_days, 10);
     }
-    return 3; // Default standard course
+    return 1; // Default standard course
   }, [studentData, loggedUser]);
 
-  const isCertificateUnlocked = (stats.completed >= requiredSessions);
+  const isCertificateUnlocked = useMemo(() => {
+    if (stats.completed >= requiredSessions) return true;
+    const stdStatus = String(studentData?.status || loggedUser?.status || '').toLowerCase().trim();
+    if (stdStatus === 'completed' || stdStatus === 'finished') return true;
+    if (stats.completed > 0) return true;
+    return false;
+  }, [stats.completed, requiredSessions, studentData, loggedUser]);
 
   // Filtered sessions based on active tab and search query
   const displayedSessions = useMemo(() => {
@@ -1017,17 +1165,17 @@ export default function MyAchievements() {
 
       ctx.save();
       ctx.textAlign = 'center';
-      // Top: COACH
+      // Top: WAVES
       ctx.fillStyle = '#78350F';
       ctx.font = '900 13px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText('COACH', badgeCX, badgeCY - 22);
-      // Center: scoreOutOf10
+      ctx.fillText('WAVES', badgeCX, badgeCY - 22);
+      // Center: wavesCount
       ctx.font = '900 48px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText(`${scoreOutOf10}`, badgeCX, badgeCY + 14);
-      // Bottom: /10
+      ctx.fillText(`${wavesCount}`, badgeCX, badgeCY + 14);
+      // Bottom: CAUGHT
       ctx.fillStyle = '#92400E';
-      ctx.font = '800 18px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText('/10', badgeCX, badgeCY + 36);
+      ctx.font = '800 16px "Plus Jakarta Sans", sans-serif';
+      ctx.fillText(wavesCount !== '--' ? 'waves' : 'caught', badgeCX, badgeCY + 36);
       ctx.restore();
 
       // Quote & Notes Below
@@ -1054,7 +1202,7 @@ export default function MyAchievements() {
 
       ctx.fillStyle = '#334155';
       ctx.font = '700 22px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText(`${wavesCount} waves caught`, 380, 1165);
+      ctx.fillText(scoreOutOf10 !== '--' ? `⭐ ${scoreOutOf10}/10 coach score` : '⭐ Coach score pending', 380, 1165);
       ctx.fillText(`⏱️ ${waterTime} in water`, 720, 1165);
 
       // Watermark
@@ -1093,19 +1241,21 @@ export default function MyAchievements() {
 
       // Middle Section - Left Column
       ctx.textAlign = 'left';
-      ctx.fillStyle = '#FCD34D';
+      ctx.fillStyle = '#5EEAD4';
       ctx.font = '950 145px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText(`${scoreOutOf10}`, 80, 520);
-      const scoreW = ctx.measureText(`${scoreOutOf10}`).width;
+      ctx.fillText(`${wavesCount}`, 80, 520);
+      const waveW = ctx.measureText(`${wavesCount}`).width;
 
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-      ctx.font = '800 36px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText('/10', 80 + scoreW + 12, 490);
+      if (wavesCount !== '--') {
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+        ctx.font = '800 36px "Plus Jakarta Sans", sans-serif';
+        ctx.fillText('waves', 80 + waveW + 12, 490);
+      }
 
-      // Score Label
+      // Wave Label
       ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
       ctx.font = '800 20px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText('COACH SCORE', 80, 565);
+      ctx.fillText('WAVES CAUGHT', 80, 565);
 
       // Athlete Details (Highlighted Hero)
       ctx.fillStyle = '#5EEAD4';
@@ -1135,9 +1285,9 @@ export default function MyAchievements() {
 
       // Bottom Row: 3 Metrics Columns (Plain text, no boxes)
       const metrics = [
-        { x: 80, val: `${wavesCount}`, lbl: 'WAVES CAUGHT' },
+        { x: 80, val: `${scoreOutOf10 !== '--' ? `${scoreOutOf10}/10` : '--'}`, lbl: 'COACH SCORE' },
         { x: 400, val: waterTime, lbl: 'WATER TIME' },
-        { x: 740, val: `${scoreOutOf10}/10`, lbl: 'COACH SCORE' }
+        { x: 740, val: `${wavesCount}`, lbl: 'WAVES CAUGHT' }
       ];
 
       metrics.forEach((m) => {
@@ -1224,10 +1374,10 @@ export default function MyAchievements() {
       ctx.fillText('A session to be', 70, 840);
       ctx.fillText('proud of.', 70, 910);
 
-      // Right Side Score Box
+      // Right Side Waves Box (Swapped from Score)
       const scBoxX = 770, scBoxY = 780;
       ctx.fillStyle = 'rgba(30, 41, 59, 0.9)';
-      ctx.strokeStyle = '#FCD34D';
+      ctx.strokeStyle = '#2DD4BF';
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.roundRect(scBoxX, scBoxY, 240, 130, 18);
@@ -1235,16 +1385,18 @@ export default function MyAchievements() {
       ctx.stroke();
 
       ctx.textAlign = 'center';
-      ctx.fillStyle = '#FCD34D';
+      ctx.fillStyle = '#2DD4BF';
       ctx.font = '900 64px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText(`${scoreOutOf10}`, scBoxX + 90, scBoxY + 70);
+      ctx.fillText(`${wavesCount}`, scBoxX + 90, scBoxY + 70);
 
-      ctx.fillStyle = '#94A3B8';
-      ctx.font = '700 24px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText('/10', scBoxX + 175, scBoxY + 68);
+      if (wavesCount !== '--') {
+        ctx.fillStyle = '#94A3B8';
+        ctx.font = '700 24px "Plus Jakarta Sans", sans-serif';
+        ctx.fillText('waves', scBoxX + 175, scBoxY + 68);
+      }
 
       ctx.font = '800 13px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText('COACH SCORE', scBoxX + 120, scBoxY + 106);
+      ctx.fillText('WAVES CAUGHT', scBoxX + 120, scBoxY + 106);
 
       // Subline
       ctx.textAlign = 'left';
@@ -1259,9 +1411,9 @@ export default function MyAchievements() {
       // Metrics Trio on Canvas
       const pY = 1055, pW = 290, pH = 75, pGap = 35;
       const spotPills = [
-        { val: wavesCount !== '--' ? `${wavesCount} Waves` : 'In Training', lbl: 'WAVES CAUGHT' },
+        { val: scoreOutOf10 !== '--' ? `${scoreOutOf10}/10` : 'Unrated', lbl: 'COACH SCORE' },
         { val: waterTime, lbl: 'WATER TIME' },
-        { val: scoreOutOf10 !== '--' ? `${scoreOutOf10}/10` : 'Unrated', lbl: 'TECHNIQUE SCORE' },
+        { val: wavesCount !== '--' ? `${wavesCount} Waves` : 'In Training', lbl: 'WAVES CAUGHT' },
       ];
       spotPills.forEach((p, i) => {
         const px = 70 + i * (pW + pGap);
@@ -1595,10 +1747,6 @@ export default function MyAchievements() {
 
   // ── Certificate Generator (HTML5 Canvas, A4 Landscape) ───────────────────
   const handleDownloadCertificate = async () => {
-    if (!isCertificateUnlocked) {
-      setCertLockModal(true);
-      return;
-    }
     try {
       setDownloadingCert(true);
       const W = 1754, H = 1240; // A4 landscape @150dpi
@@ -1606,6 +1754,74 @@ export default function MyAchievements() {
       canvas.width = W;
       canvas.height = H;
       const ctx = canvas.getContext('2d');
+
+      // Safe image loader that never crashes or stalls
+      const loadImgSafely = async (url) => {
+        if (!url) return null;
+        try {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.src = url;
+          await new Promise((resolve) => {
+            img.onload = () => resolve(img);
+            img.onerror = () => resolve(null);
+            setTimeout(() => resolve(null), 3000); // 3s timeout guard
+          });
+          return img.naturalWidth > 0 ? img : null;
+        } catch (e) {
+          return null;
+        }
+      };
+
+      // Guaranteed file downloader with Blob and DataURL fallback and safe revocation
+      const triggerCanvasDownload = (targetCanvas, filename) => {
+        const deliverFile = (urlOrDataUrl, isBlob) => {
+          try {
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = urlOrDataUrl;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => {
+              try {
+                document.body.removeChild(a);
+                if (isBlob) URL.revokeObjectURL(urlOrDataUrl);
+              } catch (e) {}
+            }, 60000);
+          } catch (err) {
+            console.error('Download link error:', err);
+          } finally {
+            setDownloadingCert(false);
+          }
+        };
+
+        try {
+          targetCanvas.toBlob((blob) => {
+            if (blob) {
+              const objUrl = URL.createObjectURL(blob);
+              deliverFile(objUrl, true);
+            } else {
+              // Fallback to Data URL if toBlob returned null
+              try {
+                const dataUrl = targetCanvas.toDataURL('image/png');
+                deliverFile(dataUrl, false);
+              } catch (e) {
+                console.error('DataURL fallback failed:', e);
+                setDownloadingCert(false);
+              }
+            }
+          }, 'image/png');
+        } catch (err) {
+          try {
+            const dataUrl = targetCanvas.toDataURL('image/png');
+            deliverFile(dataUrl, false);
+          } catch (e2) {
+            console.error('All canvas exports failed:', e2);
+            setDownloadingCert(false);
+          }
+        }
+      };
 
       const completedSessions = sessions.filter(isSessionCompleted);
       const lastSession = completedSessions[0];
@@ -1648,15 +1864,13 @@ export default function MyAchievements() {
       if (activeCertConfig && (activeCertConfig.custom_bg_url || activeCertConfig.fields)) {
         // ── CUSTOM ACADEMY CERTIFICATE RENDERER ──
         if (activeCertConfig.template_type === 'custom' && activeCertConfig.custom_bg_url) {
-          const bgImg = new Image();
-          bgImg.crossOrigin = 'anonymous';
-          bgImg.src = activeCertConfig.custom_bg_url;
-          await new Promise(r => { bgImg.onload = r; bgImg.onerror = r; });
-          if (bgImg.naturalWidth > 0) {
-            ctx.drawImage(bgImg, 0, 0, W, H);
+          const bgImg = await loadImgSafely(activeCertConfig.custom_bg_url);
+          if (bgImg) {
+            try { ctx.drawImage(bgImg, 0, 0, W, H); } catch (e) {
+              ctx.fillStyle = '#FAFBFD'; ctx.fillRect(0, 0, W, H);
+            }
           } else {
-            ctx.fillStyle = '#FAFBFD';
-            ctx.fillRect(0, 0, W, H);
+            ctx.fillStyle = '#FAFBFD'; ctx.fillRect(0, 0, W, H);
           }
         } else if (activeCertConfig.template_type === 'minimal_emerald') {
           const bgGrad = ctx.createLinearGradient(0, 0, W, H);
@@ -1695,13 +1909,10 @@ export default function MyAchievements() {
           ctx.fillRect(0, 0, W, H);
 
           if (activeCertConfig.template_type === 'default' || !activeCertConfig.template_type) {
-            const bgImg = new Image();
-            bgImg.crossOrigin = 'anonymous';
-            bgImg.src = posterBgUrl || '/surf-milestone-bg.jpg';
-            await new Promise(r => { bgImg.onload = r; bgImg.onerror = r; });
-            if (bgImg.naturalWidth > 0) {
+            const bgImg = await loadImgSafely(posterBgUrl || '/surf-milestone-bg.jpg');
+            if (bgImg && bgImg.naturalWidth > 0) {
               ctx.globalAlpha = 0.16;
-              ctx.drawImage(bgImg, 0, 0, W, H);
+              try { ctx.drawImage(bgImg, 0, 0, W, H); } catch (e) {}
               ctx.globalAlpha = 1;
             }
           }
@@ -1761,8 +1972,8 @@ export default function MyAchievements() {
 
             drawDivider(600);
             const pills = [
-              { icon: '🏄', label: 'SESSIONS', val: `${completedSessions.length} Completed` },
-              { icon: '🌊', label: 'WAVES RIDDEN', val: `${totalWaves || 50} Waves` },
+              { icon: '🏄', label: 'SESSIONS', val: `${stats.completed || completedSessions.length} Completed` },
+              { icon: '🌊', label: 'WAVES RIDDEN', val: `${stats.totalWaves || 0} Waves` },
               { icon: '⭐', label: 'COACH SCORE', val: `${stats.avgScore || 88} / 100` },
             ];
             const pillW = 360, pillH = 90, pillGap = 60;
@@ -1798,6 +2009,31 @@ export default function MyAchievements() {
           ...(activeCertConfig.custom_fields || []).map((f, i) => ({ ...f, key: `custom_${i}` }))
         ];
 
+        const studentDays = Math.max(1, parseInt(requiredSessions, 10) || 1);
+        const dayWordCap = studentDays === 1 ? 'Day' : 'Days';
+        const dayWordLower = studentDays === 1 ? 'day' : 'days';
+
+        // Dynamically replace any hardcoded day count (e.g. 10-Day, 3-Day) with the student's actual course duration
+        const formatWithStudentDays = (text) => {
+          if (!text || typeof text !== 'string') return text;
+          return text
+            // 1. Hyphenated: e.g. "10-Day", "10-day", "3-Day", "1-Day", "5 - Days"
+            .replace(/\b\d+\s*-\s*day(s)?\b/gi, (match) => {
+              const isCap = match.includes('D');
+              return `${studentDays}-${isCap ? 'Day' : 'day'}`;
+            })
+            // 2. Space separated: e.g. "10 Days", "10 days", "10 Day", "3 Days", "1 Day"
+            .replace(/\b\d+\s+day(s)?\b/gi, (match) => {
+              const isCap = match.includes('D');
+              return `${studentDays} ${isCap ? dayWordCap : dayWordLower}`;
+            })
+            // 3. Compact: e.g. "10days", "3day"
+            .replace(/\b\d+day(s)?\b/gi, (match) => {
+              const isCap = match.includes('D');
+              return `${studentDays}-${isCap ? 'Day' : 'day'}`;
+            });
+        };
+
         for (const field of allFields) {
           if (field.visible === false) continue;
           const fx = (field.x / 100) * W;
@@ -1807,18 +2043,15 @@ export default function MyAchievements() {
           // Image Field Rendering (School Logo or Coach Signature Photo)
           if (field.type === 'image' || field.key === 'school_logo' || field.key === 'coach_signature') {
             if (field.image_url) {
-              const img = new Image();
-              img.crossOrigin = 'anonymous';
-              img.src = field.image_url;
-              await new Promise(r => { img.onload = r; img.onerror = r; });
-              if (img.naturalWidth > 0) {
+              const img = await loadImgSafely(field.image_url);
+              if (img && img.naturalWidth > 0) {
                 const imgW = (field.width || (field.key === 'school_logo' ? 80 : 130)) * scaleFactor;
                 const imgH = (img.naturalHeight / img.naturalWidth) * imgW;
                 let drawX = fx - imgW / 2;
                 if (field.align === 'left') drawX = fx;
                 else if (field.align === 'right') drawX = fx - imgW;
                 const drawY = fy - imgH / 2;
-                ctx.drawImage(img, drawX, drawY, imgW, imgH);
+                try { ctx.drawImage(img, drawX, drawY, imgW, imgH); } catch (e) {}
               }
             }
             continue;
@@ -1835,9 +2068,11 @@ export default function MyAchievements() {
           if (field.key === 'student_name') {
             textToDraw = studentName;
           } else if (field.key === 'course_title') {
-            textToDraw = field.sample || `${requiredSessions}-Day Surf Training Course`;
+            const rawTitle = field.sample || `${studentDays}-Day Surf Training Course`;
+            textToDraw = formatWithStudentDays(rawTitle);
           } else if (field.key === 'body_text') {
-            textToDraw = field.sample || 'has successfully completed the comprehensive ocean surfing and safety training course.';
+            const rawBody = field.sample || `has successfully completed the comprehensive ${studentDays}-day ocean surfing, paddle technique, and wave riding modules.`;
+            textToDraw = formatWithStudentDays(rawBody);
           } else if (field.key === 'academy_name') {
             textToDraw = studentSchool || field.sample || 'Athnex Surf Academy';
           } else if (field.key === 'issue_date') {
@@ -1845,9 +2080,13 @@ export default function MyAchievements() {
           } else if (field.key === 'coach_name') {
             textToDraw = coachNameCert || field.sample || 'Certified Head Coach';
           } else if (field.key === 'cert_id') {
-            textToDraw = `ATHNEX-CERT-${requiredSessions}D-${Date.now().toString().slice(-4)}`;
+            textToDraw = `ATHNEX-CERT-${studentDays}D-${Date.now().toString().slice(-4)}`;
           } else {
-            textToDraw = field.sample || field.label || '';
+            let sampleTxt = field.sample || field.label || '';
+            if (field.key !== 'issue_date' && field.key !== 'student_name' && field.key !== 'coach_name' && field.key !== 'academy_name' && typeof sampleTxt === 'string') {
+              sampleTxt = formatWithStudentDays(sampleTxt);
+            }
+            textToDraw = sampleTxt;
           }
 
           ctx.fillText(textToDraw, fx, fy + (fSize * 0.32));
@@ -1868,24 +2107,15 @@ export default function MyAchievements() {
         }
 
         // Trigger download
-        canvas.toBlob((blob) => {
-          if (!blob) return;
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          const cleanName = studentName.replace(/\s+/g, '_');
-          const courseTag = requiredSessions === 5 ? '5Day' : '3Day';
-          a.download = `${studentSchool.replace(/\s+/g, '_')}_${courseTag}_Certificate_${cleanName}.png`;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
-          setDownloadingCert(false);
-        }, 'image/png');
+        const cleanName = (studentName || 'Athlete').replace(/\s+/g, '_');
+        const courseTag = `${studentDays}Day`;
+        const fileName = `${(studentSchool || 'Athnex').replace(/\s+/g, '_')}_${courseTag}_Certificate_${cleanName}.png`;
+        triggerCanvasDownload(canvas, fileName);
         return;
       }
 
       // ─ FALLBACK DEFAULT ATHNEX CERTIFICATE GENERATOR ─
+      const studentDays = Math.max(1, parseInt(requiredSessions, 10) || 1);
       const bgGrad = ctx.createLinearGradient(0, 0, W, H);
       bgGrad.addColorStop(0, '#0A1628');
       bgGrad.addColorStop(0.5, '#0D2240');
@@ -1894,18 +2124,15 @@ export default function MyAchievements() {
       ctx.fillRect(0, 0, W, H);
 
       // Surf action image background
-      const bgImg = new Image();
-      bgImg.crossOrigin = 'anonymous';
-      bgImg.src = posterBgUrl || '/surf-milestone-bg.jpg';
-      await new Promise(r => { bgImg.onload = r; bgImg.onerror = r; });
-      if (bgImg.naturalWidth > 0) {
+      const bgImg = await loadImgSafely(posterBgUrl || '/surf-milestone-bg.jpg');
+      if (bgImg && bgImg.naturalWidth > 0) {
         ctx.globalAlpha = 0.12;
         const iR = bgImg.naturalWidth / bgImg.naturalHeight;
         const cR = W / H;
         let sw = bgImg.naturalWidth, sh = bgImg.naturalHeight, sx = 0, sy = 0;
         if (iR > cR) { sw = bgImg.naturalHeight * cR; sx = (bgImg.naturalWidth - sw) / 2; }
         else { sh = bgImg.naturalWidth / cR; sy = (bgImg.naturalHeight - sh) / 2; }
-        ctx.drawImage(bgImg, sx, sy, sw, sh, 0, 0, W, H);
+        try { ctx.drawImage(bgImg, sx, sy, sw, sh, 0, 0, W, H); } catch (e) {}
         ctx.globalAlpha = 1;
       }
 
@@ -1985,7 +2212,7 @@ export default function MyAchievements() {
 
       ctx.fillStyle = '#FCD34D';
       ctx.font = 'bold 46px Georgia, serif';
-      ctx.fillText(`${requiredSessions}-Day Surf Training Course`, W / 2, 515);
+      ctx.fillText(`${studentDays}-Day Surf Training Course`, W / 2, 515);
 
       ctx.fillStyle = '#94A3B8';
       ctx.font = '22px Arial, sans-serif';
@@ -2062,19 +2289,9 @@ export default function MyAchievements() {
       ctx.font = 'bold 15px Arial, sans-serif';
       ctx.fillText('ATHNEX LIVE • OFFICIAL SURF ACADEMY CERTIFICATE • athnexlive.com', W / 2, H - 55);
 
-      canvas.toBlob((blob) => {
-        if (!blob) return;
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        const cleanName = studentName.replace(/\s+/g, '_');
-        a.download = `Athnex_${requiredSessions}Day_Certificate_${cleanName}.png`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        setDownloadingCert(false);
-      }, 'image/png');
+      const cleanName = (studentName || 'Athlete').replace(/\s+/g, '_');
+      const fileName = `Athnex_${studentDays}Day_Certificate_${cleanName}.png`;
+      triggerCanvasDownload(canvas, fileName);
     } catch (err) {
       console.error('Certificate generation failed:', err);
       setDownloadingCert(false);
@@ -2164,12 +2381,12 @@ export default function MyAchievements() {
             </div>
           </div>
 
-          <div className="ach-stat-card card-emerald">
-            <div className="ach-stat-icon">🌊</div>
+          <div className="ach-stat-card card-purple">
+            <div className="ach-stat-icon">⭐</div>
             <div className="ach-stat-body">
-              <span className="ach-stat-num">{stats.totalWaves > 0 ? stats.totalWaves : '--'}</span>
-              <span className="ach-stat-label">Total Waves Caught</span>
-              <span className="ach-stat-hint">{stats.totalWaves > 0 ? 'Across verified sessions' : 'Pending coach wave log'}</span>
+              <span className="ach-stat-num">{stats.avgScore !== null ? `${stats.avgScore}/100` : 'Unrated'}</span>
+              <span className="ach-stat-label">Coach Technique Score</span>
+              <span className="ach-stat-hint">{stats.avgScore !== null ? `${studentLevel} Level` : 'Awaiting coach review'}</span>
             </div>
           </div>
 
@@ -2182,12 +2399,12 @@ export default function MyAchievements() {
             </div>
           </div>
 
-          <div className="ach-stat-card card-purple">
-            <div className="ach-stat-icon">⭐</div>
+          <div className="ach-stat-card card-emerald">
+            <div className="ach-stat-icon">🌊</div>
             <div className="ach-stat-body">
-              <span className="ach-stat-num">{stats.avgScore !== null ? `${stats.avgScore}/100` : 'Unrated'}</span>
-              <span className="ach-stat-label">Coach Technique Score</span>
-              <span className="ach-stat-hint">{stats.avgScore !== null ? `${studentLevel} Level` : 'Awaiting coach review'}</span>
+              <span className="ach-stat-num">{stats.totalWaves > 0 ? stats.totalWaves : '--'}</span>
+              <span className="ach-stat-label">Total Waves Caught</span>
+              <span className="ach-stat-hint">{stats.totalWaves > 0 ? 'Across verified sessions' : 'Pending coach wave log'}</span>
             </div>
           </div>
         </div>
@@ -2277,9 +2494,15 @@ export default function MyAchievements() {
                 const coachName = getCleanCoachName(sess);
                 const spot = sess.location || studentSchool || 'Surf Academy Spot';
                 const levelTag = sess.level || sess.type || studentLevel;
+                const isTargeted = Boolean(targetSessionParam && String(sess.id) === String(targetSessionParam));
 
                 return (
-                  <article key={sess.id || idx} className="ach-session-card">
+                  <article
+                    key={sess.id || idx}
+                    id={sess.id ? `ach-session-${sess.id}` : undefined}
+                    className={`ach-session-card ${isTargeted ? 'ach-session-card-targeted' : ''}`}
+                    style={isTargeted ? { border: '2px solid #0D9488', boxShadow: '0 0 0 3px rgba(13, 148, 136, 0.18)' } : undefined}
+                  >
                     {/* Left Date / Status Badge */}
                     <div className="ach-session-date-col">
                       <div className="ach-session-date-badge">
@@ -2336,18 +2559,6 @@ export default function MyAchievements() {
                     {/* Right Performance Metrics & Share Actions */}
                     <div className="ach-session-actions-col">
                       <div className="ach-metric-pills">
-                        {getSessionWaves(sess) !== null ? (
-                          <div className="ach-pill" title="Verified waves caught in this session">
-                            <span className="ach-pill-icon">🌊</span>
-                            <span className="ach-pill-val">{getSessionWaves(sess)} Waves</span>
-                          </div>
-                        ) : (
-                          <div className="ach-pill ach-pill-unrecorded" title="Wave count pending coach entry">
-                            <span className="ach-pill-icon" style={{ opacity: 0.55 }}>🌊</span>
-                            <span className="ach-pill-val" style={{ color: '#94A3B8', fontWeight: 600 }}>-- Waves</span>
-                          </div>
-                        )}
-
                         {getSessionScore(sess) !== null ? (
                           <div className="ach-pill" title="Verified technique assessment score">
                             <span className="ach-pill-icon">⭐</span>
@@ -2357,6 +2568,18 @@ export default function MyAchievements() {
                           <div className="ach-pill ach-pill-unrated" title="Technique score pending coach evaluation">
                             <span className="ach-pill-icon" style={{ opacity: 0.55 }}>⭐</span>
                             <span className="ach-pill-val" style={{ color: '#94A3B8', fontWeight: 600 }}>Unrated</span>
+                          </div>
+                        )}
+
+                        {getSessionWaves(sess) !== null ? (
+                          <div className="ach-pill" title="Verified waves caught in this session">
+                            <span className="ach-pill-icon">🌊</span>
+                            <span className="ach-pill-val">{getSessionWaves(sess)} Waves</span>
+                          </div>
+                        ) : (
+                          <div className="ach-pill ach-pill-unrecorded" title="Wave count pending coach entry">
+                            <span className="ach-pill-icon" style={{ opacity: 0.55 }}>🌊</span>
+                            <span className="ach-pill-val" style={{ color: '#94A3B8', fontWeight: 600 }}>-- Waves</span>
                           </div>
                         )}
                       </div>
@@ -2454,23 +2677,45 @@ export default function MyAchievements() {
                   You are enrolled in the <strong>{requiredSessions}-Day Surf Training Course</strong>. Your official verified completion certificate will be automatically unlocked and ready to download once you complete all <strong>{requiredSessions} sessions</strong>!
                 </p>
 
-                <button
-                  type="button"
-                  onClick={() => setCertLockModal(false)}
-                  style={{
-                    width: '100%',
-                    padding: '10px 16px',
-                    borderRadius: '10px',
-                    border: 'none',
-                    background: '#0F172A',
-                    color: '#FFFFFF',
-                    fontSize: '13.5px',
-                    fontWeight: 700,
-                    cursor: 'pointer'
-                  }}
-                >
-                  Understood 👍
-                </button>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCertLockModal(false);
+                      handleDownloadCertificate();
+                    }}
+                    style={{
+                      flex: 1,
+                      padding: '10px 16px',
+                      borderRadius: '10px',
+                      border: 'none',
+                      background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
+                      color: '#FFFFFF',
+                      fontSize: '13.5px',
+                      fontWeight: 700,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Download Certificate
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCertLockModal(false)}
+                    style={{
+                      flex: 1,
+                      padding: '10px 16px',
+                      borderRadius: '10px',
+                      border: '1px solid #CBD5E1',
+                      background: '#FFFFFF',
+                      color: '#475569',
+                      fontSize: '13.5px',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Close
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -2491,6 +2736,8 @@ export default function MyAchievements() {
           const paddlingRating = rawPaddling !== null ? `${rawPaddling}/10` : '--';
           const coachCandidates = getCoachCandidates(shareModalSession);
           const coachName = getCleanCoachName(shareModalSession, selectedCoachOverride);
+          const coachPhoto = getCoachPhotoForSession(shareModalSession, coachName);
+          const coachInitial = (coachName.replace(/^coach\s+/i, '').trim().charAt(0) || 'C').toUpperCase();
           const groupName = getSessionGroupName(shareModalSession);
           const dateFormatted = getSessionFormattedDate(shareModalSession);
           const quoteText = getCoachQuote(shareModalSession);
@@ -2583,9 +2830,9 @@ export default function MyAchievements() {
                           </div>
                           <div className="ach-spotlight-score-block">
                             <div className="ach-spotlight-score-val">
-                              {scoreOutOf10}<span>/10</span>
+                              {wavesCount !== '--' ? wavesCount : '--'}{wavesCount !== '--' && <span>waves</span>}
                             </div>
-                            <div className="ach-spotlight-score-lbl">COACH SCORE</div>
+                            <div className="ach-spotlight-score-lbl">WAVES CAUGHT</div>
                           </div>
                         </div>
 
@@ -2594,16 +2841,16 @@ export default function MyAchievements() {
                         {/* 3-Pill Performance Metric Trio */}
                         <div className="ach-spotlight-metric-trio">
                           <div className="ach-spot-metric-pill">
-                            <span className="ach-spot-metric-val">🌊 {wavesCount !== '--' ? `${wavesCount} Waves` : 'In Training'}</span>
-                            <span className="ach-spot-metric-sub">Waves Caught</span>
+                            <span className="ach-spot-metric-val">⭐ {scoreOutOf10 !== '--' ? `${scoreOutOf10}/10` : 'Unrated'}</span>
+                            <span className="ach-spot-metric-sub">Coach Score</span>
                           </div>
                           <div className="ach-spot-metric-pill">
                             <span className="ach-spot-metric-val">⏱️ {waterTime}</span>
                             <span className="ach-spot-metric-sub">Water Time</span>
                           </div>
                           <div className="ach-spot-metric-pill">
-                            <span className="ach-spot-metric-val">⭐ {scoreOutOf10 !== '--' ? `${scoreOutOf10}/10` : 'Unrated'}</span>
-                            <span className="ach-spot-metric-sub">Technique Score</span>
+                            <span className="ach-spot-metric-val">🌊 {wavesCount !== '--' ? `${wavesCount} Waves` : 'In Training'}</span>
+                            <span className="ach-spot-metric-sub">Waves Caught</span>
                           </div>
                         </div>
 
@@ -2611,7 +2858,37 @@ export default function MyAchievements() {
                         <div className="ach-spotlight-quote-box">
                           <div className="ach-spotlight-quote-head">
                             <span className="ach-spotlight-verdict-tag">COACH VERDICT</span>
-                            <span className="ach-spotlight-coach">{coachName}</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <div style={{
+                                width: '26px',
+                                height: '26px',
+                                borderRadius: '50%',
+                                overflow: 'hidden',
+                                border: '1.5px solid #2DD4BF',
+                                background: '#134E4A',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '11.5px',
+                                fontWeight: 800,
+                                color: '#2DD4BF',
+                                flexShrink: 0,
+                                boxShadow: '0 2px 8px rgba(0,0,0,0.35)'
+                              }}>
+                                {coachPhoto ? (
+                                  <img
+                                    src={coachPhoto}
+                                    alt={coachName}
+                                    crossOrigin={coachPhoto && !coachPhoto.startsWith('data:') && !coachPhoto.startsWith('blob:') ? 'anonymous' : undefined}
+                                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                                  />
+                                ) : (
+                                  <span>{coachInitial}</span>
+                                )}
+                              </div>
+                              <span className="ach-spotlight-coach">{coachName}</span>
+                            </div>
                           </div>
                           <p className="ach-spotlight-quote">“{quoteText}”</p>
                         </div>
@@ -2661,9 +2938,9 @@ export default function MyAchievements() {
                           />
                         </div>
                         <div className="ach-keepsake-gold-badge">
-                          <span className="ach-gold-top-lbl">COACH</span>
-                          <span className="ach-gold-score">{scoreOutOf10}</span>
-                          <span className="ach-gold-den">/10</span>
+                          <span className="ach-gold-top-lbl">WAVES</span>
+                          <span className="ach-gold-score">{wavesCount}</span>
+                          <span className="ach-gold-den">{wavesCount !== '--' ? 'waves' : 'caught'}</span>
                         </div>
                       </div>
 
@@ -2672,14 +2949,44 @@ export default function MyAchievements() {
                       <div className="ach-keepsake-quote-box">
                         <div className="ach-keepsake-quote-head">
                           <span className="ach-keepsake-verdict-tag">COACH VERDICT</span>
-                          <span className="ach-keepsake-coach">{coachName}</span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <div style={{
+                              width: '26px',
+                              height: '26px',
+                              borderRadius: '50%',
+                              overflow: 'hidden',
+                              border: '1.5px solid #0D9488',
+                              background: '#CCFBF1',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: '11.5px',
+                              fontWeight: 800,
+                              color: '#0F766E',
+                              flexShrink: 0,
+                              boxShadow: '0 2px 6px rgba(0,0,0,0.1)'
+                            }}>
+                              {coachPhoto ? (
+                                <img
+                                  src={coachPhoto}
+                                  alt={coachName}
+                                  crossOrigin={coachPhoto && !coachPhoto.startsWith('data:') && !coachPhoto.startsWith('blob:') ? 'anonymous' : undefined}
+                                  style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                                />
+                              ) : (
+                                <span>{coachInitial}</span>
+                              )}
+                            </div>
+                            <span className="ach-keepsake-coach">{coachName}</span>
+                          </div>
                         </div>
                         <div className="ach-keepsake-quote">“{quoteText}”</div>
                       </div>
 
                       <div className="ach-keepsake-footer-row">
                         <span>✓ Completed</span>
-                        <span>{wavesCount !== '--' ? `${wavesCount} waves caught` : 'Session completed'}</span>
+                        <span>{scoreOutOf10 !== '--' ? `⭐ ${scoreOutOf10}/10 coach score` : '⭐ Coach score pending'}</span>
                         <span>⏱️ {waterTime} in water</span>
                       </div>
 
@@ -2708,10 +3015,10 @@ export default function MyAchievements() {
 
                           <div className="ach-sc-score-block">
                             <div className="ach-sc-score-line">
-                              <span className="ach-sc-score-num">{scoreOutOf10}</span>
-                              <span className="ach-sc-score-den">/10</span>
+                              <span className="ach-sc-score-num">{wavesCount}</span>
+                              {wavesCount !== '--' && <span className="ach-sc-score-den" style={{ fontSize: '18px' }}> waves</span>}
                             </div>
-                            <div className="ach-sc-score-lbl">COACH SCORE</div>
+                            <div className="ach-sc-score-lbl">WAVES CAUGHT</div>
                           </div>
 
                           <div className="ach-sc-ath-info">
@@ -2752,23 +3059,52 @@ export default function MyAchievements() {
                       {/* 3 Metric Stats Columns */}
                       <div className="ach-sc-metrics-grid">
                         <div className="ach-sc-metric-col">
-                          <div className="ach-sc-metric-val">{wavesCount}</div>
-                          <div className="ach-sc-metric-lbl">WAVES CAUGHT</div>
+                          <div className="ach-sc-metric-val">{scoreOutOf10 !== '--' ? `${scoreOutOf10}/10` : '--'}</div>
+                          <div className="ach-sc-metric-lbl">COACH SCORE</div>
                         </div>
                         <div className="ach-sc-metric-col">
                           <div className="ach-sc-metric-val">{waterTime}</div>
                           <div className="ach-sc-metric-lbl">WATER TIME</div>
                         </div>
                         <div className="ach-sc-metric-col">
-                          <div className="ach-sc-metric-val">{scoreOutOf10 !== '--' ? `${scoreOutOf10}/10` : '--'}</div>
-                          <div className="ach-sc-metric-lbl">COACH SCORE</div>
+                          <div className="ach-sc-metric-val">{wavesCount}</div>
+                          <div className="ach-sc-metric-lbl">WAVES CAUGHT</div>
                         </div>
                       </div>
 
                       {/* Coach Quote Box at Bottom */}
                       <div className="ach-sc-quote-box">
                         <div className="ach-sc-quote-msg">“{quoteText}”</div>
-                        <div className="ach-sc-quote-by">{coachName}</div>
+                        <div className="ach-sc-quote-by" style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px' }}>
+                          <div style={{
+                            width: '24px',
+                            height: '24px',
+                            borderRadius: '50%',
+                            overflow: 'hidden',
+                            border: '1.5px solid #2DD4BF',
+                            background: '#047857',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '10.5px',
+                            fontWeight: 800,
+                            color: '#FFFFFF',
+                            flexShrink: 0
+                          }}>
+                            {coachPhoto ? (
+                              <img
+                                src={coachPhoto}
+                                alt={coachName}
+                                crossOrigin={coachPhoto && !coachPhoto.startsWith('data:') && !coachPhoto.startsWith('blob:') ? 'anonymous' : undefined}
+                                style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                                onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                              />
+                            ) : (
+                              <span>{coachInitial}</span>
+                            )}
+                          </div>
+                          <span>{coachName}</span>
+                        </div>
                       </div>
 
                       {/* Clean Watermark */}

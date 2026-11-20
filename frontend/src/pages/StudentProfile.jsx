@@ -116,6 +116,21 @@ const parseTimeStrToMinutes = (t) => {
   return hours * 60 + mins;
 };
 
+const isSessionCompleted = (s) => {
+  if (!s) return false;
+  const st = String(s.status || '').toLowerCase().trim();
+  if (st === 'completed' || st === 'finished' || st === 'attended') return true;
+  const att = String(s.attendance || '').toLowerCase().trim();
+  if (att === 'present' || att === 'completed') return true;
+  if (st === 'cancelled' || st === 'canceled') return false;
+  if (s.date) {
+    const todayISO = getTodayYYYYMMDD();
+    const sessionISO = normalizeToYYYYMMDD(s.date);
+    if (sessionISO && sessionISO < todayISO) return true;
+  }
+  return false;
+};
+
 const getSessionDisplayStatus = (s) => {
   if (!s) return 'Upcoming';
   const rawStatus = s.status;
@@ -126,8 +141,8 @@ const getSessionDisplayStatus = (s) => {
   const str = String(rawStatus || '').trim();
   const lower = str.toLowerCase();
 
-  if (lower === 'completed') return 'Completed';
   if (lower === 'cancelled' || lower === 'canceled') return 'Cancelled';
+  if (isSessionCompleted(s)) return 'Completed';
   if (lower === 'pending for review' || lower === 'pending review' || lower === 'pending_review') {
     return 'Pending for Review';
   }
@@ -137,7 +152,7 @@ const getSessionDisplayStatus = (s) => {
     const todayISO = getTodayYYYYMMDD();
     if (sessionISO) {
       if (sessionISO < todayISO) {
-        return 'Pending for Review';
+        return 'Completed';
       } else if (sessionISO > todayISO) {
         return 'Upcoming';
       } else {
@@ -154,7 +169,7 @@ const getSessionDisplayStatus = (s) => {
             const now = new Date();
             const nowMins = now.getHours() * 60 + now.getMinutes();
             if (nowMins < startMins) return 'Upcoming';
-            if (nowMins >= endMins) return 'Pending for Review';
+            if (nowMins >= endMins) return 'Completed';
             return 'In Progress';
           }
         }
@@ -208,11 +223,11 @@ const StudentProfile = () => {
           navigate(`/students/${u.student_id || u.id}`, { replace: true });
           return;
         }
-      } catch (e) {}
+      } catch (e) { }
       navigate('/students', { replace: true });
     }
   }, [id, navigate]);
-  
+
   // Auth state
   const [currentUser, setCurrentUser] = useState(null);
   const [selectedCoachForModal, setSelectedCoachForModal] = useState(null);
@@ -233,6 +248,7 @@ const StudentProfile = () => {
   // Primary Athlete Swap state
   const [swapModalGuest, setSwapModalGuest] = useState(null); // the guest to promote
   const [swappingPrimary, setSwappingPrimary] = useState(false);
+  const [showAllCoaches, setShowAllCoaches] = useState(false);
 
   const handleOpenGuestModal = () => {
     const existing = student?.guests_details && student.guests_details.length > 0
@@ -304,7 +320,7 @@ const StudentProfile = () => {
             savedUser.guests_details = guestFormList;
             sessionStorage.setItem('user', JSON.stringify(savedUser));
           }
-        } catch (err) {}
+        } catch (err) { }
         setShowGuestModal(false);
         fetchStudent();
       } else {
@@ -386,7 +402,7 @@ const StudentProfile = () => {
     try {
       const urlParams = new URLSearchParams(window.location.search);
       const token = urlParams.get('token') || currentUser?.invite_token;
-      
+
       let res;
       if (token) {
         res = await fetch(`${API}/api/invite/${token}/set-password`, {
@@ -428,12 +444,12 @@ const StudentProfile = () => {
             });
             localStorage.setItem('school_join_requests', JSON.stringify(reqs));
           }
-        } catch (e) {}
+        } catch (e) { }
 
         // Remove invite token from URL so banner and modal never re-trigger on refresh
         try {
           window.history.replaceState({}, document.title, window.location.pathname);
-        } catch (e) {}
+        } catch (e) { }
 
         setTimeout(() => {
           setShowPasswordModal(false);
@@ -506,7 +522,7 @@ const StudentProfile = () => {
         try {
           const savedSchools = JSON.parse(localStorage.getItem('saved_schools_list') || '[]');
           names = [...names, ...savedSchools];
-        } catch (e) {}
+        } catch (e) { }
         names = names.filter(Boolean);
         setSchoolsList(Array.from(new Set(names)));
       })
@@ -555,7 +571,7 @@ const StudentProfile = () => {
             ...(token ? { 'Authorization': `Bearer ${token}` } : {})
           },
           body: JSON.stringify({ school: selectedSchoolToJoin })
-        }).catch(() => {});
+        }).catch(() => { });
       }
 
       // 3. Update student state
@@ -598,7 +614,7 @@ const StudentProfile = () => {
             'Content-Type': 'application/json',
             ...(token ? { 'Authorization': `Bearer ${token}` } : {})
           }
-        }).catch(() => {});
+        }).catch(() => { });
       }
 
       // Reset student state
@@ -635,8 +651,8 @@ const StudentProfile = () => {
     // If admin is viewing student by ID, look up matching student in local storage records first
     const matchedRecord = !isStudentSelf && id
       ? reqs.find(r => String(r.student_id || r.id) === String(id)) ||
-        mockStudents.find(m => String(m.student_id || m.id) === String(id)) ||
-        savedAccs.find(a => String(a.student_id || a.id) === String(id))
+      mockStudents.find(m => String(m.student_id || m.id) === String(id)) ||
+      savedAccs.find(a => String(a.student_id || a.id) === String(id))
       : null;
 
     const emailLower = (isStudentSelf ? (savedUser.email || '') : (matchedRecord?.email || '')).toLowerCase().trim();
@@ -712,7 +728,7 @@ const StudentProfile = () => {
       const savedUser = JSON.parse(sessionStorage.getItem('user') || '{}');
       const isStudentSelf = Boolean(
         savedUser && (savedUser.role === 'athlete' || savedUser.role === 'student' || savedUser.role === 'user') &&
-        (!id || String(savedUser.student_id) === String(id) || String(savedUser.id) === String(id))
+        (!id || id === 'me' || String(savedUser.student_id) === String(id) || String(savedUser.id) === String(id))
       );
       const emailLower = (savedUser.email || '').toLowerCase().trim();
       const nameLower = (savedUser.name || '').toLowerCase().trim();
@@ -737,28 +753,60 @@ const StudentProfile = () => {
           emailLower && (m.email || '').toLowerCase().trim() === emailLower
         ) : null;
         if (mock && mock.approval_status === 'approved') isApprovedLocally = true;
-      } catch (e) {}
+      } catch (e) { }
 
-      // Try fetching student by ID
+      // Try fetching student by ID or /api/students/me
       let data = null;
-      try {
-        const res = await fetch(`${API}/api/students/${id}`);
-        if (res.ok) {
-          data = await res.json();
-        }
-      } catch (e) {}
-
-      // If not found by ID and user is viewing their OWN profile, search by email from all students list
-      if (!data && emailLower && isStudentSelf) {
+      if (id === 'me') {
         try {
-          const listRes = await fetch(`${API}/api/students`);
+          const meUrl = emailLower ? `${API}/api/students/me?email=${encodeURIComponent(emailLower)}` : `${API}/api/students/me`;
+          const res = await fetch(meUrl);
+          if (res.ok) {
+            data = await res.json();
+          }
+        } catch (e) { }
+      } else {
+        try {
+          const res = await fetch(`${API}/api/students/${id}`);
+          if (res.ok) {
+            data = await res.json();
+          }
+        } catch (e) { }
+      }
+
+      // If viewing own profile, verify the returned student record actually matches this user's email
+      if (data && isStudentSelf && emailLower && data.email) {
+        if (data.email.toLowerCase().trim() !== emailLower) {
+          // ID collision: numeric ID in route was not this user's student record
+          data = null;
+        }
+      }
+
+      // If not found by ID, collision occurred, or empty duplicate loaded: search by email to resolve real active student record
+      if (emailLower && isStudentSelf) {
+        try {
+          const listRes = await fetch(`${API}/api/students?email=${encodeURIComponent(emailLower)}`);
           if (listRes.ok) {
             const list = await listRes.json();
-            if (Array.isArray(list)) {
-              data = list.find(s => (s.email || '').toLowerCase().trim() === emailLower);
+            if (Array.isArray(list) && list.length > 0) {
+              const uid = savedUser?.id ? String(savedUser.id) : null;
+              const matchedByUser = uid ? list.find(s => s.user_id && String(s.user_id) === uid) : null;
+              const matchedWithSessions = list.find(s => Array.isArray(s.sessions) && s.sessions.length > 0);
+              const bestMatch = matchedByUser || matchedWithSessions || list[0];
+              if (bestMatch && (!data || (String(data.id) !== String(bestMatch.id) && (!Array.isArray(data.sessions) || data.sessions.length === 0)))) {
+                data = bestMatch;
+                if (String(id) !== String(bestMatch.id)) {
+                  navigate(`/students/${bestMatch.id}`, { replace: true });
+                }
+              }
             }
           }
-        } catch (e) {}
+        } catch (e) { }
+      }
+
+      if (data && isStudentSelf && savedUser && savedUser.student_id !== data.id) {
+        savedUser.student_id = data.id;
+        sessionStorage.setItem('user', JSON.stringify(savedUser));
       }
 
       // Also check remote approval status if user has email (only for own profile)
@@ -771,7 +819,7 @@ const StudentProfile = () => {
               isApprovedLocally = true;
             }
           }
-        } catch (e) {}
+        } catch (e) { }
       }
 
       if (!data) {
@@ -781,14 +829,28 @@ const StudentProfile = () => {
         }
         // Fetch sessions and sync coach even for fallback
         try {
-          const sessRes = await fetch(`${API}/api/sessions?student_id=${fallback.id}`);
+          const sessRes = await fetch(`${API}/api/sessions`);
           if (sessRes.ok) {
             const allSess = await sessRes.json();
-            if (Array.isArray(allSess)) {
-              const sNameLower = (fallback.name || '').toLowerCase().trim();
-              // Strictly filter by student_id — never by name alone.
-              // Same-name students must not see each other's sessions.
-              const mySess = allSess.filter(s => s.student_id === fallback.id);
+            if (Array.isArray(allSess) && allSess.length > 0) {
+              const sNameLower = (fallback.name || savedUser?.name || '').toLowerCase().trim();
+              const studentSchool = (fallback.school || savedUser?.school || '').toLowerCase().trim();
+              const studentCandidateIds = [
+                fallback.id ? String(fallback.id) : null,
+                savedUser?.student_id ? String(savedUser.student_id) : null,
+              ].filter(Boolean);
+
+              const mySess = allSess.filter(s => {
+                const sName = (s.student || s.guest_name || s.student_name || '').toLowerCase().trim();
+                const sid = s.student_id ? String(s.student_id) : '';
+                const sSchool = (s.school || s.student_school || '').toLowerCase().trim();
+                const idMatch = sid && studentCandidateIds.includes(sid);
+                if (idMatch) return true;
+                if (studentSchool && sSchool && sSchool !== studentSchool && studentSchool !== 'all') return false;
+                const nameMatch = sNameLower && (sName === sNameLower || (s.student_name && s.student_name.toLowerCase().trim() === sNameLower) || (s.guest_name && s.guest_name.toLowerCase().trim() === sNameLower));
+                return nameMatch;
+              });
+
               if (mySess.length > 0) {
                 fallback.sessions = mySess;
                 const sortedFallbackSess = sortSessionsDescending(mySess);
@@ -800,7 +862,7 @@ const StudentProfile = () => {
               }
             }
           }
-        } catch (e) {}
+        } catch (e) { }
 
         setStudent(fallback);
         if (isApprovedLocally && savedUser && savedUser.approval_status !== 'approved') {
@@ -828,7 +890,7 @@ const StudentProfile = () => {
             stEmail && (r.student_email || r.email || '').toLowerCase().trim() === stEmail
           );
           if (req && req.status === 'approved') isApproved = true;
-        } catch (e) {}
+        } catch (e) { }
       }
 
       let parsedGuests = [];
@@ -838,45 +900,64 @@ const StudentProfile = () => {
         } else if (typeof data.guests_details === 'string') {
           parsedGuests = JSON.parse(data.guests_details);
         }
-      } catch (e) {}
+      } catch (e) { }
       if ((!parsedGuests || parsedGuests.length === 0) && savedUser) {
         try {
           if (Array.isArray(savedUser.guests_details)) parsedGuests = savedUser.guests_details;
           else if (typeof savedUser.guests_details === 'string') parsedGuests = JSON.parse(savedUser.guests_details);
-        } catch (e) {}
+        } catch (e) { }
       }
       if (!Array.isArray(parsedGuests)) parsedGuests = [];
 
-      // Ensure student sessions and coach are synced if missing from student response
-      let stSessions = Array.isArray(data.sessions) ? data.sessions : [];
+      // Ensure student sessions and coach are synced with all sessions (both student_id and name matched)
+      let stSessions = Array.isArray(data.sessions) ? [...data.sessions] : [];
       let resolvedInstructor = data.instructor || '';
       let resolvedInstructorId = data.instructor_id || null;
 
-      if (stSessions.length > 0) {
-        if (!resolvedInstructor) {
-          const sortedMySess = sortSessionsDescending(stSessions);
-          const coachSess = sortedMySess.find(s => s.instructor && !['—', 'Coach', 'Not Assigned Yet', 'Assigned Surf Coach'].includes(s.instructor));
-          if (coachSess) {
-            resolvedInstructor = coachSess.instructor;
-            resolvedInstructorId = coachSess.instructor_id;
-          }
-        }
-      } else {
-        try {
-          const sessRes = await fetch(`${API}/api/sessions?student_id=${data.id}`);
-          if (sessRes.ok) {
-            const mySess = await sessRes.json();
-            if (Array.isArray(mySess) && mySess.length > 0) {
-              stSessions = mySess;
-              const sortedMySess = sortSessionsDescending(mySess);
-              const coachSess = sortedMySess.find(s => s.instructor && !['—', 'Coach', 'Not Assigned Yet', 'Assigned Surf Coach'].includes(s.instructor));
-              if (coachSess) {
-                resolvedInstructor = coachSess.instructor;
-                resolvedInstructorId = coachSess.instructor_id;
-              }
+      try {
+        const sessRes = await fetch(`${API}/api/sessions`);
+        if (sessRes.ok) {
+          const allSess = await sessRes.json();
+          if (Array.isArray(allSess) && allSess.length > 0) {
+            const targetName = (data.name || savedUser?.name || '').toLowerCase().trim();
+            const studentSchool = (data.school || savedUser?.school || '').toLowerCase().trim();
+            const studentCandidateIds = [
+              data.id ? String(data.id) : null,
+              savedUser?.student_id ? String(savedUser.student_id) : null,
+            ].filter(Boolean);
+
+            const matchedFromApi = allSess.filter(s => {
+              const sName = (s.student || s.guest_name || s.student_name || '').toLowerCase().trim();
+              const sid = s.student_id ? String(s.student_id) : '';
+              const sSchool = (s.school || s.student_school || '').toLowerCase().trim();
+              const idMatch = sid && studentCandidateIds.includes(sid);
+              if (idMatch) return true;
+              if (studentSchool && sSchool && sSchool !== studentSchool && studentSchool !== 'all') return false;
+              const nameMatch = targetName && (sName === targetName || (s.student_name && s.student_name.toLowerCase().trim() === targetName) || (s.guest_name && s.guest_name.toLowerCase().trim() === targetName));
+              return nameMatch;
+            });
+
+            if (matchedFromApi.length > 0) {
+              const existingIds = new Set(stSessions.map(s => String(s.id)));
+              matchedFromApi.forEach(s => {
+                if (!existingIds.has(String(s.id))) {
+                  stSessions.push(s);
+                }
+              });
             }
           }
-        } catch (e) {}
+        }
+      } catch (e) {
+        console.warn('Could not sync all sessions for student profile:', e);
+      }
+
+      if (stSessions.length > 0 && !resolvedInstructor) {
+        const sortedMySess = sortSessionsDescending(stSessions);
+        const coachSess = sortedMySess.find(s => s.instructor && !['—', 'Coach', 'Not Assigned Yet', 'Assigned Surf Coach'].includes(s.instructor));
+        if (coachSess) {
+          resolvedInstructor = coachSess.instructor;
+          resolvedInstructorId = coachSess.instructor_id;
+        }
       }
 
       const cleanStudent = {
@@ -895,12 +976,12 @@ const StudentProfile = () => {
         approval_status: isApproved ? 'approved' : (data.approval_status || 'pending'),
         badges: (data.badges && data.badges.length > 0)
           ? data.badges.map((b, bIdx) => ({
-              id: bIdx + 1,
-              name: `${b} Badge`,
-              date: 'Earned',
-              color: b === 'YELLOW' ? '#F59E0B' : b === 'GREEN' ? '#10B981' : b === 'BLUE' ? '#3B82F6' : b === 'RED' ? '#EF4444' : '#E2E8F0',
-              textColor: b === 'WHITE' ? '#0F172A' : '#FFFFFF'
-            }))
+            id: bIdx + 1,
+            name: `${b} Badge`,
+            date: 'Earned',
+            color: b === 'YELLOW' ? '#F59E0B' : b === 'GREEN' ? '#10B981' : b === 'BLUE' ? '#3B82F6' : b === 'RED' ? '#EF4444' : '#E2E8F0',
+            textColor: b === 'WHITE' ? '#0F172A' : '#FFFFFF'
+          }))
           : []
       };
 
@@ -935,7 +1016,7 @@ const StudentProfile = () => {
       // Check if password has been set in database or updated locally
       const updatedPassEmails = (JSON.parse(localStorage.getItem('passwords_updated_emails') || '[]')).map(e => String(e).toLowerCase().trim());
       const emailUpdatedLocally = Boolean(stEmail && updatedPassEmails.includes(stEmail));
-      
+
       let isPassSet = Boolean(data.has_password);
       if (data.has_password === false || data.password_set === false) {
         isPassSet = emailUpdatedLocally;
@@ -962,12 +1043,13 @@ const StudentProfile = () => {
     }
   };
 
-  const fetchMockHeats = () => {
-    if (!id || id === 'undefined' || id === 'null') return;
-    fetch(`${API}/api/students/${id}/mock-heats`)
+  const fetchMockHeats = (targetId = id) => {
+    const sId = targetId === 'me' ? student?.id : targetId;
+    if (!sId || sId === 'undefined' || sId === 'null' || sId === 'me') return;
+    fetch(`${API}/api/students/${sId}/mock-heats`)
       .then(res => res.ok ? res.json() : [])
       .then(setMockHeats)
-      .catch(() => {});
+      .catch(() => { });
   };
 
   useEffect(() => {
@@ -989,7 +1071,7 @@ const StudentProfile = () => {
             sessionStorage.setItem('user', JSON.stringify(u));
           }
           setCurrentUser(u);
-        } catch (e) {}
+        } catch (e) { }
       }
       fetchStudent();
       fetchMockHeats();
@@ -1013,7 +1095,6 @@ const StudentProfile = () => {
   };
 
   const handleEditClick = () => {
-    if (!isSchoolAdmin) return;
     setEditForm({
       name: student.name || '',
       bio: student.bio || '',
@@ -1054,10 +1135,6 @@ const StudentProfile = () => {
 
   const handleEditSubmit = async (e) => {
     e.preventDefault();
-    if (!isSchoolAdmin) {
-      alert("Only administrators can edit student profiles.");
-      return;
-    }
     setSaving(true);
     try {
       const token = sessionStorage.getItem('token');
@@ -1173,11 +1250,11 @@ const StudentProfile = () => {
   const isOwnProfile = Boolean(
     currentUser &&
     currentUser.role === 'athlete' &&
-    (currentUser.student_id === parseInt(id) || currentUser.id === parseInt(id) || (currentUser.email && student?.email && currentUser.email.toLowerCase().trim() === student.email.toLowerCase().trim()))
+    (id === 'me' || currentUser.student_id === parseInt(id) || currentUser.id === parseInt(id) || (currentUser.email && student?.email && currentUser.email.toLowerCase().trim() === student.email.toLowerCase().trim()))
   );
 
   const isStudentSelf = Boolean(
-    (currentUser?.role === 'athlete' && (currentUser?.student_id === parseInt(id) || currentUser?.id === parseInt(id) || (currentUser?.email && student?.email && currentUser.email.toLowerCase().trim() === student.email.toLowerCase().trim()))) ||
+    (currentUser?.role === 'athlete' && (id === 'me' || currentUser?.student_id === parseInt(id) || currentUser?.id === parseInt(id) || (currentUser?.email && student?.email && currentUser.email.toLowerCase().trim() === student.email.toLowerCase().trim()))) ||
     Boolean(new URLSearchParams(window.location.search).get('token'))
   );
 
@@ -1295,7 +1372,7 @@ const StudentProfile = () => {
           });
           sessionStorage.setItem('user', JSON.stringify(savedUser));
         }
-      } catch (e) {}
+      } catch (e) { }
 
       setSwapModalGuest(null);
       // Re-fetch to sync with server
@@ -1341,7 +1418,7 @@ const StudentProfile = () => {
         );
         if (acc && acc.approval_status === 'approved') return false;
       }
-    } catch (e) {}
+    } catch (e) { }
 
     if (student?.id && student?.approval_status !== 'pending' && student?.approval_status !== undefined) return false;
     if (student?.approval_status === 'pending') return true;
@@ -1368,6 +1445,141 @@ const StudentProfile = () => {
     return st !== 'Completed' && st !== 'Cancelled';
   }));
 
+  // Strict validator for real uploaded videos (exclude legacy dummy seeds, placeholders, and empty values)
+  const isRealUploadedVideo = (raw) => {
+    if (!raw) return false;
+    let url = '';
+    if (typeof raw === 'string') {
+      url = raw.trim();
+    } else if (typeof raw === 'object' && raw) {
+      url = (raw.url || raw.video_url || raw.video || '').trim();
+    }
+    if (!url) return false;
+    // Handle serialized JSON arrays or objects
+    if ((url.startsWith('[') && url.endsWith(']')) || (url.startsWith('{') && url.endsWith('}'))) {
+      try {
+        const parsed = JSON.parse(url);
+        if (Array.isArray(parsed)) return parsed.some(v => isRealUploadedVideo(v));
+        if (parsed && typeof parsed === 'object') return isRealUploadedVideo(parsed.url || parsed.video_url || parsed.video);
+      } catch (e) {}
+    }
+    const u = url.toLowerCase();
+    if (u === 'none' || u === 'null' || u === 'undefined' || u === '#' || u === '[]' || u === '{}') return false;
+    if (u.includes('placeholder') || u.includes('c041fea3-b7ed-40d0-ad1e-2c1e14ee6e4d')) return false;
+    if (u.includes('watch?v=demo') || u.includes('mixkit.co') || u.includes('commondatastorage.googleapis.com') || u.includes('w3schools.com')) return false;
+    return u.startsWith('http://') || u.startsWith('https://') || u.startsWith('/uploads/') || u.startsWith('uploads/') || u.startsWith('blob:') || u.startsWith('data:') || u.includes('/uploads/');
+  };
+
+  const parseSessionVideoList = (rawSource) => {
+    if (!rawSource) return [];
+    if (Array.isArray(rawSource)) {
+      const list = [];
+      rawSource.forEach((item, i) => {
+        if (!item) return;
+        if (typeof item === 'string') {
+          const trimmed = item.trim();
+          if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+            list.push(...parseSessionVideoList(trimmed));
+          } else if (isRealUploadedVideo(trimmed)) {
+            list.push({ url: trimmed, title: `Wave Clip #${i + 1}` });
+          }
+        } else if (typeof item === 'object') {
+          const u = item.url || item.video_url || item.video || '';
+          if (isRealUploadedVideo(u)) {
+            list.push({ url: u, title: item.title || `Wave Clip #${i + 1}` });
+          }
+        }
+      });
+      return list;
+    }
+    if (typeof rawSource === 'string') {
+      const trimmed = rawSource.trim();
+      if (!trimmed) return [];
+      if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (Array.isArray(parsed)) {
+            return parseSessionVideoList(parsed);
+          }
+        } catch (e) {}
+      }
+      if (trimmed.includes('|||')) {
+        return trimmed.split('|||').map(t => t.trim()).filter(Boolean).map((u, i) => ({ url: u, title: `Wave Clip #${i + 1}` }));
+      }
+      if (isRealUploadedVideo(trimmed)) {
+        return [{ url: trimmed, title: 'Wave Clip #1' }];
+      }
+    } else if (typeof rawSource === 'object') {
+      const u = rawSource.url || rawSource.video_url || rawSource.video || '';
+      if (isRealUploadedVideo(u)) {
+        return [{ url: u, title: rawSource.title || 'Wave Clip #1' }];
+      }
+    }
+    return [];
+  };
+
+  // Extract all genuinely uploaded videos across all sessions and technical logs
+  const allUploadedVideos = (() => {
+    const list = [];
+    const seenUrls = new Set();
+
+    // 1. Scan all student sessions
+    effectiveSessions.forEach((sess, sIdx) => {
+      const sessDate = sess.date || (sess.start_date ? sess.start_date : `Session #${sIdx + 1}`);
+      const coachTxt = sess.instructor || sess.primary_instructor || sess.coach || '';
+      const studentName = sess.student || sess.student_name || student?.name || '';
+
+      const candidates = [sess.video_url, sess.video, sess.video_urls].filter(Boolean);
+      candidates.forEach(cand => {
+        const parsedList = parseSessionVideoList(cand);
+        parsedList.forEach((vObj, vIdx) => {
+          const normUrl = (vObj?.url || (typeof vObj === 'string' ? vObj : '') || '').trim();
+          if (normUrl && !seenUrls.has(normUrl.toLowerCase())) {
+            seenUrls.add(normUrl.toLowerCase());
+            list.push({
+              id: `${sess.id || sIdx}-${vIdx}-${normUrl}`,
+              url: normUrl,
+              title: vObj.title || `Wave Clip #${list.length + 1}`,
+              date: sessDate,
+              coach: coachTxt,
+              session: sess,
+              studentName: studentName
+            });
+          }
+        });
+      });
+    });
+
+    // 2. Scan technical logs if available
+    const techLogs = Array.isArray(student?.technical_logs) ? student.technical_logs : [];
+    techLogs.forEach((log, lIdx) => {
+      const logDate = log.date || 'Technical Log';
+      const parsedList = parseSessionVideoList(log.video_url || log.video);
+      parsedList.forEach((vObj, vIdx) => {
+        const normUrl = vObj.url.trim();
+        if (normUrl && !seenUrls.has(normUrl.toLowerCase())) {
+          seenUrls.add(normUrl.toLowerCase());
+          list.push({
+            id: `tech-${log.id || lIdx}-${vIdx}-${normUrl}`,
+            url: normUrl,
+            title: vObj.title || `Technical Log #${list.length + 1}`,
+            date: logDate,
+            coach: student?.instructor || '',
+            session: log,
+            studentName: student?.name || ''
+          });
+        }
+      });
+    });
+
+    return list;
+  })();
+
+  // Sessions with genuine uploaded videos only
+  const validVideoSessions = effectiveSessions.filter(s => {
+    return parseSessionVideoList(s.video_url || s.video || s.video_urls).length > 0;
+  });
+
   // Next Session banner:
   // Earliest upcoming future session -> that's the next session
   // If no upcoming session, but there is a pending review session -> show pending session
@@ -1375,6 +1587,15 @@ const StudentProfile = () => {
   const pendingBannerSession = (!nextSession && pendingReviewSessions.length > 0)
     ? pendingReviewSessions[0]
     : (!nextSession && inProgressSessions.length > 0 ? inProgressSessions[0] : null);
+
+  const isAllSessionsCompleted = Boolean(
+    completedSessions.length > 0 &&
+    !nextSession &&
+    !pendingBannerSession &&
+    upcomingSessions.length === 0 &&
+    pendingReviewSessions.length === 0 &&
+    inProgressSessions.length === 0
+  );
 
   // Comprehensive coach resolution supporting multiple assigned coaches
   const assignedCoaches = (() => {
@@ -1386,7 +1607,7 @@ const StudentProfile = () => {
       rawName.split(/[,&]+|\band\b/i).forEach(n => {
         const trimmed = n.trim();
         const lower = trimmed.toLowerCase();
-        if (trimmed && !seenNames.has(lower) && !['—', 'coach', 'not assigned yet', 'assigned surf coach', 'staff'].includes(lower)) {
+        if (trimmed && !seenNames.has(lower) && !['—', 'coach', 'not assigned yet', 'assigned surf coach', 'staff', 'instructor', 'surf instructor', 'instructors'].includes(lower)) {
           seenNames.add(lower);
           list.push({ name: trimmed, id: id || null });
         }
@@ -1598,13 +1819,13 @@ const StudentProfile = () => {
             style={{ display: 'none' }}
             onChange={handlePhotoUpload}
           />
-          
+
           <div className="sp-hero-left">
             <div
               className="sp-avatar-wrapper"
-              onClick={() => isSchoolAdmin && avatarFileInputRef.current?.click()}
-              style={{ cursor: isSchoolAdmin ? 'pointer' : 'default' }}
-              title={isSchoolAdmin ? "Click to change profile photo" : ""}
+              onClick={() => isOwnProfile && avatarFileInputRef.current?.click()}
+              style={{ cursor: isOwnProfile ? 'pointer' : 'default' }}
+              title={isOwnProfile ? "Click to change profile photo" : ""}
             >
               {student.image && !student.image.includes('1500648767791') && !student.image.includes('unsplash.com') ? (
                 <img
@@ -1635,7 +1856,7 @@ const StudentProfile = () => {
               >
                 {student.name ? student.name.charAt(0).toUpperCase() : 'S'}
               </div>
-              {isSchoolAdmin && (
+              {(isOwnProfile || isSchoolAdmin) && (
                 <div className="sp-avatar-overlay">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
@@ -1648,7 +1869,7 @@ const StudentProfile = () => {
             <div className="sp-hero-info">
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <h1 className="sp-name">{student.name}</h1>
-                {isSchoolAdmin && (
+                {(isOwnProfile || isSchoolAdmin) && (
                   <button
                     type="button"
                     onClick={handleEditClick}
@@ -1699,7 +1920,7 @@ const StudentProfile = () => {
                           background: '#F5F3FF',
                           border: '1px solid #DDD6FE'
                         }}
-                        title={`Kids / Under 16 (${stAge} yrs)`}
+                          title={`Kids / Under 16 (${stAge} yrs)`}
                         >
                           🧒 Kids ({stAge} yrs)
                         </span>
@@ -1780,8 +2001,8 @@ const StudentProfile = () => {
                     }}>
                       <span>🏄‍♂️</span> Coaches:
                     </span>
-                    {assignedCoaches.map((c, cIdx) => (
-                      <div 
+                    {(showAllCoaches ? assignedCoaches : assignedCoaches.slice(0, 2)).map((c, cIdx) => (
+                      <div
                         key={cIdx}
                         onClick={() => handleOpenCoachModal(c.name, c.id)}
                         style={{
@@ -1808,9 +2029,39 @@ const StudentProfile = () => {
                         <span style={{ fontSize: '11px', color: '#0D9488', fontWeight: 800 }}>★ Review</span>
                       </div>
                     ))}
+
+                    {assignedCoaches.length > 2 && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setShowAllCoaches(!showAllCoaches);
+                        }}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '3px',
+                          fontSize: '11px',
+                          color: '#0F766E',
+                          background: '#E6FFFA',
+                          border: '1.5px solid #0D9488',
+                          padding: '3px 9px',
+                          borderRadius: '20px',
+                          fontWeight: 800,
+                          cursor: 'pointer',
+                          boxShadow: '0 1px 3px rgba(13, 148, 136, 0.12)',
+                          transition: 'all 0.15s ease'
+                        }}
+                        title={showAllCoaches ? 'Collapse coaches list' : `Click to view ${assignedCoaches.length - 2} more: ${assignedCoaches.slice(2).map(c => c.name).join(', ')}`}
+                        onMouseEnter={e => { e.currentTarget.style.background = '#99F6E4'; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = '#E6FFFA'; }}
+                      >
+                        {showAllCoaches ? '▴ Less' : `+${assignedCoaches.length - 2}`}
+                      </button>
+                    )}
                   </div>
                 ) : (
-                  <div 
+                  <div
                     style={{
                       display: 'inline-flex',
                       alignItems: 'center',
@@ -1915,6 +2166,44 @@ const StudentProfile = () => {
                   {pendingBannerSession.location || student?.school || 'Surf Spot'}{pendingBannerSession.instructor ? ` • Coach: ${pendingBannerSession.instructor}` : (assignedCoachName ? ` • Coach: ${assignedCoachName}` : '')}
                 </div>
               </div>
+            ) : isAllSessionsCompleted ? (
+              <div
+                className="sp-next-session-box"
+                style={{
+                  background: 'linear-gradient(135deg, #059669 0%, #047857 100%)',
+                  boxShadow: '0 4px 16px rgba(5, 150, 105, 0.28)',
+                  border: '1px solid rgba(16, 185, 129, 0.4)',
+                  cursor: 'pointer'
+                }}
+                onClick={() => navigate('/achievements')}
+                title="All sessions completed! Click to view your achievements & track record"
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ fontSize: '13px' }}>🎉</span>
+                    <span className="sp-ns-box-label" style={{ color: '#A7F3D0', letterSpacing: '0.6px', fontWeight: 800 }}>
+                      ALL SESSIONS COMPLETED
+                    </span>
+                  </div>
+                  <span style={{
+                    fontSize: '10.5px',
+                    background: 'rgba(255, 255, 255, 0.22)',
+                    color: '#FFFFFF',
+                    padding: '2px 8px',
+                    borderRadius: '10px',
+                    fontWeight: 700,
+                    letterSpacing: '0.3px'
+                  }}>
+                    Completed
+                  </span>
+                </div>
+                <div className="sp-ns-box-time" style={{ fontSize: '19px', fontWeight: 800, marginTop: '2px', color: '#FFFFFF' }}>
+                  All Sessions Completed
+                </div>
+                <div className="sp-ns-box-sub" style={{ color: 'rgba(255, 255, 255, 0.95)', fontSize: '12px', marginTop: '2px' }}>
+                  {completedSessions.length} {completedSessions.length === 1 ? 'session' : 'sessions'} completed • View in My Achievements →
+                </div>
+              </div>
             ) : (
               <div className="sp-next-session-box-empty">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center' }}>
@@ -1934,7 +2223,7 @@ const StudentProfile = () => {
           let updatedEmails = [];
           try {
             updatedEmails = (JSON.parse(localStorage.getItem('passwords_updated_emails') || '[]')).map(e => String(e).toLowerCase().trim());
-          } catch (e) {}
+          } catch (e) { }
           const isPasswordSet = Boolean(student?.password_updated || (student?.has_password && !student?.is_temporary_password) || (emailLower && updatedEmails.includes(emailLower)));
 
           if (isPasswordSet) return null;
@@ -2174,19 +2463,24 @@ const StudentProfile = () => {
                     </span>
                   )}
                   {completedSessions.some(s => Boolean(getCoachRemarksData(s))) && (
-                    <span style={{
-                      background: 'linear-gradient(135deg, #ECFDF5 0%, #D1FAE5 100%)',
-                      color: '#065F46',
-                      border: '1px solid #6EE7B7',
-                      fontSize: '11px',
-                      fontWeight: 800,
-                      padding: '2px 9px',
-                      borderRadius: '20px',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      boxShadow: '0 1px 3px rgba(16, 185, 129, 0.15)'
-                    }}>
+                    <span
+                      onClick={() => navigate('/achievements')}
+                      title="Click to view all coach remarks in My Achievements"
+                      style={{
+                        background: 'linear-gradient(135deg, #ECFDF5 0%, #D1FAE5 100%)',
+                        color: '#065F46',
+                        border: '1px solid #6EE7B7',
+                        fontSize: '11px',
+                        fontWeight: 800,
+                        padding: '2px 9px',
+                        borderRadius: '20px',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        cursor: 'pointer',
+                        boxShadow: '0 1px 3px rgba(16, 185, 129, 0.15)'
+                      }}
+                    >
                       <span>💬</span> Coach Remarks Available
                     </span>
                   )}
@@ -2326,35 +2620,6 @@ const StudentProfile = () => {
                             </div>
 
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              {remarksData && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    navigate(`/sessions?openSession=${session.id}&tab=notes`);
-                                  }}
-                                  style={{
-                                    fontSize: '10.5px',
-                                    fontWeight: 800,
-                                    background: 'linear-gradient(135deg, #ECFDF5 0%, #D1FAE5 100%)',
-                                    color: '#065F46',
-                                    border: '1.5px solid #10B981',
-                                    padding: '2px 8px',
-                                    borderRadius: '6px',
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '4px',
-                                    cursor: 'pointer',
-                                    boxShadow: '0 1px 3px rgba(16, 185, 129, 0.18)',
-                                    transition: 'all 0.15s ease'
-                                  }}
-                                  title="Click to open full session & view remarks"
-                                >
-                                  <span>💬 See your remarks</span>
-                                  <span style={{ fontSize: '9px', background: '#059669', color: '#FFFFFF', padding: '0 4px', borderRadius: '3px', fontWeight: 800 }}>★</span>
-                                </button>
-                              )}
-
                               <span style={{
                                 fontSize: '10.5px',
                                 fontWeight: 800,
@@ -2367,7 +2632,7 @@ const StudentProfile = () => {
                                 alignItems: 'center',
                                 gap: '4px'
                               }}>
-                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
                                 Completed
                               </span>
                             </div>
@@ -2415,7 +2680,7 @@ const StudentProfile = () => {
                           {/* Direct Notification Callout Banner: If Coach gave notes */}
                           {remarksData && (
                             <div
-                              onClick={() => navigate(`/sessions?openSession=${session.id}&tab=notes`)}
+                              onClick={() => navigate(`/achievements?session=${session.id}`)}
                               style={{
                                 display: 'flex',
                                 alignItems: 'center',
@@ -2438,6 +2703,7 @@ const StudentProfile = () => {
                                 e.currentTarget.style.transform = 'none';
                                 e.currentTarget.style.boxShadow = 'none';
                               }}
+                              title="Click to view your remarks in My Achievements"
                             >
                               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                 <span style={{ fontSize: '15px' }}>💬</span>
@@ -2449,12 +2715,12 @@ const StudentProfile = () => {
                                     </span>
                                   </div>
                                   <div style={{ fontSize: '11px', color: '#047857', marginTop: '1px' }}>
-                                    Coach {coachName} added evaluation scores & feedback. Click to open full session.
+                                    Coach {coachName} added evaluation scores & feedback. Click to view in My Achievements.
                                   </div>
                                 </div>
                               </div>
                               <span style={{ fontSize: '11.5px', fontWeight: 800, color: '#059669', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
-                                Open Session &rarr;
+                                View in Achievements &rarr;
                               </span>
                             </div>
                           )}
@@ -2462,10 +2728,10 @@ const StudentProfile = () => {
                           {/* Bottom Row: Coach & Review link + View Details */}
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', fontSize: '12px', flexWrap: 'wrap', marginTop: '2px' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                              <span 
-                                style={{ 
-                                  color: '#0F766E', 
-                                  fontWeight: 700, 
+                              <span
+                                style={{
+                                  color: '#0F766E',
+                                  fontWeight: 700,
                                   cursor: (coachName && coachName !== 'Surf Coach') ? 'pointer' : 'default',
                                   display: 'inline-flex',
                                   alignItems: 'center',
@@ -2483,28 +2749,6 @@ const StudentProfile = () => {
                                   ★ Review
                                 </span>
                               </span>
-
-                              {remarksData && (
-                                <button
-                                  type="button"
-                                  onClick={() => navigate(`/sessions?openSession=${session.id}&tab=notes`)}
-                                  style={{
-                                    background: '#ECFDF5',
-                                    color: '#065F46',
-                                    border: '1px solid #A7F3D0',
-                                    borderRadius: '6px',
-                                    padding: '2px 8px',
-                                    fontSize: '11.5px',
-                                    fontWeight: 800,
-                                    cursor: 'pointer',
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '4px'
-                                  }}
-                                >
-                                  <span>💬 See your remarks</span>
-                                </button>
-                              )}
                             </div>
 
                             <button
@@ -2652,10 +2896,10 @@ const StudentProfile = () => {
                             )}
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', flexWrap: 'wrap' }}>
-                            <span 
-                              style={{ 
-                                color: '#0F766E', 
-                                fontWeight: 700, 
+                            <span
+                              style={{
+                                color: '#0F766E',
+                                fontWeight: 700,
                                 cursor: session.instructor ? 'pointer' : 'default',
                                 display: 'inline-flex',
                                 alignItems: 'center',
@@ -2688,8 +2932,24 @@ const StudentProfile = () => {
           <div className="sp-col-right">
             {/* Video Analysis */}
             <div className="sp-card">
-              <h2 className="sp-card-title">Video Analysis</h2>
-              {((student.sessions || []).filter(s => s.video_url || s.video)).length === 0 ? (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+                <h2 className="sp-card-title" style={{ margin: 0 }}>Video Analysis</h2>
+                {allUploadedVideos.length > 0 && (
+                  <span style={{
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    background: '#ECFDF5',
+                    color: '#047857',
+                    border: '1px solid #A7F3D0',
+                    padding: '2px 9px',
+                    borderRadius: '12px'
+                  }}>
+                    {allUploadedVideos.length} {allUploadedVideos.length === 1 ? 'Uploaded Video' : 'Uploaded Videos'}
+                  </span>
+                )}
+              </div>
+
+              {allUploadedVideos.length === 0 ? (
                 <div style={{
                   display: 'flex',
                   flexDirection: 'column',
@@ -2710,18 +2970,70 @@ const StudentProfile = () => {
                 </div>
               ) : (
                 <div className="sp-video-grid">
-                  {(student.sessions || []).filter(s => s.video_url || s.video).map((sess, idx) => (
-                    <div key={sess.id || idx} className="sp-video-card" style={{ background: '#0F172A' }}>
-                      <div className="sp-video-overlay">
-                        <div className="sp-video-status status-teal">
-                          ANALYZED
-                        </div>
-                        <div className="sp-play-btn" onClick={() => window.open(sess.video_url || sess.video, '_blank')}>
-                          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/></svg>
+                  {allUploadedVideos.map((vidItem, idx) => {
+                    const vUrl = vidItem.url;
+                    const sessDate = vidItem.date || `Session #${idx + 1}`;
+                    const coachTxt = vidItem.coach || '';
+                    return (
+                      <div
+                        key={vidItem.id || idx}
+                        className="sp-video-card"
+                        style={{ background: '#0F172A', position: 'relative', overflow: 'hidden' }}
+                        title={`Open video analysis for ${sessDate} (${vidItem.title})`}
+                      >
+                        {vUrl && (
+                          <video
+                            src={`${vUrl}#t=0.5`}
+                            preload="metadata"
+                            style={{
+                              position: 'absolute',
+                              top: 0,
+                              left: 0,
+                              width: '100%',
+                              height: '100%',
+                              objectFit: 'cover',
+                              opacity: 0.65
+                            }}
+                          />
+                        )}
+                        <div className="sp-video-overlay" style={{ background: 'linear-gradient(180deg, rgba(15, 23, 42, 0.35) 0%, rgba(15, 23, 42, 0.85) 100%)' }}>
+                          <div className="sp-video-status status-teal" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <span>●</span>
+                            <span>ANALYZED</span>
+                          </div>
+
+                          <div
+                            className="sp-play-btn"
+                            onClick={() => {
+                              const sParam = encodeURIComponent(vidItem.studentName || student?.name || '');
+                              const dParam = encodeURIComponent(vidItem.date || '');
+                              const vParam = encodeURIComponent(vUrl);
+                              navigate(`/analysis?student=${sParam}&date=${dParam}&video=${vParam}`);
+                            }}
+                            title="Click to launch AI Video Analysis"
+                          >
+                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor" /></svg>
+                          </div>
+
+                          <div style={{
+                            position: 'absolute',
+                            bottom: '8px',
+                            left: '10px',
+                            right: '10px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            color: '#F8FAFC',
+                            fontSize: '11px',
+                            fontWeight: 700
+                          }}>
+                            <span>📅 {sessDate}</span>
+                            {coachTxt && <span style={{ opacity: 0.9 }}>🏄 {coachTxt}</span>}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -2730,7 +3042,7 @@ const StudentProfile = () => {
 
 
         {/* EDIT PROFILE MODAL */}
-        {showEditModal && isSchoolAdmin && (
+        {showEditModal && (
           <div className="sp-modal-overlay">
             <div className="sp-modal glass">
               <div className="sp-modal-header">
@@ -2749,19 +3061,19 @@ const StudentProfile = () => {
                       )}
                     </div>
                     <div style={{ flex: 1 }}>
-                      <button 
-                        type="button" 
+                      <button
+                        type="button"
                         onClick={() => modalPhotoInputRef.current?.click()}
                         style={{ background: '#0D9488', color: '#FFF', border: 'none', padding: '8px 14px', borderRadius: '8px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}
                       >
                         📷 Change Profile Photo
                       </button>
-                      <input 
-                        type="file" 
-                        ref={modalPhotoInputRef} 
-                        accept="image/*" 
-                        style={{ display: 'none' }} 
-                        onChange={handlePhotoUpload} 
+                      <input
+                        type="file"
+                        ref={modalPhotoInputRef}
+                        accept="image/*"
+                        style={{ display: 'none' }}
+                        onChange={handlePhotoUpload}
                       />
                     </div>
                   </div>
@@ -2771,7 +3083,7 @@ const StudentProfile = () => {
                     <label>Full Name</label>
                     <input type="text" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} required />
                   </div>
-                  
+
                   {/* Phone & Group Size */}
                   <div className="sp-form-row">
                     <div className="sp-form-field">
@@ -2780,11 +3092,11 @@ const StudentProfile = () => {
                     </div>
                     <div className="sp-form-field">
                       <label>Accompanying Guests</label>
-                      <input 
-                        type="text" 
-                        value={editForm.guests_details && editForm.guests_details.length > 0 ? `${editForm.guests_details.length} Guests Registered` : 'No Guests'} 
-                        disabled 
-                        style={{ background: '#F1F5F9', color: '#64748B', cursor: 'not-allowed', fontWeight: 600 }} 
+                      <input
+                        type="text"
+                        value={editForm.guests_details && editForm.guests_details.length > 0 ? `${editForm.guests_details.length} Guests Registered` : 'No Guests'}
+                        disabled
+                        style={{ background: '#F1F5F9', color: '#64748B', cursor: 'not-allowed', fontWeight: 600 }}
                         title="Accompanying guests can only be registered during sign up"
                       />
                     </div>
@@ -2801,15 +3113,15 @@ const StudentProfile = () => {
                           </span>
                         )}
                       </label>
-                      <input 
-                        type="date" 
-                        value={editForm.dob || ''} 
+                      <input
+                        type="date"
+                        value={editForm.dob || ''}
                         onChange={(e) => {
                           const val = e.target.value;
                           const cAge = calculateAge(val);
                           setEditForm({ ...editForm, dob: val, age: cAge });
-                        }} 
-                        max={new Date().toISOString().split('T')[0]} 
+                        }}
+                        max={new Date().toISOString().split('T')[0]}
                       />
                     </div>
                     <div className="sp-form-field">
@@ -2821,9 +3133,9 @@ const StudentProfile = () => {
                           <span style={{ fontSize: '10px', color: '#94A3B8', fontWeight: 600 }}>🔒 School Admin Only</span>
                         )}
                       </label>
-                      <input 
-                        type="date" 
-                        value={editForm.start_date || ''} 
+                      <input
+                        type="date"
+                        value={editForm.start_date || ''}
                         disabled={!isSchoolAdmin}
                         onChange={(e) => {
                           const newStart = e.target.value;
@@ -2839,7 +3151,7 @@ const StudentProfile = () => {
                             newEnd = `${y}-${m}-${day}`;
                           }
                           setEditForm({ ...editForm, start_date: newStart, end_date: newEnd });
-                        }} 
+                        }}
                         style={{
                           opacity: isSchoolAdmin ? 1 : 0.65,
                           cursor: isSchoolAdmin ? 'pointer' : 'not-allowed',
@@ -2860,11 +3172,11 @@ const StudentProfile = () => {
                           <span style={{ fontSize: '10px', color: '#94A3B8', fontWeight: 600 }}>🔒 School Admin Only</span>
                         )}
                       </label>
-                      <input 
-                        type="date" 
-                        value={editForm.end_date || ''} 
+                      <input
+                        type="date"
+                        value={editForm.end_date || ''}
                         disabled={!isSchoolAdmin}
-                        onChange={(e) => setEditForm({ ...editForm, end_date: e.target.value })} 
+                        onChange={(e) => setEditForm({ ...editForm, end_date: e.target.value })}
                         style={{
                           opacity: isSchoolAdmin ? 1 : 0.65,
                           cursor: isSchoolAdmin ? 'pointer' : 'not-allowed',
@@ -3141,14 +3453,14 @@ const StudentProfile = () => {
                     >
                       {showPassVisible ? (
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
-                          <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
-                          <line x1="1" y1="1" x2="23" y2="23"/>
+                          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                          <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                          <line x1="1" y1="1" x2="23" y2="23" />
                         </svg>
                       ) : (
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                          <circle cx="12" cy="12" r="3"/>
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                          <circle cx="12" cy="12" r="3" />
                         </svg>
                       )}
                     </button>
@@ -3175,14 +3487,14 @@ const StudentProfile = () => {
                     >
                       {showConfirmVisible ? (
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
-                          <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
-                          <line x1="1" y1="1" x2="23" y2="23"/>
+                          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                          <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                          <line x1="1" y1="1" x2="23" y2="23" />
                         </svg>
                       ) : (
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                          <circle cx="12" cy="12" r="3"/>
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                          <circle cx="12" cy="12" r="3" />
                         </svg>
                       )}
                     </button>

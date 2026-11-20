@@ -442,13 +442,16 @@ const Sessions = () => {
     if (currentUser?.name) names.add(currentUser.name.toLowerCase().trim());
     if (currentUser?.student_name) names.add(currentUser.student_name.toLowerCase().trim());
     if (currentUser?.username) names.add(currentUser.username.toLowerCase().trim());
+    if (currentUser?.email) {
+      const prefix = currentUser.email.split('@')[0].toLowerCase().trim();
+      if (prefix) names.add(prefix);
+    }
     if (loggedInStudent?.name) names.add(loggedInStudent.name.toLowerCase().trim());
     return Array.from(names).filter(Boolean);
   }, [currentUser, loggedInStudent]);
 
   const studentCandidateIds = useMemo(() => {
     const ids = new Set();
-    // ONLY include genuine student IDs (from students table), NEVER users.id!
     if (currentUser?.student_id) ids.add(String(currentUser.student_id));
     if (loggedInStudent?.id) ids.add(String(loggedInStudent.id));
     return Array.from(ids).filter(Boolean);
@@ -592,13 +595,25 @@ const Sessions = () => {
   // School Coaches, Students & View Admins can NEVER schedule/configure/delete sessions — view only!
   const canManageSessions = !isViewAdmin && !isStudent && (!isSchoolCoach || isHeadCoach) && Boolean(isAdminOrSuperAdmin || isCoachFreelance || isIndividualSurfer || isHeadCoach);
 
-  // Filter States: Default to Today's date so "Today" live schedule is shown immediately
-  const [dateFilter, setDateFilter] = useState(() => getTodayYYYYMMDD());
-  const [dateRange, setDateRange] = useState(() => ({
+  // Filter States: Default to Today's date for coaches/admins, but 'all' for students so all personal sessions are visible
+  const [dateFilter, setDateFilter] = useState(() => isStudent ? '' : getTodayYYYYMMDD());
+  const [dateRange, setDateRange] = useState(() => isStudent ? ({
+    startDate: '',
+    endDate: '',
+    preset: 'all'
+  }) : ({
     startDate: getTodayYYYYMMDD(),
     endDate: getTodayYYYYMMDD(),
     preset: 'today'
   }));
+
+  // Ensure student accounts always default to all sessions
+  useEffect(() => {
+    if (isStudent && dateRange.preset === 'today') {
+      setDateRange({ startDate: '', endDate: '', preset: 'all' });
+      setDateFilter('');
+    }
+  }, [isStudent]);
   const [slotFilter, setSlotFilter] = useState('All');
   const [instructorFilter, setInstructorFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
@@ -2212,15 +2227,15 @@ const Sessions = () => {
         ? 'Individual / Freelance Coach'
         : (effectiveSchool && !isSuperAdmin ? effectiveSchool : '');
 
-    const url = targetSchool
-      ? `${API}/api/sessions?school=${encodeURIComponent(targetSchool)}`
-      : (isSuperAdmin ? `${API}/api/sessions` : `${API}/api/sessions?school=${encodeURIComponent(effectiveSchool || 'none')}`);
+    const url = (isStudent || isSuperAdmin || !targetSchool)
+      ? `${API}/api/sessions`
+      : `${API}/api/sessions?school=${encodeURIComponent(targetSchool)}`;
 
     fetch(url)
       .then(r => r.json())
       .then(data => {
         const list = Array.isArray(data) ? data : [];
-        if (!isSuperAdmin && effectiveSchool) {
+        if (!isSuperAdmin && !isStudent && effectiveSchool) {
           const normTarget = effectiveSchool.toLowerCase().trim();
           setSessions(list.filter(s => {
             const stSchool = (s.student_school || s.school || '').toLowerCase().trim();
@@ -2246,14 +2261,14 @@ const Sessions = () => {
       .catch(() => { });
 
     // Always fetch student records so loggedInStudent can be resolved immediately
-    const stUrl = (effectiveSchool && !isSuperAdmin && !isStudent)
-      ? `${API}/api/students?school=${encodeURIComponent(effectiveSchool)}`
-      : (isSuperAdmin ? `${API}/api/students?school=all` : `${API}/api/students?school=${encodeURIComponent(effectiveSchool || 'none')}`);
+    const stUrl = (isSuperAdmin || isStudent)
+      ? `${API}/api/students?school=all`
+      : (effectiveSchool ? `${API}/api/students?school=${encodeURIComponent(effectiveSchool)}` : `${API}/api/students?school=all`);
     fetch(stUrl)
       .then(r => r.json())
       .then(data => {
         if (Array.isArray(data)) {
-          if (!isSuperAdmin && effectiveSchool) {
+          if (!isSuperAdmin && !isStudent && effectiveSchool) {
             const normTarget = effectiveSchool.toLowerCase().trim();
             setAllStudentsList(data.filter(s => (s.school || '').toLowerCase().trim() === normTarget));
           } else {
@@ -2331,40 +2346,36 @@ const Sessions = () => {
 
     // Student Role: Strictly isolate to ONLY sessions belonging to this specific student
     if (isStudent) {
-      const myNames = new Set(studentCandidateNames);
+      const myNames = studentCandidateNames;
       const validStudentIds = new Set(studentCandidateIds);
+      const studentSchool = (loggedInStudent?.school || currentUser?.school || currentUser?.school_name || '').toLowerCase().trim();
 
       return sessions.filter(s => {
         const sid = s.student_id ? String(s.student_id) : '';
         const sStudent = (s.student || '').toLowerCase().trim();
         const sStudentName = (s.student_name || '').toLowerCase().trim();
         const sGuest = (s.guest_name || '').toLowerCase().trim();
+        const sSchool = (s.school || s.student_school || '').toLowerCase().trim();
 
-        // 1. If we have verified student IDs for this logged-in student:
-        if (validStudentIds.size > 0 && sid) {
-          if (!validStudentIds.has(sid)) return false;
-          // ID matched — also verify that the session name doesn't belong to a totally different student
-          if (myNames.size > 0 && (sStudent || sStudentName || sGuest)) {
-            return (
-              (sStudent && myNames.has(sStudent)) ||
-              (sStudentName && myNames.has(sStudentName)) ||
-              (sGuest && myNames.has(sGuest))
-            );
-          }
+        // 1. Direct ID match (must belong to verified student ID)
+        if (sid && validStudentIds.has(sid)) {
           return true;
         }
 
-        // 2. If student ID is not yet assigned or session has no student_id:
-        // Strictly match by the logged-in student's real names
-        if (myNames.size > 0) {
-          return (
-            (sStudent && myNames.has(sStudent)) ||
-            (sStudentName && myNames.has(sStudentName)) ||
-            (sGuest && myNames.has(sGuest))
-          );
+        // 2. Cross-school protection: if student belongs to a specific school, sessions from other schools NEVER match
+        if (studentSchool && sSchool && sSchool !== studentSchool && studentSchool !== 'all') {
+          return false;
         }
 
-        return false;
+        // 3. Exact full name match only
+        const nameMatch = myNames.some(n => {
+          if (!n || n.length < 2) return false;
+          return (sStudent && sStudent === n) ||
+                 (sStudentName && sStudentName === n) ||
+                 (sGuest && sGuest === n);
+        });
+
+        return nameMatch;
       });
     }
 
@@ -2804,22 +2815,30 @@ const Sessions = () => {
   }, [roleScopedSessions]);
 
   const todayISO = getTodayYYYYMMDD();
-  const hasActiveFilters =
-    Boolean(dateFilter && dateFilter !== todayISO) ||
-    Boolean(dateRange && (dateRange.preset !== 'today' || dateRange.startDate !== todayISO || dateRange.endDate !== todayISO)) ||
-    slotFilter !== 'All' ||
-    instructorFilter !== 'All' ||
-    statusFilter !== 'All' ||
-    searchQuery.trim() !== '';
+  const hasActiveFilters = isStudent
+    ? Boolean(dateFilter || (dateRange && dateRange.preset !== 'all') || slotFilter !== 'All' || statusFilter !== 'All' || searchQuery.trim() !== '')
+    : (
+      Boolean(dateFilter && dateFilter !== todayISO) ||
+      Boolean(dateRange && (dateRange.preset !== 'today' || dateRange.startDate !== todayISO || dateRange.endDate !== todayISO)) ||
+      slotFilter !== 'All' ||
+      instructorFilter !== 'All' ||
+      statusFilter !== 'All' ||
+      searchQuery.trim() !== ''
+    );
 
   const resetFilters = () => {
-    const today = getTodayYYYYMMDD();
-    setDateFilter(today);
-    setDateRange({
-      startDate: today,
-      endDate: today,
-      preset: 'today'
-    });
+    if (isStudent) {
+      setDateRange({ startDate: '', endDate: '', preset: 'all' });
+      setDateFilter('');
+    } else {
+      const today = getTodayYYYYMMDD();
+      setDateFilter(today);
+      setDateRange({
+        startDate: today,
+        endDate: today,
+        preset: 'today'
+      });
+    }
     setSlotFilter('All');
     setInstructorFilter('All');
     setStatusFilter('All');

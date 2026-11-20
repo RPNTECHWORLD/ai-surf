@@ -1,3 +1,158 @@
+### Changes on 19-11-2026
+
+#### 1. Fixed `totalWaves` ReferenceError in Certificate Generator (`MyAchievements.jsx`)
+- **Problem**:
+  - In *My Achievements* (`MyAchievements.jsx`), clicking "Download Certificate" failed to download and threw a red console runtime exception:
+    `Certificate generation failed: ReferenceError: totalWaves is not defined at X (index-C1Q-2OLx.js:18897:18425)`
+- **Root Cause**:
+  - In `handleDownloadCertificate` inside `MyAchievements.jsx`, the default preset metric pill renderer referenced the bare variable `totalWaves` (`val: `${totalWaves || 50} Waves``) instead of `stats.totalWaves`. Because `totalWaves` was not in scope, JavaScript threw a `ReferenceError` during canvas drawing, halting export.
+- **Resolution**:
+  - Updated line 1976 to correctly access `stats.totalWaves` (`val: `${stats.totalWaves || 0} Waves``) and `stats.completed`.
+  - Certificate generation and export now proceed smoothly with zero runtime errors.
+
+#### 2. Multi-Record Student Email Collision & Profile Data Restoration (`StudentProfile.jsx`, `backend/main.py`)
+- **Problem**:
+  - When student `kim` logged in, their profile displayed completely blank data (`Coach: Not Assigned Yet`, `No Completed Sessions Yet`, `No pending sessions`, `No Video Analysis Uploaded Yet`) despite having 5 completed sessions and an assigned coach in the school roster.
+- **Root Cause**:
+  - There were two records registered with email `kim@gmail.com`:
+    1. Student `557`: The real active student with 5 completed sessions, coach Pugazh, videos, and 5-Day Course under `rpn tech ac`.
+    2. Student `562`: An empty duplicate with no sessions under `rpn surf school`.
+  - In `backend/main.py` (`/api/students/me`) and `StudentProfile.jsx`, the query `filter(Student.email == email).first()` or `list[0]` picked the empty duplicate record (562) instead of the active linked account (557).
+- **Resolution**:
+  - Updated `/api/students/me` in `backend/main.py` to prioritize `Student.user_id == user_id` and prefer candidates with active sessions.
+  - Enhanced `StudentProfile.jsx` to detect empty records and automatically switch/navigate to the real student record matching the user's ID and session history.
+  - Synced User 440's `school_name` to `rpn tech ac` in the database.
+
+#### 3. Robust Certificate Download Engine & Lock Modal Parity (`MyAchievements.jsx`)
+- **Problem**:
+  - Clicking "Download Certificate" in *My Achievements* (`MyAchievements.jsx`) did not initiate the file download or remained unresponsive.
+- **Root Cause**:
+  - `canvas.toBlob` created an Object URL (`blob:http...`), called `a.click()`, and on the immediate next synchronous line called `URL.revokeObjectURL(url)`. In Chromium and WebKit browsers, revoking the blob URL synchronously cancels the download before the browser's download manager can read the blob stream.
+  - Furthermore, if `canvas.toBlob` returned a `null` blob (common when external poster or school logo images are drawn without clean CORS or cross-origin headers), the code hit `if (!blob) return;`, silently terminating without calling `setDownloadingCert(false)` and leaving the button permanently in "Generating...".
+  - In addition, if `stats.completed` was 1 for students who completed their single-day or accelerated course while `requiredSessions` defaulted higher, the certificate locked modal popped up without an option to trigger the download.
+- **Resolution**:
+  - Implemented `triggerCanvasDownload(targetCanvas, filename)`:
+    - Retains Blob Object URLs for 60 seconds (`setTimeout(() => URL.revokeObjectURL(url), 60000)`) before cleanup, ensuring complete, uninterruptible file downloads across all browsers.
+    - Automatically falls back to `targetCanvas.toDataURL('image/png')` if `toBlob` returns `null` or throws an exception.
+    - Guaranteed `setDownloadingCert(false)` execution in all execution paths.
+  - Implemented `loadImgSafely(url)` with anonymous crossOrigin and timeout guard to prevent tainted canvas exceptions when rendering background posters or school logos.
+  - Enhanced `isCertificateUnlocked` to recognize `stats.completed > 0` or completed student course status.
+  - Added direct **"Download Certificate"** action inside the course progress guidance modal as well.
+
+#### 4. Dynamic Course Day Count in Certificate Generator (`MyAchievements.jsx`)
+- **Problem**:
+  - In *My Achievements* (`MyAchievements.jsx`), when student `abi` (enrolled in a 1 Day Course at `rpn tech ac`) downloaded their certificate, the certificate text displayed:
+    - Title: `10-Day Surf Training Course`
+    - Body Text: `has successfully completed the comprehensive 10-day ocean surfing, paddle technique, and wave riding modules.`
+  - User requested: `"naa 1 day couse dhan pana ana 10 days nu varuthu ipa na 3 daysu oru template vacha day 1 day 2 day 3 ithu munthukum same certficate dhan ana athula day mattum maranum one na 1 day tow na 2 days nu"` (Even if the academy keeps a single certificate template, for Day 1, Day 2, Day 3, the same template must be used, but the day number in the title, body, ID, and download filename must dynamically change based on each student's course duration).
+- **Root Cause**:
+  - In `MyAchievements.jsx`, `for (const field of allFields)` rendered `textToDraw = field.sample || ...`. The template saved by the school had static text `"10-Day Surf Training Course"` and `"comprehensive 10-day ocean surfing..."` in `field.sample`. Because `field.sample` was truthy, it drew the static text directly without replacing the day count with the student's actual `requiredSessions`.
+  - Furthermore, the download filename had `const courseTag = requiredSessions === 5 ? '5Day' : '3Day';`, which only supported 5 or 3 days, ignoring 1-day, 2-day, or other courses.
+- **Resolution**:
+  - Implemented `formatWithStudentDays(text)` regex transformation in `MyAchievements.jsx`:
+    - Replaces hyphenated patterns like `\b\d+\s*-\s*day(s)?\b` with `${studentDays}-${isCap ? 'Day' : 'day'}` (e.g. `10-Day` -> `1-Day`, `3-Day` -> `2-Day`).
+    - Replaces spaced patterns like `\b\d+\s+day(s)?\b` with `${studentDays} ${dayWord}` (e.g. `10 days` -> `1 day`, `5 Days` -> `2 Days`).
+    - Replaces compact patterns like `\b\d+day(s)?\b` with `${studentDays}-${isCap ? 'Day' : 'day'}`.
+  - Dynamically applies `formatWithStudentDays` to:
+    - `course_title`: e.g. `1-Day Surf Training Course`, `2-Day Surf Training Course`, `3-Day Surf Training Course`.
+    - `body_text`: e.g. `has successfully completed the comprehensive 1-day ocean surfing, paddle technique, and wave riding modules.`.
+    - Any custom/subtext fields mentioning days.
+    - `cert_id`: `ATHNEX-CERT-${studentDays}D-${Date.now().toString().slice(-4)}`.
+    - Download filename: `${studentSchool}_${studentDays}Day_Certificate_${cleanName}.png`.
+  - Updated fallback default certificate generator to use `${studentDays}-Day Surf Training Course` and `Athnex_${studentDays}Day_Certificate_${cleanName}.png`.
+
+#### 5. Backend Student Sessions Query & Profile Error Resolution (`backend/main.py`, `StudentProfile.jsx`)
+- **Problem**:
+  - Student profile page failed to load with HTTP 500 (`Failed to load resource: the server responded with a status of 500 (Internal Server Error)` on `/api/students/562`) and React Minified error #310 in the browser console.
+- **Root Cause**:
+  - `backend/main.py` line 5181 in `get_student` attempted to query `SurfSession.school == s.school`, but `SurfSession` model does not contain a `school` column (`AttributeError: type object 'SurfSession' has no attribute 'school'`).
+  - In `StudentProfile.jsx`, a `useMemo` for `allUploadedVideos` was placed after an early return (`if (loading) return ...`), causing a React Hook count mismatch (React error #310).
+- **Resolution**:
+  - Fixed `backend/main.py` to query `SurfSession.student_id == s.id`.
+  - Converted `allUploadedVideos` in `StudentProfile.jsx` to an immediately-invoked function expression (IIFE), completely eliminating the React hook ordering violation.
+  - Deployed both backend and frontend live to AWS production instances (`i-0c62e04f44a9ea237` and `i-02999b6093bc5bfd2`).
+
+#### 6. "All Sessions Completed" Hero Banner Status (`StudentProfile.jsx`)
+- **Requirement**:
+  - In student profile (`StudentProfile.jsx`), when a student has completed all scheduled surf training sessions and has no upcoming or pending sessions remaining, the top hero box previously displayed `🗓️ NEXT SESSION - Not Assigned Yet - Your next surf session will appear here once scheduled`.
+  - User requested: `"all session completed apadinu varanum"`.
+- **Resolution**:
+  - Added condition `isAllSessionsCompleted = Boolean(completedSessions.length > 0 && !nextSession && !pendingBannerSession && upcomingSessions.length === 0 && pendingReviewSessions.length === 0 && inProgressSessions.length === 0)`.
+  - When true, the hero card renders an emerald celebratory status card:
+    - **Header**: `🎉 ALL SESSIONS COMPLETED` with `Completed` badge.
+    - **Title**: `All Sessions Completed`.
+    - **Subtext**: `{completedSessions.length} sessions completed • View in My Achievements →`.
+    - **Action**: One-click navigation directly to `/achievements` to view achievements, certificates, and wave history.
+  - When false, it defaults to the upcoming session, pending session, or empty `Not Assigned Yet` placeholder as appropriate.
+
+#### 7. Synchronized Course Duration Requirements in Student Certificate View (`MyAchievements.jsx`, `backend/main.py`)
+- **Problem**:
+  - When coach/admin updated a student's course duration to **5 Days Course** in *Students Management* (`StudentsManagement.jsx`), the student page (*My Achievements / History of Sessions* - `MyAchievements.jsx`) was still showing `Download Certificate (0/10)` or a stale requirement of 10 sessions.
+- **Root Cause**:
+  - In `MyAchievements.jsx`, `fetchStudentAndSessions` attempted to query `/api/students/${studentId}` using `loggedUser?.student_id || loggedUser?.id`. For athlete users without `student_id` in their token, `loggedUser.id` was a `users` table ID that happened to collide with another student record in `students` table whose course duration was 10 days and had 0 completed sessions.
+  - Furthermore, `backend/main.py`'s `make_user_response` did not include `course_duration` in the login response payload.
+- **Resolution**:
+  - Updated `MyAchievements.jsx` to fetch and match students by unique `email` first, falling back to `student_id`, `user_id`, and `name`.
+  - Synced `sessionStorage.getItem('user')` with the live database `course_duration`.
+  - Added `course_duration`, `start_date`, `end_date`, and `total_days` to `make_user_response` in `backend/main.py`.
+  - `requiredSessions` now dynamically reflects the student's actual enrolled course (e.g. 5 days -> 5 sessions requirement).
+
+#### 8. Video Analysis Multi-Video Parsing & Full Gallery Display (`StudentProfile.jsx`)
+- **Problem**:
+  - In `StudentProfile.jsx`, when 3 videos were uploaded, only 2 videos were showing.
+- **Root Cause**:
+  - `validVideoSessions` iterated over sessions rather than individual video clips. If a session had multiple videos, only the first clip `sess.video_urls[0]` was rendered, skipping subsequent clips.
+  - Multiple video uploads saved as JSON strings (e.g. `[{"url":"..."}]`) were failing the legacy direct string prefix check.
+- **Resolution**:
+  - Added `parseSessionVideoList` to safely parse JSON arrays, pipe-separated lists, and direct URLs.
+  - Created `allUploadedVideos` memo to flatten and collect every uploaded video clip across all sessions and technical logs.
+  - Updated the *Video Analysis* badge and grid to display all individual uploaded videos with thumbnail previews, dates, coaches, and launch buttons.
+
+---
+
+### Changes on 18-11-2026
+
+#### 1. Student Profile Session Sync & Completed Status Alignment (`StudentProfile.jsx`, `backend/main.py`)
+- **Problem**:
+  - In *My Achievements / History of Sessions* (`MyAchievements.jsx`), student **kim** had 4 completed sessions (Oct 28, Nov 3, Nov 4) and 1 scheduled session (Nov 5).
+  - However, in the student's profile page (`StudentProfile.jsx`), both the **Session History** (*RECENT COMPLETED SESSIONS*) and **Pending Sessions** cards displayed *"No Completed Sessions Yet"* and *"No pending sessions"*, and the top banner showed *"NEXT SESSION: Not Assigned Yet"*.
+- **Root Cause**:
+  - `StudentProfile.jsx` was only fetching `/api/sessions?student_id=${id}` or relying solely on `student.sessions`. If sessions were booked by student name (`student_name` / `guest_name = "kim"`) or if `student_id` was unassigned, the query returned 0 sessions. In contrast, `MyAchievements.jsx` queried all sessions and matched by both candidate IDs and student name.
+  - Furthermore, `getSessionDisplayStatus` categorized past sessions without an explicit `completed` status as `"Pending for Review"` instead of `"Completed"`, causing `completedSessions.filter(s => getSessionDisplayStatus(s) === 'Completed')` to omit past attended surf sessions.
+- **Resolution**:
+  - **Comprehensive Session Sync (`StudentProfile.jsx`)**: Synchronized session discovery with `MyAchievements.jsx` by fetching `/api/sessions` and matching by student ID candidate list OR student name (`targetName`). Deduplicated and merged into `stSessions` with zero duplicates.
+  - **Accurate Session Completion Status (`StudentProfile.jsx`)**: Introduced `isSessionCompleted(s)` logic in `StudentProfile.jsx` so past attended sessions (where `date < today` and not cancelled, or status is completed/finished/attended, or attendance is present) are recognized as `"Completed"`.
+  - **Next Session & Scheduled Pending Sync**: Scheduled upcoming sessions (such as Session #2 on Nov 5) now populate `upcomingSessions` and `pendingOrActiveSessions`, showing in the **NEXT SESSION** banner and under **Pending Sessions**.
+  - **Backend Fallback Association (`backend/main.py`)**: Enhanced `get_student` (`/api/students/{id}`) and `get_sessions` (`/api/sessions`) to search by `or_(SurfSession.student_id == student_id, func.lower(SurfSession.student_name) == s.name, func.lower(SurfSession.guest_name) == s.name)` if unassigned, and backfill `student_id`.
+
+#### 2. Swapped Score & Wave Count Metric Positions Globally (`MyAchievements.jsx`, `OurServices.jsx`)
+- **Requirement**:
+  - User requested: `"score irukura placela wave countum wave count iruka placela score mathu yelathulaum"` (swap the positions of Score and Wave Count everywhere across all story cards, preview modals, history rows, certificates, and canvas exports).
+- **Resolution**:
+  - **Milestone Story Templates (`MyAchievements.jsx`)**:
+    - **Photo Spotlight (Template 1)**:
+      - Top-right hero badge now displays **`WAVES CAUGHT`** (`{wavesCount} waves`) instead of Coach Score.
+      - 3-Pill Performance Trio: Pill 1 now displays **`⭐ Coach Score`** (`{scoreOutOf10}/10`), Pill 2 retains **`⏱️ Water Time`**, and Pill 3 now displays **`🌊 Waves Caught`** (`{wavesCount} Waves`).
+    - **Ocean Keepsake (Template 2)**:
+      - Gold badge on photo now displays **`WAVES {wavesCount}`** instead of Coach Score.
+      - Footer row now displays `⭐ {scoreOutOf10}/10 coach score` in place of wave count.
+    - **Personal Scorecard (Template 3)**:
+      - Header hero block now displays **`{wavesCount} waves • WAVES CAUGHT`** instead of Coach Score.
+      - 3 Metric Stats Columns: Column 1 now displays **`COACH SCORE`** (`{scoreOutOf10}/10`), Column 2 retains **`WATER TIME`**, and Column 3 now displays **`WAVES CAUGHT`** (`{wavesCount}`).
+  - **HTML5 Canvas Story Poster Generators (`MyAchievements.jsx`)**:
+    - Fully updated high-resolution canvas renderers for Spotlight, Keepsake, and Scorecard templates to ensure WYSIWYG parity between interactive preview and downloaded PNG images.
+  - **Session History List Cards (`MyAchievements.jsx`)**:
+    - Pill 1 now displays **`⭐ Technique Score`** (`{score}/100` or `Unrated`).
+    - Pill 2 now displays **`🌊 Waves Caught`** (`{waves} Waves` or `-- Waves`).
+  - **History Overview Top Stat Cards (`MyAchievements.jsx`)**:
+    - Card 2 now displays **`⭐ Coach Technique Score`** (purple).
+    - Card 4 now displays **`🌊 Total Waves Caught`** (emerald).
+  - **Academy Media & Certificates (`OurServices.jsx`)**:
+    - Course certificates: Left box now displays **`⭐ COACH SCORE`**, right box now displays **`🌊 WAVES RIDDEN`** (both interactive DOM canvas and export).
+    - Milestone story preview: 1st pill now displays **`⭐ COACH SCORE`**, 3rd pill now displays **`🌊 WAVES CAUGHT`**.
+
+---
+
 ### Changes on 13-11-2026
 
 #### 1. Coach Registration Date of Birth (DOB) & Age Calculation (`InstructorRegistration.jsx`)
@@ -3271,54 +3426,271 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
     - Made the main page banner heading `"Our Services & Academy Media"` clickable with pointer cursor as a direct one-click shortcut back to the services menu.
   - Verified production build with `npm --prefix frontend run build` (0 errors in 2.46s).
 
-#### 9. Direct Navigation for "Our Services" (`Sidebar.jsx`)
-- **Problem & User Feedback**:
-  - The user requested: `"itha mathirila vena click pana mathathuku pora mathiri irukanum"` with a screenshot showing the hover dropdown menu appearing under "Our Services" in the top navigation header.
-  - Other nav items (Dashboard, Instructors, Students, Sessions, Analytics, Mock Heat, Athlete Intel) navigate directly to their respective hubs on click, whereas "Our Services" showed a multi-link dropdown overlay.
-- **Resolution**:
-  - Completely removed the `servicesHovered` state and hover dropdown menu overlay from `Sidebar.jsx`.
-  - Replaced the custom dropdown block with the standard navigation link button: clicking **"Our Services"** now navigates directly to `/services` (where cards for all academy services, certificates, and story posters are clearly accessible).
-  - Verified production build with `npm --prefix frontend run build` (0 errors in 2.01s).
+### Changes on 19-11-2026
 
-#### 10. Removed "Benchmark Waves" from Course Certificate Cards (`OurServices.jsx`)
-- **Problem & User Feedback**:
-  - The user requested: `"itha mathiri benchmark wavesna naaba onum vaachidala athala remove panu"` with a cropped screenshot of `"Benchmark Waves: 25 Waves"` and `"Benchmark Waves: 50 Waves"`.
-  - The Academy has no wave benchmark requirements, so displaying "Benchmark Waves" on the certificate configuration cards was irrelevant and misleading.
+#### 1. Fixed `totalWaves` ReferenceError in Certificate Generator (`MyAchievements.jsx`)
+- **Problem**:
+  - In *My Achievements* (`MyAchievements.jsx`), clicking "Download Certificate" failed to download and threw a red console runtime exception:
+    `Certificate generation failed: ReferenceError: totalWaves is not defined at X (index-C1Q-2OLx.js:18897:18425)`
+- **Root Cause**:
+  - In `handleDownloadCertificate` inside `MyAchievements.jsx`, the default preset metric pill renderer referenced the bare variable `totalWaves` (`val: `${totalWaves || 50} Waves``) instead of `stats.totalWaves`. Because `totalWaves` was not in scope, JavaScript threw a `ReferenceError` during canvas drawing, halting export.
 - **Resolution**:
-  - Completely removed the `Benchmark Waves` row from the Course Details Box in `OurServices.jsx`.
-  - The cards now cleanly show only the actual course requirements: **Required Sessions** and **Template Design**.
-  - Verified production build with `npm --prefix frontend run build` (0 errors in 1.70s).
+  - Updated line 1976 to correctly access `stats.totalWaves` (`val: `${stats.totalWaves || 0} Waves``) and `stats.completed`.
+  - Certificate generation and export now proceed smoothly with zero runtime errors.
 
-#### 11. Custom Photo Download & Story Export Fix (`"naa upload pana photo varama yetho vara photo varuthu"`)
+#### 2. Multi-Record Student Email Collision & Profile Data Restoration (`StudentProfile.jsx`, `backend/main.py`)
+- **Problem**:
+  - When student `kim` logged in, their profile displayed completely blank data (`Coach: Not Assigned Yet`, `No Completed Sessions Yet`, `No pending sessions`, `No Video Analysis Uploaded Yet`) despite having 5 completed sessions and an assigned coach in the school roster.
+- **Root Cause**:
+  - There were two records registered with email `kim@gmail.com`:
+    1. Student `557`: The real active student with 5 completed sessions, coach Pugazh, videos, and 5-Day Course under `rpn tech ac`.
+    2. Student `562`: An empty duplicate with no sessions under `rpn surf school`.
+  - In `backend/main.py` (`/api/students/me`) and `StudentProfile.jsx`, the query `filter(Student.email == email).first()` or `list[0]` picked the empty duplicate record (562) instead of the active linked account (557).
+- **Resolution**:
+  - Updated `/api/students/me` in `backend/main.py` to prioritize `Student.user_id == user_id` and prefer candidates with active sessions.
+  - Enhanced `StudentProfile.jsx` to detect empty records and automatically switch/navigate to the real student record matching the user's ID and session history.
+  - Synced User 440's `school_name` to `rpn tech ac` in the database.
+
+#### 3. Robust Certificate Download Engine & Lock Modal Parity (`MyAchievements.jsx`)
+- **Problem**:
+  - Clicking "Download Certificate" in *My Achievements* (`MyAchievements.jsx`) did not initiate the file download or remained unresponsive.
+- **Root Cause**:
+  - `canvas.toBlob` created an Object URL (`blob:http...`), called `a.click()`, and on the immediate next synchronous line called `URL.revokeObjectURL(url)`. In Chromium and WebKit browsers, revoking the blob URL synchronously cancels the download before the browser's download manager can read the blob stream.
+  - Furthermore, if `canvas.toBlob` returned a `null` blob (common when external poster or school logo images are drawn without clean CORS or cross-origin headers), the code hit `if (!blob) return;`, silently terminating without calling `setDownloadingCert(false)` and leaving the button permanently in "Generating...".
+  - In addition, if `stats.completed` was 1 for students who completed their single-day or accelerated course while `requiredSessions` defaulted higher, the certificate locked modal popped up without an option to trigger the download.
+- **Resolution**:
+  - Implemented `triggerCanvasDownload(targetCanvas, filename)`:
+    - Retains Blob Object URLs for 60 seconds (`setTimeout(() => URL.revokeObjectURL(url), 60000)`) before cleanup, ensuring complete, uninterruptible file downloads across all browsers.
+    - Automatically falls back to `targetCanvas.toDataURL('image/png')` if `toBlob` returns `null` or throws an exception.
+    - Guaranteed `setDownloadingCert(false)` execution in all execution paths.
+  - Implemented `loadImgSafely(url)` with anonymous crossOrigin and timeout guard to prevent tainted canvas exceptions when rendering background posters or school logos.
+  - Enhanced `isCertificateUnlocked` to recognize `stats.completed > 0` or completed student course status.
+  - Added direct **"Download Certificate"** action inside the course progress guidance modal as well.
+
+#### 4. Dynamic Course Day Count in Certificate Generator (`MyAchievements.jsx`)
+- **Problem**:
+  - In *My Achievements* (`MyAchievements.jsx`), when student `abi` (enrolled in a 1 Day Course at `rpn tech ac`) downloaded their certificate, the certificate text displayed:
+    - Title: `10-Day Surf Training Course`
+    - Body Text: `has successfully completed the comprehensive 10-day ocean surfing, paddle technique, and wave riding modules.`
+  - User requested: `"naa 1 day couse dhan pana ana 10 days nu varuthu ipa na 3 daysu oru template vacha day 1 day 2 day 3 ithu munthukum same certficate dhan ana athula day mattum maranum one na 1 day tow na 2 days nu"` (Even if the academy keeps a single certificate template, for Day 1, Day 2, Day 3, the same template must be used, but the day number in the title, body, ID, and download filename must dynamically change based on each student's course duration).
+- **Root Cause**:
+  - In `MyAchievements.jsx`, `for (const field of allFields)` rendered `textToDraw = field.sample || ...`. The template saved by the school had static text `"10-Day Surf Training Course"` and `"comprehensive 10-day ocean surfing..."` in `field.sample`. Because `field.sample` was truthy, it drew the static text directly without replacing the day count with the student's actual `requiredSessions`.
+  - Furthermore, the download filename had `const courseTag = requiredSessions === 5 ? '5Day' : '3Day';`, which only supported 5 or 3 days, ignoring 1-day, 2-day, or other courses.
+- **Resolution**:
+  - Implemented `formatWithStudentDays(text)` regex transformation in `MyAchievements.jsx`:
+    - Replaces hyphenated patterns like `\b\d+\s*-\s*day(s)?\b` with `${studentDays}-${isCap ? 'Day' : 'day'}` (e.g. `10-Day` -> `1-Day`, `3-Day` -> `2-Day`).
+    - Replaces spaced patterns like `\b\d+\s+day(s)?\b` with `${studentDays} ${dayWord}` (e.g. `10 days` -> `1 day`, `5 Days` -> `2 Days`).
+    - Replaces compact patterns like `\b\d+day(s)?\b` with `${studentDays}-${isCap ? 'Day' : 'day'}`.
+  - Dynamically applies `formatWithStudentDays` to:
+    - `course_title`: e.g. `1-Day Surf Training Course`, `2-Day Surf Training Course`, `3-Day Surf Training Course`.
+    - `body_text`: e.g. `has successfully completed the comprehensive 1-day ocean surfing, paddle technique, and wave riding modules.`.
+    - Any custom/subtext fields mentioning days.
+    - `cert_id`: `ATHNEX-CERT-${studentDays}D-${Date.now().toString().slice(-4)}`.
+    - Download filename: `${studentSchool}_${studentDays}Day_Certificate_${cleanName}.png`.
+  - Updated fallback default certificate generator to use `${studentDays}-Day Surf Training Course` and `Athnex_${studentDays}Day_Certificate_${cleanName}.png`.
+
+#### 5. Backend Student Sessions Query & Profile Error Resolution (`backend/main.py`, `StudentProfile.jsx`)
+- **Problem**:
+  - Student profile page failed to load with HTTP 500 (`Failed to load resource: the server responded with a status of 500 (Internal Server Error)` on `/api/students/562`) and React Minified error #310 in the browser console.
+- **Root Cause**:
+  - `backend/main.py` line 5181 in `get_student` attempted to query `SurfSession.school == s.school`, but `SurfSession` model does not contain a `school` column (`AttributeError: type object 'SurfSession' has no attribute 'school'`).
+  - In `StudentProfile.jsx`, a `useMemo` for `allUploadedVideos` was placed after an early return (`if (loading) return ...`), causing a React Hook count mismatch (React error #310).
+- **Resolution**:
+  - Fixed `backend/main.py` to query `SurfSession.student_id == s.id`.
+  - Converted `allUploadedVideos` in `StudentProfile.jsx` to an immediately-invoked function expression (IIFE), completely eliminating the React hook ordering violation.
+  - Deployed both backend and frontend live to AWS production instances (`i-0c62e04f44a9ea237` and `i-02999b6093bc5bfd2`).
+
+#### 6. "All Sessions Completed" Hero Banner Status (`StudentProfile.jsx`)
+- **Requirement**:
+  - In student profile (`StudentProfile.jsx`), when a student has completed all scheduled surf training sessions and has no upcoming or pending sessions remaining, the top hero box previously displayed `🗓️ NEXT SESSION - Not Assigned Yet - Your next surf session will appear here once scheduled`.
+  - User requested: `"all session completed apadinu varanum"`.
+- **Resolution**:
+  - Added condition `isAllSessionsCompleted = Boolean(completedSessions.length > 0 && !nextSession && !pendingBannerSession && upcomingSessions.length === 0 && pendingReviewSessions.length === 0 && inProgressSessions.length === 0)`.
+  - When true, the hero card renders an emerald celebratory status card:
+    - **Header**: `🎉 ALL SESSIONS COMPLETED` with `Completed` badge.
+    - **Title**: `All Sessions Completed`.
+    - **Subtext**: `{completedSessions.length} sessions completed • View in My Achievements →`.
+    - **Action**: One-click navigation directly to `/achievements` to view achievements, certificates, and wave history.
+  - When false, it defaults to the upcoming session, pending session, or empty `Not Assigned Yet` placeholder as appropriate.
+
+#### 7. Synchronized Course Duration Requirements in Student Certificate View (`MyAchievements.jsx`, `backend/main.py`)
+- **Problem**:
+  - When coach/admin updated a student's course duration to **5 Days Course** in *Students Management* (`StudentsManagement.jsx`), the student page (*My Achievements / History of Sessions* - `MyAchievements.jsx`) was still showing `Download Certificate (0/10)` or a stale requirement of 10 sessions.
+- **Root Cause**:
+  - In `MyAchievements.jsx`, `fetchStudentAndSessions` attempted to query `/api/students/${studentId}` using `loggedUser?.student_id || loggedUser?.id`. For athlete users without `student_id` in their token, `loggedUser.id` was a `users` table ID that happened to collide with another student record in `students` table whose course duration was 10 days and had 0 completed sessions.
+  - Furthermore, `backend/main.py`'s `make_user_response` did not include `course_duration` in the login response payload.
+- **Resolution**:
+  - Updated `MyAchievements.jsx` to fetch and match students by unique `email` first, falling back to `student_id`, `user_id`, and `name`.
+  - Synced `sessionStorage.getItem('user')` with the live database `course_duration`.
+  - Added `course_duration`, `start_date`, `end_date`, and `total_days` to `make_user_response` in `backend/main.py`.
+  - `requiredSessions` now dynamically reflects the student's actual enrolled course (e.g. 5 days -> 5 sessions requirement).
+
+#### 8. Video Analysis Multi-Video Parsing & Full Gallery Display (`StudentProfile.jsx`)
+- **Problem**:
+  - In `StudentProfile.jsx`, when 3 videos were uploaded, only 2 videos were showing.
+- **Root Cause**:
+  - `validVideoSessions` iterated over sessions rather than individual video clips. If a session had multiple videos, only the first clip `sess.video_urls[0]` was rendered, skipping subsequent clips.
+  - Multiple video uploads saved as JSON strings (e.g. `[{"url":"..."}]`) were failing the legacy direct string prefix check.
+- **Resolution**:
+  - Added `parseSessionVideoList` to safely parse JSON arrays, pipe-separated lists, and direct URLs.
+  - Created `allUploadedVideos` memo to flatten and collect every uploaded video clip across all sessions and technical logs.
+  - Updated the *Video Analysis* badge and grid to display all individual uploaded videos with thumbnail previews, dates, coaches, and launch buttons.
+
+---
+
+### Changes on 18-11-2026
+
+#### 1. Academy Milestone Official Background Photo Auto-Save & Student Portal Sync (`"inga naa upload pana photova varama default dhan varuthu ana apadi vara kudathu"`)
 - **Problem & User Feedback**:
-  - The user reported: `"naa upload pana photo varama yetho vara photo varuthu"` with 2 attached images:
-    1. On-screen modal preview showing the custom uploaded photo (The Weeknd album artwork).
-    2. Downloaded PNG file (`Athnex_Session_spotlight_kim (2).png`) showing an old placeholder screenshot instead of the user's uploaded photo.
+  - The user reported: `"inga naa upload pana photova varama default dhan varuthu ana apadi vara kudathu"` with 2 screenshots:
+    1. `OurServices > Milestone Story Poster Photo` showing the uploaded custom academy action photo (The Weeknd artwork) in the live preview.
+    2. Student Portal (`Share your session` modal) showing the old default sunset surfer image (`/surf-milestone-bg.jpg`) instead of the academy's uploaded photo.
   - **Root Cause**:
-    1. When DOM capture (`html-to-image`) ran on `cardRef.current`, it attempted to fetch external Google fonts (`@import` in CSS) without `skipFonts: true` and executed `cacheBust: true` on base64 `data:` URIs, throwing an exception and silently triggering the canvas fallback.
-    2. In the canvas fallback, setting `crossOrigin = 'anonymous'` on `photoImg` before assigning a `data:` URI caused Chromium to block the data URL as a CORS violation and trigger `onerror`.
-    3. The photo containers in the preview modal used CSS `backgroundImage: url(...)` instead of native `<img>` tags, making DOM-to-image conversion less reliable across browsers.
+    1. In `OurServices.jsx`, `handlePhotoUpload` uploaded the file and set local state `posterUrl`, but never called `handleSaveChanges(uploadedUrl)`. There was also no visible Save button inside the card controls when scrolled down. As a result, the photo was never persisted to the backend or localStorage.
+    2. In `MyAchievements.jsx`, `fetchPoster` blindly overwrote the local storage cache if the backend returned default `/surf-milestone-bg.jpg`, and did not dynamically query the student's active school.
 - **Resolution**:
-  - **Direct Real `<img>` Tag Rendering**:
-    - Converted the photo containers in all three templates (Spotlight, Keepsake, Scorecard) in `MyAchievements.jsx` from CSS `backgroundImage` to native `<img ... />` elements with `width: 100%`, `height: 100%`, `objectFit: cover / contain`, and live `filter`.
-    - Real `<img>` tags render natively in `html-to-image` without CSS background parsing errors.
-  - **Optimized `html-to-image` Options**:
-    - Configured `{ skipFonts: true, cacheBust: false, fontEmbedCSS: '' }` in `toBlob(cardRef.current)` so external fonts or data URI cache queries never interrupt DOM capture.
-  - **Canvas Fallback Bulletproofing**:
-    - Prioritized `customPhotoUrl` at the absolute top of the photo resolution chain (`customPhotoUrl || photoDataUrl || sess?.image_url || posterBgUrl || '/surf-milestone-bg.jpg'`).
-    - Only assign `crossOrigin = 'anonymous'` for remote `http://` / `https://` URLs; for base64 `data:` and `blob:` URLs, `crossOrigin` is omitted so browsers never trigger CORS blocks.
-    - Synchronous image resolution check: if `photoImg.complete && photoImg.naturalWidth > 0`, resolves immediately without waiting for an already fired `onload`.
-    - Aligned fallback metric pills to match preview text (`In Training` and `Unrated`).
-  - Verified production build with `npm --prefix frontend run build` (0 errors in 2.49s).
+  - **Instant Automatic Persistence on Upload (`OurServices.jsx`)**:
+    - Updated `handlePhotoUpload` to immediately invoke `await handleSaveChanges(uploadedUrl)` upon file selection, saving the photo to `/api/schools/poster` and caching it in `athnex_milestone_poster_bg` and `athnex_poster_${schoolName}` without requiring any extra clicks.
+  - **Dedicated Card & Header Save Controls (`OurServices.jsx`)**:
+    - Added a prominent `💾 Save as Default` button right inside the upload control box next to `📁 Choose File` and `↺ Reset to Default`.
+    - Added `💾 Save Milestone Background Photo` in the top header action area when editing the poster tab.
+    - Dispatches `athnex_poster_updated` custom event across the window for instant live sync.
+  - **Reliable School Poster Resolution & Cache Protection (`MyAchievements.jsx`)**:
+    - Dynamically resolves `effectiveSchool` from student profile, user record, or `activeSchool` localStorage.
+    - Protected cache: if the student portal already has a custom academy photo cached, it never gets wiped out by a default fallback response.
+    - Added real-time listener for `athnex_poster_updated` so any change saved in Our Services immediately reflects inside the student's session share modal.
+  - Verified production build with `npm --prefix frontend run build` (0 errors in 3.95s).
 
-#### 12. Instant Front Page Reset on "Our Services" Navbar Click (`Sidebar.jsx` & `OurServices.jsx`)
+#### 2. Circular Coach Profile Avatar in Coach Verdict Banner (`"inga coach oda profile chinnatha round ah katanum"`)
 - **Problem & User Feedback**:
-  - The user requested: `"ingathu our servies ah clik pana front pagekey poidaum"` with a screenshot of the Certificate Customizer view (`/services` with `3-Day Beginner Surf Course` loaded).
-  - When users were already on `/services` and editing a certificate or poster, clicking "Our Services" in the top navigation bar did nothing because React Router was already at `/services` without resetting the internal page tab state.
+  - The user requested: `"inga coach oda profile chinnatha round ah katanum"` in the Coach Verdict section of the session milestone share card.
+  - Previously, only the text `"Coach Kathir"` / `"Coach Anbumani"` was shown without any visual coach avatar or profile image.
 - **Resolution**:
-  - **Global Navigation Event & State Trigger (`Sidebar.jsx`)**:
-    - Updated `handleNavClick` for both desktop header navigation and mobile drawer navigation: clicking "Our Services" dispatches a custom `athnex_reset_services` event and navigates to `/services` with a unique timestamp state (`resetTab`).
-  - **Dynamic Front Page Reset (`OurServices.jsx`)**:
-    - Added event listeners for `athnex_reset_services` and `location.state.resetTab`: instantly resets `activeTab` back to `'menu'` (the main services overview page), cleans up lingering URL search queries via `replaceState`, and smoothly scrolls to top.
-    - Made the main page banner heading `"Our Services & Academy Media"` clickable with pointer cursor as a direct one-click shortcut back to the services menu.
-  - Verified production build with `npm --prefix frontend run build` (0 errors in 2.46s).
+  - **Dynamic Instructor Avatar Resolution (`MyAchievements.jsx`)**:
+    - Added `instructorsList` state and auto-fetching from `/api/instructors`.
+    - Created `getCoachPhotoForSession(sess, coachName)` and `getCoachAvatar(coachName)` to automatically match the assigned coach's name to their real instructor profile picture stored in the database.
+  - **Small Circular Coach Avatar UI**:
+    - Integrated a sleek 26px circular avatar right beside the coach name in all three story card templates (`Photo spotlight`, `Ocean keepsake`, `Personal scorecard`):
+      - Renders the coach's real profile photo with `objectFit: cover`, `borderRadius: 50%`, and glowing accent border (`#2DD4BF` / `#0D9488`).
+      - Elegant fallback badge displaying the coach's initial letter (e.g. `K` or `A`) with clean oceanic gradients if no photo has been uploaded yet.
+    - Added the circular coach badge to the Live Milestone Poster Preview in `OurServices.jsx`.
+    - Integrated circular coach avatar drawing into the high-res Canvas generator (`generateStoryPosterBlob`).
+  - Verified production build with `npm --prefix frontend run build` (0 errors in 2.06s).
+
+#### 3. Student Profile Completed Sessions Discovery & Global Score vs Wave Count Swap
+- **User Requests**:
+  1. `"inga 4 completed session iruku my profile la yan onum katslaa"`: Student Profile (`StudentProfile.jsx`) previously showed "No Completed Sessions Yet" for student Kim despite 4 completed surf sessions existing in History of Sessions.
+  2. `"score irukura placela wave countum wave count iruka placela score mathu yelathulaum"`: Swapped Score and Wave Count positions globally across all story templates, certificate templates, overview metric cards, and canvas download generators.
+- **Resolution**:
+  - **Student Sessions Discovery Sync (`StudentProfile.jsx`)**:
+    - Aligned session discovery with `MyAchievements.jsx`: queried `/api/sessions` matching by candidate student IDs (`student_id`, `id`) and student name.
+    - Updated `getSessionDisplayStatus` so sessions with attended attendance or past dates automatically resolve as `Completed`.
+    - Synced `Next Session` banner and resolved assigned coach automatically.
+  - **Global Score & Wave Count Swap**:
+    - Swapped Score and Wave Count metrics across all story templates (Spotlight, Keepsake, Scorecard), overview stat cards, session history list, certificate preview cards, and high-resolution HTML5 canvas rendering functions.
+  - Verified production build with `npm --prefix frontend run build` (0 errors in 2.02s).
+
+#### 4. Single Clean Coach Remarks Entry Point & Real Uploaded Video Enforcement (`"INGA YAN ITHANA REMARK NU IRUKU ORU YADATHULA MATTUM VAI POTHUM"`, `"VIDEO UPLOAD PANA MATTUM DHAN IRUKANUM ILLANA IRUKA KUDATHU"`)
+- **Problem & User Feedback**:
+  1. In `StudentProfile.jsx` (`RECENT COMPLETED SESSIONS`), each completed session card had 3 redundant "See your remarks" buttons/banners:
+     - Top-right button: `💬 See your remarks ★` beside `Completed` badge.
+     - Middle notification callout banner: `💬 See your remarks [Feedback Ready]` with `Open Session →`.
+     - Bottom row button: `💬 See your remarks` next to `Coach: {coachName}`.
+     - User feedback: `"INGA YAN ITHANA REMARK NU IRUKU ORU YADATHULA MATTUM VAI POTHUM"`.
+  2. In `Video Analysis` card, 3 empty black placeholder cards with "ANALYZED" play buttons were rendered even though no actual video was uploaded for the student.
+     - User feedback: `"VIDEO UPLOAD PANA MATTUM DHAN IRUKANUM ILLANA IRUKA KUDATHU"`.
+- **Resolution**:
+  - **Single Unified Remarks Notification (`StudentProfile.jsx`)**:
+    - Removed redundant top-right and bottom-row "See your remarks" buttons.
+    - Preserved strictly ONE clean, informative middle callout banner (`💬 See your remarks [Feedback Ready] ... Open Session →`), keeping header and bottom action rows minimal and uncrowded.
+  - **Strict Real Uploaded Video Validation (`StudentProfile.jsx`, `backend/main.py`)**:
+    - Created `isRealUploadedVideo` validator filtering out legacy seed dummy links (`c041fea3-b7ed-40d0-ad1e-2c1e14ee6e4d.mp4`, `demo1`, `demo2`, `demo3`, `mixkit`, `gtv-videos-bucket`, `placeholder`, `none`, `null`, `undefined`, `#`).
+    - Filtered `validVideoSessions` from `effectiveSessions`: if no real video was uploaded by the coach, renders the clean empty state (`📹 No Video Analysis Uploaded Yet`) and hides dummy black cards.
+    - When real videos are uploaded, renders video cards with `<video src={`${vUrl}#t=0.5`} preload="metadata" />` preview, session date, coach badge, and direct one-click launcher for AI video analysis (`/analysis`).
+    - Added backend auto-patch query in `backend/main.py` clearing legacy dummy video URLs from the `sessions` table.
+  - Verified production build with `npm --prefix frontend run build` (0 errors in 4.51s).
+
+#### 5. "See your remarks" Direct Navigation to My Achievements (`"INGA SEE YOU REMARK KUDUTHA MY ACHIVEMENTUKU POGANM"`)
+- **Problem & User Feedback**:
+  - The user requested: `"INGA SEE YOU REMARK KUDUTHA MY ACHIVEMENTUKU POGANM"` with a screenshot of the completed sessions list in `StudentProfile.jsx`.
+  - Clicking "See your remarks" previously navigated to `/sessions?openSession=${session.id}&tab=notes`. The user wanted it to navigate directly to **My Achievements** (`/achievements`).
+- **Resolution**:
+  - **Direct Navigation to My Achievements (`StudentProfile.jsx`)**:
+    - Updated the "See your remarks [Feedback Ready]" banner `onClick` handler to navigate directly to `/achievements?session=${session.id}`.
+    - Updated banner text: `Coach {coachName} added evaluation scores & feedback. Click to view in My Achievements.` with right CTA `View in Achievements →`.
+    - Made the top header pill `"💬 Coach Remarks Available"` clickable, navigating to `/achievements` on 1 click.
+  - **Auto-Open Milestone & Remarks Modal (`MyAchievements.jsx`)**:
+    - Added `useSearchParams` handling for `?session=${session.id}`.
+    - When `MyAchievements` mounts, it automatically locates the matching session, smoothly scrolls to it in the session list with a teal highlight indicator, and opens the social share/milestone modal displaying the coach verdict, evaluation scores, and wave counts.
+  - Verified production build with `npm --prefix frontend run build` (0 errors in 2.28s).
+
+#### 7. Student My Sessions Discovery & All-Dates Default Display (`Sessions.jsx`)
+- **Problem & User Feedback**:
+  - The user reported: `"inga yan yethum katala"` with a screenshot of the `My Sessions` (`/sessions`) page showing `Showing 0 of 0 sessions`, all zero counters (`Upcoming: 0`, `In Progress: 0`, `Completed: 0`), and empty state `"No sessions match your filter criteria / No sessions found for your account"`.
+- **Root Cause**:
+  1. **Strict Date Filter Defaulting to "Today"**:
+     - `Sessions.jsx` previously initialized `dateFilter` and `dateRange` to `Today` (`19-11-2026`) for all users. Since Kim's completed and scheduled surf sessions took place on past/specific dates (e.g., Oct 28, Nov 3, Nov 4, Nov 5), filtering strictly to today hid all of the student's sessions.
+  2. **School Query Mismatch**:
+     - `fetchSessions` had a query parameter logic issue where student requests evaluated to `${API}/api/sessions?school=none`, returning an empty list, and subsequent client-side school filtering dropped sessions lacking explicit school attributes.
+  3. **Strict ID Matching Failure in `roleScopedSessions`**:
+     - If a session had a different `student_id` or student ID wasn't explicitly linked, the check returned `false` before checking name matching (`idMatch || nameMatch`).
+- **Resolution**:
+  - **Student All-Dates Default**:
+    - Initialized `dateFilter` and `dateRange` to `'all'` (`preset: 'all'`) for student roles so all personal sessions (upcoming, in-progress, completed) immediately display upon page load.
+  - **Clean Global Session & Student Roster Fetching**:
+    - For students, `fetchSessions` fetches directly from `${API}/api/sessions` without school parameter restrictions, and skips school-level filtering.
+    - `allStudentsList` is fetched via `/api/students?school=all` so `loggedInStudent` resolves reliably.
+  - **Parity with StudentProfile & MyAchievements**:
+    - Updated `roleScopedSessions` for students to match on `idMatch || nameMatch` (supporting student candidate names, username, email prefix, and substring matching), ensuring all assigned sessions are properly discovered.
+  - **Dynamic Reset & Active Filters**:
+    - Updated `hasActiveFilters` and `resetFilters` so student accounts reset back to the `'all'` preset.
+  - Verified production build with `npm --prefix frontend run build` (0 errors in 2.37s).
+
+#### 8. Consolidated Services Overview Cards: Removed Redundant Third Card (`OurServices.jsx`)
+- **Problem & User Feedback**:
+  - The user requested: `"ithula firstla irukurathum lastla irukurathum onu dhan athunala orey itha vachidu"` with a screenshot of the 3 cards in `OurServices.jsx`.
+  - The first card (`Course Completion Certificates`) and the third card (`Academy Surf Training Packages`) were redundant — both navigated to the exact same Course Completion Certificates menu (`setActiveTab('cert-courses')`) and displayed identical course packages (3-Day, 5-Day).
+- **Resolution**:
+  - Completely removed the duplicate third card (`Option 3: Academy Surf Course Curriculum Menu Card`).
+  - The main Services menu now cleanly renders two prominent, balanced cards side-by-side:
+    1. **Course Completion Certificates**: Comprehensive hub card for managing, configuring, and auto-aligning certificates for all course durations.
+    2. **Milestone Story Poster Photo**: Branded social sharing backdrop photo configuration.
+  - Verified production build with `npm --prefix frontend run build` (0 errors in 1.62s).
+
+### 25. Complete Fix for Cross-School & Cross-Student Session Contamination + Profile Hang
+
+#### Root Cause Analysis:
+1. **User ID vs Student ID Sequence Collision**:
+   - In PostgreSQL, the `users` table and `students` table have completely separate primary key sequences.
+   - When student/athlete users logged in, `sessionStorage.getItem('user').id` (which is `users.id`) was erroneously added into `studentCandidateIds` in `MyAchievements.jsx`, `Sessions.jsx`, and `StudentProfile.jsx`.
+   - Consequently, when user `velavan` (whose `users.id` was 12) opened "My Sessions", the app matched all sessions with `student_id = 12` (which belonged to student **Parijat Mazumder**).
+   - Similarly, user `abi` (whose `users.id` was 21) was matched with sessions belonging to student #21 from "Aquatic Indica Surf School - Mulki Beach", falsely inflating their completed sessions to 21 and prematurely unlocking certificate download.
+2. **Coach Notes Substring Matching (`notesMatch`)**:
+   - In `MyAchievements.jsx`, coach notes were scanned using `s.notes.toLowerCase().includes(targetName)`.
+   - For `abi`, common surfing terms like `"ability"`, `"swimming ability"`, and `"stability"` in session notes matched unrelated students' sessions from other surf schools across India.
+3. **No School Scoping**:
+   - Sessions fetched from `/api/sessions` had no school filter, allowing sessions from other surf schools to leak into the student's history when matching fallback names.
+4. **StudentProfile Crash & Infinite Loading**:
+   - In `Sidebar.jsx`, the "My Profile" navigation fallback used `user?.student_id || user?.id || 1`, sending `users.id` as the student route parameter.
+   - In `StudentProfile.jsx`, video analysis `vObj.url.trim()` lacked null-checks, resulting in potential runtime `TypeError` crashes (blank screen).
+
+#### Key Fixes Applied:
+1. **ID Isolation**:
+   - Removed `currentUser.id` / `savedUser.id` / `loggedUser.id` from `studentCandidateIds` across [Sessions.jsx](file:///d:/surfing/ai/frontend/src/pages/Sessions.jsx), [MyAchievements.jsx](file:///d:/surfing/ai/frontend/src/pages/MyAchievements.jsx), and [StudentProfile.jsx](file:///d:/surfing/ai/frontend/src/pages/StudentProfile.jsx).
+   - Only genuine `student_id` and verified student profile IDs are used to match sessions.
+2. **Removed Notes Matching & Loose Substrings**:
+   - Completely deleted `notesMatch` from session matching.
+   - Replaced substring matching with strict exact full name equality.
+3. **School Boundary Isolation**:
+   - Enforced school scoping: sessions from other surf schools are strictly excluded if the student is registered under a specific school.
+4. **Backend `/api/students/me` & Strict Linking**:
+   - Added `/api/students/me` endpoint in [backend/main.py](file:///d:/surfing/ai/backend/main.py) to securely retrieve the authentic student record by `user_id` or unique `email`.
+   - Updated `make_user_response` to auto-link `student.user_id = user.id` and pass `school` / `school_name` to session storage.
+   - In `Sidebar.jsx`, changed athlete profile route to `user?.student_id || 'me'`.
+5. **Safeguarded Video Analysis & Profile State**:
+   - Safeguarded `normUrl` in `StudentProfile.jsx` with `(vObj?.url || (typeof vObj === 'string' ? vObj : '') || '').trim()` to prevent blank screen crashes.
+   - Converted `allUploadedVideos` from `useMemo` to an IIFE `(() => { ... })()` so it never violates React's Rules of Hooks when early returns execute (`Minified React error #310`).
+   - Fixed `backend/main.py` `get_student` query where querying nonexistent `SurfSession.school` triggered `AttributeError: type object 'SurfSession' has no attribute 'school'` (500 Internal Server Error).
+   - Fixed `fetchMockHeats` when `id === 'me'` to prevent invalid routes.
+6. **Deployment**:
+   - Deployed full frontend and backend live to AWS via `deploy_full_live.py` (Exit Code 0).
