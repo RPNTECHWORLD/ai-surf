@@ -1785,6 +1785,20 @@ class SaveSessionDraftRequest(BaseModel):
     draft_data: Dict[str, Any] = {}
 
 
+class SlotAllocationItem(BaseModel):
+    time: str
+    duration_mins: Optional[int] = 120
+    student_ids: List[int] = []
+    location: Optional[str] = "Main Beach"
+
+
+class ConfirmSlotsRequest(BaseModel):
+    date: str
+    location: Optional[str] = "Main Beach"
+    school: Optional[str] = ""
+    slot_allocations: List[SlotAllocationItem] = []
+
+
 class SchoolCreate(BaseModel):
     name: str
     owner: str
@@ -2224,6 +2238,7 @@ def student_to_dict(s: Student):
         "school": s.school or "",
         "approval_status": s.approval_status or "approved",
         "invite_token": s.invite_token,
+        "session_count": len(s.sessions) if s.sessions else 0,
     }
 
 
@@ -2489,7 +2504,15 @@ def make_user_response(user: User, db_session: Optional[OrmSession] = None):
     student_obj = user.student
     if not student_obj and user.role == "athlete" and session:
         if user.email:
-            student_obj = session.query(Student).filter(func.lower(Student.email) == user.email.lower().strip()).first()
+            st_candidates = session.query(Student).filter(func.lower(Student.email) == user.email.lower().strip()).all()
+            if st_candidates:
+                candidates_linked = [c for c in st_candidates if c.user_id == user.id]
+                if candidates_linked:
+                    student_obj = candidates_linked[0]
+                else:
+                    def count_st_sess(st):
+                        return session.query(SurfSession).filter(SurfSession.student_id == st.id).count()
+                    student_obj = max(st_candidates, key=count_st_sess)
         if not student_obj and user.id:
             student_obj = session.query(Student).filter(Student.user_id == user.id).first()
         if student_obj and not student_obj.user_id:
@@ -5096,8 +5119,13 @@ def get_superadmin_students(db: OrmSession = Depends(get_db)):
 def get_students(school: Optional[str] = None, instructor_id: Optional[int] = None, email: Optional[str] = None, db: OrmSession = Depends(get_db)):
     if email:
         clean_email = email.lower().strip()
-        query = db.query(Student).filter(func.lower(Student.email) == clean_email).order_by(Student.id.desc())
-        return [student_to_dict(s) for s in query.all()]
+        query = db.query(Student).filter(func.lower(Student.email) == clean_email)
+        st_list = query.all()
+        def sort_st_by_sessions(st):
+            cnt = db.query(SurfSession).filter(SurfSession.student_id == st.id).count()
+            return (cnt, 1 if st.user_id else 0, st.id)
+        st_list.sort(key=sort_st_by_sessions, reverse=True)
+        return [student_to_dict(s) for s in st_list]
 
     query = db.query(Student).order_by(Student.id.desc())
     school_clean = (school or "").lower().strip()
@@ -5136,12 +5164,11 @@ def get_current_student(email: Optional[str] = None, user_id: Optional[int] = No
     if not s and email:
         candidates = db.query(Student).filter(func.lower(Student.email) == email.lower().strip()).all()
         if candidates:
-            # Prefer candidate with active user_id or candidate with sessions
-            candidates_with_user = [c for c in candidates if c.user_id is not None]
-            if candidates_with_user:
-                s = candidates_with_user[0]
-            else:
-                s = max(candidates, key=lambda c: len(c.sessions) if c.sessions else 0)
+            def sort_cand(c):
+                cnt = db.query(SurfSession).filter(SurfSession.student_id == c.id).count()
+                u_score = 2 if (user_id and c.user_id == user_id) else (1 if c.user_id else 0)
+                return (cnt, u_score, c.id)
+            s = max(candidates, key=sort_cand)
     if not s:
         u = None
         if email:
@@ -5214,8 +5241,35 @@ def get_student(student_id: int, db: OrmSession = Depends(get_db)):
     d = student_to_dict(s)
     d["badges"] = [b.badge_level for b in s.badges]
     
-    # Query sessions strictly belonging to this student ID
-    all_sess = db.query(SurfSession).filter(SurfSession.student_id == s.id).order_by(SurfSession.id.desc()).all()
+    # Query sessions strictly belonging to this student
+    clean_name = s.name.strip().lower() if s.name else ""
+    session_filters = [SurfSession.student_id == s.id]
+    if clean_name:
+        # Match unassigned sessions where student_id is NULL or 0 and name matches
+        session_filters.append(
+            and_(
+                or_(SurfSession.student_id.is_(None), SurfSession.student_id == 0),
+                or_(
+                    func.lower(SurfSession.student_name) == clean_name,
+                    func.lower(SurfSession.guest_name) == clean_name
+                )
+            )
+        )
+    all_sess = db.query(SurfSession).filter(or_(*session_filters)).order_by(SurfSession.id.desc()).all()
+
+    # School isolation: verify session school matches student school
+    clean_school = s.school.strip().lower() if s.school else ""
+    generic_schools = ['surf academy', 'no school selected', 'your selected surf school', 'athnex', 'athnex live', 'all']
+    if clean_school and clean_school not in generic_schools:
+        filtered_sess = []
+        for sess in all_sess:
+            sess_dict = session_to_dict(sess, db)
+            sess_school = (sess_dict.get("school") or "").strip().lower()
+            if sess_school and sess_school not in generic_schools:
+                if sess_school != clean_school and sess_school not in clean_school and clean_school not in sess_school:
+                    continue
+            filtered_sess.append(sess)
+        all_sess = filtered_sess
 
     d["session_count"] = len(all_sess)
     d["sessions"] = [session_to_dict(sess) for sess in all_sess]
@@ -6555,6 +6609,90 @@ def create_sessions_bulk(data: SessionBulkCreate, db: OrmSession = Depends(get_d
     ))
     db.commit()
     return [session_to_dict(s, db=db) for s in created]
+
+
+@app.post("/api/sessions/confirm-slots")
+def confirm_slot_schedule(data: ConfirmSlotsRequest, db: OrmSession = Depends(get_db)):
+    clean_date = (data.date or "").strip()
+    if not clean_date:
+        raise HTTPException(status_code=400, detail="Session date is required")
+
+    confirmed_count = 0
+    updated_sessions = []
+    all_target_student_ids = set()
+
+    for alloc in data.slot_allocations:
+        slot_time = (alloc.time or "").strip()
+        dur = alloc.duration_mins or 120
+        loc = alloc.location or data.location or "Main Beach"
+
+        for sid in alloc.student_ids:
+            all_target_student_ids.add(sid)
+            student = db.query(Student).filter(Student.id == sid).first()
+            if not student:
+                continue
+
+            # Update student's expected/active session time
+            student.session_time = slot_time
+
+            # Check if student already has an upcoming session on this date
+            existing_sess = db.query(SurfSession).filter(
+                SurfSession.student_id == sid,
+                func.lower(SurfSession.date) == clean_date.lower(),
+                SurfSession.status.in_(["Upcoming", "Pending for Review", "Scheduled"])
+            ).first()
+
+            if existing_sess:
+                existing_sess.time = slot_time
+                existing_sess.duration_mins = dur
+                existing_sess.location = loc
+                if not existing_sess.group_name or existing_sess.group_name in ["", "Slot Confirmed", "Unassigned"]:
+                    existing_sess.group_name = "Slot Confirmed"
+                    existing_sess.notes = f"Slot Confirmed ({slot_time}) - Beach briefing & groups on spot"
+                updated_sessions.append(existing_sess)
+                confirmed_count += 1
+            else:
+                new_sess = SurfSession(
+                    date=clean_date,
+                    time=slot_time,
+                    duration_mins=dur,
+                    student_id=sid,
+                    student_name=student.name,
+                    instructor_id=None,
+                    instructor_ids="[]",
+                    location=loc,
+                    condition="Moderate",
+                    type=student.level or "Beginner",
+                    status="Upcoming",
+                    group_name="Slot Confirmed",
+                    notes=f"Slot Confirmed ({slot_time}) - Beach briefing & groups on spot"
+                )
+                db.add(new_sess)
+                updated_sessions.append(new_sess)
+                confirmed_count += 1
+
+    db.commit()
+
+    # Activity log
+    log_school = data.school or ""
+    if not log_school and all_target_student_ids:
+        first_st = db.query(Student).filter(Student.id == list(all_target_student_ids)[0]).first()
+        if first_st and first_st.school:
+            log_school = first_st.school
+
+    db.add(ActivityLog(
+        text=f"Time slots confirmed for {confirmed_count} student(s) on {clean_date}",
+        type="session",
+        school=log_school
+    ))
+    db.commit()
+
+    return {
+        "success": True,
+        "confirmed_count": confirmed_count,
+        "date": clean_date,
+        "message": f"Successfully confirmed slot schedule for {confirmed_count} student(s) on {clean_date}."
+    }
 
 
 @app.put("/api/sessions/{session_id}")

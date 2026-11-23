@@ -407,14 +407,10 @@ const Sessions = () => {
     const userName = (currentUser?.name || currentUser?.student_name || currentUser?.username || '').toLowerCase().trim();
 
     if (allStudentsList && allStudentsList.length > 0) {
-      const match = allStudentsList.find(st => {
-        // 1. Match by explicit student_id if present on currentUser
+      const candidates = allStudentsList.filter(st => {
         if (currentUser?.student_id && (st.id === parseInt(currentUser.student_id) || String(st.id) === String(currentUser.student_id))) return true;
-        // 2. Match by unique email
-        if (userEmail && (st.email || '').toLowerCase().trim() === userEmail) return true;
-        // 3. Match by user_id link (st.user_id is the foreign key to users.id — NEVER match st.id against users.id!)
         if (currentUser?.id && (st.user_id === parseInt(currentUser.id) || String(st.user_id) === String(currentUser.id))) return true;
-        // 4. Match by exact full name ONLY if email matches or student record has no email
+        if (userEmail && (st.email || '').toLowerCase().trim() === userEmail) return true;
         if (userName && (st.name || '').toLowerCase().trim() === userName) {
           if (!st.email || !userEmail || st.email.toLowerCase().trim() === userEmail) {
             return true;
@@ -422,7 +418,15 @@ const Sessions = () => {
         }
         return false;
       });
-      if (match) return match;
+
+      if (candidates.length > 0) {
+        const match = candidates.find(c => currentUser?.student_id && String(c.id) === String(currentUser.student_id))
+          || candidates.find(c => currentUser?.id && c.user_id && String(c.user_id) === String(currentUser.id))
+          || candidates.find(c => c.session_count && c.session_count > 0)
+          || candidates.find(c => Array.isArray(c.sessions) && c.sessions.length > 0)
+          || candidates[0];
+        if (match) return match;
+      }
     }
 
     try {
@@ -454,8 +458,16 @@ const Sessions = () => {
     const ids = new Set();
     if (currentUser?.student_id) ids.add(String(currentUser.student_id));
     if (loggedInStudent?.id) ids.add(String(loggedInStudent.id));
+    const userEmail = (currentUser?.email || '').toLowerCase().trim();
+    if (userEmail && allStudentsList && allStudentsList.length > 0) {
+      allStudentsList.forEach(st => {
+        if ((st.email || '').toLowerCase().trim() === userEmail && st.id) {
+          ids.add(String(st.id));
+        }
+      });
+    }
     return Array.from(ids).filter(Boolean);
-  }, [currentUser, loggedInStudent]);
+  }, [currentUser, loggedInStudent, allStudentsList]);
 
   const currentStudentName = loggedInStudent?.name || currentUser?.name || currentUser?.student_name || currentUser?.username || 'Student';
   const currentCoachName = currentUser?.name || '';
@@ -2348,31 +2360,38 @@ const Sessions = () => {
     if (isStudent) {
       const myNames = studentCandidateNames;
       const validStudentIds = new Set(studentCandidateIds);
-      const studentSchool = (loggedInStudent?.school || currentUser?.school || currentUser?.school_name || '').toLowerCase().trim();
+      const studentSchool = (loggedInStudent?.school || currentUser?.school_name || currentUser?.school || '').toLowerCase().trim();
+      const isGenericSchool = (sch) => !sch || ['surf academy', 'no school selected', 'your selected surf school', 'athnex', 'athnex live', 'all'].includes(sch);
 
       return sessions.filter(s => {
         const sid = s.student_id ? String(s.student_id) : '';
-        const sStudent = (s.student || '').toLowerCase().trim();
-        const sStudentName = (s.student_name || '').toLowerCase().trim();
-        const sGuest = (s.guest_name || '').toLowerCase().trim();
-        const sSchool = (s.school || s.student_school || '').toLowerCase().trim();
+        const sSchool = (s.school || '').toLowerCase().trim();
 
         // 1. Direct ID match (must belong to verified student ID)
         if (sid && validStudentIds.has(sid)) {
           return true;
         }
 
-        // 2. Cross-school protection: if student belongs to a specific school, sessions from other schools NEVER match
-        if (studentSchool && sSchool && sSchool !== studentSchool && studentSchool !== 'all') {
+        // If session is already assigned to another student ID, do NOT match
+        if (sid && !validStudentIds.has(sid)) {
           return false;
         }
 
-        // 3. Exact full name match only
+        // School isolation: if both have explicit schools and they don't match, reject unassigned session!
+        if (studentSchool && sSchool && !isGenericSchool(studentSchool) && !isGenericSchool(sSchool)) {
+          if (studentSchool !== sSchool && !studentSchool.includes(sSchool) && !sSchool.includes(studentSchool)) {
+            return false;
+          }
+        }
+
+        // 2. Unassigned session with exact name match
+        const sStudent = (s.student || '').toLowerCase().trim();
+        const sStudentName = (s.student_name || '').toLowerCase().trim();
+        const sGuest = (s.guest_name || '').toLowerCase().trim();
+
         const nameMatch = myNames.some(n => {
           if (!n || n.length < 2) return false;
-          return (sStudent && sStudent === n) ||
-                 (sStudentName && sStudentName === n) ||
-                 (sGuest && sGuest === n);
+          return sStudent === n || sStudentName === n || sGuest === n;
         });
 
         return nameMatch;
@@ -2656,11 +2675,16 @@ const Sessions = () => {
       const datePart = (session.date || '').trim();
       const timePart = (session.time || '').trim();
       const instPart = (session.instructor || '').trim();
+      const isSlotConfirmed = explicitGrp === 'Slot Confirmed' || (session.notes && session.notes.includes('Slot Confirmed'));
 
-      if (explicitGrp) {
+      if (explicitGrp && !isSlotConfirmed) {
         key = `EXPLICIT__${explicitGrp}__${datePart}__${timePart}`;
         groupTitle = explicitGrp;
         isExplicit = true;
+      } else if (isSlotConfirmed) {
+        key = `SLOT_CONFIRMED__${datePart}__${timePart}`;
+        groupTitle = `${timePart || 'Session'} Slot Pool`;
+        isExplicit = false;
       } else {
         key = `AUTO__${datePart}__${timePart}__${instPart}`;
         groupTitle = `${timePart || 'Session'} Group`;
@@ -2672,10 +2696,11 @@ const Sessions = () => {
           key,
           groupName: groupTitle,
           isExplicit,
+          isSlotConfirmed,
           date: session.date,
           time: session.time,
           duration_mins: session.duration_mins,
-          instructor: session.instructor,
+          instructor: isSlotConfirmed ? 'Assigned at Beach' : session.instructor,
           location: session.location,
           condition: session.condition,
           type: session.type,
@@ -3753,17 +3778,48 @@ const Sessions = () => {
                             <span
                               className="ses-status-pill"
                               style={{
-                                backgroundColor: statusBg(groupObj),
-                                color: statusColor(groupObj),
+                                backgroundColor: groupObj.isSlotConfirmed ? '#CCFBF1' : statusBg(groupObj),
+                                color: groupObj.isSlotConfirmed ? '#0F766E' : statusColor(groupObj),
+                                border: groupObj.isSlotConfirmed ? '1px solid #99F6E4' : undefined,
+                                fontWeight: 700,
                                 whiteSpace: 'nowrap'
                               }}
                             >
-                              <span className="ses-status-dot" style={{ backgroundColor: statusColor(groupObj) }}></span>
-                              {formatSessionStatus(groupObj)}
+                              <span className="ses-status-dot" style={{ backgroundColor: groupObj.isSlotConfirmed ? '#0D9488' : statusColor(groupObj) }}></span>
+                              {groupObj.isSlotConfirmed ? 'SLOT CONFIRMED' : formatSessionStatus(groupObj)}
                             </span>
                           </td>
                           <td style={{ textAlign: 'right', paddingRight: '20px' }}>
                             <div className="ses-actions-row" style={{ justifyContent: 'flex-end', gap: '6px', flexWrap: 'nowrap' }}>
+                              {/* Beach Grouping Button for Slot Confirmed Groups */}
+                              {groupObj.isSlotConfirmed && canManageSessions && (
+                                <button
+                                  className="ses-btn-beach-grouping"
+                                  title="Open Beach Grouping to assign coaches and split into groups on the beach"
+                                  style={{
+                                    padding: '5px 11px',
+                                    fontWeight: 700,
+                                    fontSize: '11.5px',
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '5px',
+                                    background: 'linear-gradient(135deg, #0F766E 0%, #0D9488 100%)',
+                                    color: '#FFFFFF',
+                                    border: '1.5px solid #2DD4BF',
+                                    borderRadius: '6px',
+                                    whiteSpace: 'nowrap',
+                                    cursor: 'pointer',
+                                    boxShadow: '0 2px 8px rgba(13, 148, 136, 0.28)'
+                                  }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigate(`/sessions/new?editDate=${encodeURIComponent(groupObj.date)}&slotTime=${encodeURIComponent(groupObj.time)}&step=2`);
+                                  }}
+                                >
+                                  <span>🏄</span>
+                                  <span>Beach Grouping</span>
+                                </button>
+                              )}
                               {/* Analysis Button for Group (When Video is Attached) */}
                               {hasGroupMedia && (
                                 <button
@@ -5495,6 +5551,17 @@ const Sessions = () => {
 
                       const activeStudentId = hubSelectedStudentId || dedupedSessions[0]?.id;
                       const activeAthleteObj = dedupedSessions.find(s => s.id === activeStudentId) || dedupedSessions[0];
+                      const activeAthleteIdx = dedupedSessions.findIndex(s => s.id === activeAthleteObj?.id);
+                      const activeAthletePrevOcc = activeAthleteObj ? dedupedSessions.slice(0, activeAthleteIdx >= 0 ? activeAthleteIdx : 0).filter(prevS =>
+                        Boolean(prevS.is_guest || (prevS.guest_name && prevS.guest_name.trim())) &&
+                        ((activeAthleteObj.student_id != null && prevS.student_id != null && String(prevS.student_id) === String(activeAthleteObj.student_id)) ||
+                          ((prevS.student || '').trim().toLowerCase() === (activeAthleteObj.student || '').trim().toLowerCase()))
+                      ).length : 0;
+                      const activeAthleteRes = activeAthleteObj ? resolveStudentAndGuestDisplay(activeAthleteObj, allStudentsList, activeAthletePrevOcc) : null;
+                      const isActiveGuest = Boolean(activeAthleteRes?.isGuest || activeAthleteObj?.is_guest || (activeAthleteObj?.guest_name && activeAthleteObj.guest_name.trim()));
+                      const activeAthleteName = isActiveGuest
+                        ? (activeAthleteRes?.displayName || activeAthleteObj?.guest_name || 'Guest')
+                        : (activeAthleteRes?.displayName || activeAthleteObj?.student || activeAthleteObj?.student_name || 'Athlete');
 
                       return (
                         <div style={{
@@ -5549,7 +5616,12 @@ const Sessions = () => {
                             }}>
                               <span>Active:</span>
                               <span style={{ color: '#134E4A' }}>
-                                {activeAthleteObj?.student || activeAthleteObj?.student_name || 'Athlete'}
+                                {activeAthleteName}
+                                {isActiveGuest && (
+                                  <span style={{ fontSize: '11px', fontWeight: 600, color: '#0F766E', marginLeft: '6px' }}>
+                                    (Guest{activeAthleteRes?.parentName ? ` of ${activeAthleteRes.parentName}` : ''})
+                                  </span>
+                                )}
                               </span>
                             </div>
                           </div>
@@ -5568,9 +5640,23 @@ const Sessions = () => {
                               const isSelected = s.id === activeStudentId;
                               const sObj = hubStudentNotesMap[s.id];
                               const hasFeedback = Boolean(sObj && (sObj.waveCount || sObj.whatDidWell || sObj.whatToImprove));
-                              const studentDisplayName = s.student || s.student_name || `Student ${idx + 1}`;
-                              const studentInitials = studentDisplayName.trim().split(/\s+/).map(p => p[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || 'ST';
-                              const currentLvl = hubStudentLevelMap[s.id] || s.level || 'Beginner';
+
+                              const prevGuestOcc = dedupedSessions
+                                .slice(0, idx)
+                                .filter(prevS =>
+                                  Boolean(prevS.is_guest || (prevS.guest_name && prevS.guest_name.trim())) &&
+                                  ((s.student_id != null && prevS.student_id != null && String(prevS.student_id) === String(s.student_id)) ||
+                                    ((prevS.student || '').trim().toLowerCase() === (s.student || '').trim().toLowerCase()))
+                                ).length;
+
+                              const resInfo = resolveStudentAndGuestDisplay(s, allStudentsList, prevGuestOcc);
+                              const isGuestRow = Boolean(resInfo.isGuest || s.is_guest || (s.guest_name && s.guest_name.trim()));
+                              const studentDisplayName = isGuestRow
+                                ? (resInfo.displayName || s.guest_name || 'Guest')
+                                : (resInfo.displayName || s.student || s.student_name || `Student ${idx + 1}`);
+
+                              const studentInitials = studentDisplayName.trim().split(/\s+/).map(p => p[0]).filter(Boolean).slice(0, 2).join('').toUpperCase() || (isGuestRow ? 'G' : 'ST');
+                              const currentLvl = hubStudentLevelMap[s.id] || resInfo.level || s.level || 'Beginner';
                               const bMeta = BADGE_LEVELS.find(b => b.label.toLowerCase() === normalizeBadgeLevel(currentLvl).toLowerCase()) || BADGE_LEVELS[0];
 
                               return (
@@ -5618,8 +5704,10 @@ const Sessions = () => {
                                     width: '28px',
                                     height: '28px',
                                     borderRadius: '50%',
-                                    background: isSelected ? '#FFFFFF' : 'linear-gradient(135deg, #0284C7 0%, #0369A1 100%)',
-                                    color: isSelected ? '#0D9488' : '#FFFFFF',
+                                    background: isSelected
+                                      ? '#FFFFFF'
+                                      : (isGuestRow ? 'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)' : 'linear-gradient(135deg, #0284C7 0%, #0369A1 100%)'),
+                                    color: isSelected ? (isGuestRow ? '#B45309' : '#0D9488') : '#FFFFFF',
                                     display: 'flex',
                                     alignItems: 'center',
                                     justifyContent: 'center',
@@ -5639,19 +5727,20 @@ const Sessions = () => {
                                         whiteSpace: 'nowrap',
                                         overflow: 'hidden',
                                         textOverflow: 'ellipsis'
-                                      }}>
+                                      }} title={isGuestRow && resInfo.parentName ? `${studentDisplayName} (Guest of ${resInfo.parentName})` : studentDisplayName}>
                                         {studentDisplayName}
                                       </span>
-                                      {s.is_guest && (
+                                      {isGuestRow && (
                                         <span style={{
                                           fontSize: '10px',
-                                          fontWeight: 700,
+                                          fontWeight: 800,
                                           padding: '1px 6px',
                                           borderRadius: '6px',
-                                          background: isSelected ? 'rgba(255,255,255,0.25)' : '#E0F2FE',
-                                          color: isSelected ? '#FFFFFF' : '#0369A1',
+                                          background: isSelected ? 'rgba(255,255,255,0.28)' : '#FEF3C7',
+                                          color: isSelected ? '#FFFFFF' : '#92400E',
+                                          border: isSelected ? '1px solid rgba(255,255,255,0.45)' : '1px solid #FDE68A',
                                           flexShrink: 0
-                                        }}>
+                                        }} title={resInfo.parentName ? `Guest of ${resInfo.parentName}` : 'Guest'}>
                                           Guest
                                         </span>
                                       )}
@@ -5794,10 +5883,19 @@ const Sessions = () => {
                               </h3>
                               {(() => {
                                 const activeStudentObj = selectedHubSession?.sessions?.find(s => s.id === (hubSelectedStudentId || selectedHubSession?.sessions?.[0]?.id)) || selectedHubSession;
-                                const activeStudentName = activeStudentObj?.student || activeStudentObj?.student_name || selectedHubSession?.student || 'Athlete';
+                                const isG = Boolean(activeStudentObj?.is_guest || (activeStudentObj?.guest_name && activeStudentObj.guest_name.trim()));
+                                const activeStudentName = isG
+                                  ? (activeStudentObj?.guest_name || 'Guest')
+                                  : (activeStudentObj?.student || activeStudentObj?.student_name || selectedHubSession?.student || 'Athlete');
                                 return (
                                   <p style={{ margin: '2px 0 0', fontSize: '12.5px', color: '#CBD5E1' }}>
-                                    Athlete: <strong style={{ color: '#38BDF8' }}>{activeStudentName}</strong> • Coach: <strong>{selectedHubSession?.coach || selectedHubSession?.instructor || 'Instructor'}</strong>
+                                    Athlete: <strong style={{ color: '#38BDF8' }}>{activeStudentName}</strong>
+                                    {isG && (
+                                      <span style={{ color: '#FCD34D', marginLeft: '6px', fontSize: '11px', fontWeight: 700 }}>
+                                        (Guest{activeStudentObj?.student ? ` of ${activeStudentObj.student}` : ''})
+                                      </span>
+                                    )}
+                                    {' '}• Coach: <strong>{selectedHubSession?.coach || selectedHubSession?.instructor || 'Instructor'}</strong>
                                   </p>
                                 );
                               })()}

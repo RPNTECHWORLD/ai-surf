@@ -160,6 +160,9 @@ const Sidebar = () => {
     sessionStorage.removeItem('token');
     sessionStorage.removeItem('user');
     sessionStorage.removeItem('activeSchool');
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    localStorage.removeItem('activeSchool');
     navigate('/auth');
   };
 

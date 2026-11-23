@@ -105,28 +105,36 @@ export default function MyAchievements() {
         let studentId = loggedUser?.student_id || null;
         let fetchedProfile = null;
 
+        let allStds = [];
         // 1. Fetch all students to accurately match by email (100% unique), student_id, or name
         try {
           const fallbackRes = await fetch(`${API}/api/students?school=all`);
           if (fallbackRes.ok) {
-            const allStds = await fallbackRes.json();
+            allStds = await fallbackRes.json();
             if (Array.isArray(allStds) && allStds.length > 0) {
-              const matched = allStds.find(s => {
+              // Filter candidates matching email or student_id or user_id or name
+              const candidates = allStds.filter(s => {
                 const sEmail = (s.email || '').toLowerCase().trim();
                 const sName = (s.name || '').toLowerCase().trim();
                 const sUserId = s.user_id ? String(s.user_id) : '';
                 const sId = s.id ? String(s.id) : '';
 
-                // A. Exact Email match (highest priority, unique to account)
                 if (uEmail && sEmail && sEmail === uEmail) return true;
-                // B. student_id match
                 if (loggedUser?.student_id && sId === String(loggedUser.student_id)) return true;
-                // C. user_id match
                 if (sUserId && loggedUser?.id && sUserId === String(loggedUser.id)) return true;
-                // D. Exact Name match
                 if (uName && sName && (sName === uName || (sName.length >= 3 && uName === sName))) return true;
                 return false;
               });
+
+              // From candidates, pick the best match (prioritize candidate with sessions, or linked user_id, or matching student_id)
+              let matched = null;
+              if (candidates.length > 0) {
+                matched = candidates.find(c => loggedUser?.student_id && String(c.id) === String(loggedUser.student_id))
+                  || candidates.find(c => loggedUser?.id && c.user_id && String(c.user_id) === String(loggedUser.id))
+                  || candidates.find(c => c.session_count && c.session_count > 0)
+                  || candidates.find(c => Array.isArray(c.sessions) && c.sessions.length > 0)
+                  || candidates[0];
+              }
 
               if (matched) {
                 fetchedProfile = matched;
@@ -139,6 +147,7 @@ export default function MyAchievements() {
                     const parsedUser = JSON.parse(currUserStr);
                     parsedUser.student_id = matched.id;
                     parsedUser.course_duration = matched.course_duration;
+                    if (matched.school) parsedUser.school = matched.school;
                     sessionStorage.setItem('user', JSON.stringify(parsedUser));
                   }
                 } catch (e) { }
@@ -149,8 +158,8 @@ export default function MyAchievements() {
           console.warn('Fallback student fetch error:', e);
         }
 
-        // If not matched from list, try direct /api/students/${studentId} only if email/name aligns
-        if (!fetchedProfile && studentId) {
+        // If not matched from list, or if profile has no sessions, fetch direct /api/students/${studentId}
+        if ((!fetchedProfile || !Array.isArray(fetchedProfile.sessions) || fetchedProfile.sessions.length === 0) && studentId) {
           try {
             const sRes = await fetch(`${API}/api/students/${studentId}`);
             if (sRes.ok) {
@@ -188,35 +197,55 @@ export default function MyAchievements() {
         const activeStudent = fetchedProfile || studentData;
         const targetName = (activeStudent?.name || uName || '').toLowerCase().trim();
         const studentSchool = (activeStudent?.school || effectiveSchool || loggedUser?.school || '').toLowerCase().trim();
-        const studentCandidateIds = [
+        const isGenericSchool = (sch) => !sch || ['surf academy', 'no school selected', 'your selected surf school', 'athnex', 'athnex live', 'all'].includes(sch);
+
+        const studentCandidateIds = new Set([
           activeStudent?.id ? String(activeStudent.id) : null,
           studentId ? String(studentId) : null,
           loggedUser?.student_id ? String(loggedUser.student_id) : null,
-        ].filter(Boolean);
+        ].filter(Boolean));
+
+        // Add all student IDs from allStds associated with this user's verified email
+        if (uEmail && Array.isArray(allStds)) {
+          allStds.forEach(st => {
+            if ((st.email || '').toLowerCase().trim() === uEmail && st.id) {
+              studentCandidateIds.add(String(st.id));
+            }
+          });
+        }
 
         const matchedSessions = allSess.filter(s => {
-          const sName = (s.student || s.guest_name || s.student_name || '').toLowerCase().trim();
           const sid = s.student_id ? String(s.student_id) : '';
-          const sSchool = (s.school || s.student_school || '').toLowerCase().trim();
+          const sSchool = (s.school || '').toLowerCase().trim();
 
-          // 1. Direct verified ID match
-          if (sid && studentCandidateIds.includes(sid)) {
+          // 1. Direct verified ID match (Session booked directly for this student)
+          if (sid && studentCandidateIds.has(sid)) {
             return true;
           }
 
-          // 2. Strict school scoping: sessions from other schools must NEVER match
-          if (studentSchool && sSchool && sSchool !== studentSchool && studentSchool !== 'all') {
+          // If session is already assigned to another student ID, do NOT match
+          if (sid && !studentCandidateIds.has(sid)) {
             return false;
           }
 
-          // 3. Exact full name match only
-          const nameMatch = Boolean(targetName && (
-            sName === targetName ||
-            (s.student_name && s.student_name.toLowerCase().trim() === targetName) ||
-            (s.guest_name && s.guest_name.toLowerCase().trim() === targetName)
-          ));
+          // School isolation: if both have explicit schools and they don't match, reject unassigned session!
+          if (studentSchool && sSchool && !isGenericSchool(studentSchool) && !isGenericSchool(sSchool)) {
+            if (studentSchool !== sSchool && !studentSchool.includes(sSchool) && !sSchool.includes(studentSchool)) {
+              return false;
+            }
+          }
 
-          return nameMatch;
+          // 2. Unassigned session with exact name match
+          if (targetName && targetName.length >= 2) {
+            const sName = (s.student || '').toLowerCase().trim();
+            const sStudentName = (s.student_name || '').toLowerCase().trim();
+            const sGuest = (s.guest_name || '').toLowerCase().trim();
+            if (sName === targetName || sStudentName === targetName || sGuest === targetName) {
+              return true;
+            }
+          }
+
+          return false;
         });
 
         // 4. Sort sessions: newest first
@@ -1036,9 +1065,45 @@ export default function MyAchievements() {
       };
     });
 
+    const athnexLogo = new Image();
+    athnexLogo.src = '/athnexlive-logo.png';
+    await new Promise((resolve) => {
+      if (athnexLogo.complete && athnexLogo.naturalWidth > 0) return resolve();
+      athnexLogo.onload = resolve;
+      athnexLogo.onerror = resolve;
+    });
+
+    const drawAthnexLogoBadge = (rightX, topY, height = 34) => {
+      if (!athnexLogo.complete || !athnexLogo.naturalWidth) return;
+      const aspect = athnexLogo.naturalWidth / athnexLogo.naturalHeight;
+      const logoW = height * aspect;
+      const padX = 12, padY = 6;
+      const boxW = logoW + padX * 2;
+      const boxH = height + padY * 2;
+      const boxX = rightX - boxW;
+      const boxY = topY;
+
+      ctx.save();
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.28)';
+      ctx.shadowBlur = 14;
+      ctx.shadowOffsetY = 4;
+      ctx.fillStyle = '#FFFFFF';
+      ctx.beginPath();
+      ctx.roundRect(boxX, boxY, boxW, boxH, 10);
+      ctx.fill();
+      ctx.restore();
+
+      ctx.drawImage(athnexLogo, boxX + padX, boxY + padY, logoW, height);
+    };
+
+    const isCustomUserPhoto = Boolean(customPhotoUrl);
+
     const drawCover = (dx, dy, dw, dh) => {
       if (!photoImg.complete || !photoImg.naturalWidth) return;
       ctx.save();
+      if (!isCustomUserPhoto) {
+        ctx.globalAlpha = 0.42;
+      }
       if (filter === 'golden') {
         ctx.filter = 'brightness(1.05) saturate(1.25) sepia(0.15)';
       } else if (filter === 'ocean') {
@@ -1089,7 +1154,7 @@ export default function MyAchievements() {
     const popUpRating = rawPopUp !== null ? `${rawPopUp}/10` : '--';
     const paddlingRating = rawPaddling !== null ? `${rawPaddling}/10` : '--';
     const coachName = getCleanCoachName(sess, selectedCoachOverride);
-    const groupName = getSessionGroupName(sess);
+    const displaySchoolName = (sess && (sess.school || sess.student_school)) || studentData?.school || effectiveSchool || loggedUser?.school || studentSchool || 'Surf Academy';
     const dateFormatted = getSessionFormattedDate(sess);
     const quoteText = getCoachQuote(sess);
     const shortDuration = isOverall ? `${stats.totalHours} hrs` : (sess && sess.duration_mins ? `${Math.round(sess.duration_mins / 60 * 10) / 10} hrs` : '2.0 hrs');
@@ -1099,6 +1164,9 @@ export default function MyAchievements() {
       // ══════ TEMPLATE 2: OCEAN KEEPSAKE (Warm Cream / Minimal Sand) ══════
       ctx.fillStyle = '#FAF6F0';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Top-Right Athnexlive Logo Badge
+      drawAthnexLogoBadge(1000, 60, 32);
 
       // Header Tag
       ctx.textAlign = 'left';
@@ -1117,10 +1185,10 @@ export default function MyAchievements() {
       ctx.font = '900 34px "Plus Jakarta Sans", sans-serif';
       ctx.fillText(studentName, 90, 282);
 
-      // Subline
+      // Subline (School Name instead of Group Name)
       ctx.fillStyle = '#64748B';
       ctx.font = '600 21px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText(`${groupName}  •  ${dateFormatted}`, 90, 318);
+      ctx.fillText(`${displaySchoolName}  •  ${dateFormatted}`, 90, 318);
 
       // Framed Photo in Center
       const frameX = 80, frameY = 340, frameW = 920, frameH = 570;
@@ -1216,6 +1284,9 @@ export default function MyAchievements() {
       ctx.fillStyle = '#006859';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+      // Top-Right Athnexlive Logo Badge
+      drawAthnexLogoBadge(1000, 60, 32);
+
       // Top Tag: THE COACH'S CUT
       ctx.textAlign = 'left';
       ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
@@ -1264,7 +1335,7 @@ export default function MyAchievements() {
 
       ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
       ctx.font = '700 22px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText(`${groupName}  •  ${dateFormatted}`, 80, 695);
+      ctx.fillText(`${displaySchoolName}  •  ${dateFormatted}`, 80, 695);
 
       // Right Column: Arched Surfer Photo Frame (Expanded to utilize space)
       const archX = 560, archY = 240, archW = 440, archH = 620;
@@ -1358,6 +1429,9 @@ export default function MyAchievements() {
       ctx.textAlign = 'center';
       ctx.fillText(pillText, 70 + pillW / 2, 100);
 
+      // Top-Right Athnexlive Logo Badge
+      drawAthnexLogoBadge(1010, 70, 32);
+
       // Photo Bottom-Left Pill: "✓ SESSION COMPLETE"
       ctx.fillStyle = '#FEF3C7';
       ctx.beginPath();
@@ -1402,7 +1476,7 @@ export default function MyAchievements() {
       ctx.textAlign = 'left';
       ctx.fillStyle = '#94A3B8';
       ctx.font = '700 24px "Plus Jakarta Sans", sans-serif';
-      ctx.fillText(`${groupName}  •  ${dateFormatted}`, 70, 985);
+      ctx.fillText(`${displaySchoolName}  •  ${dateFormatted}`, 70, 985);
 
       // Divider
       ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
@@ -2106,6 +2180,25 @@ export default function MyAchievements() {
           }
         }
 
+        // ── OFFICIAL ATHNEXLIVE LOGO IN RIGHT CORNER OF CERTIFICATE ──
+        const athnexLogo = await loadImgSafely('/athnexlive-logo.png');
+        if (athnexLogo && athnexLogo.naturalWidth > 0) {
+          const alW = 165;
+          const alH = (athnexLogo.naturalHeight / athnexLogo.naturalWidth) * alW;
+          const alX = W - alW - 65;
+          const alY = 60;
+          ctx.save();
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+          ctx.beginPath();
+          ctx.roundRect(alX - 10, alY - 6, alW + 20, alH + 12, 8);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(13, 148, 136, 0.35)';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+          ctx.drawImage(athnexLogo, alX, alY, alW, alH);
+          ctx.restore();
+        }
+
         // Trigger download
         const cleanName = (studentName || 'Athlete').replace(/\s+/g, '_');
         const courseTag = `${studentDays}Day`;
@@ -2288,6 +2381,25 @@ export default function MyAchievements() {
       ctx.fillStyle = '#D4AF37';
       ctx.font = 'bold 15px Arial, sans-serif';
       ctx.fillText('ATHNEX LIVE • OFFICIAL SURF ACADEMY CERTIFICATE • athnexlive.com', W / 2, H - 55);
+
+      // ── OFFICIAL ATHNEXLIVE LOGO IN RIGHT CORNER OF CERTIFICATE ──
+      const athnexLogoFallback = await loadImgSafely('/athnexlive-logo.png');
+      if (athnexLogoFallback && athnexLogoFallback.naturalWidth > 0) {
+        const alW = 165;
+        const alH = (athnexLogoFallback.naturalHeight / athnexLogoFallback.naturalWidth) * alW;
+        const alX = W - alW - 65;
+        const alY = 60;
+        ctx.save();
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+        ctx.beginPath();
+        ctx.roundRect(alX - 10, alY - 6, alW + 20, alH + 12, 8);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(13, 148, 136, 0.35)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.drawImage(athnexLogoFallback, alX, alY, alW, alH);
+        ctx.restore();
+      }
 
       const cleanName = (studentName || 'Athlete').replace(/\s+/g, '_');
       const fileName = `Athnex_${studentDays}Day_Certificate_${cleanName}.png`;
@@ -2738,12 +2850,13 @@ export default function MyAchievements() {
           const coachName = getCleanCoachName(shareModalSession, selectedCoachOverride);
           const coachPhoto = getCoachPhotoForSession(shareModalSession, coachName);
           const coachInitial = (coachName.replace(/^coach\s+/i, '').trim().charAt(0) || 'C').toUpperCase();
-          const groupName = getSessionGroupName(shareModalSession);
+          const displaySchoolName = shareModalSession.school || shareModalSession.student_school || studentData?.school || effectiveSchool || loggedUser?.school || studentSchool || 'Athnex Surf Academy';
           const dateFormatted = getSessionFormattedDate(shareModalSession);
           const quoteText = getCoachQuote(shareModalSession);
           const previewPhoto = customPhotoUrl || posterBgUrl || '/surf-milestone-bg.jpg';
+          const isDefaultPhoto = !customPhotoUrl;
           const shortDuration = isOverall ? `${stats.totalHours} hrs` : (shareModalSession.duration_mins ? `${Math.round(shareModalSession.duration_mins / 60 * 10) / 10} hrs` : '2.0 hrs');
-          const sessionLoc = isOverall ? studentSchool : (shareModalSession.location || studentSchool || 'Surf Beach');
+          const sessionLoc = isOverall ? displaySchoolName : (shareModalSession.location || displaySchoolName || 'Surf Beach');
 
           return (
             <div className="ach-modal-backdrop" onClick={() => setShareModalSession(null)}>
@@ -2755,7 +2868,7 @@ export default function MyAchievements() {
                       Share your session
                     </h3>
                     <p className="ach-modal-sub" style={{ margin: '3px 0 0', fontSize: '12px', color: '#64748B' }}>
-                      {groupName} • {dateFormatted}
+                      {displaySchoolName} • {dateFormatted}
                     </p>
                   </div>
                   <button
@@ -2798,7 +2911,7 @@ export default function MyAchievements() {
                         style={{
                           position: 'relative',
                           overflow: 'hidden',
-                          backgroundColor: photoFit === 'contain' ? '#0F172A' : 'transparent',
+                          backgroundColor: '#0F172A',
                         }}
                       >
                         <img
@@ -2811,18 +2924,110 @@ export default function MyAchievements() {
                             objectFit: photoFit === 'contain' ? 'contain' : 'cover',
                             objectPosition: `center ${photoPosY}%`,
                             filter: getFilterCss(photoFilter),
+                            opacity: isDefaultPhoto ? 0.38 : 1,
+                            transition: 'opacity 0.25s ease',
                             display: 'block',
                           }}
                         />
-                        <span className="ach-cut-pill" style={{ zIndex: 2 }}>🏄 {studentName.toUpperCase()}</span>
-                        <span className="ach-session-badge-yellow" style={{ zIndex: 2 }}>✓ SESSION COMPLETE</span>
+                        {isDefaultPhoto && (
+                          <div
+                            onClick={() => fileInputRef.current?.click()}
+                            title="Click to upload your session photo"
+                            style={{
+                              position: 'absolute',
+                              inset: 0,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              padding: '24px 20px',
+                              textAlign: 'center',
+                              zIndex: 3,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            <div style={{
+                              background: 'rgba(15, 23, 42, 0.78)',
+                              backdropFilter: 'blur(8px)',
+                              WebkitBackdropFilter: 'blur(8px)',
+                              border: '1.5px dashed rgba(45, 212, 191, 0.7)',
+                              borderRadius: '16px',
+                              padding: '16px 20px',
+                              maxWidth: '290px',
+                              boxShadow: '0 10px 28px rgba(0, 0, 0, 0.4)',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              gap: '8px',
+                              pointerEvents: 'auto'
+                            }}>
+                              <div style={{
+                                width: '40px',
+                                height: '40px',
+                                borderRadius: '50%',
+                                background: 'rgba(45, 212, 191, 0.15)',
+                                border: '1px solid rgba(45, 212, 191, 0.45)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '20px'
+                              }}>
+                                📸
+                              </div>
+                              <div style={{
+                                color: '#FFFFFF',
+                                fontFamily: "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif",
+                                fontSize: '13.5px',
+                                fontWeight: 800,
+                                lineHeight: 1.35,
+                                letterSpacing: '0.2px'
+                              }}>
+                                Upload your session Photo and Inspire your friends
+                              </div>
+                              <div style={{
+                                color: '#2DD4BF',
+                                fontSize: '11px',
+                                fontWeight: 600,
+                                letterSpacing: '0.3px',
+                                textTransform: 'uppercase'
+                              }}>
+                                Tap here to upload
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                        <span className="ach-cut-pill" style={{ zIndex: 4 }}>🏄 {studentName.toUpperCase()}</span>
+                        <span className="ach-session-badge-yellow" style={{ zIndex: 4 }}>✓ SESSION COMPLETE</span>
+                        {/* Athnexlive Logo in Top Right Corner */}
+                        <div className="ach-athnex-corner-logo" style={{
+                          position: 'absolute',
+                          top: '12px',
+                          right: '12px',
+                          zIndex: 4,
+                          background: 'rgba(255, 255, 255, 0.95)',
+                          padding: '5px 10px',
+                          borderRadius: '8px',
+                          boxShadow: '0 2px 10px rgba(0,0,0,0.22)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          border: '1px solid rgba(255,255,255,0.7)',
+                          backdropFilter: 'blur(4px)'
+                        }}>
+                          <img
+                            src="/athnexlive-logo.png"
+                            alt="Athnexlive"
+                            crossOrigin="anonymous"
+                            style={{ height: '20px', width: 'auto', display: 'block', objectFit: 'contain' }}
+                          />
+                        </div>
                       </div>
                       <div className="ach-spotlight-slate">
                         <div className="ach-spotlight-slate-top">
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <h4 className="ach-spotlight-title">A session to be proud of.</h4>
                             <div className="ach-spotlight-sub-line" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '4px' }}>
-                              <span className="ach-student-group-badge">{groupName}</span>
+                              <span className="ach-student-group-badge">{displaySchoolName}</span>
                               <span style={{ color: '#94A3B8', fontSize: '11.5px', fontWeight: 600 }}>
                                 {dateFormatted}{!isOverall && shareModalSession.time ? ` • ${shareModalSession.time}` : ' • 07:00-09:00 AM'}
                               </span>
@@ -2903,14 +3108,36 @@ export default function MyAchievements() {
 
                   {/* Template 2: Ocean keepsake */}
                   {shareTemplate === 'keepsake' && (
-                    <div className="ach-card-keepsake">
+                    <div className="ach-card-keepsake" style={{ position: 'relative' }}>
+                      {/* Athnexlive Logo in Top Right Corner */}
+                      <div className="ach-athnex-corner-logo" style={{
+                        position: 'absolute',
+                        top: '14px',
+                        right: '14px',
+                        zIndex: 4,
+                        background: 'rgba(255, 255, 255, 0.95)',
+                        padding: '4px 9px',
+                        borderRadius: '8px',
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        border: '1px solid rgba(255,255,255,0.7)'
+                      }}>
+                        <img
+                          src="/athnexlive-logo.png"
+                          alt="Athnexlive"
+                          crossOrigin="anonymous"
+                          style={{ height: '18px', width: 'auto', display: 'block', objectFit: 'contain' }}
+                        />
+                      </div>
                       <div className="ach-keepsake-tag">THE COACH'S CUT / SESSION KEEPSAKE</div>
                       <h4 className="ach-keepsake-title">
                         Small wins.<br />Big ocean energy.
                       </h4>
                       <div className="ach-keepsake-student-highlight">
                         <span className="ach-keepsake-student-name">{studentName}</span>
-                        <span className="ach-keepsake-group-badge">{groupName}</span>
+                        <span className="ach-keepsake-group-badge">{displaySchoolName}</span>
                       </div>
                       <div className="ach-keepsake-date-sub">{dateFormatted}</div>
 
@@ -2920,7 +3147,7 @@ export default function MyAchievements() {
                           style={{
                             position: 'relative',
                             overflow: 'hidden',
-                            backgroundColor: photoFit === 'contain' ? '#CBD5E1' : 'transparent',
+                            backgroundColor: '#0F172A',
                           }}
                         >
                           <img
@@ -2933,9 +3160,63 @@ export default function MyAchievements() {
                               objectFit: photoFit === 'contain' ? 'contain' : 'cover',
                               objectPosition: `center ${photoPosY}%`,
                               filter: getFilterCss(photoFilter),
+                              opacity: isDefaultPhoto ? 0.38 : 1,
+                              transition: 'opacity 0.25s ease',
                               display: 'block',
                             }}
                           />
+                          {isDefaultPhoto && (
+                            <div
+                              onClick={() => fileInputRef.current?.click()}
+                              title="Click to upload your session photo"
+                              style={{
+                                position: 'absolute',
+                                inset: 0,
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                padding: '16px',
+                                textAlign: 'center',
+                                zIndex: 3,
+                                cursor: 'pointer'
+                              }}
+                            >
+                              <div style={{
+                                background: 'rgba(15, 23, 42, 0.78)',
+                                backdropFilter: 'blur(6px)',
+                                WebkitBackdropFilter: 'blur(6px)',
+                                border: '1.5px dashed rgba(45, 212, 191, 0.65)',
+                                borderRadius: '14px',
+                                padding: '12px 16px',
+                                maxWidth: '280px',
+                                boxShadow: '0 8px 24px rgba(0, 0, 0, 0.35)',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                gap: '6px'
+                              }}>
+                                <div style={{ fontSize: '20px' }}>📸</div>
+                                <div style={{
+                                  color: '#FFFFFF',
+                                  fontSize: '12.5px',
+                                  fontWeight: 800,
+                                  lineHeight: 1.35
+                                }}>
+                                  Upload your session Photo and Inspire your friends
+                                </div>
+                                <div style={{
+                                  color: '#2DD4BF',
+                                  fontSize: '10.5px',
+                                  fontWeight: 600,
+                                  letterSpacing: '0.3px',
+                                  textTransform: 'uppercase'
+                                }}>
+                                  Tap here to upload
+                                </div>
+                              </div>
+                            </div>
+                          )}
                         </div>
                         <div className="ach-keepsake-gold-badge">
                           <span className="ach-gold-top-lbl">WAVES</span>
@@ -2999,7 +3280,29 @@ export default function MyAchievements() {
 
                   {/* Template 3: Personal scorecard (Exact Reference Match) */}
                   {shareTemplate === 'scorecard' && (
-                    <div className="ach-card-scorecard">
+                    <div className="ach-card-scorecard" style={{ position: 'relative' }}>
+                      {/* Athnexlive Logo in Top Right Corner */}
+                      <div className="ach-athnex-corner-logo" style={{
+                        position: 'absolute',
+                        top: '14px',
+                        right: '14px',
+                        zIndex: 4,
+                        background: 'rgba(255, 255, 255, 0.95)',
+                        padding: '4px 9px',
+                        borderRadius: '8px',
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.18)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        border: '1px solid rgba(255,255,255,0.7)'
+                      }}>
+                        <img
+                          src="/athnexlive-logo.png"
+                          alt="Athnexlive"
+                          crossOrigin="anonymous"
+                          style={{ height: '18px', width: 'auto', display: 'block', objectFit: 'contain' }}
+                        />
+                      </div>
                       {/* Top Section with Content on Left & Expanded Arch Photo on Right */}
                       <div className="ach-sc-top-section">
                         <div className="ach-sc-left-col">
@@ -3023,7 +3326,7 @@ export default function MyAchievements() {
 
                           <div className="ach-sc-ath-info">
                             <div className="ach-sc-ath-name-highlight">{studentName}</div>
-                            <div className="ach-sc-ath-sub">{groupName} · {dateFormatted}</div>
+                            <div className="ach-sc-ath-sub">{displaySchoolName} · {dateFormatted}</div>
                           </div>
                         </div>
 
@@ -3033,7 +3336,7 @@ export default function MyAchievements() {
                             style={{
                               position: 'relative',
                               overflow: 'hidden',
-                              backgroundColor: photoFit === 'contain' ? '#005548' : 'transparent',
+                              backgroundColor: '#004D40',
                             }}
                           >
                             <img
@@ -3046,9 +3349,63 @@ export default function MyAchievements() {
                                 objectFit: photoFit === 'contain' ? 'contain' : 'cover',
                                 objectPosition: `center ${photoPosY}%`,
                                 filter: getFilterCss(photoFilter),
+                                opacity: isDefaultPhoto ? 0.38 : 1,
+                                transition: 'opacity 0.25s ease',
                                 display: 'block',
                               }}
                             />
+                            {isDefaultPhoto && (
+                              <div
+                                onClick={() => fileInputRef.current?.click()}
+                                title="Click to upload your session photo"
+                                style={{
+                                  position: 'absolute',
+                                  inset: 0,
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  padding: '12px',
+                                  textAlign: 'center',
+                                  zIndex: 3,
+                                  cursor: 'pointer'
+                                }}
+                              >
+                                <div style={{
+                                  background: 'rgba(4, 47, 44, 0.88)',
+                                  backdropFilter: 'blur(6px)',
+                                  WebkitBackdropFilter: 'blur(6px)',
+                                  border: '1.5px dashed rgba(94, 234, 212, 0.75)',
+                                  borderRadius: '12px',
+                                  padding: '12px 14px',
+                                  maxWidth: '185px',
+                                  boxShadow: '0 8px 20px rgba(0, 0, 0, 0.4)',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  alignItems: 'center',
+                                  gap: '6px'
+                                }}>
+                                  <div style={{ fontSize: '18px' }}>📸</div>
+                                  <div style={{
+                                    color: '#FFFFFF',
+                                    fontSize: '11px',
+                                    fontWeight: 800,
+                                    lineHeight: 1.3
+                                  }}>
+                                    Upload your session Photo and Inspire your friends
+                                  </div>
+                                  <div style={{
+                                    color: '#5EEAD4',
+                                    fontSize: '9.5px',
+                                    fontWeight: 600,
+                                    letterSpacing: '0.3px',
+                                    textTransform: 'uppercase'
+                                  }}>
+                                    Tap to upload
+                                  </div>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>

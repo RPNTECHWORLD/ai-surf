@@ -8109,28 +8109,38 @@ const StudentsManagement = () => {
 
         /* Responsive Overrides */
         @media (max-width: 900px) {
+          .sm-page {
+            width: 100% !important;
+            max-width: 100vw !important;
+            overflow-x: hidden !important;
+          }
           .sm-main {
             padding: 20px 16px !important;
             gap: 20px !important;
             margin-left: 0 !important;
             width: 100% !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
           }
           .sm-stats-grid {
             display: grid !important;
-            grid-template-columns: repeat(2, 1fr) !important;
-            gap: 12px !important;
+            grid-template-columns: repeat(4, 1fr) !important;
+            gap: 8px !important;
           }
           .sm-header {
             flex-direction: column !important;
             align-items: flex-start !important;
-            gap: 16px !important;
+            gap: 14px !important;
           }
           .sm-actions {
             width: 100% !important;
-            flex-wrap: wrap !important;
+            display: grid !important;
+            grid-template-columns: repeat(2, 1fr) !important;
+            gap: 8px !important;
           }
           .sm-actions button {
-            flex: 1 !important;
+            width: 100% !important;
+            min-width: 0 !important;
             justify-content: center !important;
           }
         }
@@ -8150,22 +8160,34 @@ const StudentsManagement = () => {
           .sm-label-full { display: none !important; }
           .sm-label-short { display: inline !important; }
           .sm-mobile-scroll-hint {
-            display: block !important;
-            background: #F0FDFA;
-            border-bottom: 1px solid #CCFBF1;
-            padding: 8px 12px;
-            font-size: 11.5px;
-            font-weight: 600;
-            color: #0F766E;
-            text-align: center;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            gap: 6px !important;
+            background: #F0FDFA !important;
+            border-bottom: 1px solid #CCFBF1 !important;
+            padding: 8px 10px !important;
+            font-size: 11px !important;
+            font-weight: 600 !important;
+            color: #0F766E !important;
+            text-align: center !important;
+            box-sizing: border-box !important;
+          }
+          .sm-page {
+            width: 100% !important;
+            max-width: 100vw !important;
+            overflow-x: hidden !important;
+            flex-direction: column !important;
+            box-sizing: border-box !important;
           }
           .sm-main {
-            margin-top: 64px !important;
-            padding: 14px 12px 90px 12px !important;
+            margin-top: 60px !important;
+            padding: 12px 10px 85px 10px !important;
             gap: 12px !important;
             width: 100% !important;
-            max-width: 100% !important;
+            max-width: 100vw !important;
             box-sizing: border-box !important;
+            overflow-x: hidden !important;
           }
           .sm-header {
             display: flex !important;
@@ -8174,6 +8196,7 @@ const StudentsManagement = () => {
             text-align: left !important;
             gap: 8px !important;
             width: 100% !important;
+            box-sizing: border-box !important;
           }
           .sm-header-text {
             display: flex !important;
@@ -8183,43 +8206,50 @@ const StudentsManagement = () => {
             width: 100% !important;
           }
           .sm-title {
-            font-size: 20px !important;
+            font-size: 19px !important;
+            font-weight: 800 !important;
             text-align: left !important;
             line-height: 1.2 !important;
             width: 100% !important;
           }
           .sm-sub {
-            font-size: 12px !important;
+            font-size: 11.5px !important;
             text-align: left !important;
             margin: 2px 0 0 0 !important;
             line-height: 1.35 !important;
             width: 100% !important;
           }
           .sm-actions {
-            display: flex !important;
-            flex-direction: row !important;
-            flex-wrap: wrap !important;
-            gap: 8px !important;
+            display: grid !important;
+            grid-template-columns: repeat(2, 1fr) !important;
+            gap: 6px !important;
             width: 100% !important;
+            box-sizing: border-box !important;
           }
           .sm-btn-secondary,
           .sm-btn-primary {
-            flex: 1 1 auto !important;
-            min-width: 110px !important;
+            width: 100% !important;
+            min-width: 0 !important;
             height: 38px !important;
-            padding: 6px 12px !important;
-            font-size: 12.5px !important;
+            padding: 0 8px !important;
+            font-size: 11.5px !important;
             font-weight: 700 !important;
             border-radius: 8px !important;
+            display: flex !important;
+            align-items: center !important;
             justify-content: center !important;
+            text-align: center !important;
+            white-space: nowrap !important;
             box-sizing: border-box !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
           }
           .sm-filters {
             display: flex !important;
             flex-direction: column !important;
             align-items: stretch !important;
             gap: 8px !important;
-            padding: 10px !important;
+            padding: 8px !important;
             border-radius: 12px !important;
             background: #FFFFFF !important;
             border: 1px solid #E2E8F0 !important;
@@ -8229,37 +8259,38 @@ const StudentsManagement = () => {
           .sm-search-wrap {
             width: 100% !important;
             height: 38px !important;
-            padding: 0 12px !important;
+            padding: 0 10px !important;
             gap: 8px !important;
             background: #F8FAFC !important;
-            border: 1px solid #CBD5E1 !important;
+            border: 1.5px solid #CBD5E1 !important;
             border-radius: 8px !important;
             box-sizing: border-box !important;
             flex: none !important;
           }
           .sm-search-input {
-            font-size: 12.5px !important;
+            font-size: 12px !important;
             color: #0F172A !important;
           }
           .sm-dropdowns-row {
-            display: flex !important;
-            flex-direction: row !important;
-            gap: 8px !important;
+            display: grid !important;
+            grid-template-columns: 1fr 1fr !important;
+            gap: 6px !important;
             width: 100% !important;
             box-sizing: border-box !important;
           }
           .sm-select-wrap {
-            flex: 1 1 0 !important;
+            width: 100% !important;
             min-width: 0 !important;
-            width: 50% !important;
             display: flex !important;
             box-sizing: border-box !important;
           }
           .sm-select {
             width: 100% !important;
+            min-width: 0 !important;
             height: 36px !important;
             padding: 0 8px !important;
-            font-size: 11.5px !important;
+            font-size: 11px !important;
+            font-weight: 600 !important;
             border-radius: 8px !important;
             border: 1.5px solid #CBD5E1 !important;
             box-sizing: border-box !important;
@@ -8269,29 +8300,29 @@ const StudentsManagement = () => {
           }
           .sm-stats-grid {
             display: grid !important;
-            grid-template-columns: repeat(auto-fit, minmax(60px, 1fr)) !important;
-            gap: 6px !important;
+            grid-template-columns: repeat(4, 1fr) !important;
+            gap: 5px !important;
             width: 100% !important;
             box-sizing: border-box !important;
           }
           .sm-stat-card {
-            height: 48px !important;
+            height: 50px !important;
             min-width: 0 !important;
             border-radius: 8px !important;
             border: 1.5px solid #E2E8F0 !important;
-            padding: 4px 1px !important;
+            padding: 4px 2px !important;
             display: flex !important;
             flex-direction: column !important;
             align-items: center !important;
             justify-content: center !important;
-            gap: 1px !important;
+            gap: 2px !important;
             background: #FFFFFF !important;
             box-sizing: border-box !important;
           }
           .sm-stat-value {
             font-size: 16px !important;
             font-weight: 800 !important;
-            line-height: 1.1 !important;
+            line-height: 1 !important;
           }
           .sm-stat-label {
             font-size: 8px !important;
@@ -8300,7 +8331,7 @@ const StudentsManagement = () => {
             text-transform: uppercase !important;
             white-space: nowrap !important;
             overflow: hidden !important;
-            text-overflow: clip !important;
+            text-overflow: ellipsis !important;
             max-width: 100% !important;
             text-align: center !important;
           }
@@ -8308,25 +8339,115 @@ const StudentsManagement = () => {
             overflow-x: auto !important;
             -webkit-overflow-scrolling: touch !important;
             border-radius: 12px !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
+            border: 1px solid #E2E8F0 !important;
+            background: #FFFFFF !important;
           }
           .sm-table {
-            min-width: 720px !important;
+            min-width: 680px !important;
+            width: 100% !important;
+          }
+          .sm-table th {
+            padding: 12px 10px !important;
+            font-size: 10px !important;
+            white-space: nowrap !important;
+          }
+          .sm-table td {
+            padding: 10px !important;
+            font-size: 11.5px !important;
+          }
+
+          /* Modal Responsiveness */
+          .sm-modal-overlay {
+            padding: 8px !important;
+            align-items: flex-end !important;
           }
           .sm-modal {
-            width: calc(100% - 24px) !important;
-            padding: 20px 16px !important;
-            margin: 12px !important;
-            max-height: 90vh !important;
-            border-radius: 18px !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            padding: 18px 14px !important;
+            margin: 0 !important;
+            max-height: 92vh !important;
+            border-radius: 20px 20px 0 0 !important;
+            box-sizing: border-box !important;
           }
-          .sm-modal-form {
+          .sm-tab-cards-grid {
+            grid-template-columns: 1fr !important;
+            gap: 6px !important;
+            margin-bottom: 14px !important;
+          }
+          .sm-tab-card {
+            padding: 10px 12px !important;
+          }
+          .sm-single-layout {
+            display: flex !important;
+            flex-direction: column !important;
             gap: 14px !important;
           }
+          .sm-grid-2 {
+            grid-template-columns: 1fr !important;
+            gap: 10px !important;
+          }
+          .sm-requirements-box {
+            padding: 14px !important;
+          }
+          .sm-modal-form {
+            gap: 12px !important;
+          }
           .sm-modal-actions {
-            flex-direction: column !important;
+            flex-direction: column-reverse !important;
+            gap: 8px !important;
           }
           .sm-modal-actions button {
             width: 100% !important;
+            height: 40px !important;
+          }
+          .sm-bulk-table-wrap {
+            overflow-x: auto !important;
+            -webkit-overflow-scrolling: touch !important;
+          }
+          .sm-csv-layout {
+            grid-template-columns: 1fr !important;
+            gap: 14px !important;
+          }
+        }
+
+        @media (max-width: 480px) {
+          .sm-main {
+            padding: 10px 6px 85px 6px !important;
+            gap: 10px !important;
+          }
+          .sm-actions {
+            grid-template-columns: repeat(2, 1fr) !important;
+            gap: 5px !important;
+          }
+          .sm-btn-secondary,
+          .sm-btn-primary {
+            height: 36px !important;
+            font-size: 11px !important;
+            padding: 0 4px !important;
+          }
+          .sm-title {
+            font-size: 18px !important;
+          }
+          .sm-sub {
+            font-size: 11px !important;
+          }
+          .sm-stats-grid {
+            grid-template-columns: repeat(4, 1fr) !important;
+            gap: 4px !important;
+          }
+          .sm-stat-card {
+            height: 48px !important;
+            padding: 3px 1px !important;
+          }
+          .sm-stat-value {
+            font-size: 15px !important;
+          }
+          .sm-stat-label {
+            font-size: 7.5px !important;
           }
         }
       `}</style>

@@ -1309,6 +1309,96 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     });
   };
 
+  const [isConfirmingSlots, setIsConfirmingSlots] = useState(false);
+
+  const handleConfirmSlotsSchedule = () => {
+    const allocations = [];
+    slots.forEach(s => {
+      const sId = s.id;
+      const ids = (slotStudentMap[sId] || slotStudentMap[String(sId)] || []).filter(id => {
+        const st = allPoolStudents.find(sp => String(sp.id) === String(id));
+        return !st || !isStudentScheduledInDbOnDate(st);
+      });
+
+      if (ids.length > 0) {
+        allocations.push({
+          time: s.startTime || s.time || '06:30 AM',
+          duration_mins: parseInt(s.duration) || 120,
+          student_ids: ids.map(id => parseInt(id)).filter(id => !isNaN(id) && id > 0),
+          location: spotName || 'Main Beach'
+        });
+      }
+    });
+
+    const totalStudents = allocations.reduce((acc, a) => acc + a.student_ids.length, 0);
+
+    if (totalStudents === 0) {
+      setUiAlert({
+        title: 'No Students Selected',
+        message: 'Please select students into at least one time slot before confirming the schedule.',
+        type: 'warning',
+        icon: '⚠️'
+      });
+      return;
+    }
+
+    const slotBreakdown = allocations.map(a => `${a.time}: ${a.student_ids.length} student(s)`).join(', ');
+
+    setConfirmModal({
+      isOpen: true,
+      title: 'Confirm Slot Schedule?',
+      message: `Confirm time slots for ${totalStudents} student(s) on ${formattedSessionDate}? (${slotBreakdown}). Students will immediately see their confirmed slot timing in their portal. Groups and Coaches can be finalized at the beach!`,
+      confirmText: 'Yes, Confirm Slots',
+      cancelText: 'Cancel',
+      isDanger: false,
+      iconType: 'check',
+      onConfirm: async () => {
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+        setIsConfirmingSlots(true);
+        try {
+          const res = await fetch(`${API}/api/sessions/confirm-slots`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              date: formattedSessionDate,
+              location: spotName || 'Main Beach',
+              school: selectedSchool || '',
+              slot_allocations: allocations
+            })
+          });
+
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data.success) {
+            setUiAlert({
+              title: '🎉 Slot Schedule Confirmed!',
+              message: `Successfully confirmed ${totalStudents} students across ${allocations.length} time slot(s) for ${formattedSessionDate}. Students can now see their confirmed time in their portal. You can view them on the Sessions page or proceed to group them on the beach!`,
+              type: 'info',
+              icon: '🌊'
+            });
+            saveCurrentDraftToStorage();
+          } else {
+            setUiAlert({
+              title: 'Confirmation Failed',
+              message: data.detail || data.message || 'Could not confirm slot schedule. Please try again.',
+              type: 'error',
+              icon: '⚠️'
+            });
+          }
+        } catch (err) {
+          console.error('Error confirming slot schedule:', err);
+          setUiAlert({
+            title: 'Network Error',
+            message: err?.message ? `Failed to connect to server: ${err.message}` : 'Failed to connect to server. Please check your network connection.',
+            type: 'error',
+            icon: '⚠️'
+          });
+        } finally {
+          setIsConfirmingSlots(false);
+        }
+      }
+    });
+  };
+
   const executeClearDraft = () => {
     isDiscardingRef.current = true;
     userClearedGroupsRef.current = false;
@@ -8159,6 +8249,31 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                     onMouseLeave={(e) => { if (!draftSavedToast) e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)'; }}
                   >
                     <span>{draftSavedToast ? '✓ Draft Saved' : 'Save Draft'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="ns-confirm-slots-btn"
+                    onClick={handleConfirmSlotsSchedule}
+                    disabled={isConfirmingSlots}
+                    title="Confirm slot timings for selected students without creating groups yet. Students will immediately see their confirmed slot timing in their portal."
+                    style={{
+                      background: 'linear-gradient(135deg, #0F766E 0%, #0D9488 100%)',
+                      color: '#FFFFFF',
+                      border: '1.5px solid #2DD4BF',
+                      padding: '7px 15px',
+                      fontSize: '12.5px',
+                      fontWeight: 800,
+                      borderRadius: '8px',
+                      cursor: isConfirmingSlots ? 'not-allowed' : 'pointer',
+                      boxShadow: '0 2px 10px rgba(13, 148, 136, 0.35)',
+                      transition: 'all 0.15s ease',
+                      whiteSpace: 'nowrap',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '5px'
+                    }}
+                  >
+                    <span>{isConfirmingSlots ? 'Confirming...' : '✓ Confirm Slot Schedule'}</span>
                   </button>
                   <button
                     className="ns-primary-btn"

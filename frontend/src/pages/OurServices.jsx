@@ -1878,6 +1878,30 @@ const OurServices = () => {
         }
       }
 
+      // ── OFFICIAL ATHNEXLIVE LOGO IN TOP-RIGHT CORNER OF CERTIFICATE ──
+      try {
+        const alImg = new Image();
+        alImg.crossOrigin = 'anonymous';
+        alImg.src = '/athnexlive-logo.png';
+        await new Promise(r => { alImg.onload = r; alImg.onerror = r; setTimeout(r, 1500); });
+        if (alImg.naturalWidth > 0) {
+          const alW = 165;
+          const alH = (alImg.naturalHeight / alImg.naturalWidth) * alW;
+          const alX = W - alW - 65;
+          const alY = 60;
+          ctx.save();
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+          ctx.beginPath();
+          ctx.roundRect(alX - 10, alY - 6, alW + 20, alH + 12, 8);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(13, 148, 136, 0.35)';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+          ctx.drawImage(alImg, alX, alY, alW, alH);
+          ctx.restore();
+        }
+      } catch (e) {}
+
       canvas.toBlob((blob) => {
         if (!blob) return;
         const url = URL.createObjectURL(blob);
@@ -2866,6 +2890,7 @@ const OurServices = () => {
                   maxHeight: 'calc(100vh - 105px)',
                   overflowY: 'auto',
                   overflowX: 'hidden',
+                  minWidth: 0,
                   paddingRight: '8px',
                   paddingBottom: '24px'
                 }}
@@ -3093,7 +3118,7 @@ const OurServices = () => {
                 </div>
 
                 {/* Official School Logo & Coach Signature Photos Upload Hub */}
-                <div style={{ background: '#FFFFFF', borderRadius: '16px', padding: '18px 20px', border: '1px solid #E2E8F0', boxShadow: '0 4px 16px rgba(0,0,0,0.04)' }}>
+                <div style={{ background: '#FFFFFF', borderRadius: '16px', padding: '18px 20px', border: '1px solid #E2E8F0', boxShadow: '0 4px 16px rgba(0,0,0,0.04)', boxSizing: 'border-box' }}>
                   <div style={{ marginBottom: '14px' }}>
                     <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 800, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <span>🖼️</span> Official School Logo & Coach Signature Photos
@@ -3103,217 +3128,253 @@ const OurServices = () => {
                     </p>
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                     {/* School Logo Card */}
-                    <div style={{ background: '#F8FAFC', borderRadius: '12px', padding: '12px 14px', border: '1px solid #E2E8F0', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                      <div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                          <span style={{ fontSize: '12.5px', fontWeight: 800, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                            <span>🏫</span> School Logo
-                          </span>
-                          {certConfig.fields?.school_logo?.image_url && (
-                            <span style={{ fontSize: '9.5px', fontWeight: 800, color: '#059669', background: '#ECFDF5', padding: '2px 6px', borderRadius: '4px' }}>
-                              ✓ ACTIVE
-                            </span>
-                          )}
-                        </div>
-
+                    <div style={{
+                      background: '#F8FAFC',
+                      borderRadius: '12px',
+                      padding: '12px 14px',
+                      border: '1px solid #E2E8F0',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '10px',
+                      boxSizing: 'border-box'
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '13px', fontWeight: 800, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span>🏫</span> School Logo
+                        </span>
                         {certConfig.fields?.school_logo?.image_url ? (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#FFFFFF', padding: '8px', borderRadius: '8px', border: '1px solid #CBD5E1', marginBottom: '10px' }}>
-                            <div style={{ width: '45px', height: '45px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F1F5F9', borderRadius: '6px', overflow: 'hidden' }}>
-                              <img src={certConfig.fields.school_logo.image_url} alt="Logo" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
-                            </div>
-                            <div style={{ fontSize: '11px', color: '#334155', fontWeight: 650, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              Academy Crest / Logo
-                            </div>
-                          </div>
+                          <span style={{ fontSize: '9.5px', fontWeight: 800, color: '#059669', background: '#ECFDF5', border: '1px solid #A7F3D0', padding: '2px 7px', borderRadius: '4px', letterSpacing: '0.04em' }}>
+                            ✓ ACTIVE
+                          </span>
                         ) : (
-                          <div style={{ fontSize: '11px', color: '#64748B', marginBottom: '10px', minHeight: '38px', lineHeight: 1.4 }}>
-                            No logo uploaded yet. Upload a transparent PNG or JPG logo.
-                          </div>
+                          <span style={{ fontSize: '9.5px', fontWeight: 700, color: '#64748B', background: '#F1F5F9', padding: '2px 6px', borderRadius: '4px' }}>
+                            Optional
+                          </span>
                         )}
                       </div>
 
-                      <div style={{ display: 'flex', gap: '6px' }}>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setActiveFieldKey('school_logo');
-                            logoFileInputRef.current?.click();
-                          }}
-                          style={{
-                            flex: 1,
-                            padding: '7px 10px',
-                            background: '#0D9488',
-                            color: '#FFFFFF',
-                            border: 'none',
-                            borderRadius: '7px',
-                            fontSize: '11.5px',
-                            fontWeight: 800,
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: '5px'
-                          }}
-                        >
-                          <span>📷</span>
-                          <span>{certConfig.fields?.school_logo?.image_url ? 'Change Logo' : 'Upload Logo'}</span>
-                        </button>
-                        {certConfig.fields?.school_logo?.image_url && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: '#FFFFFF', padding: '8px 10px', borderRadius: '8px', border: '1px solid #CBD5E1', boxSizing: 'border-box' }}>
+                        <div style={{ width: '48px', height: '42px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', borderRadius: '6px', border: '1px solid #E2E8F0', overflow: 'hidden', flexShrink: 0 }}>
+                          {certConfig.fields?.school_logo?.image_url ? (
+                            <img src={certConfig.fields.school_logo.image_url} alt="Logo" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                          ) : (
+                            <span style={{ fontSize: '18px', opacity: 0.5 }}>🏫</span>
+                          )}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: '12px', color: '#1E293B', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {certConfig.fields?.school_logo?.image_url ? 'Academy Crest / Logo' : 'No Logo Uploaded'}
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#64748B', marginTop: '1px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {certConfig.fields?.school_logo?.image_url ? 'Displayed on certificate' : 'Transparent PNG or JPG'}
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
                           <button
                             type="button"
-                            onClick={() => handleRemoveImageField('school_logo')}
-                            title="Remove Logo"
+                            onClick={() => {
+                              setActiveFieldKey('school_logo');
+                              logoFileInputRef.current?.click();
+                            }}
                             style={{
-                              padding: '7px 10px',
-                              background: '#FEE2E2',
-                              color: '#DC2626',
+                              padding: '6px 12px',
+                              background: '#0D9488',
+                              color: '#FFFFFF',
                               border: 'none',
                               borderRadius: '7px',
-                              fontSize: '11px',
+                              fontSize: '11.5px',
                               fontWeight: 750,
-                              cursor: 'pointer'
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '5px',
+                              whiteSpace: 'nowrap',
+                              boxShadow: '0 1px 3px rgba(13, 148, 136, 0.25)'
                             }}
                           >
-                            🗑️
+                            <span>📷</span>
+                            <span>{certConfig.fields?.school_logo?.image_url ? 'Change Logo' : 'Upload Logo'}</span>
                           </button>
-                        )}
+                          {certConfig.fields?.school_logo?.image_url && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveImageField('school_logo')}
+                              title="Remove Logo"
+                              style={{
+                                padding: '6px 9px',
+                                background: '#FEE2E2',
+                                color: '#DC2626',
+                                border: '1px solid #FECACA',
+                                borderRadius: '7px',
+                                fontSize: '12px',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                              }}
+                            >
+                              🗑️
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
 
                     {/* Coach Signature Card */}
-                    <div style={{ background: '#F8FAFC', borderRadius: '12px', padding: '12px 14px', border: '1px solid #E2E8F0', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                      <div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                          <span style={{ fontSize: '12.5px', fontWeight: 800, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                            <span>✍️</span> Coach Signature
-                          </span>
-                          {certConfig.fields?.coach_signature?.image_url && (
-                            <span style={{ fontSize: '9.5px', fontWeight: 800, color: '#059669', background: '#ECFDF5', padding: '2px 6px', borderRadius: '4px' }}>
-                              ✓ ACTIVE
-                            </span>
-                          )}
-                        </div>
-
+                    <div style={{
+                      background: '#F8FAFC',
+                      borderRadius: '12px',
+                      padding: '12px 14px',
+                      border: '1px solid #E2E8F0',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '10px',
+                      boxSizing: 'border-box'
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '13px', fontWeight: 800, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span>✍️</span> Coach Signature
+                        </span>
                         {certConfig.fields?.coach_signature?.image_url ? (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#FFFFFF', padding: '8px', borderRadius: '8px', border: '1px solid #CBD5E1', marginBottom: '10px' }}>
-                            <div style={{ width: '55px', height: '45px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F1F5F9', borderRadius: '6px', overflow: 'hidden' }}>
-                              <img src={certConfig.fields.coach_signature.image_url} alt="Signature" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
-                            </div>
-                            <div style={{ fontSize: '11px', color: '#334155', fontWeight: 650, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              Handwritten Signature
-                            </div>
-                          </div>
+                          <span style={{ fontSize: '9.5px', fontWeight: 800, color: '#059669', background: '#ECFDF5', border: '1px solid #A7F3D0', padding: '2px 7px', borderRadius: '4px', letterSpacing: '0.04em' }}>
+                            ✓ ACTIVE
+                          </span>
                         ) : (
-                          <div style={{ fontSize: '11px', color: '#64748B', marginBottom: '10px', minHeight: '38px', lineHeight: 1.4 }}>
-                            No signature photo uploaded. Upload handwritten signature or stamp.
-                          </div>
+                          <span style={{ fontSize: '9.5px', fontWeight: 700, color: '#64748B', background: '#F1F5F9', padding: '2px 6px', borderRadius: '4px' }}>
+                            Optional
+                          </span>
                         )}
                       </div>
 
-                      <div style={{ display: 'flex', gap: '6px' }}>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setActiveFieldKey('coach_signature');
-                            sigFileInputRef.current?.click();
-                          }}
-                          style={{
-                            flex: 1,
-                            padding: '7px 10px',
-                            background: '#0D9488',
-                            color: '#FFFFFF',
-                            border: 'none',
-                            borderRadius: '7px',
-                            fontSize: '11.5px',
-                            fontWeight: 800,
-                            cursor: 'pointer',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: '5px'
-                          }}
-                        >
-                          <span>✍️</span>
-                          <span>{certConfig.fields?.coach_signature?.image_url ? 'Change Signature' : 'Upload Signature'}</span>
-                        </button>
-                        {certConfig.fields?.coach_signature?.image_url && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: '#FFFFFF', padding: '8px 10px', borderRadius: '8px', border: '1px solid #CBD5E1', boxSizing: 'border-box' }}>
+                        <div style={{ width: '48px', height: '42px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', borderRadius: '6px', border: '1px solid #E2E8F0', overflow: 'hidden', flexShrink: 0 }}>
+                          {certConfig.fields?.coach_signature?.image_url ? (
+                            <img src={certConfig.fields.coach_signature.image_url} alt="Signature" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                          ) : (
+                            <span style={{ fontSize: '18px', opacity: 0.5 }}>✍️</span>
+                          )}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: '12px', color: '#1E293B', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {certConfig.fields?.coach_signature?.image_url ? 'Handwritten Signature' : 'No Signature Uploaded'}
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#64748B', marginTop: '1px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {certConfig.fields?.coach_signature?.image_url ? 'Placed on signature line' : 'Photo or ink stamp'}
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
                           <button
                             type="button"
-                            onClick={() => handleRemoveImageField('coach_signature')}
-                            title="Remove Signature"
+                            onClick={() => {
+                              setActiveFieldKey('coach_signature');
+                              sigFileInputRef.current?.click();
+                            }}
                             style={{
-                              padding: '7px 10px',
-                              background: '#FEE2E2',
-                              color: '#DC2626',
+                              padding: '6px 12px',
+                              background: '#0D9488',
+                              color: '#FFFFFF',
                               border: 'none',
                               borderRadius: '7px',
-                              fontSize: '11px',
+                              fontSize: '11.5px',
                               fontWeight: 750,
-                              cursor: 'pointer'
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '5px',
+                              whiteSpace: 'nowrap',
+                              boxShadow: '0 1px 3px rgba(13, 148, 136, 0.25)'
                             }}
                           >
-                            🗑️
+                            <span>✍️</span>
+                            <span>{certConfig.fields?.coach_signature?.image_url ? 'Change Signature' : 'Upload Signature'}</span>
                           </button>
-                        )}
+                          {certConfig.fields?.coach_signature?.image_url && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveImageField('coach_signature')}
+                              title="Remove Signature"
+                              style={{
+                                padding: '6px 9px',
+                                background: '#FEE2E2',
+                                color: '#DC2626',
+                                border: '1px solid #FECACA',
+                                borderRadius: '7px',
+                                fontSize: '12px',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                              }}
+                            >
+                              🗑️
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
                 </div>
 
                 {/* Dynamic Field Selector & Position Styler */}
-                <div style={{ background: '#FFFFFF', borderRadius: '16px', padding: '20px', border: '1px solid #E2E8F0', boxShadow: '0 4px 16px rgba(0,0,0,0.04)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-                    <div>
-                      <h3 style={{ margin: 0, fontSize: '15.5px', fontWeight: 800, color: '#0F172A' }}>
-                        Field Placement & Typography
-                      </h3>
-                      <p style={{ margin: '2px 0 0', fontSize: '11.5px', color: '#64748B' }}>
-                        Choose a field to customize its position, font size, and color.
-                      </p>
-                    </div>
+                <div style={{ background: '#FFFFFF', borderRadius: '16px', padding: '20px', border: '1px solid #E2E8F0', boxShadow: '0 4px 16px rgba(0,0,0,0.04)', boxSizing: 'border-box' }}>
+                  <div style={{ marginBottom: '14px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', flexWrap: 'wrap', marginBottom: '6px' }}>
+                      <div>
+                        <h3 style={{ margin: 0, fontSize: '15.5px', fontWeight: 800, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '7px' }}>
+                          <span>📐</span> Field Placement & Typography
+                        </h3>
+                        <p style={{ margin: '3px 0 0', fontSize: '11.5px', color: '#64748B' }}>
+                          Choose a field to customize its position, font size, and color.
+                        </p>
+                      </div>
 
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button
-                        type="button"
-                        onClick={handleShowAllFields}
-                        style={{
-                          background: '#F0FDF4',
-                          color: '#16A34A',
-                          border: '1px solid #BBF7D0',
-                          borderRadius: '8px',
-                          padding: '5px 10px',
-                          fontSize: '11.5px',
-                          fontWeight: 800,
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '4px'
-                        }}
-                      >
-                        <span>👁️</span> Show All Fields
-                      </button>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
+                        <button
+                          type="button"
+                          onClick={handleShowAllFields}
+                          style={{
+                            background: '#F0FDF4',
+                            color: '#16A34A',
+                            border: '1px solid #BBF7D0',
+                            borderRadius: '8px',
+                            padding: '6px 12px',
+                            fontSize: '11.5px',
+                            fontWeight: 800,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '5px',
+                            whiteSpace: 'nowrap',
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+                          }}
+                        >
+                          <span>👁️</span> Show All Fields
+                        </button>
 
-                      <button
-                        type="button"
-                        onClick={handleAddCustomField}
-                        style={{
-                          background: '#F0FDFA',
-                          color: '#0D9488',
-                          border: '1px solid #99F6E4',
-                          borderRadius: '8px',
-                          padding: '5px 10px',
-                          fontSize: '11.5px',
-                          fontWeight: 800,
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '4px'
-                        }}
-                      >
-                        <span>+</span> Add Custom Text
-                      </button>
+                        <button
+                          type="button"
+                          onClick={handleAddCustomField}
+                          style={{
+                            background: '#F0FDFA',
+                            color: '#0D9488',
+                            border: '1px solid #99F6E4',
+                            borderRadius: '8px',
+                            padding: '6px 12px',
+                            fontSize: '11.5px',
+                            fontWeight: 800,
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '5px',
+                            whiteSpace: 'nowrap',
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+                          }}
+                        >
+                          <span>➕</span> Add Custom Text
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -3327,7 +3388,7 @@ const OurServices = () => {
                       { key: 'school_logo', label: '🖼️ School Logo' },
                       { key: 'issue_date', label: '📅 Issue Date' },
                       { key: 'coach_name', label: '👤 Coach Name' },
-                      { key: 'coach_signature', label: '✍️ Coach Signature Photo' },
+                      { key: 'coach_signature', label: '✍️ Coach Signature' },
                       { key: 'cert_id', label: '🔢 Serial ID' },
                       ...(certConfig.custom_fields || []).map((_, i) => ({
                         key: `custom_${i}`,
@@ -3354,6 +3415,11 @@ const OurServices = () => {
                             fontWeight: isSelected ? 800 : 650,
                             cursor: 'pointer',
                             opacity: isVis ? 1 : 0.65,
+                            whiteSpace: 'nowrap',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            boxShadow: isSelected ? '0 2px 6px rgba(13, 148, 136, 0.3)' : 'none',
                             transition: 'all 0.15s ease'
                           }}
                         >
@@ -3889,6 +3955,29 @@ const OurServices = () => {
                     cursor: draggingField ? 'grabbing' : 'default'
                   }}
                 >
+                  {/* Official Athnexlive Accreditation Logo in Top Right Corner */}
+                  <div style={{
+                    position: 'absolute',
+                    top: '12px',
+                    right: '14px',
+                    zIndex: 12,
+                    background: 'rgba(255, 255, 255, 0.95)',
+                    padding: '3px 8px',
+                    borderRadius: '7px',
+                    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.18)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    border: '1px solid rgba(255, 255, 255, 0.7)',
+                    pointerEvents: 'none'
+                  }}>
+                    <img
+                      src="/athnexlive-logo.png"
+                      alt="Athnexlive"
+                      style={{ height: '17px', width: 'auto', display: 'block', objectFit: 'contain' }}
+                    />
+                  </div>
+
                   {/* Default Surf Wave Image Backdrop */}
                   {((certConfig.template_type === 'default' || !certConfig.template_type) && !certConfig.custom_bg_url) && (
                     <div
@@ -4655,13 +4744,34 @@ const OurServices = () => {
                 border: '2px solid rgba(255, 255, 255, 0.2)',
                 overflow: 'hidden'
               }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ background: 'rgba(255, 255, 255, 0.15)', backdropFilter: 'blur(8px)', color: '#A7F3D0', fontSize: '9px', fontWeight: 850, padding: '3px 9px', borderRadius: '999px', border: '1px solid rgba(167, 243, 208, 0.3)' }}>
-                    THE COACH'S CUT
-                  </span>
-                  <span style={{ background: 'linear-gradient(135deg, #34D399 0%, #059669 100%)', color: '#022C22', fontSize: '9px', fontWeight: 900, padding: '3px 9px', borderRadius: '999px' }}>
-                    ✓ SESSION COMPLETE
-                  </span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-start' }}>
+                    <span style={{ background: 'rgba(255, 255, 255, 0.15)', backdropFilter: 'blur(8px)', color: '#A7F3D0', fontSize: '9px', fontWeight: 850, padding: '3px 9px', borderRadius: '999px', border: '1px solid rgba(167, 243, 208, 0.3)' }}>
+                      THE COACH'S CUT
+                    </span>
+                    <span style={{ background: 'linear-gradient(135deg, #34D399 0%, #059669 100%)', color: '#022C22', fontSize: '9px', fontWeight: 900, padding: '3px 9px', borderRadius: '999px' }}>
+                      ✓ SESSION COMPLETE
+                    </span>
+                  </div>
+
+                  {/* Athnexlive Logo in Top Right Corner */}
+                  <div style={{
+                    background: 'rgba(255, 255, 255, 0.95)',
+                    padding: '4px 9px',
+                    borderRadius: '8px',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.22)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    border: '1px solid rgba(255,255,255,0.7)',
+                    backdropFilter: 'blur(4px)'
+                  }}>
+                    <img
+                      src="/athnexlive-logo.png"
+                      alt="Athnexlive"
+                      style={{ height: '18px', width: 'auto', display: 'block', objectFit: 'contain' }}
+                    />
+                  </div>
                 </div>
 
                 <div>

@@ -119,10 +119,11 @@ const parseTimeStrToMinutes = (t) => {
 const isSessionCompleted = (s) => {
   if (!s) return false;
   const st = String(s.status || '').toLowerCase().trim();
+  if (st === 'pending for review' || st === 'pending review' || st === 'pending_review') return false;
+  if (st === 'cancelled' || st === 'canceled') return false;
   if (st === 'completed' || st === 'finished' || st === 'attended') return true;
   const att = String(s.attendance || '').toLowerCase().trim();
   if (att === 'present' || att === 'completed') return true;
-  if (st === 'cancelled' || st === 'canceled') return false;
   if (s.date) {
     const todayISO = getTodayYYYYMMDD();
     const sessionISO = normalizeToYYYYMMDD(s.date);
@@ -142,17 +143,17 @@ const getSessionDisplayStatus = (s) => {
   const lower = str.toLowerCase();
 
   if (lower === 'cancelled' || lower === 'canceled') return 'Cancelled';
-  if (isSessionCompleted(s)) return 'Completed';
   if (lower === 'pending for review' || lower === 'pending review' || lower === 'pending_review') {
     return 'Pending for Review';
   }
+  if (isSessionCompleted(s)) return 'Completed';
 
   if (rawDate) {
     const sessionISO = normalizeToYYYYMMDD(rawDate);
     const todayISO = getTodayYYYYMMDD();
     if (sessionISO) {
       if (sessionISO < todayISO) {
-        return 'Completed';
+        return 'Pending for Review';
       } else if (sessionISO > todayISO) {
         return 'Upcoming';
       } else {
@@ -169,7 +170,7 @@ const getSessionDisplayStatus = (s) => {
             const now = new Date();
             const nowMins = now.getHours() * 60 + now.getMinutes();
             if (nowMins < startMins) return 'Upcoming';
-            if (nowMins >= endMins) return 'Completed';
+            if (nowMins >= endMins) return 'Pending for Review';
             return 'In Progress';
           }
         }
@@ -791,7 +792,7 @@ const StudentProfile = () => {
             if (Array.isArray(list) && list.length > 0) {
               const uid = savedUser?.id ? String(savedUser.id) : null;
               const matchedByUser = uid ? list.find(s => s.user_id && String(s.user_id) === uid) : null;
-              const matchedWithSessions = list.find(s => Array.isArray(s.sessions) && s.sessions.length > 0);
+              const matchedWithSessions = list.find(s => (s.session_count && s.session_count > 0) || (Array.isArray(s.sessions) && s.sessions.length > 0));
               const bestMatch = matchedByUser || matchedWithSessions || list[0];
               if (bestMatch && (!data || (String(data.id) !== String(bestMatch.id) && (!Array.isArray(data.sessions) || data.sessions.length === 0)))) {
                 data = bestMatch;
@@ -833,22 +834,49 @@ const StudentProfile = () => {
           if (sessRes.ok) {
             const allSess = await sessRes.json();
             if (Array.isArray(allSess) && allSess.length > 0) {
-              const sNameLower = (fallback.name || savedUser?.name || '').toLowerCase().trim();
-              const studentSchool = (fallback.school || savedUser?.school || '').toLowerCase().trim();
-              const studentCandidateIds = [
+              const targetNames = new Set([
+                (fallback.name || '').toLowerCase().trim(),
+                (isOwnProfile && savedUser?.name ? savedUser.name : '').toLowerCase().trim(),
+              ].filter(Boolean));
+
+              const studentCandidateIds = new Set([
                 fallback.id ? String(fallback.id) : null,
-                savedUser?.student_id ? String(savedUser.student_id) : null,
-              ].filter(Boolean);
+                (isOwnProfile && savedUser?.student_id) ? String(savedUser.student_id) : null,
+              ].filter(Boolean));
+
+              const studentSchool = (fallback.school || (isOwnProfile && savedUser?.school ? savedUser.school : '') || '').toLowerCase().trim();
+              const isGenericSchool = (sch) => !sch || ['surf academy', 'no school selected', 'your selected surf school', 'athnex', 'athnex live', 'all'].includes(sch);
 
               const mySess = allSess.filter(s => {
-                const sName = (s.student || s.guest_name || s.student_name || '').toLowerCase().trim();
-                const sid = s.student_id ? String(s.student_id) : '';
-                const sSchool = (s.school || s.student_school || '').toLowerCase().trim();
-                const idMatch = sid && studentCandidateIds.includes(sid);
-                if (idMatch) return true;
-                if (studentSchool && sSchool && sSchool !== studentSchool && studentSchool !== 'all') return false;
-                const nameMatch = sNameLower && (sName === sNameLower || (s.student_name && s.student_name.toLowerCase().trim() === sNameLower) || (s.guest_name && s.guest_name.toLowerCase().trim() === sNameLower));
-                return nameMatch;
+                const sid = s.student_id != null ? String(s.student_id) : '';
+                const sSchool = (s.school || '').toLowerCase().trim();
+
+                // 1. Direct verified ID match
+                if (sid && studentCandidateIds.has(sid)) return true;
+
+                // If session is already assigned to another student ID, do NOT match
+                if (sid && !studentCandidateIds.has(sid)) return false;
+
+                // School isolation: if both have explicit schools and they don't match, reject unassigned session!
+                if (studentSchool && sSchool && !isGenericSchool(studentSchool) && !isGenericSchool(sSchool)) {
+                  if (studentSchool !== sSchool && !studentSchool.includes(sSchool) && !sSchool.includes(studentSchool)) {
+                    return false;
+                  }
+                }
+
+                // 2. Unassigned session matching name
+                const sName = (s.student || '').toLowerCase().trim();
+                const sStudentName = (s.student_name || '').toLowerCase().trim();
+                const sGuest = (s.guest_name || '').toLowerCase().trim();
+
+                for (const tName of targetNames) {
+                  if (!tName || tName.length < 2) continue;
+                  if (sName === tName || sStudentName === tName || sGuest === tName) {
+                    return true;
+                  }
+                }
+
+                return false;
               });
 
               if (mySess.length > 0) {
@@ -919,25 +947,60 @@ const StudentProfile = () => {
         if (sessRes.ok) {
           const allSess = await sessRes.json();
           if (Array.isArray(allSess) && allSess.length > 0) {
-            const targetName = (data.name || savedUser?.name || '').toLowerCase().trim();
-            const studentSchool = (data.school || savedUser?.school || '').toLowerCase().trim();
-            const studentCandidateIds = [
+            const isOwn = isOwnProfile;
+            const targetNames = new Set([
+              (data.name || '').toLowerCase().trim(),
+              (isOwn && savedUser?.name ? savedUser.name : '').toLowerCase().trim(),
+            ].filter(Boolean));
+
+            const studentCandidateIds = new Set([
               data.id ? String(data.id) : null,
-              savedUser?.student_id ? String(savedUser.student_id) : null,
-            ].filter(Boolean);
+              (isOwn && savedUser?.student_id) ? String(savedUser.student_id) : null,
+            ].filter(Boolean));
+
+            const studentSchool = (data.school || (isOwn && savedUser?.school ? savedUser.school : '') || '').toLowerCase().trim();
+            const isGenericSchool = (sch) => !sch || ['surf academy', 'no school selected', 'your selected surf school', 'athnex', 'athnex live', 'all'].includes(sch);
 
             const matchedFromApi = allSess.filter(s => {
-              const sName = (s.student || s.guest_name || s.student_name || '').toLowerCase().trim();
-              const sid = s.student_id ? String(s.student_id) : '';
-              const sSchool = (s.school || s.student_school || '').toLowerCase().trim();
-              const idMatch = sid && studentCandidateIds.includes(sid);
-              if (idMatch) return true;
-              if (studentSchool && sSchool && sSchool !== studentSchool && studentSchool !== 'all') return false;
-              const nameMatch = targetName && (sName === targetName || (s.student_name && s.student_name.toLowerCase().trim() === targetName) || (s.guest_name && s.guest_name.toLowerCase().trim() === targetName));
-              return nameMatch;
+              const sid = s.student_id != null ? String(s.student_id) : '';
+              const sSchool = (s.school || '').toLowerCase().trim();
+
+              // 1. Direct verified ID match
+              if (sid && studentCandidateIds.has(sid)) return true;
+
+              // If session is already assigned to another student ID, do NOT match
+              if (sid && !studentCandidateIds.has(sid)) return false;
+
+              // School isolation: if both have explicit schools and they don't match, reject unassigned session!
+              if (studentSchool && sSchool && !isGenericSchool(studentSchool) && !isGenericSchool(sSchool)) {
+                if (studentSchool !== sSchool && !studentSchool.includes(sSchool) && !sSchool.includes(studentSchool)) {
+                  return false;
+                }
+              }
+
+              // 2. Unassigned session matching name
+              const sName = (s.student || '').toLowerCase().trim();
+              const sStudentName = (s.student_name || '').toLowerCase().trim();
+              const sGuest = (s.guest_name || '').toLowerCase().trim();
+
+              for (const tName of targetNames) {
+                if (!tName || tName.length < 2) continue;
+                if (sName === tName || sStudentName === tName || sGuest === tName) {
+                  return true;
+                }
+              }
+
+              return false;
             });
 
             if (matchedFromApi.length > 0) {
+              const apiMap = new Map(matchedFromApi.map(s => [String(s.id), s]));
+              // Update existing sessions with latest api data (e.g. status changes, review notes)
+              stSessions = stSessions.map(s => {
+                const fresh = apiMap.get(String(s.id));
+                return fresh ? { ...s, ...fresh } : s;
+              });
+              // Add any new sessions that weren't in stSessions
               const existingIds = new Set(stSessions.map(s => String(s.id)));
               matchedFromApi.forEach(s => {
                 if (!existingIds.has(String(s.id))) {
@@ -1582,20 +1645,20 @@ const StudentProfile = () => {
 
   // Next Session banner:
   // Earliest upcoming future session -> that's the next session
-  // If no upcoming session, but there is a pending review session -> show pending session
+  // If no upcoming session, find latest finished or active session (Pending for Review or Completed or In Progress)
   const nextSession = upcomingSessions.length > 0 ? upcomingSessions[0] : null;
-  const pendingBannerSession = (!nextSession && pendingReviewSessions.length > 0)
-    ? pendingReviewSessions[0]
-    : (!nextSession && inProgressSessions.length > 0 ? inProgressSessions[0] : null);
 
-  const isAllSessionsCompleted = Boolean(
-    completedSessions.length > 0 &&
-    !nextSession &&
-    !pendingBannerSession &&
-    upcomingSessions.length === 0 &&
-    pendingReviewSessions.length === 0 &&
-    inProgressSessions.length === 0
+  // Find latest finished or current session if no upcoming session exists
+  const finishedOrActiveSessions = sortSessionsDescending(
+    effectiveSessions.filter(s => {
+      const st = getSessionDisplayStatus(s);
+      return st === 'In Progress' || st === 'Pending for Review' || st === 'Completed';
+    })
   );
+  const latestFinishedSession = !nextSession && finishedOrActiveSessions.length > 0
+    ? (inProgressSessions.length > 0 ? inProgressSessions[0] : finishedOrActiveSessions[0])
+    : null;
+  const latestFinishedStatus = latestFinishedSession ? getSessionDisplayStatus(latestFinishedSession) : null;
 
   // Comprehensive coach resolution supporting multiple assigned coaches
   const assignedCoaches = (() => {
@@ -1614,7 +1677,7 @@ const StudentProfile = () => {
       });
     };
 
-    // 1. Upcoming or Pending Banner Session coaches
+    // 1. Upcoming or Latest Finished Session coaches
     if (nextSession) {
       if (nextSession.notes && nextSession.notes.includes('Coaches:')) {
         const m = nextSession.notes.match(/Coaches:\s*([^-\n]+)/i);
@@ -1622,12 +1685,12 @@ const StudentProfile = () => {
       }
       if (nextSession.instructor) addCoach(nextSession.instructor, nextSession.instructor_id);
     }
-    if (pendingBannerSession) {
-      if (pendingBannerSession.notes && pendingBannerSession.notes.includes('Coaches:')) {
-        const m = pendingBannerSession.notes.match(/Coaches:\s*([^-\n]+)/i);
-        if (m && m[1]) addCoach(m[1], pendingBannerSession.instructor_id);
+    if (latestFinishedSession) {
+      if (latestFinishedSession.notes && latestFinishedSession.notes.includes('Coaches:')) {
+        const m = latestFinishedSession.notes.match(/Coaches:\s*([^-\n]+)/i);
+        if (m && m[1]) addCoach(m[1], latestFinishedSession.instructor_id);
       }
-      if (pendingBannerSession.instructor) addCoach(pendingBannerSession.instructor, pendingBannerSession.instructor_id);
+      if (latestFinishedSession.instructor) addCoach(latestFinishedSession.instructor, latestFinishedSession.instructor_id);
     }
 
     // 2. All sessions sorted descending
@@ -1654,11 +1717,23 @@ const StudentProfile = () => {
 
   const assignedCoachId = assignedCoaches.length > 0 ? assignedCoaches[0].id : null;
 
+  const latestFinishedCoach = (() => {
+    if (!latestFinishedSession) return null;
+    if (latestFinishedSession.instructor && !['—', 'Coach', 'Not Assigned Yet', 'Assigned Surf Coach'].includes(latestFinishedSession.instructor)) {
+      return latestFinishedSession.instructor;
+    }
+    if (latestFinishedSession.notes && latestFinishedSession.notes.includes('Coaches:')) {
+      const m = latestFinishedSession.notes.match(/Coaches:\s*([^-\n]+)/i);
+      if (m && m[1]) return m[1].trim();
+    }
+    return (assignedCoachName && assignedCoachName !== 'Not Assigned Yet') ? assignedCoachName : null;
+  })();
+
   const nextSessionTime = nextSession
     ? `${nextSession.date ? nextSession.date + ', ' : ''}${nextSession.time || ''}`
     : null;
   const nextSessionSub = nextSession
-    ? `${nextSession.location || student.school || 'Surf Spot'}${nextSession.group_name ? ` • ${nextSession.group_name}` : (nextSession.title ? ` • ${nextSession.title}` : '')}`
+    ? `${nextSession.location || student.school || 'Surf Spot'}${student.school && nextSession.location !== student.school ? ` • ${student.school}` : ''}`
     : null;
 
   return (
@@ -2123,87 +2198,154 @@ const StudentProfile = () => {
           </div>
 
           <div className="sp-hero-right">
-            {/* NEXT SESSION / PENDING FOR REVIEW Banner Box */}
+            {/* NEXT SESSION / LATEST FINISHED SESSION / EMPTY Banner Box */}
             {nextSession ? (
-              <div className="sp-next-session-box">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span>⏰</span>
-                  <span className="sp-ns-box-label">NEXT SESSION</span>
-                </div>
-                <div className="sp-ns-box-time">{nextSessionTime}</div>
-                <div className="sp-ns-box-sub">{nextSessionSub}</div>
-              </div>
-            ) : pendingBannerSession ? (
               <div className="sp-next-session-box" style={{
-                background: 'linear-gradient(135deg, #D97706 0%, #B45309 100%)',
-                boxShadow: '0 6px 20px rgba(217, 119, 6, 0.28)',
-                border: '1px solid rgba(251, 191, 36, 0.35)'
+                background: (nextSession.group_name === 'Slot Confirmed' || nextSession.instructor === 'Assigned at Beach' || (nextSession.notes && nextSession.notes.includes('Slot Confirmed')))
+                  ? 'linear-gradient(135deg, #042F2C 0%, #0F766E 100%)'
+                  : undefined
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span style={{ fontSize: '13px' }}>⏳</span>
-                    <span className="sp-ns-box-label" style={{ color: '#FEF3C7', letterSpacing: '0.6px', fontWeight: 800 }}>
-                      PENDING FOR REVIEW
-                    </span>
+                    <span>⏰</span>
+                    <span className="sp-ns-box-label">NEXT SESSION</span>
                   </div>
-                  <span style={{
-                    fontSize: '10.5px',
-                    background: 'rgba(255, 255, 255, 0.22)',
-                    color: '#FFFFFF',
-                    padding: '2px 8px',
-                    borderRadius: '10px',
-                    fontWeight: 700,
-                    letterSpacing: '0.3px'
-                  }}>
-                    Under Review
-                  </span>
+                  {(nextSession.group_name === 'Slot Confirmed' || nextSession.instructor === 'Assigned at Beach' || (nextSession.notes && nextSession.notes.includes('Slot Confirmed'))) && (
+                    <span style={{
+                      fontSize: '10.5px',
+                      fontWeight: 800,
+                      background: '#2DD4BF',
+                      color: '#042F2C',
+                      padding: '2px 8px',
+                      borderRadius: '10px',
+                      letterSpacing: '0.4px',
+                      textTransform: 'uppercase'
+                    }}>
+                      ✓ Slot Confirmed
+                    </span>
+                  )}
                 </div>
-                <div className="sp-ns-box-time" style={{ fontSize: '20px', fontWeight: 800, marginTop: '2px', color: '#FFFFFF' }}>
-                  {pendingBannerSession.date ? pendingBannerSession.date : 'Recent Session'}
-                  {pendingBannerSession.time ? ` • ${pendingBannerSession.time}` : ''}
-                </div>
-                <div className="sp-ns-box-sub" style={{ color: 'rgba(255, 255, 255, 0.92)', fontSize: '12.5px', marginTop: '2px' }}>
-                  {pendingBannerSession.location || student?.school || 'Surf Spot'}{pendingBannerSession.instructor ? ` • Coach: ${pendingBannerSession.instructor}` : (assignedCoachName ? ` • Coach: ${assignedCoachName}` : '')}
+                <div className="sp-ns-box-time">{nextSessionTime}</div>
+                <div className="sp-ns-box-sub">
+                  {(nextSession.group_name === 'Slot Confirmed' || nextSession.instructor === 'Assigned at Beach' || (nextSession.notes && nextSession.notes.includes('Slot Confirmed')))
+                    ? `🌊 ${nextSession.location || student.school || 'Surf Beach'} • Groups & Coaches assigned at beach roll call`
+                    : nextSessionSub
+                  }
                 </div>
               </div>
-            ) : isAllSessionsCompleted ? (
-              <div
-                className="sp-next-session-box"
-                style={{
-                  background: 'linear-gradient(135deg, #059669 0%, #047857 100%)',
-                  boxShadow: '0 4px 16px rgba(5, 150, 105, 0.28)',
-                  border: '1px solid rgba(16, 185, 129, 0.4)',
-                  cursor: 'pointer'
-                }}
-                onClick={() => navigate('/achievements')}
-                title="All sessions completed! Click to view your achievements & track record"
-              >
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <span style={{ fontSize: '13px' }}>🎉</span>
-                    <span className="sp-ns-box-label" style={{ color: '#A7F3D0', letterSpacing: '0.6px', fontWeight: 800 }}>
-                      ALL SESSIONS COMPLETED
+            ) : latestFinishedSession ? (
+              latestFinishedStatus === 'Pending for Review' ? (
+                <div className="sp-next-session-box" style={{
+                  background: 'linear-gradient(135deg, #D97706 0%, #B45309 100%)',
+                  boxShadow: '0 6px 20px rgba(217, 119, 6, 0.28)',
+                  border: '1px solid rgba(251, 191, 36, 0.35)'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ fontSize: '13px' }}>⏳</span>
+                      <span className="sp-ns-box-label" style={{ color: '#FEF3C7', letterSpacing: '0.6px', fontWeight: 800 }}>
+                        PENDING FOR REVIEW
+                      </span>
+                    </div>
+                    <span style={{
+                      fontSize: '10.5px',
+                      background: 'rgba(255, 255, 255, 0.22)',
+                      color: '#FFFFFF',
+                      padding: '2px 8px',
+                      borderRadius: '10px',
+                      fontWeight: 700,
+                      letterSpacing: '0.3px'
+                    }}>
+                      Under Review
                     </span>
                   </div>
-                  <span style={{
-                    fontSize: '10.5px',
-                    background: 'rgba(255, 255, 255, 0.22)',
-                    color: '#FFFFFF',
-                    padding: '2px 8px',
-                    borderRadius: '10px',
-                    fontWeight: 700,
-                    letterSpacing: '0.3px'
-                  }}>
-                    Completed
-                  </span>
+                  <div className="sp-ns-box-time" style={{ fontSize: '20px', fontWeight: 800, marginTop: '2px', color: '#FFFFFF' }}>
+                    {latestFinishedSession.date ? latestFinishedSession.date : 'Recent Session'}
+                    {latestFinishedSession.time ? ` • ${latestFinishedSession.time}` : ''}
+                  </div>
+                  <div className="sp-ns-box-sub" style={{ color: 'rgba(255, 255, 255, 0.92)', fontSize: '12.5px', marginTop: '2px' }}>
+                    {latestFinishedSession.location || student?.school || 'Surf Spot'}{latestFinishedCoach ? ` • Coach: ${latestFinishedCoach}` : ''}{student?.school && latestFinishedSession.location !== student.school ? ` • ${student.school}` : ''}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'rgba(255, 255, 255, 0.82)', marginTop: '4px', fontStyle: 'italic' }}>
+                    Awaiting Coach Review • Next session will appear once scheduled
+                  </div>
                 </div>
-                <div className="sp-ns-box-time" style={{ fontSize: '19px', fontWeight: 800, marginTop: '2px', color: '#FFFFFF' }}>
-                  All Sessions Completed
+              ) : latestFinishedStatus === 'In Progress' ? (
+                <div className="sp-next-session-box" style={{
+                  background: 'linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%)',
+                  boxShadow: '0 6px 20px rgba(37, 99, 235, 0.28)',
+                  border: '1px solid rgba(96, 165, 250, 0.4)'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ fontSize: '13px' }}>🏄</span>
+                      <span className="sp-ns-box-label" style={{ color: '#DBEAFE', letterSpacing: '0.6px', fontWeight: 800 }}>
+                        SESSION IN PROGRESS
+                      </span>
+                    </div>
+                    <span style={{
+                      fontSize: '10.5px',
+                      background: 'rgba(255, 255, 255, 0.22)',
+                      color: '#FFFFFF',
+                      padding: '2px 8px',
+                      borderRadius: '10px',
+                      fontWeight: 700,
+                      letterSpacing: '0.3px'
+                    }}>
+                      Live Now
+                    </span>
+                  </div>
+                  <div className="sp-ns-box-time" style={{ fontSize: '20px', fontWeight: 800, marginTop: '2px', color: '#FFFFFF' }}>
+                    {latestFinishedSession.date ? latestFinishedSession.date : 'Today'}
+                    {latestFinishedSession.time ? ` • ${latestFinishedSession.time}` : ''}
+                  </div>
+                  <div className="sp-ns-box-sub" style={{ color: 'rgba(255, 255, 255, 0.92)', fontSize: '12.5px', marginTop: '2px' }}>
+                    {latestFinishedSession.location || student?.school || 'Surf Spot'}{latestFinishedCoach ? ` • Coach: ${latestFinishedCoach}` : ''}
+                  </div>
                 </div>
-                <div className="sp-ns-box-sub" style={{ color: 'rgba(255, 255, 255, 0.95)', fontSize: '12px', marginTop: '2px' }}>
-                  {completedSessions.length} {completedSessions.length === 1 ? 'session' : 'sessions'} completed • View in My Achievements →
+              ) : (
+                <div
+                  className="sp-next-session-box"
+                  style={{
+                    background: 'linear-gradient(135deg, #059669 0%, #047857 100%)',
+                    boxShadow: '0 4px 16px rgba(5, 150, 105, 0.28)',
+                    border: '1px solid rgba(16, 185, 129, 0.4)',
+                    cursor: 'pointer'
+                  }}
+                  onClick={() => navigate('/achievements')}
+                  title="Session completed! Click to view your achievements & track record"
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span style={{ fontSize: '13px' }}>✅</span>
+                      <span className="sp-ns-box-label" style={{ color: '#A7F3D0', letterSpacing: '0.6px', fontWeight: 800 }}>
+                        SESSION COMPLETED
+                      </span>
+                    </div>
+                    <span style={{
+                      fontSize: '10.5px',
+                      background: 'rgba(255, 255, 255, 0.22)',
+                      color: '#FFFFFF',
+                      padding: '2px 8px',
+                      borderRadius: '10px',
+                      fontWeight: 700,
+                      letterSpacing: '0.3px'
+                    }}>
+                      Completed
+                    </span>
+                  </div>
+                  <div className="sp-ns-box-time" style={{ fontSize: '20px', fontWeight: 800, marginTop: '2px', color: '#FFFFFF' }}>
+                    {latestFinishedSession.date ? latestFinishedSession.date : 'Finished Session'}
+                    {latestFinishedSession.time ? ` • ${latestFinishedSession.time}` : ''}
+                  </div>
+                  <div className="sp-ns-box-sub" style={{ color: 'rgba(255, 255, 255, 0.95)', fontSize: '12.5px', marginTop: '2px' }}>
+                    {latestFinishedSession.location || student?.school || 'Surf Spot'}{latestFinishedCoach ? ` • Coach: ${latestFinishedCoach}` : ''}{student?.school && latestFinishedSession.location !== student.school ? ` • ${student.school}` : ''}
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'rgba(255, 255, 255, 0.85)', marginTop: '4px', fontStyle: 'italic' }}>
+                    Next session will appear once scheduled • View in My Achievements →
+                  </div>
                 </div>
-              </div>
+              )
             ) : (
               <div className="sp-next-session-box-empty">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center' }}>

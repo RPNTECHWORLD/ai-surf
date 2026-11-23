@@ -675,9 +675,17 @@ const AuthPage = () => {
         const schoolNameStr = typeof approvedUser.school === 'string'
           ? approvedUser.school
           : (approvedUser.school?.name || approvedUser.school_name || '');
-        sessionStorage.setItem('token', sessionStorage.getItem('token') || 'session_active_token');
+        const activeTok = sessionStorage.getItem('token') || localStorage.getItem('token') || 'session_active_token';
+        sessionStorage.setItem('token', activeTok);
         sessionStorage.setItem('user', JSON.stringify(approvedUser));
+        localStorage.setItem('token', activeTok);
+        localStorage.setItem('user', JSON.stringify(approvedUser));
         sessionStorage.setItem('activeSchool', JSON.stringify({
+          name: schoolNameStr,
+          owner: approvedUser.name,
+          email: approvedUser.email,
+        }));
+        localStorage.setItem('activeSchool', JSON.stringify({
           name: schoolNameStr,
           owner: approvedUser.name,
           email: approvedUser.email,
@@ -703,6 +711,8 @@ const AuthPage = () => {
   const handleAuthSuccess = (token, user) => {
     sessionStorage.setItem('token', token);
     sessionStorage.setItem('user', JSON.stringify(user));
+    localStorage.setItem('token', token);
+    localStorage.setItem('user', JSON.stringify(user));
     try {
       const existingSaved = JSON.parse(localStorage.getItem('savedAccounts') || '[]');
       const filtered = existingSaved.filter(a => a.email && a.email.toLowerCase() !== user.email.toLowerCase());

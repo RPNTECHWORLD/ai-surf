@@ -27,8 +27,19 @@ import JudgeLogin from './components/aquaticx/JudgeLogin';
 import JudgeDashboard from './components/aquaticx/JudgeDashboard';
 
 const PrivateRoute = ({ children }) => {
-  const token = sessionStorage.getItem('token');
-  return token ? children : <Navigate to="/auth" replace />;
+  const token = sessionStorage.getItem('token') || localStorage.getItem('token');
+  if (token) {
+    // If session lost in mobile browser tab sleep, auto-restore from persistent storage
+    if (!sessionStorage.getItem('token')) {
+      sessionStorage.setItem('token', token);
+      const user = localStorage.getItem('user');
+      if (user) sessionStorage.setItem('user', user);
+      const activeSchool = localStorage.getItem('activeSchool');
+      if (activeSchool) sessionStorage.setItem('activeSchool', activeSchool);
+    }
+    return children;
+  }
+  return <Navigate to="/auth" replace />;
 };
 
 function App() {

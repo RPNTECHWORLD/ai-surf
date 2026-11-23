@@ -3,16 +3,17 @@ import sys
 import time
 import zipfile
 import subprocess
-from dotenv import load_dotenv
 
-# Try importing boto3, if not in standard sys.path, add .venv
-try:
-    import boto3
-except ImportError:
-    venv_site = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".venv", "Lib", "site-packages")
-    if os.path.exists(venv_site):
-        sys.path.insert(0, venv_site)
-    import boto3
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+for sp in [
+    os.path.join(ROOT_DIR, ".venv", "Lib", "site-packages"),
+    os.path.join(ROOT_DIR, "backend", "venv", "Lib", "site-packages"),
+]:
+    if os.path.exists(sp) and sp not in sys.path:
+        sys.path.insert(0, sp)
+
+from dotenv import load_dotenv
+import boto3
 
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 backend_env_path = os.path.join(ROOT_DIR, "backend", ".env")
