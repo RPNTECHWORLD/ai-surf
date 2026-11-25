@@ -1660,6 +1660,16 @@ const StudentProfile = () => {
     : null;
   const latestFinishedStatus = latestFinishedSession ? getSessionDisplayStatus(latestFinishedSession) : null;
 
+  const isSlotConfirmedSession = (s) => {
+    if (!s) return false;
+    const hasCoachId = Boolean(s.instructor_id) || (Array.isArray(s.instructor_ids) && s.instructor_ids.length > 0);
+    if (hasCoachId) return false;
+    const gName = (s.group_name || '').trim();
+    const inst = (s.instructor || '').trim();
+    const notes = (s.notes || '');
+    return gName === 'Slot Confirmed' || inst === 'Assigned at Beach' || notes.includes('Slot Confirmed');
+  };
+
   // Comprehensive coach resolution supporting multiple assigned coaches
   const assignedCoaches = (() => {
     const list = [];
@@ -1670,7 +1680,7 @@ const StudentProfile = () => {
       rawName.split(/[,&]+|\band\b/i).forEach(n => {
         const trimmed = n.trim();
         const lower = trimmed.toLowerCase();
-        if (trimmed && !seenNames.has(lower) && !['—', 'coach', 'not assigned yet', 'assigned surf coach', 'staff', 'instructor', 'surf instructor', 'instructors'].includes(lower)) {
+        if (trimmed && !seenNames.has(lower) && !['—', 'coach', 'not assigned yet', 'not assigned', 'assigned at beach', 'assigned surf coach', 'staff', 'instructor', 'surf instructor', 'instructors'].includes(lower)) {
           seenNames.add(lower);
           list.push({ name: trimmed, id: id || null });
         }
@@ -1678,14 +1688,14 @@ const StudentProfile = () => {
     };
 
     // 1. Upcoming or Latest Finished Session coaches
-    if (nextSession) {
+    if (nextSession && !isSlotConfirmedSession(nextSession)) {
       if (nextSession.notes && nextSession.notes.includes('Coaches:')) {
         const m = nextSession.notes.match(/Coaches:\s*([^-\n]+)/i);
         if (m && m[1]) addCoach(m[1], nextSession.instructor_id);
       }
       if (nextSession.instructor) addCoach(nextSession.instructor, nextSession.instructor_id);
     }
-    if (latestFinishedSession) {
+    if (latestFinishedSession && !isSlotConfirmedSession(latestFinishedSession)) {
       if (latestFinishedSession.notes && latestFinishedSession.notes.includes('Coaches:')) {
         const m = latestFinishedSession.notes.match(/Coaches:\s*([^-\n]+)/i);
         if (m && m[1]) addCoach(m[1], latestFinishedSession.instructor_id);
@@ -1696,6 +1706,7 @@ const StudentProfile = () => {
     // 2. All sessions sorted descending
     const sorted = sortSessionsDescending(effectiveSessions);
     sorted.forEach(s => {
+      if (isSlotConfirmedSession(s)) return;
       if (s.notes && s.notes.includes('Coaches:')) {
         const m = s.notes.match(/Coaches:\s*([^-\n]+)/i);
         if (m && m[1]) addCoach(m[1], s.instructor_id);
@@ -1719,6 +1730,7 @@ const StudentProfile = () => {
 
   const latestFinishedCoach = (() => {
     if (!latestFinishedSession) return null;
+    if (isSlotConfirmedSession(latestFinishedSession)) return 'Not Assigned';
     if (latestFinishedSession.instructor && !['—', 'Coach', 'Not Assigned Yet', 'Assigned Surf Coach'].includes(latestFinishedSession.instructor)) {
       return latestFinishedSession.instructor;
     }
@@ -2201,7 +2213,7 @@ const StudentProfile = () => {
             {/* NEXT SESSION / LATEST FINISHED SESSION / EMPTY Banner Box */}
             {nextSession ? (
               <div className="sp-next-session-box" style={{
-                background: (nextSession.group_name === 'Slot Confirmed' || nextSession.instructor === 'Assigned at Beach' || (nextSession.notes && nextSession.notes.includes('Slot Confirmed')))
+                background: isSlotConfirmedSession(nextSession)
                   ? 'linear-gradient(135deg, #042F2C 0%, #0F766E 100%)'
                   : undefined
               }}>
@@ -2210,7 +2222,7 @@ const StudentProfile = () => {
                     <span>⏰</span>
                     <span className="sp-ns-box-label">NEXT SESSION</span>
                   </div>
-                  {(nextSession.group_name === 'Slot Confirmed' || nextSession.instructor === 'Assigned at Beach' || (nextSession.notes && nextSession.notes.includes('Slot Confirmed'))) && (
+                  {isSlotConfirmedSession(nextSession) && (
                     <span style={{
                       fontSize: '10.5px',
                       fontWeight: 800,
@@ -2227,14 +2239,48 @@ const StudentProfile = () => {
                 </div>
                 <div className="sp-ns-box-time">{nextSessionTime}</div>
                 <div className="sp-ns-box-sub">
-                  {(nextSession.group_name === 'Slot Confirmed' || nextSession.instructor === 'Assigned at Beach' || (nextSession.notes && nextSession.notes.includes('Slot Confirmed')))
-                    ? `🌊 ${nextSession.location || student.school || 'Surf Beach'} • Groups & Coaches assigned at beach roll call`
+                  {isSlotConfirmedSession(nextSession)
+                    ? `🌊 ${nextSession.location || student.school || 'Surf Beach'} • Coach: Not Assigned (Assigned at beach)`
                     : nextSessionSub
                   }
                 </div>
               </div>
             ) : latestFinishedSession ? (
-              latestFinishedStatus === 'Pending for Review' ? (
+              isSlotConfirmedSession(latestFinishedSession) ? (
+                <div className="sp-next-session-box" style={{
+                  background: 'linear-gradient(135deg, #042F2C 0%, #0F766E 100%)',
+                  boxShadow: '0 6px 20px rgba(15, 118, 110, 0.28)',
+                  border: '1px solid rgba(45, 212, 191, 0.35)'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <span>⏰</span>
+                      <span className="sp-ns-box-label" style={{ color: '#CCFBF1', letterSpacing: '0.6px', fontWeight: 800 }}>
+                        SLOT CONFIRMED
+                      </span>
+                    </div>
+                    <span style={{
+                      fontSize: '10.5px',
+                      fontWeight: 800,
+                      background: '#2DD4BF',
+                      color: '#042F2C',
+                      padding: '2px 8px',
+                      borderRadius: '10px',
+                      letterSpacing: '0.4px',
+                      textTransform: 'uppercase'
+                    }}>
+                      ✓ Slot Confirmed
+                    </span>
+                  </div>
+                  <div className="sp-ns-box-time" style={{ fontSize: '20px', fontWeight: 800, marginTop: '2px', color: '#FFFFFF' }}>
+                    {latestFinishedSession.date ? latestFinishedSession.date : 'Confirmed Slot'}
+                    {latestFinishedSession.time ? ` • ${latestFinishedSession.time}` : ''}
+                  </div>
+                  <div className="sp-ns-box-sub" style={{ color: 'rgba(255, 255, 255, 0.92)', fontSize: '12.5px', marginTop: '2px' }}>
+                    🌊 {latestFinishedSession.location || student?.school || 'Surf Beach'} • Coach: Not Assigned (Assigned at beach)
+                  </div>
+                </div>
+              ) : latestFinishedStatus === 'Pending for Review' ? (
                 <div className="sp-next-session-box" style={{
                   background: 'linear-gradient(135deg, #D97706 0%, #B45309 100%)',
                   boxShadow: '0 6px 20px rgba(217, 119, 6, 0.28)',
@@ -2957,13 +3003,14 @@ const StudentProfile = () => {
                 <div style={{ display: 'flex', flexDirection: 'column' }}>
                   {pendingOrActiveSessions.map((session, pIdx, arr) => {
                     const st = getSessionDisplayStatus(session);
-                    const isPendingReview = st === 'Pending for Review';
-                    const isInProgress = st === 'In Progress';
-                    const dotColor = isPendingReview ? '#D97706' : isInProgress ? '#10B981' : '#0284C7';
-                    const badgeBg = isPendingReview ? '#FEF3C7' : isInProgress ? '#DCFCE7' : '#E0F2FE';
-                    const badgeColor = isPendingReview ? '#92400E' : isInProgress ? '#166534' : '#0369A1';
-                    const badgeBorder = isPendingReview ? '#FDE68A' : isInProgress ? '#BBF7D0' : '#BAE6FD';
-                    const badgeLabel = isPendingReview ? '⏳ Pending for Review' : isInProgress ? '⚡ In Progress' : '🗓️ Scheduled';
+                    const isSlotOnly = isSlotConfirmedSession(session);
+                    const isPendingReview = !isSlotOnly && st === 'Pending for Review';
+                    const isInProgress = !isSlotOnly && st === 'In Progress';
+                    const dotColor = isSlotOnly ? '#0D9488' : isPendingReview ? '#D97706' : isInProgress ? '#10B981' : '#0284C7';
+                    const badgeBg = isSlotOnly ? '#CCFBF1' : isPendingReview ? '#FEF3C7' : isInProgress ? '#DCFCE7' : '#E0F2FE';
+                    const badgeColor = isSlotOnly ? '#0F766E' : isPendingReview ? '#92400E' : isInProgress ? '#166534' : '#0369A1';
+                    const badgeBorder = isSlotOnly ? '#99F6E4' : isPendingReview ? '#FDE68A' : isInProgress ? '#BBF7D0' : '#BAE6FD';
+                    const badgeLabel = isSlotOnly ? '✓ Slot Confirmed' : isPendingReview ? '⏳ Pending for Review' : isInProgress ? '⚡ In Progress' : '🗓️ Scheduled';
 
                     return (
                       <div
@@ -3038,25 +3085,33 @@ const StudentProfile = () => {
                             )}
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', flexWrap: 'wrap' }}>
-                            <span
-                              style={{
-                                color: '#0F766E',
-                                fontWeight: 700,
-                                cursor: session.instructor ? 'pointer' : 'default',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '4px'
-                              }}
-                              onClick={() => handleOpenCoachModal(session.instructor, session.instructor_id)}
-                              title="Click to view coach profile & submit a review"
-                            >
-                              <span style={{ textDecoration: session.instructor ? 'underline' : 'none' }}>
-                                🏄‍♂️ Coach: {session.instructor || 'Coach'}
+                            {isSlotOnly ? (
+                              <span style={{ color: '#64748B', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                <span>🏄‍♂️ Coach: Not Assigned</span>
                               </span>
-                              <span style={{ fontSize: '10px', background: '#CCFBF1', color: '#0F766E', padding: '1px 5px', borderRadius: '4px', fontWeight: 700 }}>
-                                ★ Review
+                            ) : (
+                              <span
+                                style={{
+                                  color: '#0F766E',
+                                  fontWeight: 700,
+                                  cursor: session.instructor ? 'pointer' : 'default',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px'
+                                }}
+                                onClick={() => handleOpenCoachModal(session.instructor, session.instructor_id)}
+                                title="Click to view coach profile & submit a review"
+                              >
+                                <span style={{ textDecoration: session.instructor ? 'underline' : 'none' }}>
+                                  🏄‍♂️ Coach: {session.instructor || 'Not Assigned'}
+                                </span>
+                                {session.instructor && (
+                                  <span style={{ fontSize: '10px', background: '#CCFBF1', color: '#0F766E', padding: '1px 5px', borderRadius: '4px', fontWeight: 700 }}>
+                                    ★ Review
+                                  </span>
+                                )}
                               </span>
-                            </span>
+                            )}
                             {session.time && (
                               <span style={{ color: '#64748B' }}>• {session.time}</span>
                             )}

@@ -169,7 +169,16 @@ const Sidebar = () => {
   const getNavItems = () => {
     const role = user?.role || 'admin';
     const isStudent = role === 'athlete' || role === 'student' || role === 'user';
+    const isCoach = role === 'coach' || role === 'instructor';
     const isHeadCoach = !isStudent && (role === 'coach' || role === 'head_coach') && Boolean(user?.is_head_coach || role === 'head_coach');
+    const rawSchool = user?.school || user?.school_name || '';
+    const userSchoolStr = (typeof rawSchool === 'string' ? rawSchool : (rawSchool?.name || '')).trim().toLowerCase();
+    const isSchoolCoach = isCoach && !isHeadCoach && Boolean(
+      userSchoolStr &&
+      !userSchoolStr.includes('individual') &&
+      !userSchoolStr.includes('freelance') &&
+      !userSchoolStr.includes('independent')
+    );
     const items = [];
 
     if (role === 'admin' || role === 'guest_admin' || isHeadCoach) {
@@ -208,7 +217,7 @@ const Sidebar = () => {
       { label: 'Athlete Intel', subtitle: 'BETA VERSION', path: '/athlete-intelligence' }
     );
 
-    if (!isStudent) {
+    if (!isStudent && !isSchoolCoach) {
       items.push({ label: 'Our Services', path: '/services' });
     }
 

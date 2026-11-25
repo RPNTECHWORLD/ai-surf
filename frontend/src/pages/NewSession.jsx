@@ -1362,7 +1362,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             body: JSON.stringify({
               date: formattedSessionDate,
               location: spotName || 'Main Beach',
-              school: selectedSchool || '',
+              school: activeSchoolName || currentUser?.school || currentUser?.school_name || '',
               slot_allocations: allocations
             })
           });
@@ -1773,6 +1773,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
     existingDbDateSessions.forEach(sess => {
       const groupName = sess.group_name || sess.groupName || '';
+      if (groupName.trim() === 'Slot Confirmed') return; // Slot-confirmed pool students are unassigned, NOT blocked from Step 3 Students List
       const timeStr = sess.time || '';
       const instructorName = sess.instructor || sess.instructor_name || '';
       const instructorId = sess.instructor_id || null;
@@ -1830,6 +1831,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const existingScheduledStudentNamesOnDate = useMemo(() => {
     const setNames = new Set();
     existingDbDateSessions.forEach(sess => {
+      const groupName = sess.group_name || sess.groupName || '';
+      if (groupName.trim() === 'Slot Confirmed') return; // Slot-confirmed pool students are unassigned, NOT blocked from Step 3 Students List
       const isGuestSession = Boolean(sess.guest_name && sess.guest_name.trim());
       if (isGuestSession) {
         // Guest session: only the guest name is scheduled
@@ -2607,12 +2610,36 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       setStep3SlotFilter(targetSlotId);
     }
 
-    // 3. Pre-populate slotStudentMap
-    if (matchedIds.length > 0 && targetSlotId) {
-      setSlotStudentMap({ [targetSlotId]: matchedIds });
+    // 3. Pre-populate slotStudentMap (include group students + any unassigned "Slot Confirmed" pool students in this same slot)
+    const slotPoolIds = [...matchedIds];
+    if (targetSlot && existingDbDateSessions && existingDbDateSessions.length > 0) {
+      const tStart = (targetSlot.startTime || targetSlot.time || '').split(' - ')[0].trim().toLowerCase().replace(/^0/, '');
+      existingDbDateSessions.forEach(sess => {
+        if ((sess.group_name || '').trim() !== 'Slot Confirmed') return;
+        const sTime = (sess.time || '').split(' - ')[0].trim().toLowerCase().replace(/^0/, '');
+        if (tStart && sTime && sTime !== tStart) return;
+        const isGuest = Boolean(sess.guest_name && sess.guest_name.trim());
+        const sid = sess.student_id;
+        let poolId = null;
+        if (isGuest) {
+          const gName = sess.guest_name.trim();
+          const foundG = allPoolStudents.find(s => s.isGuest && (s.name || '').toLowerCase().trim() === gName.toLowerCase());
+          poolId = foundG ? foundG.id : `sess-guest-${sid || '0'}-${gName.replace(/\s+/g, '-').toLowerCase()}`;
+        } else {
+          const foundR = allPoolStudents.find(s => !s.isGuest && sid != null && String(s.id) === String(sid));
+          poolId = foundR ? foundR.id : sid;
+        }
+        if (poolId != null && !slotPoolIds.some(id => String(id) === String(poolId))) {
+          slotPoolIds.push(poolId);
+        }
+      });
+    }
+
+    if (slotPoolIds.length > 0 && targetSlotId) {
+      setSlotStudentMap({ [targetSlotId]: slotPoolIds });
       setSlotCapacityMap(prev => ({
         ...prev,
-        [targetSlotId]: Math.max(prev[targetSlotId] || 0, matchedIds.length)
+        [targetSlotId]: Math.max(prev[targetSlotId] || 0, slotPoolIds.length)
       }));
     }
 
@@ -3937,18 +3964,19 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     return null;
   }, [allPoolStudents, dbStudents, existingDbDateSessions]);
 
-  // Step 3: Students in Column 1 (All selected students across all slots)
+  // Step 3: Students in Column 1 (Strictly students selected in slots or assigned to groups — never dump all school students)
   const importedStudents = useMemo(() => {
-    if (editSession) {
-      // In edit mode: allPoolStudents is already strictly the group's students
-      return allPoolStudents;
-    }
     const allGroupStudentIds = new Set();
     trainingGroups.forEach(g => {
       (g.studentIds || []).forEach(id => allGroupStudentIds.add(String(id)));
     });
+    const allSlotStudentIds = new Set();
+    Object.values(slotStudentMap).forEach(list => {
+      if (Array.isArray(list)) list.forEach(id => allSlotStudentIds.add(String(id)));
+    });
     const targetIdSet = new Set([
       ...allSelectedStudentIds.map(String),
+      ...(editSession ? allSlotStudentIds : []),
       ...allGroupStudentIds
     ]);
     return allPoolStudents.filter(s => {
@@ -3962,7 +3990,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       }
       return false;
     });
-  }, [allPoolStudents, allSelectedStudentIds, trainingGroups, editSession]);
+  }, [allPoolStudents, allSelectedStudentIds, slotStudentMap, trainingGroups, editSession]);
 
   // Step 3: Available Days for Imported Students
   const step3AvailableDays = useMemo(() => {
@@ -3979,10 +4007,10 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
   // Students in active slot (for option counts)
   const slotImportedStudents = useMemo(() => {
-    if (editSession || step3SlotFilter === 'ALL') return importedStudents;
+    if (step3SlotFilter === 'ALL') return importedStudents;
     const slotAssignedIds = slotStudentMap[step3SlotFilter] || slotStudentMap[String(step3SlotFilter)] || [];
     return importedStudents.filter(s => slotAssignedIds.some(id => String(id) === String(s.id)));
-  }, [importedStudents, step3SlotFilter, slotStudentMap, editSession]);
+  }, [importedStudents, step3SlotFilter, slotStudentMap]);
 
   const hasActiveStep3Filters = step3DayFilter !== 'all' || step3StatusFilter !== 'unassigned' || step3LevelFilter !== 'all' || step3GenderFilter !== 'all' || step3SwimmingFilter !== 'all' || Boolean(studentSearch);
 
@@ -3998,8 +4026,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const filteredColumn1Students = useMemo(() => {
     return importedStudents
       .filter(s => {
-        // Slot filtering in Step 3 (bypassed in edit mode so group students never disappear)
-        if (!editSession && step3SlotFilter !== 'ALL') {
+        // Slot filtering in Step 3
+        if (step3SlotFilter !== 'ALL') {
           const slotAssignedIds = slotStudentMap[step3SlotFilter] || slotStudentMap[String(step3SlotFilter)] || [];
           const isInGroupForSlot = trainingGroups.some(g => String(g.slotId) === String(step3SlotFilter) && (g.studentIds || []).some(id => String(id) === String(s.id)));
           if (!slotAssignedIds.some(id => String(id) === String(s.id)) && !isInGroupForSlot) return false;
@@ -5772,14 +5800,44 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           });
 
           if (safeToDelete.length > 0) {
+            // Check which removed students are still in the slot's Students List (unassigned, not unchecked in Step 2)
+            const allSlotPoolIds = new Set();
+            Object.values(slotStudentMap).forEach(list => {
+              if (Array.isArray(list)) list.forEach(id => allSlotPoolIds.add(String(id)));
+            });
+            const allAssignedGroupIds = new Set();
+            validGroups.forEach(g => (g.studentIds || []).forEach(id => allAssignedGroupIds.add(String(id))));
+
             await Promise.all(
               safeToDelete
                 .filter(sess => sess.id != null)
-                .map(sess =>
-                  fetch(`${API}/api/sessions/${sess.id}`, {
+                .map(sess => {
+                  const sessIsGuest = Boolean(sess.guest_name && sess.guest_name.trim());
+                  const gSlug = sessIsGuest ? `sess-guest-${sess.student_id || '0'}-${sess.guest_name.trim().replace(/\s+/g, '-').toLowerCase()}` : null;
+                  const sIdStr = sessIsGuest ? gSlug : String(sess.student_id);
+
+                  const isInSlotList = sIdStr && allSlotPoolIds.has(sIdStr);
+                  const isInAnyGroup = sIdStr && allAssignedGroupIds.has(sIdStr);
+
+                  // If student was removed from group back to Column 1 Students List (not unchecked in Step 2),
+                  // move their session back to "Slot Confirmed" pool instead of deleting them!
+                  if (isInSlotList && !isInAnyGroup) {
+                    return fetch(`${API}/api/sessions/${sess.id}`, {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        group_name: 'Slot Confirmed',
+                        instructor_id: null,
+                        instructor_ids: [],
+                        notes: `Slot Confirmed (${slotTimeStr}) - Returned to Students List`
+                      }),
+                    }).catch(err => console.error('Failed returning removed student to slot pool', sess.id, err));
+                  }
+
+                  return fetch(`${API}/api/sessions/${sess.id}`, {
                     method: 'DELETE',
-                  }).catch(err => console.error('Failed deleting removed student session', sess.id, err))
-                )
+                  }).catch(err => console.error('Failed deleting removed student session', sess.id, err));
+                })
             );
           }
 

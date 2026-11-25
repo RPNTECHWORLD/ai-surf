@@ -691,7 +691,7 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
           3. backend/main.py's /api/schools endpoint contained an auto-population check that automatically recreated 'Aquatic Indica Surf School' in the database whenever the schools table was queried while empty.
           4. seed_database() in backend/main.py and Column definitions had hardcoded demo seed routines (ericsheldon@gmail.com, Aarav, Chloe, etc.) and default='Aquatic Indica Surf School'.
       - **Frontend Clean-up & Storage Sanitization**:
-        - Replaced all hardcoded school name fallbacks across Sidebar.jsx, SchoolDashboard.jsx, Sessions.jsx, CoachPortal.jsx, Competitions.jsx, CompetitorManagement.jsx, HeatManagement.jsx, and mockFetch.js.
+        - Replaced all hardcoded school name fallbacks across Sidebar.jsx,  SchoolDashboard.jsx, Sessions.jsx, CoachPortal.jsx, Competitions.jsx, CompetitorManagement.jsx, HeatManagement.jsx, and mockFetch.js.
         - Embedded an automatic client-side storage sanitizer in Sidebar.jsx that inspects localStorage and sessionStorage on mount and strips out any cached 'Aquatic Indica' values.
         - Updated header and mobile dropdown to only render school affiliation if a valid school exists.
       - **Backend Clean-up & AWS RDS Database Purge**:
@@ -3871,6 +3871,129 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
   - Enhanced error handling in `frontend/src/pages/NewSession.jsx` so that any detailed error message is surfaced in the alert.
   - Verified live API call via both backend direct port (`8000`) and Vite proxy (`5173`), returning `200 OK` with `success: true`.
   - Verified clean frontend build with `npm --prefix frontend run build` (0 errors in 3.54s).
+
+
+### Changes on 25-11-2026
+
+#### 16. Edit Published Group: Keep Removed Students in Students List & Scope Column 1 Strictly to Slot (`NewSession.jsx`, `backend/main.py`)
+- **Problem & User Feedback**:
+  - User reported: `"group publish anathuku aparom thiruba edit kuduthu student ah remove pana atha student fulla remove akiduranga ana student list dhan avanga ponum full remove aga kudathu aparo yela studdentum aga katturaga apadi aga kudathu"`.
+  - Two issues occurred when clicking **Edit Session** on a published group:
+    1. **All School Students Shown in Step 3 Students List**: `allPoolStudents` in `editSession` mode loads all active `dbStudents` (for Step 2 selection if user navigates back), and `importedStudents` returned `allPoolStudents` directly in `editSession` mode while `slotImportedStudents` / `filteredColumn1Students` bypassed slot filtering. This dumped every active student in the school into Step 3 Column 1 ("Students List").
+    2. **Removed Students Completely Deleted Instead of Returning to Students List**: When removing a student from a published group via `×` and saving, `handlePublishSession` executed `DELETE /api/sessions/{id}`, permanently deleting the student's session instead of returning them to the slot's unassigned Students List (`Slot Confirmed`).
+- **Resolution**:
+  1. **Strict Slot Scoping in Edit Mode (`frontend/src/pages/NewSession.jsx`)**:
+     - Removed the `if (editSession) return allPoolStudents;` shortcut in `importedStudents` and removed the `editSession` bypass in `slotImportedStudents` and `filteredColumn1Students`.
+     - Column 1 ("Students List") now strictly shows only students belonging to `slotStudentMap` / `trainingGroups` for the active slot.
+     - During `editSession` prefill, any existing `"Slot Confirmed"` (unassigned pool) sessions for the same slot time and date are also loaded into `slotStudentMap[targetSlotId]` so they remain visible in Column 1.
+  2. **Preserve Removed Students in Slot Pool (`frontend/src/pages/NewSession.jsx`, `backend/main.py`)**:
+     - In `handlePublishSession`, when a student is removed from a group (`safeToDelete`) while still present in `slotStudentMap` (i.e. sitting in Column 1 Students List rather than unchecked in Step 2), the session is updated via `PUT /api/sessions/{id}` with `group_name: "Slot Confirmed"` instead of `DELETE`.
+     - In `backend/main.py` (`PUT /api/sessions/{session_id}`), explicitly cleared `instructor_id = None` and `instructor_ids = "[]"` whenever `group_name == "Slot Confirmed"`.
+  3. Verified frontend build (`npm --prefix frontend run build` — 0 errors in 3.19s) and backend Python syntax (`py_compile`).
+
+
+#### 17. Slot Confirmed Coach ("Not Assigned"), Student Profile Display & Step 3 Students List Fix (`NewSession.jsx`, `StudentProfile.jsx`, `backend/main.py`)
+- **Problems & User Feedback**:
+  - User reported: `"slot mattum dhan confirm pana coachla yarumey vaikala aparo yan ipadi katuthu not assion nu katanum aparo slot cofirm pana avagala student listla katanumla yan katala"` along with 3 screenshots.
+  - **Issue 1 (`selectedSchool` ReferenceError)**: Clicking `"✓ Confirm Slot Schedule"` threw `ReferenceError: selectedSchool is not defined` in `NewSession.jsx` (`handleConfirmSlotsSchedule`).
+  - **Issue 2 (`StudentProfile.jsx` Hero & Pending Sessions Cards)**:
+    - When a `Slot Confirmed` session's slot time passed for the day (or appeared under `Pending Sessions`), `StudentProfile.jsx` displayed `⏳ PENDING FOR REVIEW` / `Under Review` and fell back to `assignedCoachName` (e.g. `gabriel, Kathir, santhosh, sundari` from past sessions) or `Coach: Coach ★ Review`, instead of `✓ Slot Confirmed` and `Coach: Not Assigned`.
+  - **Issue 3 (Slot-Confirmed Students Missing from Step 3 `Students List`)**:
+    - Once `confirm-slots` created a `"Slot Confirmed"` session in DB for a student (`testing`), `isStudentScheduledInDbOnDate` treated that session as already scheduled/blocked, causing `allSelectedStudentIds` to exclude the main student while leaving only their guests in Step 3 `Students List`.
+- **Resolution**:
+  1. **`NewSession.jsx`**:
+     - Fixed `school: activeSchoolName || currentUser?.school || currentUser?.school_name || ''` in `handleConfirmSlotsSchedule`.
+     - Excluded `group_name === 'Slot Confirmed'` sessions from `existingDbScheduledInfoMapOnDate` and `existingScheduledStudentNamesOnDate` so slot-confirmed students remain selected and visible in Step 3 `Students List` (alongside their guests) until assigned to a real group.
+  2. **`StudentProfile.jsx`**:
+     - Added `isSlotConfirmedSession(s)` helper (checks `Slot Confirmed` / `Assigned at Beach` with no assigned `instructor_id` / `instructor_ids`).
+     - Updated `latestFinishedCoach` and `assignedCoaches` so `Slot Confirmed` sessions never pull coaches from old sessions and return `'Not Assigned'`.
+     - Updated Hero Card (`nextSession` and `latestFinishedSession`) and `Pending Sessions` list to display `✓ Slot Confirmed` (teal badge) and `Coach: Not Assigned` without `★ Review` or `Pending for Review`.
+  3. **`backend/main.py` (`create_sessions_bulk`)**:
+     - Automatically deletes any `"Slot Confirmed"` placeholder session for the same `student_id` + `date` (matching guest vs non-guest) when publishing a real group so no duplicate session remains.
+  4. Verified frontend build (`npm --prefix frontend run build`) and backend Python syntax (`py_compile`).
+
+
+#### 18. Fix Blank/Black Certificate Download for S3 Custom Certificate Templates (`backend/main.py`, `MyAchievements.jsx`, `OurServices.jsx`)
+- **Problem & User Feedback**:
+  - User reported: `"certificate crt ah illa paru olunga vai download pana black ah varuthu"` with screenshots showing custom certificates configured in `OurServices.jsx` rendering only overlay text (`Ruchika Shah`, `Date`, `Serial ID`, `athnexlive` logo) on a blank/black background when downloaded in `MyAchievements.jsx`.
+- **Root Cause**:
+  - Custom certificate backgrounds uploaded to S3 (`https://aisurf-media-uploads-...s3.us-east-1.amazonaws.com/...`) rendered fine in CSS `background-image` preview, but failed when loaded into HTML5 `<canvas>` with `img.crossOrigin = 'anonymous'` due to S3 CORS / non-CORS browser cache mismatch, causing `loadImgSafely` to return `null` and fall back to a solid blank fill.
+- **Resolution**:
+  1. **Same-Origin Image Proxy (`backend/main.py`)**:
+     - Added `@app.get("/api/proxy-image")` to safely fetch external HTTP/HTTPS certificate/logo images server-side (blocking private/local IPs) and serve them on the same origin with `Cache-Control: public, max-age=86400`.
+  2. **CORS-Safe Canvas Image Loader (`MyAchievements.jsx`, `OurServices.jsx`)**:
+     - Updated `loadImgSafely` (`MyAchievements.jsx`) and added `loadCertImgSafely` (`OurServices.jsx`) to try direct load with cache-busting first and automatically fall back to `${API}/api/proxy-image?url=...` if CORS blocks direct canvas access.
+     - Painted a solid `#FFFFFF` base before drawing `bgImg` so transparent PNG templates never render black.
+  3. Verified `/api/proxy-image` live via Vite proxy (`200 OK`), frontend build (`npm --prefix frontend run build`), and backend syntax (`py_compile`).
+  4. Fixed `Uncaught ReferenceError: activeCourseData is not defined` in `OurServices.jsx` (`handleDownloadTestCertificate`) when downloading custom certificates by hoisting `activeCourseData` declaration outside the default-template branch.
+
+
+#### 19. Editable (Draggable & Resizable) Non-Removable Athnexlive Brand Logo on Certificates (`OurServices.jsx`, `MyAchievements.jsx`)
+- **Problem & Requirement**:
+  - User requested: `"itha edit panura mathiri vachikaala ana remove pana kudatha mathiri irukanum"` with screenshot of the top-right `athnexlive` brand badge overlapping the certificate border.
+  - Admins need to reposition and resize the `athnexlive` brand badge so it fits cleanly on custom certificate designs without overlapping borders or logos, while ensuring the brand badge can never be hidden or deleted.
+- **Resolution**:
+  1. **Added `athnex_logo` Field (`OurServices.jsx`)**:
+     - Added `athnex_logo` (`🏷️ Athnex Logo`) to `defaultCourseCertificates` and the Field Selection Pills.
+     - Made `athnex_logo` draggable directly on the Live Certificate Interactive Canvas and resizable/alignable via X%, Y%, Alignment, and Image Display Width sliders.
+     - Locked visibility (`lockedVisible: true`, `visible: true` enforced in `updateActiveField` and `handleRemoveImageField`), replacing the Hide/Remove buttons with a **`🔒 Required Brand Logo`** badge.
+  2. **Synced High-Res Canvas Exports (`OurServices.jsx`, `MyAchievements.jsx`)**:
+     - Updated both `handleDownloadTestCertificate` and `handleDownloadCertificate` to render `/athnexlive-logo.png` at the exact saved `(x, y, width, align)` coordinates of `athnex_logo`.
+  3. Verified frontend build (`npm --prefix frontend run build`).
+
+
+#### 20. Fix `ReferenceError: currentUser is not defined` in `UserProfileMenu.jsx`
+- **Problem**:
+  - Coach profile edit dropdown in `UserProfileMenu.jsx` referenced `currentUser?.school` instead of `effectiveUser?.school`, causing `Uncaught ReferenceError: currentUser is not defined` and a blank white screen when rendered.
+- **Resolution**:
+  - Updated `frontend/src/components/UserProfileMenu.jsx` line 3151 to use `effectiveUser?.school`.
+  - Verified frontend production build (`npm --prefix frontend run build`).
+
+
+#### 21. Hide & Block "Our Services" for School-Affiliated Coaches (`Sidebar.jsx`, `OurServices.jsx`)
+- **Problem & User Feedback**:
+  - User reported: `"inga oru schoola iruka coachku yan our servies kattuthu indivaull coah ku mattum dhana katnaum unakey oru arivu vena"` with screenshot showing a school-affiliated Surf Coach (`Eric Sheldon RS`, `rpn tech ac`) seeing and accessing the `Our Services` tab.
+- **Root Cause**:
+  - `Sidebar.jsx` used `if (!isStudent)` to show the `Our Services` nav tab, which exposed it to regular school-affiliated coaches too. `OurServices.jsx` also lacked a route guard against school coaches.
+- **Resolution**:
+  - Updated `Sidebar.jsx` (`getNavItems`) to detect `isSchoolCoach` (a non-head coach affiliated with a school rather than `Individual / Freelance Coach`) and hide `Our Services` (`if (!isStudent && !isSchoolCoach)`).
+  - Added a `useEffect` route guard in `OurServices.jsx` that redirects school-affiliated regular coaches to their profile (`/instructors/:id`) and students to their profile if `/services` is accessed directly.
+  - Verified frontend production build (`npm --prefix frontend run build`).
+
+
+#### 22. Decouple Default Certificate Backdrop from Milestone Story Poster Photo (`OurServices.jsx`, `MyAchievements.jsx`)
+- **Problem & User Feedback**:
+  - User reported: `"naa inga reset tu defaut aluthuna naa milestone nuku upload pana photo dhan inga varutha ana apadi vara kudathu"` with screenshot showing the custom Milestone Story Poster photo appearing faded behind the Default Certificate template when clicking **Reset to Default**.
+- **Root Cause**:
+  - Both `OurServices.jsx` (preview & `handleDownloadTestCertificate`) and `MyAchievements.jsx` (`handleDownloadCertificate`) used `posterUrl || '/surf-milestone-bg.jpg'` / `posterBgUrl || '/surf-milestone-bg.jpg'` for the Default Certificate's ocean wave backdrop.
+- **Resolution**:
+  - Updated `OurServices.jsx` and `MyAchievements.jsx` so the Default Certificate template always uses the official default ocean wave image (`'/surf-milestone-bg.jpg'`), completely independent of the school's Milestone Story Poster photo.
+  - Verified frontend production build (`npm --prefix frontend run build`).
+
+
+#### 23. Fix `scaleFactor` Scope Error for Athnexlive Logo in Certificate Downloads (`OurServices.jsx`, `MyAchievements.jsx`)
+- **Problem & User Feedback**:
+  - User reported: `"test ku download pani patha athenxlive logo vara mattuthu munadi mathiri"` with screenshot showing the downloaded test certificate missing the `athnexlive` logo.
+- **Root Cause**:
+  - Both `OurServices.jsx` (`handleDownloadTestCertificate`) and `MyAchievements.jsx` (`handleDownloadCertificate`) referenced `scaleFactor` outside the `allFields` loop when calculating `alW` for `athnex_logo`, throwing `ReferenceError: scaleFactor is not defined` (caught silently by `try/catch` in `OurServices.jsx`).
+- **Resolution**:
+  - Defined `const alScale = W / 800;` explicitly inside the Athnexlive logo rendering block in both `OurServices.jsx` and `MyAchievements.jsx`.
+  - Verified frontend build (`npm --prefix frontend run build`).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

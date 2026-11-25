@@ -1829,22 +1829,37 @@ export default function MyAchievements() {
       canvas.height = H;
       const ctx = canvas.getContext('2d');
 
-      // Safe image loader that never crashes or stalls
-      const loadImgSafely = async (url) => {
-        if (!url) return null;
+      // Safe image loader with same-origin proxy fallback for S3/CORS images
+      const loadSingleImg = (srcUrl) => new Promise((resolve) => {
         try {
           const img = new Image();
           img.crossOrigin = 'anonymous';
-          img.src = url;
-          await new Promise((resolve) => {
-            img.onload = () => resolve(img);
-            img.onerror = () => resolve(null);
-            setTimeout(() => resolve(null), 3000); // 3s timeout guard
-          });
-          return img.naturalWidth > 0 ? img : null;
+          img.onload = () => resolve(img.naturalWidth > 0 ? img : null);
+          img.onerror = () => resolve(null);
+          img.src = srcUrl;
+          setTimeout(() => resolve(null), 8000);
         } catch (e) {
-          return null;
+          resolve(null);
         }
+      });
+
+      const loadImgSafely = async (url) => {
+        if (!url) return null;
+        if (url.startsWith('data:') || url.startsWith('blob:')) {
+          return await loadSingleImg(url);
+        }
+        // For external http(s) URLs (like S3), try proxy first or fallback to proxy if CORS blocks direct load
+        const directUrl = url.startsWith('http')
+          ? `${url}${url.includes('?') ? '&' : '?'}cors_cb=1`
+          : url;
+        const directImg = await loadSingleImg(directUrl);
+        if (directImg) return directImg;
+
+        if (url.startsWith('http')) {
+          const proxyUrl = `${API}/api/proxy-image?url=${encodeURIComponent(url)}`;
+          return await loadSingleImg(proxyUrl);
+        }
+        return null;
       };
 
       // Guaranteed file downloader with Blob and DataURL fallback and safe revocation
@@ -1938,6 +1953,8 @@ export default function MyAchievements() {
       if (activeCertConfig && (activeCertConfig.custom_bg_url || activeCertConfig.fields)) {
         // ── CUSTOM ACADEMY CERTIFICATE RENDERER ──
         if (activeCertConfig.template_type === 'custom' && activeCertConfig.custom_bg_url) {
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, W, H);
           const bgImg = await loadImgSafely(activeCertConfig.custom_bg_url);
           if (bgImg) {
             try { ctx.drawImage(bgImg, 0, 0, W, H); } catch (e) {
@@ -1983,7 +2000,7 @@ export default function MyAchievements() {
           ctx.fillRect(0, 0, W, H);
 
           if (activeCertConfig.template_type === 'default' || !activeCertConfig.template_type) {
-            const bgImg = await loadImgSafely(posterBgUrl || '/surf-milestone-bg.jpg');
+            const bgImg = await loadImgSafely('/surf-milestone-bg.jpg');
             if (bgImg && bgImg.naturalWidth > 0) {
               ctx.globalAlpha = 0.16;
               try { ctx.drawImage(bgImg, 0, 0, W, H); } catch (e) {}
@@ -2115,6 +2132,7 @@ export default function MyAchievements() {
           const scaleFactor = W / 800;
 
           // Image Field Rendering (School Logo or Coach Signature Photo)
+          if (field.key === 'athnex_logo') continue;
           if (field.type === 'image' || field.key === 'school_logo' || field.key === 'coach_signature') {
             if (field.image_url) {
               const img = await loadImgSafely(field.image_url);
@@ -2180,13 +2198,19 @@ export default function MyAchievements() {
           }
         }
 
-        // ── OFFICIAL ATHNEXLIVE LOGO IN RIGHT CORNER OF CERTIFICATE ──
+        // ── OFFICIAL ATHNEXLIVE LOGO (POSITIONABLE, ALWAYS VISIBLE) ──
         const athnexLogo = await loadImgSafely('/athnexlive-logo.png');
         if (athnexLogo && athnexLogo.naturalWidth > 0) {
-          const alW = 165;
+          const alField = activeCertConfig.fields?.athnex_logo || { x: 91, y: 6, width: 72, align: 'center' };
+          const alScale = W / 800;
+          const alW = Math.max(80, (alField.width || 72) * alScale);
           const alH = (athnexLogo.naturalHeight / athnexLogo.naturalWidth) * alW;
-          const alX = W - alW - 65;
-          const alY = 60;
+          const rawFx = ((alField.x ?? 91) / 100) * W;
+          const rawFy = ((alField.y ?? 6) / 100) * H;
+          let alX = rawFx - alW / 2;
+          if (alField.align === 'left') alX = rawFx;
+          else if (alField.align === 'right') alX = rawFx - alW;
+          const alY = rawFy - alH / 2;
           ctx.save();
           ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
           ctx.beginPath();
@@ -2216,8 +2240,8 @@ export default function MyAchievements() {
       ctx.fillStyle = bgGrad;
       ctx.fillRect(0, 0, W, H);
 
-      // Surf action image background
-      const bgImg = await loadImgSafely(posterBgUrl || '/surf-milestone-bg.jpg');
+      // Surf action image background (official default ocean wave, independent of Milestone Poster)
+      const bgImg = await loadImgSafely('/surf-milestone-bg.jpg');
       if (bgImg && bgImg.naturalWidth > 0) {
         ctx.globalAlpha = 0.12;
         const iR = bgImg.naturalWidth / bgImg.naturalHeight;

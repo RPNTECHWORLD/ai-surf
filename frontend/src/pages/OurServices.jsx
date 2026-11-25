@@ -177,6 +177,17 @@ const defaultCourseCertificates = {
         color: '#94A3B8',
         align: 'center',
         coverBackground: false
+      },
+      athnex_logo: {
+        label: 'Athnex Logo',
+        type: 'image',
+        visible: true,
+        lockedVisible: true,
+        image_url: '/athnexlive-logo.png',
+        x: 91,
+        y: 6,
+        width: 72,
+        align: 'center'
       }
     },
     custom_fields: []
@@ -305,6 +316,17 @@ const defaultCourseCertificates = {
         color: '#94A3B8',
         align: 'center',
         coverBackground: false
+      },
+      athnex_logo: {
+        label: 'Athnex Logo',
+        type: 'image',
+        visible: true,
+        lockedVisible: true,
+        image_url: '/athnexlive-logo.png',
+        x: 91,
+        y: 6,
+        width: 72,
+        align: 'center'
       }
     },
     custom_fields: []
@@ -492,6 +514,28 @@ const OurServices = () => {
       return null;
     }
   });
+
+  // Block school-affiliated regular coaches and students from accessing /services directly
+  useEffect(() => {
+    if (!user) return;
+    const role = user?.role || '';
+    const isStudent = role === 'athlete' || role === 'student' || role === 'user';
+    const isCoach = role === 'coach' || role === 'instructor';
+    const isHeadCoach = Boolean(user?.is_head_coach || role === 'head_coach');
+    const rawSch = user?.school || user?.school_name || '';
+    const schLower = (typeof rawSch === 'string' ? rawSch : (rawSch?.name || '')).trim().toLowerCase();
+    const isSchoolCoach = isCoach && !isHeadCoach && Boolean(
+      schLower &&
+      !schLower.includes('individual') &&
+      !schLower.includes('freelance') &&
+      !schLower.includes('independent')
+    );
+    if (isStudent) {
+      navigate(`/students/${user?.student_id || 'me'}`, { replace: true });
+    } else if (isSchoolCoach) {
+      navigate(`/instructors/${user?.instructor_id || user?.id || 1}`, { replace: true });
+    }
+  }, [user, navigate]);
 
   const [school, setSchool] = useState(() => {
     try {
@@ -767,6 +811,7 @@ const OurServices = () => {
   };
 
   const handleRemoveImageField = (fieldKey) => {
+    if (fieldKey === 'athnex_logo') return;
     setCertConfig(prev => {
       if (!prev.fields?.[fieldKey]) return prev;
       const updatedField = {
@@ -1183,6 +1228,7 @@ const OurServices = () => {
 
   // Helper to update active field property
   const updateActiveField = (prop, val) => {
+    if (activeFieldKey === 'athnex_logo' && prop === 'visible') return;
     // When editing content or appearance, automatically ensure the field is visible
     const makeVisible = prop !== 'visible' ? { visible: true } : {};
 
@@ -1197,10 +1243,13 @@ const OurServices = () => {
           nextCustom[idx] = { ...nextCustom[idx], [prop]: val, ...makeVisible };
         }
       } else {
+        const baseField = prev.fields?.[activeFieldKey] || (activeFieldKey === 'athnex_logo' ? {
+          label: 'Athnex Logo', type: 'image', visible: true, lockedVisible: true, image_url: '/athnexlive-logo.png', x: 91, y: 6, width: 72, align: 'center'
+        } : {});
         nextFields = {
           ...prev.fields,
           [activeFieldKey]: {
-            ...prev.fields[activeFieldKey],
+            ...baseField,
             [prop]: val,
             ...makeVisible
           }
@@ -1626,10 +1675,13 @@ const OurServices = () => {
           nextCustom[idx] = { ...nextCustom[idx], x: xPercent, y: yPercent };
         }
       } else {
+        const baseDragField = prev.fields?.[draggingField] || (draggingField === 'athnex_logo' ? {
+          label: 'Athnex Logo', type: 'image', visible: true, lockedVisible: true, image_url: '/athnexlive-logo.png', x: 91, y: 6, width: 72, align: 'center'
+        } : {});
         nextFields = {
           ...prev.fields,
           [draggingField]: {
-            ...prev.fields[draggingField],
+            ...baseDragField,
             x: xPercent,
             y: yPercent
           }
@@ -1667,14 +1719,36 @@ const OurServices = () => {
       canvas.width = W;
       canvas.height = H;
       const ctx = canvas.getContext('2d');
+      const activeCourseData = (certConfig.courses && certConfig.courses[selectedCourseKey])
+        || defaultCourseCertificates[selectedCourseKey]
+        || {};
+
+      const loadCertImgSafely = async (url) => {
+        if (!url) return null;
+        const tryLoad = (srcUrl) => new Promise((resolve) => {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.onload = () => resolve(img.naturalWidth > 0 ? img : null);
+          img.onerror = () => resolve(null);
+          img.src = srcUrl;
+          setTimeout(() => resolve(null), 8000);
+        });
+        if (url.startsWith('data:') || url.startsWith('blob:')) return await tryLoad(url);
+        const directUrl = url.startsWith('http') ? `${url}${url.includes('?') ? '&' : '?'}cors_cb=1` : url;
+        const directImg = await tryLoad(directUrl);
+        if (directImg) return directImg;
+        if (url.startsWith('http')) {
+          return await tryLoad(`${API}/api/proxy-image?url=${encodeURIComponent(url)}`);
+        }
+        return null;
+      };
 
       // Draw background
       if (certConfig.template_type === 'custom' && certConfig.custom_bg_url) {
-        const bgImg = new Image();
-        bgImg.crossOrigin = 'anonymous';
-        bgImg.src = certConfig.custom_bg_url;
-        await new Promise(r => { bgImg.onload = r; bgImg.onerror = r; });
-        if (bgImg.naturalWidth > 0) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, W, H);
+        const bgImg = await loadCertImgSafely(certConfig.custom_bg_url);
+        if (bgImg) {
           ctx.drawImage(bgImg, 0, 0, W, H);
         } else {
           ctx.fillStyle = '#FAFBFD';
@@ -1719,7 +1793,7 @@ const OurServices = () => {
         if (certConfig.template_type === 'default' || !certConfig.template_type) {
           const bgImg = new Image();
           bgImg.crossOrigin = 'anonymous';
-          bgImg.src = posterUrl || '/surf-milestone-bg.jpg';
+          bgImg.src = '/surf-milestone-bg.jpg';
           await new Promise(r => { bgImg.onload = r; bgImg.onerror = r; });
           if (bgImg.naturalWidth > 0) {
             ctx.globalAlpha = 0.16;
@@ -1782,9 +1856,6 @@ const OurServices = () => {
           ctx.fillText('This is to certify that', W / 2, 290);
 
           drawDivider(600);
-          const activeCourseData = (certConfig.courses && certConfig.courses[selectedCourseKey])
-            || defaultCourseCertificates[selectedCourseKey]
-            || {};
           const cSessions = activeCourseData.stats?.completed || activeCourseData.days || 3;
           const cWaves = activeCourseData.stats?.waves || (activeCourseData.days ? activeCourseData.days * 10 : 30);
           const cScore = activeCourseData.stats?.score || 88;
@@ -1834,13 +1905,11 @@ const OurServices = () => {
         const scaleFactor = W / 800;
 
         // Image Field Rendering (School Logo or Coach Signature Photo)
+        if (field.key === 'athnex_logo') continue;
         if (field.type === 'image' || field.key === 'school_logo' || field.key === 'coach_signature') {
           if (field.image_url) {
-            const img = new Image();
-            img.crossOrigin = 'anonymous';
-            img.src = field.image_url;
-            await new Promise(r => { img.onload = r; img.onerror = r; });
-            if (img.naturalWidth > 0) {
+            const img = await loadCertImgSafely(field.image_url);
+            if (img) {
               const imgW = (field.width || (field.key === 'school_logo' ? 80 : 130)) * scaleFactor;
               const imgH = (img.naturalHeight / img.naturalWidth) * imgW;
               let drawX = fx - imgW / 2;
@@ -1878,17 +1947,23 @@ const OurServices = () => {
         }
       }
 
-      // ── OFFICIAL ATHNEXLIVE LOGO IN TOP-RIGHT CORNER OF CERTIFICATE ──
+      // ── OFFICIAL ATHNEXLIVE LOGO (POSITIONABLE, CANNOT BE REMOVED) ──
       try {
         const alImg = new Image();
         alImg.crossOrigin = 'anonymous';
         alImg.src = '/athnexlive-logo.png';
         await new Promise(r => { alImg.onload = r; alImg.onerror = r; setTimeout(r, 1500); });
         if (alImg.naturalWidth > 0) {
-          const alW = 165;
+          const alField = certConfig.fields?.athnex_logo || { x: 91, y: 6, width: 72, align: 'center' };
+          const alScale = W / 800;
+          const alW = Math.max(80, (alField.width || 72) * alScale);
           const alH = (alImg.naturalHeight / alImg.naturalWidth) * alW;
-          const alX = W - alW - 65;
-          const alY = 60;
+          const rawFx = ((alField.x ?? 91) / 100) * W;
+          const rawFy = ((alField.y ?? 6) / 100) * H;
+          let alX = rawFx - alW / 2;
+          if (alField.align === 'left') alX = rawFx;
+          else if (alField.align === 'right') alX = rawFx - alW;
+          const alY = rawFy - alH / 2;
           ctx.save();
           ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
           ctx.beginPath();
@@ -1903,7 +1978,10 @@ const OurServices = () => {
       } catch (e) {}
 
       canvas.toBlob((blob) => {
-        if (!blob) return;
+        if (!blob) {
+          setDownloadingTestCert(false);
+          return;
+        }
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -1924,7 +2002,9 @@ const OurServices = () => {
   // Current active field object for controls
   const currentActiveField = activeFieldKey.startsWith('custom_')
     ? (certConfig.custom_fields || [])[parseInt(activeFieldKey.replace('custom_', ''), 10)]
-    : certConfig.fields?.[activeFieldKey];
+    : (certConfig.fields?.[activeFieldKey] || (activeFieldKey === 'athnex_logo' ? {
+      label: 'Athnex Logo', type: 'image', visible: true, lockedVisible: true, image_url: '/athnexlive-logo.png', x: 91, y: 6, width: 72, align: 'center'
+    } : undefined));
 
   // Current active course object
   const activeCourse = (certConfig.courses && certConfig.courses[selectedCourseKey])
@@ -3390,6 +3470,7 @@ const OurServices = () => {
                       { key: 'coach_name', label: '👤 Coach Name' },
                       { key: 'coach_signature', label: '✍️ Coach Signature' },
                       { key: 'cert_id', label: '🔢 Serial ID' },
+                      { key: 'athnex_logo', label: '🏷️ Athnex Logo' },
                       ...(certConfig.custom_fields || []).map((_, i) => ({
                         key: `custom_${i}`,
                         label: `✨ Custom #${i + 1}`
@@ -3431,7 +3512,8 @@ const OurServices = () => {
 
                   {/* Controls for current active field */}
                   {currentActiveField && (() => {
-                    const isImageField = currentActiveField.type === 'image' || activeFieldKey === 'school_logo' || activeFieldKey === 'coach_signature';
+                    const isImageField = currentActiveField.type === 'image' || activeFieldKey === 'school_logo' || activeFieldKey === 'coach_signature' || activeFieldKey === 'athnex_logo';
+                    const isLockedBrandLogo = activeFieldKey === 'athnex_logo';
                     return (
                       <div style={{ background: '#F8FAFC', borderRadius: '12px', padding: '16px', border: '1px solid #E2E8F0' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', borderBottom: '1px solid #E2E8F0', paddingBottom: '10px' }}>
@@ -3440,26 +3522,43 @@ const OurServices = () => {
                           </div>
 
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <button
-                              type="button"
-                              onClick={() => updateActiveField('visible', currentActiveField.visible === false ? true : false)}
-                              style={{
-                                display: 'flex',
+                            {isLockedBrandLogo ? (
+                              <span style={{
+                                display: 'inline-flex',
                                 alignItems: 'center',
-                                gap: '6px',
+                                gap: '5px',
                                 padding: '4px 10px',
                                 borderRadius: '6px',
-                                border: currentActiveField.visible !== false ? '1.5px solid #10B981' : '1.5px solid #F59E0B',
-                                background: currentActiveField.visible !== false ? '#ECFDF5' : '#FFFBEB',
-                                color: currentActiveField.visible !== false ? '#065F46' : '#B45309',
-                                fontSize: '11.5px',
-                                fontWeight: 800,
-                                cursor: 'pointer',
-                                transition: 'all 0.15s ease'
-                              }}
-                            >
-                              <span>{currentActiveField.visible !== false ? '👁️ Visible' : '🚫 Hidden (Click to Show)'}</span>
-                            </button>
+                                border: '1.5px solid #10B981',
+                                background: '#ECFDF5',
+                                color: '#065F46',
+                                fontSize: '11px',
+                                fontWeight: 800
+                              }}>
+                                🔒 Required Brand Logo
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => updateActiveField('visible', currentActiveField.visible === false ? true : false)}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '6px',
+                                  padding: '4px 10px',
+                                  borderRadius: '6px',
+                                  border: currentActiveField.visible !== false ? '1.5px solid #10B981' : '1.5px solid #F59E0B',
+                                  background: currentActiveField.visible !== false ? '#ECFDF5' : '#FFFBEB',
+                                  color: currentActiveField.visible !== false ? '#065F46' : '#B45309',
+                                  fontSize: '11.5px',
+                                  fontWeight: 800,
+                                  cursor: 'pointer',
+                                  transition: 'all 0.15s ease'
+                                }}
+                              >
+                                <span>{currentActiveField.visible !== false ? '👁️ Visible' : '🚫 Hidden (Click to Show)'}</span>
+                              </button>
+                            )}
 
                             {activeFieldKey.startsWith('custom_') && (
                               <button
@@ -3475,7 +3574,18 @@ const OurServices = () => {
 
                         {isImageField ? (
                           <div>
-                            {/* Image Upload Box */}
+                            {isLockedBrandLogo ? (
+                              <div style={{ marginBottom: '14px', background: '#F0FDFA', borderRadius: '10px', padding: '12px 14px', border: '1px solid #99F6E4' }}>
+                                <div style={{ fontSize: '12px', fontWeight: 800, color: '#0F766E', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <span>🏷️</span>
+                                  <span>Official Athnexlive Accreditation Badge</span>
+                                </div>
+                                <div style={{ fontSize: '11px', color: '#475569', lineHeight: 1.4 }}>
+                                  Drag this logo directly on the certificate canvas or adjust X / Y & Size below so it sits cleanly without overlapping your border. This brand badge cannot be removed.
+                                </div>
+                              </div>
+                            ) : (
+                            /* Image Upload Box */
                             <div style={{ marginBottom: '14px', background: '#FFFFFF', borderRadius: '10px', padding: '14px', border: '1.5px dashed #CBD5E1' }}>
                               <div style={{ fontSize: '12px', fontWeight: 800, color: '#0F172A', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                                 <span>{activeFieldKey === 'school_logo' ? '🏫' : '✍️'}</span>
@@ -3571,6 +3681,7 @@ const OurServices = () => {
                                 </div>
                               )}
                             </div>
+                            )}
 
                             {/* Image Width Slider */}
                             <div style={{ marginBottom: '12px' }}>
@@ -3955,36 +4066,13 @@ const OurServices = () => {
                     cursor: draggingField ? 'grabbing' : 'default'
                   }}
                 >
-                  {/* Official Athnexlive Accreditation Logo in Top Right Corner */}
-                  <div style={{
-                    position: 'absolute',
-                    top: '12px',
-                    right: '14px',
-                    zIndex: 12,
-                    background: 'rgba(255, 255, 255, 0.95)',
-                    padding: '3px 8px',
-                    borderRadius: '7px',
-                    boxShadow: '0 2px 8px rgba(0, 0, 0, 0.18)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    border: '1px solid rgba(255, 255, 255, 0.7)',
-                    pointerEvents: 'none'
-                  }}>
-                    <img
-                      src="/athnexlive-logo.png"
-                      alt="Athnexlive"
-                      style={{ height: '17px', width: 'auto', display: 'block', objectFit: 'contain' }}
-                    />
-                  </div>
-
                   {/* Default Surf Wave Image Backdrop */}
                   {((certConfig.template_type === 'default' || !certConfig.template_type) && !certConfig.custom_bg_url) && (
                     <div
                       style={{
                         position: 'absolute',
                         inset: 0,
-                        backgroundImage: `url(${posterUrl || '/surf-milestone-bg.jpg'})`,
+                        backgroundImage: `url('/surf-milestone-bg.jpg')`,
                         backgroundSize: 'cover',
                         backgroundPosition: 'center',
                         opacity: 0.16,
@@ -4221,14 +4309,18 @@ const OurServices = () => {
 
                   {/* Render Dynamic Fields */}
                   {[
-                    ...Object.entries(certConfig.fields || {}).map(([k, f]) => ({ ...f, key: k })),
+                    ...Object.entries({
+                      athnex_logo: { label: 'Athnex Logo', type: 'image', visible: true, lockedVisible: true, image_url: '/athnexlive-logo.png', x: 91, y: 6, width: 72, align: 'center' },
+                      ...(certConfig.fields || {})
+                    }).map(([k, f]) => ({ ...f, key: k, visible: k === 'athnex_logo' ? true : f?.visible })),
                     ...(certConfig.custom_fields || []).map((f, i) => ({ ...f, key: `custom_${i}` }))
                   ].map(field => {
-                    if (field.visible === false) return null;
+                    if (field.visible === false && field.key !== 'athnex_logo') return null;
                     const isSelected = activeFieldKey === field.key;
-                    const isImageField = field.type === 'image' || field.key === 'school_logo' || field.key === 'coach_signature';
+                    const isImageField = field.type === 'image' || field.key === 'school_logo' || field.key === 'coach_signature' || field.key === 'athnex_logo';
 
                     if (isImageField) {
+                      const isAthnexBrand = field.key === 'athnex_logo';
                       return (
                         <div
                           key={field.key}
@@ -4239,13 +4331,14 @@ const OurServices = () => {
                             left: `${field.x}%`,
                             top: `${field.y}%`,
                             transform: field.align === 'center' ? 'translate(-50%, -50%)' : (field.align === 'right' ? 'translate(-100%, -50%)' : 'translate(0, -50%)'),
-                            width: `${field.width || (field.key === 'school_logo' ? 80 : 130)}px`,
+                            width: `${field.width || (isAthnexBrand ? 72 : (field.key === 'school_logo' ? 80 : 130))}px`,
                             cursor: 'grab',
-                            padding: '3px',
-                            borderRadius: '8px',
-                            border: isSelected ? '2px dashed #0D9488' : '1.5px dashed transparent',
-                            backgroundColor: isSelected ? 'rgba(13, 148, 136, 0.15)' : 'transparent',
-                            zIndex: isSelected ? 12 : 3,
+                            padding: isAthnexBrand ? '3px 7px' : '3px',
+                            borderRadius: isAthnexBrand ? '7px' : '8px',
+                            border: isSelected ? '2px dashed #0D9488' : (isAthnexBrand ? '1px solid rgba(255, 255, 255, 0.7)' : '1.5px dashed transparent'),
+                            backgroundColor: isSelected ? (isAthnexBrand ? 'rgba(255, 255, 255, 0.98)' : 'rgba(13, 148, 136, 0.15)') : (isAthnexBrand ? 'rgba(255, 255, 255, 0.95)' : 'transparent'),
+                            boxShadow: isAthnexBrand ? '0 2px 8px rgba(0, 0, 0, 0.18)' : 'none',
+                            zIndex: isSelected ? 14 : (isAthnexBrand ? 12 : 3),
                             userSelect: 'none',
                             boxSizing: 'border-box',
                             display: 'flex',

@@ -3148,7 +3148,7 @@ export default function UserProfileMenu({ user, school, onLogout }) {
                       {Array.from(new Set([
                         ...schoolsList,
                         editCoachSchool,
-                        currentUser?.school,
+                        effectiveUser?.school,
                         'rpn tech ac'
                       ])).filter(Boolean).filter(s => s !== 'Individual / Freelance Coach').map(s => (
                         <option key={s} value={s}>🏫 {s}</option>

@@ -6553,6 +6553,18 @@ def create_sessions_bulk(data: SessionBulkCreate, db: OrmSession = Depends(get_d
                     st.instructor_id = data.instructor_id
                 if data.time:
                     st.session_time = data.time
+            # Remove any Slot Confirmed placeholder on this date for this student/guest when publishing a real group
+            if sid and (data.group_name or "").strip() != "Slot Confirmed":
+                q_slot_ph = db.query(SurfSession).filter(
+                    SurfSession.student_id == sid,
+                    func.lower(SurfSession.date) == (data.date or "").strip().lower(),
+                    SurfSession.group_name == "Slot Confirmed"
+                )
+                if is_guest and g_name:
+                    q_slot_ph = q_slot_ph.filter(func.lower(SurfSession.guest_name) == g_name.strip().lower())
+                else:
+                    q_slot_ph = q_slot_ph.filter((SurfSession.guest_name == None) | (SurfSession.guest_name == ""))
+                q_slot_ph.delete(synchronize_session=False)
             session = SurfSession(
                 date=data.date, time=data.time, duration_mins=data.duration_mins,
                 student_id=sid, instructor_id=data.instructor_id,
@@ -6578,6 +6590,13 @@ def create_sessions_bulk(data: SessionBulkCreate, db: OrmSession = Depends(get_d
                     st.instructor_id = data.instructor_id
                 if data.time:
                     st.session_time = data.time
+            if sid and (data.group_name or "").strip() != "Slot Confirmed":
+                db.query(SurfSession).filter(
+                    SurfSession.student_id == sid,
+                    func.lower(SurfSession.date) == (data.date or "").strip().lower(),
+                    SurfSession.group_name == "Slot Confirmed",
+                    (SurfSession.guest_name == None) | (SurfSession.guest_name == "")
+                ).delete(synchronize_session=False)
             session = SurfSession(
                 date=data.date, time=data.time, duration_mins=data.duration_mins,
                 student_id=sid, instructor_id=data.instructor_id,
@@ -6769,6 +6788,9 @@ def update_session(session_id: int, data: SessionUpdate, db: OrmSession = Depend
         s.image_url = data.image_url
     if data.group_name is not None:
         s.group_name = data.group_name
+        if data.group_name == "Slot Confirmed":
+            s.instructor_id = None
+            s.instructor_ids = "[]"
     if data.attendance is not None:
         s.attendance = data.attendance
     if data.student_name is not None:
@@ -8573,6 +8595,35 @@ def update_user_profile(
         "message": "Profile updated successfully",
         "user": make_user_response(user, db)
     }
+
+
+@app.get("/api/proxy-image")
+def proxy_image(url: str):
+    import urllib.request
+    from urllib.parse import urlparse
+    from fastapi.responses import Response
+
+    if not url or not url.startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="Valid http/https image URL required")
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if host in ("localhost", "127.0.0.1", "0.0.0.0", "::1") or host.startswith("169.254.") or host.startswith("10.") or host.startswith("192.168."):
+        raise HTTPException(status_code=403, detail="Private/local URL not allowed")
+
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            content_type = resp.headers.get("Content-Type", "image/jpeg")
+            if not content_type.startswith("image/"):
+                content_type = "image/jpeg"
+            data = resp.read()
+            return Response(
+                content=data,
+                media_type=content_type,
+                headers={"Cache-Control": "public, max-age=86400"}
+            )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch image: {e}")
 
 
 
