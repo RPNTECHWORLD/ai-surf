@@ -552,6 +552,19 @@ const OurServices = () => {
 
   const schoolId = school?.id || user?.school_id || null;
 
+  const [savedCertSnapshot, setSavedCertSnapshot] = useState('');
+  const getCertSnapshot = (cfg) => {
+    if (!cfg || typeof cfg !== 'object') return '';
+    return JSON.stringify({
+      template_type: cfg.template_type || 'default',
+      custom_bg_url: cfg.custom_bg_url || '',
+      fields: cfg.fields || {},
+      custom_fields: cfg.custom_fields || [],
+      courses: cfg.courses || {}
+    });
+  };
+  const isCertSaved = Boolean(savedCertSnapshot) && savedCertSnapshot === getCertSnapshot(certConfig);
+
   // Load School Poster & Certificate from Backend
   useEffect(() => {
     const fetchSchoolData = async () => {
@@ -593,8 +606,7 @@ const OurServices = () => {
               const activeData = coursesMap[activeKey] || coursesMap['3days'] || Object.values(coursesMap)[0] || {};
               const fallbackFields = (coursesMap[activeKey] && coursesMap[activeKey].fields) || defaultCourseCertificates['3days'].fields;
 
-              setSelectedCourseKey(activeKey);
-              setCertConfig({
+              const loadedCachedCfg = {
                 ...defaultCertConfig,
                 ...parsed,
                 activeCourseKey: activeKey,
@@ -603,7 +615,10 @@ const OurServices = () => {
                 custom_bg_url: activeData.custom_bg_url || '',
                 fields: { ...fallbackFields, ...(activeData.fields || parsed.fields || {}) },
                 custom_fields: activeData.custom_fields || parsed.custom_fields || []
-              });
+              };
+              setSelectedCourseKey(activeKey);
+              setCertConfig(loadedCachedCfg);
+              setSavedCertSnapshot(getCertSnapshot(loadedCachedCfg));
             }
           } catch (e) {}
         }
@@ -630,7 +645,7 @@ const OurServices = () => {
             const activeData = coursesMap[activeKey] || coursesMap['3days'] || Object.values(coursesMap)[0] || {};
             const fallbackFields = (coursesMap[activeKey] && coursesMap[activeKey].fields) || defaultCourseCertificates['3days'].fields;
 
-            setCertConfig({
+            const loadedBackendCfg = {
               ...defaultCertConfig,
               ...sanitizedBackendCert,
               activeCourseKey: activeKey,
@@ -639,7 +654,9 @@ const OurServices = () => {
               custom_bg_url: activeData.custom_bg_url || '',
               fields: { ...fallbackFields, ...(activeData.fields || sanitizedBackendCert.fields || {}) },
               custom_fields: activeData.custom_fields || sanitizedBackendCert.custom_fields || []
-            });
+            };
+            setCertConfig(loadedBackendCfg);
+            setSavedCertSnapshot(getCertSnapshot(loadedBackendCfg));
             localStorage.setItem(`athnex_cert_${schoolName}`, JSON.stringify(sanitizedBackendCert));
           }
         }
@@ -1205,6 +1222,7 @@ const OurServices = () => {
       });
 
       if (res.ok) {
+        setSavedCertSnapshot(getCertSnapshot(packagedConfig));
         setFeedback({
           text: `✓ ${selectedCourseKey === '5days' ? '5-Day' : '3-Day'} Course Completion Certificate template & field positions saved successfully!`,
           type: 'success'
@@ -1216,6 +1234,7 @@ const OurServices = () => {
       }
     } catch (err) {
       console.warn('Certificate backend sync:', err);
+      setSavedCertSnapshot(getCertSnapshot(packagedConfig));
       setFeedback({
         text: `✓ ${selectedCourseKey === '5days' ? '5-Day' : '3-Day'} Certificate template saved successfully!`,
         type: 'success'
@@ -2030,10 +2049,10 @@ const OurServices = () => {
         }}
       >
         {/* Page Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <span style={{ fontSize: '28px' }}>🏄</span>
+        <div className="os-page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
+          <div style={{ minWidth: 0, flex: '1 1 260px' }}>
+            <div className="os-title-row" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+              <span style={{ fontSize: '28px', flexShrink: 0 }}>🏄</span>
               <h1 
                 onClick={() => setActiveTab('menu')}
                 title="Return to Services Menu"
@@ -2041,14 +2060,16 @@ const OurServices = () => {
               >
                 Our Services & Academy Media
               </h1>
-              <span style={{
+              <span className="os-school-badge" style={{
                 background: '#CCFBF1',
                 color: '#0F766E',
                 fontSize: '11px',
                 fontWeight: 800,
                 padding: '3px 10px',
                 borderRadius: '999px',
-                border: '1px solid #99F6E4'
+                border: '1px solid #99F6E4',
+                whiteSpace: 'nowrap',
+                flexShrink: 0
               }}>
                 {schoolName}
               </span>
@@ -2063,24 +2084,24 @@ const OurServices = () => {
               <button
                 type="button"
                 onClick={() => handleSaveCertificate()}
-                disabled={saving}
+                disabled={saving || isCertSaved}
                 style={{
-                  background: 'linear-gradient(135deg, #0D9488 0%, #059669 100%)',
-                  color: '#FFFFFF',
-                  border: 'none',
+                  background: isCertSaved ? '#ECFDF5' : 'linear-gradient(135deg, #0D9488 0%, #059669 100%)',
+                  color: isCertSaved ? '#059669' : '#FFFFFF',
+                  border: isCertSaved ? '1.5px solid #A7F3D0' : 'none',
                   borderRadius: '10px',
                   padding: '10px 20px',
                   fontSize: '13.5px',
                   fontWeight: 800,
-                  cursor: saving ? 'not-allowed' : 'pointer',
+                  cursor: (saving || isCertSaved) ? 'default' : 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                   gap: '8px',
-                  boxShadow: '0 4px 14px rgba(13, 148, 136, 0.35)',
+                  boxShadow: isCertSaved ? 'none' : '0 4px 14px rgba(13, 148, 136, 0.35)',
                   transition: 'all 0.2s ease'
                 }}
               >
-                {saving ? '⏳ Saving Design...' : '💾 Save Certificate Template'}
+                {saving ? '⏳ Saving Design...' : isCertSaved ? '✓ Saved' : '💾 Save Certificate Template'}
               </button>
             ) : activeTab === 'poster' ? (
               <button
@@ -2137,15 +2158,17 @@ const OurServices = () => {
 
             {/* Options Menu Grid */}
             <div
+              className="os-menu-grid"
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 360px), 1fr))',
                 gap: '24px',
                 alignItems: 'stretch'
               }}
             >
               {/* Option 1: Course Completion Certificates Menu Card */}
               <div
+                className="os-menu-card"
                 onClick={() => setActiveTab('cert-courses')}
                 style={{
                   background: '#FFFFFF',
@@ -2157,7 +2180,8 @@ const OurServices = () => {
                   flexDirection: 'column',
                   justifyContent: 'space-between',
                   cursor: 'pointer',
-                  transition: 'all 0.2s ease'
+                  transition: 'all 0.2s ease',
+                  minWidth: 0
                 }}
                 onMouseOver={(e) => {
                   e.currentTarget.style.borderColor = '#0D9488';
@@ -2200,7 +2224,7 @@ const OurServices = () => {
                       gap: '8px'
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px' }}>
                       <span style={{ fontSize: '12px', fontWeight: 800, color: '#0F766E' }}>
                         🎓 Course Certificates Hub
                       </span>
@@ -2231,7 +2255,7 @@ const OurServices = () => {
                       })}
                     </div>
 
-                    <div style={{ fontSize: '11px', color: '#0D9488', display: 'flex', alignItems: 'center', gap: '5px', marginTop: '2px', fontWeight: 600 }}>
+                    <div style={{ fontSize: '11px', color: '#0D9488', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '5px', marginTop: '2px', fontWeight: 600 }}>
                       <span>✓ 3-Day & 5-Day Presets</span>
                       <span>•</span>
                       <span>✓ Add Custom Days</span>
@@ -2268,6 +2292,7 @@ const OurServices = () => {
 
               {/* Option 2: Milestone Story Poster Photo Menu Card */}
               <div
+                className="os-menu-card"
                 onClick={() => setActiveTab('poster')}
                 style={{
                   background: '#FFFFFF',
@@ -2279,7 +2304,8 @@ const OurServices = () => {
                   flexDirection: 'column',
                   justifyContent: 'space-between',
                   cursor: 'pointer',
-                  transition: 'all 0.2s ease'
+                  transition: 'all 0.2s ease',
+                  minWidth: 0
                 }}
                 onMouseOver={(e) => {
                   e.currentTarget.style.borderColor = '#0D9488';
@@ -2449,9 +2475,10 @@ const OurServices = () => {
 
             {/* Grid of Courses */}
             <div
+              className="os-courses-grid"
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 340px), 1fr))',
                 gap: '20px',
                 alignItems: 'stretch'
               }}
@@ -4022,19 +4049,20 @@ const OurServices = () => {
                     <button
                       type="button"
                       onClick={() => handleSaveCertificate()}
-                      disabled={saving}
+                      disabled={saving || isCertSaved}
                       style={{
-                        background: '#0D9488',
-                        color: '#FFFFFF',
-                        border: 'none',
+                        background: isCertSaved ? '#ECFDF5' : '#0D9488',
+                        color: isCertSaved ? '#059669' : '#FFFFFF',
+                        border: isCertSaved ? '1.5px solid #A7F3D0' : 'none',
                         borderRadius: '8px',
                         padding: '7px 14px',
                         fontSize: '12px',
                         fontWeight: 750,
-                        cursor: saving ? 'not-allowed' : 'pointer'
+                        cursor: (saving || isCertSaved) ? 'default' : 'pointer',
+                        transition: 'all 0.2s ease'
                       }}
                     >
-                      {saving ? '⏳ Saving...' : '💾 Save Template'}
+                      {saving ? '⏳ Saving...' : isCertSaved ? '✓ Saved' : '💾 Save Template'}
                     </button>
                   </div>
                 </div>
@@ -4650,7 +4678,7 @@ const OurServices = () => {
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: '24px', alignItems: 'flex-start' }}>
+            <div className="os-poster-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))', gap: '24px', alignItems: 'flex-start' }}>
             {/* Left Control Card */}
             <div style={{ background: '#FFFFFF', borderRadius: '16px', padding: '24px', border: '1px solid #E2E8F0', boxShadow: '0 4px 16px rgba(0,0,0,0.04)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
@@ -5248,6 +5276,67 @@ const OurServices = () => {
           </div>
         </div>
       )}
+      <style>{`
+        @media (max-width: 900px) {
+          .cert-studio-layout {
+            grid-template-columns: 1fr !important;
+            gap: 16px !important;
+          }
+          .cert-controls-sidebar {
+            max-height: none !important;
+            overflow-y: visible !important;
+            padding-right: 0 !important;
+            padding-bottom: 8px !important;
+          }
+        }
+        @media (max-width: 768px) {
+          .our-services-main {
+            margin-top: 68px !important;
+            padding: 16px 12px 48px 12px !important;
+            overflow-x: hidden !important;
+          }
+          .os-page-header {
+            gap: 10px !important;
+            margin-bottom: 16px !important;
+          }
+          .os-title-row {
+            gap: 8px !important;
+          }
+          .os-title-row h1 {
+            font-size: 19px !important;
+            line-height: 1.25 !important;
+          }
+          .os-title-row span:first-child {
+            font-size: 22px !important;
+          }
+          .os-school-badge {
+            font-size: 10.5px !important;
+            padding: 3px 9px !important;
+            white-space: nowrap !important;
+          }
+          .os-page-header p {
+            font-size: 12.5px !important;
+            line-height: 1.45 !important;
+          }
+          .os-menu-grid,
+          .os-courses-grid,
+          .os-poster-grid {
+            grid-template-columns: 1fr !important;
+            gap: 14px !important;
+          }
+          .os-menu-card {
+            padding: 16px !important;
+            border-radius: 14px !important;
+          }
+          .os-menu-card h3 {
+            font-size: 16px !important;
+          }
+          .os-menu-card button {
+            font-size: 12.5px !important;
+            padding: 10px 12px !important;
+          }
+        }
+      `}</style>
       </main>
     </div>
   );

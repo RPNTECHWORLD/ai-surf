@@ -2963,9 +2963,9 @@ const InstructorProfile = () => {
             box-sizing: border-box !important;
           }
           .ip-main {
-            padding: 10px 10px 70px 10px !important;
-            margin-top: 64px !important;
-            gap: 10px !important;
+            padding: 8px 8px 60px 8px !important;
+            margin-top: 62px !important;
+            gap: 8px !important;
             width: 100% !important;
             max-width: 100% !important;
             overflow-x: hidden !important;
@@ -2973,7 +2973,7 @@ const InstructorProfile = () => {
           }
           .ip-grid {
             flex-direction: column !important;
-            gap: 10px !important;
+            gap: 8px !important;
             width: 100% !important;
             max-width: 100% !important;
             box-sizing: border-box !important;
@@ -2982,7 +2982,7 @@ const InstructorProfile = () => {
             width: 100% !important;
             min-width: 0 !important;
             max-width: 100% !important;
-            gap: 10px !important;
+            gap: 8px !important;
             box-sizing: border-box !important;
           }
           /* Compact Hero */
@@ -2991,18 +2991,18 @@ const InstructorProfile = () => {
             flex-wrap: wrap !important;
             align-items: center !important;
             text-align: left !important;
-            padding: 12px 14px !important;
-            border-radius: 14px !important;
-            gap: 10px 12px !important;
+            padding: 10px 12px !important;
+            border-radius: 12px !important;
+            gap: 8px 10px !important;
             width: 100% !important;
             max-width: 100% !important;
             box-sizing: border-box !important;
           }
           .ip-hero-avatar {
-            width: 48px !important;
-            height: 48px !important;
-            border-radius: 24px !important;
-            font-size: 18px !important;
+            width: 40px !important;
+            height: 40px !important;
+            border-radius: 20px !important;
+            font-size: 16px !important;
             flex-shrink: 0 !important;
           }
           .ip-hero-info {
@@ -3013,61 +3013,79 @@ const InstructorProfile = () => {
             min-width: 0 !important;
           }
           .ip-hero-name {
-            font-size: 17px !important;
+            font-size: 15px !important;
             font-weight: 800 !important;
             line-height: 1.2 !important;
             margin: 0 !important;
           }
           .ip-hero-sub {
-            font-size: 11.5px !important;
+            font-size: 10.5px !important;
             color: rgba(255, 255, 255, 0.65) !important;
             margin: 0 !important;
           }
           .ip-hero-badges {
             justify-content: flex-start !important;
+            align-items: center !important;
             flex-wrap: wrap !important;
             gap: 4px !important;
             margin-top: 2px !important;
           }
-          .ip-badge-primary, .ip-badge-active {
-            font-size: 9.5px !important;
-            padding: 2px 5px !important;
-            border-radius: 3px !important;
+          .ip-hero-badges > span,
+          .ip-badge-primary,
+          .ip-badge-active {
+            font-size: 9px !important;
+            padding: 2px 6px !important;
+            line-height: 1.25 !important;
+            height: auto !important;
+            border-radius: 999px !important;
+            white-space: nowrap !important;
           }
           .ip-hero-actions {
             margin-left: 0 !important;
             margin-right: 0 !important;
             width: 100% !important;
             max-width: 100% !important;
+            display: flex !important;
             flex-direction: row !important;
-            gap: 8px !important;
+            flex-wrap: wrap !important;
+            gap: 6px !important;
             box-sizing: border-box !important;
             margin-top: 2px !important;
           }
           .ip-hero-actions button {
-            flex: 1 !important;
-            width: 100% !important;
+            flex: 1 1 auto !important;
+            width: auto !important;
             max-width: 100% !important;
-            height: 32px !important;
-            padding: 4px 10px !important;
-            font-size: 11.5px !important;
-            border-radius: 8px !important;
+            height: auto !important;
+            min-height: 28px !important;
+            padding: 5px 8px !important;
+            font-size: 10.5px !important;
+            line-height: 1.2 !important;
+            gap: 4px !important;
+            white-space: nowrap !important;
+            border-radius: 7px !important;
             justify-content: center !important;
             box-sizing: border-box !important;
+          }
+          .ip-hero-actions button svg {
+            width: 12px !important;
+            height: 12px !important;
+            margin-right: 2px !important;
+            flex-shrink: 0 !important;
           }
 
           /* Compact Cards */
           .ip-card {
-            padding: 12px 12px !important;
-            border-radius: 12px !important;
-            gap: 10px !important;
+            padding: 10px 10px !important;
+            border-radius: 11px !important;
+            gap: 7px !important;
             width: 100% !important;
             max-width: 100% !important;
             box-sizing: border-box !important;
             overflow-x: hidden !important;
           }
           .ip-card-title {
-            font-size: 14.5px !important;
+            font-size: 13.5px !important;
             font-weight: 700 !important;
             margin: 0 !important;
           }
@@ -3076,18 +3094,18 @@ const InstructorProfile = () => {
           .ip-details-list {
             display: grid !important;
             grid-template-columns: 1fr 1fr !important;
-            gap: 6px !important;
+            gap: 5px !important;
             width: 100% !important;
           }
           .ip-detail-row {
             display: flex !important;
             flex-direction: column !important;
             align-items: flex-start !important;
-            gap: 2px !important;
-            padding: 6px 8px !important;
+            gap: 1px !important;
+            padding: 5px 7px !important;
             background: #F8FAFC !important;
             border: 1px solid #E2E8F0 !important;
-            border-radius: 8px !important;
+            border-radius: 7px !important;
             box-sizing: border-box !important;
             min-width: 0 !important;
           }
@@ -3097,7 +3115,7 @@ const InstructorProfile = () => {
             grid-column: span 2 !important;
           }
           .ip-detail-label {
-            font-size: 9px !important;
+            font-size: 8.5px !important;
             color: #64748B !important;
             font-weight: 700 !important;
             text-transform: uppercase !important;
@@ -3105,13 +3123,13 @@ const InstructorProfile = () => {
             line-height: 1.1 !important;
           }
           .ip-detail-value {
-            font-size: 11.5px !important;
+            font-size: 11px !important;
             font-weight: 700 !important;
             color: #0F172A !important;
             word-break: break-word !important;
             max-width: 100% !important;
             text-align: left !important;
-            line-height: 1.25 !important;
+            line-height: 1.2 !important;
           }
           .ip-divider {
             margin: 4px 0 !important;

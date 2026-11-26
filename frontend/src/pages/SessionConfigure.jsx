@@ -525,8 +525,8 @@ const SessionConfigure = () => {
           </div>
 
           <div className="sc-card-slots">
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px" }}>
-              <div>
+            <div className="sc-slots-header-row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "24px", gap: "10px", flexWrap: "wrap" }}>
+              <div style={{ flex: "1 1 200px", minWidth: 0 }}>
                 <h2 style={{ fontFamily: "'Outfit', sans-serif", fontSize: "20px", fontWeight: 800, color: "#0F172A", margin: 0 }}>
                   Session Time Slots
                 </h2>
@@ -534,7 +534,7 @@ const SessionConfigure = () => {
                   Configure daily surf lesson schedules, max athlete capacity & operational weekdays
                 </p>
               </div>
-              <button onClick={addSlot} className="sc-btn-add-slot">
+              <button onClick={addSlot} className="sc-btn-add-slot" style={{ whiteSpace: "nowrap", flexShrink: 0 }}>
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="12" y1="5" x2="12" y2="19" />
                   <line x1="5" y1="12" x2="19" y2="12" />
@@ -543,16 +543,16 @@ const SessionConfigure = () => {
               </button>
             </div>
 
-            <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", width: "100%", paddingBottom: "8px" }}>
-              <div style={{ minWidth: "640px" }}>
-                <div style={{ display: "grid", gridTemplateColumns: "140px 130px 120px 1fr 100px 48px", gap: "16px", paddingBottom: "12px", borderBottom: "1.5px solid #E2E8F0", marginBottom: "8px" }}>
+            <div className="sc-slots-scroll-wrap" style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", width: "100%", paddingBottom: "8px" }}>
+              <div className="sc-slots-table-inner" style={{ minWidth: "640px" }}>
+                <div className="sc-slots-table-header" style={{ display: "grid", gridTemplateColumns: "140px 130px 120px 1fr 100px 48px", gap: "16px", paddingBottom: "12px", borderBottom: "1.5px solid #E2E8F0", marginBottom: "8px" }}>
                   {["TIME", "DURATION", "MAX STUDENTS", "AVAILABLE DAYS", "STATUS", "DELETE"].map(h => (
                     <span key={h} style={{ fontSize: "11px", fontWeight: 700, color: "#0D9488", textTransform: "uppercase", letterSpacing: "0.5px" }}>{h}</span>
                   ))}
                 </div>
 
                 {slots.map(slot => (
-                  <div key={slot.id} style={{ display: "grid", gridTemplateColumns: "140px 130px 120px 1fr 100px 48px", gap: "16px", alignItems: "center", padding: "16px 0", borderBottom: "1px solid #F1F5F9" }}>
+                  <div key={slot.id} className="sc-slot-row" style={{ display: "grid", gridTemplateColumns: "140px 130px 120px 1fr 100px 48px", gap: "16px", alignItems: "center", padding: "16px 0", borderBottom: "1px solid #F1F5F9" }}>
                     <div style={{ position: "relative", display: "flex", alignItems: "center", width: "100%" }}>
                       <input
                         type="time"
@@ -608,16 +608,16 @@ const SessionConfigure = () => {
                         <option value="180">180 min</option>
                       </datalist>
                     </div>
-                    <input type="number" min="1" max="20" value={slot.maxStudents} onChange={e => updateSlot(slot.id, "maxStudents", e.target.value)} style={{ ...inp, width: "70px", textAlign: "center" }} />
-                    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                    <input className="sc-slot-max-input" type="number" min="1" max="20" value={slot.maxStudents} onChange={e => updateSlot(slot.id, "maxStudents", e.target.value)} style={{ ...inp, width: "70px", textAlign: "center" }} />
+                    <div className="sc-slot-days-wrap" style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                       {DAYS.map(day => {
                         const active = slot.days.includes(day);
                         return (
-                          <button key={day} onClick={() => toggleDay(slot.id, day)} style={{ width: "40px", height: "30px", borderRadius: "6px", border: "none", background: active ? "#0D9488" : "#F1F5F9", color: active ? "#FFFFFF" : "#94A3B8", fontSize: "12px", fontWeight: 700, cursor: "pointer", transition: "all 0.15s" }}>{day}</button>
+                          <button key={day} className="sc-slot-day-btn" onClick={() => toggleDay(slot.id, day)} style={{ width: "40px", height: "30px", borderRadius: "6px", border: "none", background: active ? "#0D9488" : "#F1F5F9", color: active ? "#FFFFFF" : "#94A3B8", fontSize: "12px", fontWeight: 700, cursor: "pointer", transition: "all 0.15s" }}>{day}</button>
                         );
                       })}
                     </div>
-                    <div style={{ position: "relative", display: "inline-flex", alignItems: "center", width: "94px" }}>
+                    <div className="sc-slot-status-wrap" style={{ position: "relative", display: "inline-flex", alignItems: "center", width: "94px" }}>
                       <select
                         value={slot.active !== false ? "active" : "inactive"}
                         onChange={e => updateSlot(slot.id, "active", e.target.value === "active")}
@@ -1001,6 +1001,81 @@ const SessionConfigure = () => {
           }
           .sc-sb-right {
             justify-content: flex-end;
+          }
+        }
+        @media (max-width: 768px) {
+          .sc-slots-header-row {
+            margin-bottom: 14px !important;
+          }
+          .sc-slots-header-row h2 {
+            font-size: 16px !important;
+          }
+          .sc-slots-header-row p {
+            font-size: 11.5px !important;
+          }
+          .sc-btn-add-slot {
+            padding: 7px 12px !important;
+            font-size: 11.5px !important;
+            border-radius: 8px !important;
+          }
+          .sc-slots-scroll-wrap {
+            overflow-x: visible !important;
+            padding-bottom: 0 !important;
+          }
+          .sc-slots-table-inner {
+            min-width: 0 !important;
+            width: 100% !important;
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 10px !important;
+          }
+          .sc-slots-table-header {
+            display: none !important;
+          }
+          .sc-slot-row {
+            display: grid !important;
+            grid-template-columns: 1fr 1fr !important;
+            gap: 8px !important;
+            padding: 12px !important;
+            background: #F8FAFC !important;
+            border: 1px solid #E2E8F0 !important;
+            border-radius: 12px !important;
+          }
+          .sc-slot-row input[type="time"],
+          .sc-slot-row input[type="number"] {
+            padding: 6px 8px !important;
+            font-size: 12.5px !important;
+            height: 34px !important;
+            box-sizing: border-box !important;
+          }
+          .sc-slot-max-input {
+            width: 100% !important;
+          }
+          .sc-slot-days-wrap {
+            grid-column: 1 / -1 !important;
+            display: grid !important;
+            grid-template-columns: repeat(7, minmax(0, 1fr)) !important;
+            gap: 4px !important;
+          }
+          .sc-slot-day-btn {
+            width: 100% !important;
+            height: 28px !important;
+            font-size: 10.5px !important;
+            border-radius: 6px !important;
+            padding: 0 !important;
+          }
+          .sc-slot-status-wrap {
+            width: 100% !important;
+          }
+          .sc-slot-status-wrap select {
+            height: 34px !important;
+            font-size: 12px !important;
+          }
+          .sc-slot-row > button {
+            grid-column: 1 / -1 !important;
+            width: 100% !important;
+            height: 32px !important;
+            font-size: 12px !important;
           }
         }
       `}</style>

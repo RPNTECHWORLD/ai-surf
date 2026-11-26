@@ -1547,7 +1547,7 @@ const InstructorManagement = () => {
             <p className="im-subtitle">Manage your school's coaching roster and assignments.</p>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div className="im-header-actions" style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
             <button
               type="button"
               className="im-btn-leave-requests"
@@ -3533,7 +3533,7 @@ const InstructorManagement = () => {
                 }}
               >
                 <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div className="im-header-actions" style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                     <h3 style={{ fontSize: '22px', fontWeight: 800, color: '#0F172A', margin: 0 }}>
                       Pending Coach Registration Requests
                     </h3>
@@ -3710,7 +3710,7 @@ const InstructorManagement = () => {
                             <tr key={coach.id || coach.email || cIdx} style={{ background: '#FFFFFF', borderBottom: '1px solid #F1F5F9', transition: 'background 0.15s ease' }}>
                               {/* 1. Coach Name & Avatar */}
                               <td style={{ padding: '16px 16px', verticalAlign: 'middle' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <div className="im-header-actions" style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                                   <div style={{
                                     width: '44px',
                                     height: '44px',
@@ -3904,7 +3904,7 @@ const InstructorManagement = () => {
               onClick={e => e.stopPropagation()}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div className="im-header-actions" style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                   <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(13, 148, 136, 0.1)', color: '#0D9488', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '22px' }}>
                     🏄‍♂️
                   </div>
@@ -5205,33 +5205,91 @@ const InstructorManagement = () => {
           .im-header {
             flex-direction: column !important;
             align-items: flex-start !important;
-            gap: 10px !important;
+            gap: 8px !important;
+          }
+          .im-header-actions {
+            width: 100% !important;
+            gap: 8px !important;
+          }
+          .im-header-actions > button {
+            flex: 1 1 auto !important;
+            min-width: 0 !important;
+            padding: 7px 10px !important;
+            font-size: 11.5px !important;
+            justify-content: center !important;
+            white-space: nowrap !important;
+            border-radius: 10px !important;
+            gap: 5px !important;
           }
           .im-title {
-            font-size: 20px !important;
+            font-size: 19px !important;
             line-height: 1.25 !important;
           }
           .im-subtitle {
-            font-size: 12.5px !important;
-            margin-top: 3px !important;
-            line-height: 1.4 !important;
+            font-size: 12px !important;
+            margin-top: 2px !important;
+            line-height: 1.35 !important;
           }
           .im-btn-add-primary {
             width: 100% !important;
-            height: 38px !important;
+            height: 36px !important;
             padding: 6px 14px !important;
-            font-size: 12.5px !important;
+            font-size: 12px !important;
             justify-content: center !important;
             border-radius: 8px !important;
           }
           .im-search-bar {
-            height: 38px !important;
-            padding: 0 12px !important;
+            height: 36px !important;
+            padding: 0 10px !important;
             border-radius: 8px !important;
+          }
+          .im-search-bar input {
+            font-size: 12px !important;
           }
           .im-grid {
             grid-template-columns: 1fr !important;
-            gap: 12px !important;
+            gap: 10px !important;
+          }
+          .im-card {
+            padding: 12px !important;
+            border-radius: 12px !important;
+            gap: 6px !important;
+          }
+          .im-card-avatar,
+          .im-avatar-wrap {
+            width: 50px !important;
+            height: 50px !important;
+          }
+          .im-avatar-fallback {
+            font-size: 19px !important;
+          }
+          .im-card-name {
+            font-size: 15px !important;
+            margin: 2px 0 0 0 !important;
+          }
+          .im-card-details {
+            font-size: 11.5px !important;
+            margin: 1px 0 !important;
+          }
+          .im-card-badges {
+            gap: 4px !important;
+            margin-top: 4px !important;
+          }
+          .im-badge-cert,
+          .im-badge-level {
+            font-size: 10px !important;
+            padding: 2px 7px !important;
+          }
+          .im-card-actions {
+            padding-top: 8px !important;
+            margin-top: 6px !important;
+            gap: 6px !important;
+          }
+          .im-card-actions button {
+            padding: 6px 10px !important;
+            font-size: 11.5px !important;
+            border-radius: 8px !important;
+            height: 32px !important;
           }
           .im-right-column {
             padding: 16px 14px !important;

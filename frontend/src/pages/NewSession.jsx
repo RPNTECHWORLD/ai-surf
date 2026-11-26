@@ -1002,6 +1002,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const [dbInstructors, setDbInstructors] = useState([]);
   const [step3DayFilter, setStep3DayFilter] = useState(() => initialDraft?.step3DayFilter || 'all');
   const [step3StatusFilter, setStep3StatusFilter] = useState(() => initialDraft?.step3StatusFilter || 'unassigned');
+  const [unassignedPoolIds, setUnassignedPoolIds] = useState([]);
   const [step3LevelFilter, setStep3LevelFilter] = useState(() => initialDraft?.step3LevelFilter || 'all');
   const [step3GenderFilter, setStep3GenderFilter] = useState(() => initialDraft?.step3GenderFilter || 'all');
   const [step3SwimmingFilter, setStep3SwimmingFilter] = useState(() => initialDraft?.step3SwimmingFilter || 'all');
@@ -1310,6 +1311,73 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   };
 
   const [isConfirmingSlots, setIsConfirmingSlots] = useState(false);
+
+  const handleConfirmSlotsAndNext = async () => {
+    // 1. Validate slot capacity first
+    for (const s of slots) {
+      const assignedCount = (slotStudentMap[s.id] || []).length;
+      const sCap = getSlotCapacity(s);
+      if (assignedCount > sCap) {
+        setUiAlert({
+          title: 'Slot Capacity Exceeded',
+          message: `Slot "${s.startTime || s.time}" has ${assignedCount} students selected, which exceeds the limit of ${sCap} students. Please deselect extra students before proceeding.`,
+          type: 'error',
+          icon: '⚠️'
+        });
+        return;
+      }
+    }
+
+    // 2. Confirm slot allocations in backend (in Create mode) before moving to Step 3
+    if (!editSession) {
+      const allocations = [];
+      slots.forEach(s => {
+        const sId = s.id;
+        const ids = (slotStudentMap[sId] || slotStudentMap[String(sId)] || []).filter(id => {
+          const st = allPoolStudents.find(sp => String(sp.id) === String(id));
+          return !st || !isStudentScheduledInDbOnDate(st);
+        });
+        if (ids.length > 0) {
+          allocations.push({
+            time: s.startTime || s.time || '06:30 AM',
+            duration_mins: parseInt(s.duration) || 120,
+            student_ids: ids.map(id => parseInt(id)).filter(id => !isNaN(id) && id > 0),
+            location: spotName || 'Main Beach'
+          });
+        }
+      });
+
+      const totalStudents = allocations.reduce((acc, a) => acc + a.student_ids.length, 0);
+      if (totalStudents > 0) {
+        setIsConfirmingSlots(true);
+        try {
+          const res = await fetch(`${API}/api/sessions/confirm-slots`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              date: formattedSessionDate,
+              location: spotName || 'Main Beach',
+              school: activeSchoolName || currentUser?.school || currentUser?.school_name || '',
+              slot_allocations: allocations
+            })
+          });
+          const data = await res.json().catch(() => ({}));
+          if (res.ok && data.success) {
+            saveCurrentDraftToStorage();
+          } else {
+            console.warn('Slot confirmation warning:', data.detail || data.message);
+          }
+        } catch (err) {
+          console.error('Error confirming slot schedule:', err);
+        } finally {
+          setIsConfirmingSlots(false);
+        }
+      }
+    }
+
+    // 3. Proceed smoothly to Step 3
+    proceedToStep3();
+  };
 
   const handleConfirmSlotsSchedule = () => {
     const allocations = [];
@@ -3977,6 +4045,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     const targetIdSet = new Set([
       ...allSelectedStudentIds.map(String),
       ...(editSession ? allSlotStudentIds : []),
+      ...unassignedPoolIds.map(String),
       ...allGroupStudentIds
     ]);
     return allPoolStudents.filter(s => {
@@ -3990,7 +4059,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
       }
       return false;
     });
-  }, [allPoolStudents, allSelectedStudentIds, slotStudentMap, trainingGroups, editSession]);
+  }, [allPoolStudents, allSelectedStudentIds, slotStudentMap, trainingGroups, editSession, unassignedPoolIds]);
 
   // Step 3: Available Days for Imported Students
   const step3AvailableDays = useMemo(() => {
@@ -4591,10 +4660,29 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
     userClearedGroupsRef.current = false;
   };
 
-  // Remove individual student from a group
+  // Remove individual student from a group (preserve in slotStudentMap & unassignedPoolIds so they return to Available Students list)
   const removeStudentFromGroup = (groupId, studentId) => {
+    const targetGrp = trainingGroups.find(g => g.id === groupId);
+    const sId = targetGrp?.slotId || (step3SlotFilter !== 'ALL' ? step3SlotFilter : slots[0]?.id);
+    const studentIdStr = String(studentId);
+
+    if (sId) {
+      const sIdKey = String(sId);
+      setSlotStudentMap(prev => {
+        const currentList = prev[sId] || prev[sIdKey] || [];
+        const merged = deduplicateStudentIds([...currentList, studentId]);
+        return {
+          ...prev,
+          [sId]: merged,
+          [sIdKey]: merged
+        };
+      });
+    }
+
+    setUnassignedPoolIds(prev => (prev.includes(studentIdStr) ? prev : [...prev, studentIdStr]));
+
     setTrainingGroups(prev =>
-      prev.map(g => g.id === groupId ? { ...g, studentIds: g.studentIds.filter(id => id !== studentId) } : g)
+      prev.map(g => g.id === groupId ? { ...g, studentIds: g.studentIds.filter(id => String(id) !== studentIdStr) } : g)
     );
   };
 
@@ -6805,7 +6893,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                       transition: 'all 0.15s ease'
                     }}
                   >
-                    {editSession ? 'Confirm Date & Slot → Review Groups' : 'Save configuration and Next: Import Students »'}
+                    <span className="ns-hide-mobile">{editSession ? 'Confirm Date & Slot → Review Groups' : 'Save configuration and Next: Import Students »'}</span>
+                    <span className="ns-show-mobile">{editSession ? 'Next: Groups »' : 'Save & Next »'}</span>
                   </button>
                 </div>
               </div>
@@ -6870,13 +6959,15 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                         <span className="ns-slot-pill-time" style={{ fontWeight: 700 }}>
                           {s.startTime || s.time || `Slot ${idx + 1}`}
                         </span>
-                        <span style={{
+                        <span className="ns-slot-pill-count" style={{
                           fontSize: '11px',
                           fontWeight: 700,
                           padding: '2px 8px',
                           borderRadius: '12px',
                           background: isSelected ? 'rgba(255,255,255,0.2)' : '#F1F5F9',
-                          color: isSelected ? '#FFFFFF' : '#475569'
+                          color: isSelected ? '#FFFFFF' : '#475569',
+                          whiteSpace: 'nowrap',
+                          flexShrink: 0
                         }}>
                           {count} {count === 1 ? 'Student' : 'Students'}
                         </span>
@@ -8310,32 +8401,10 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                   </button>
                   <button
                     type="button"
-                    className="ns-confirm-slots-btn"
-                    onClick={handleConfirmSlotsSchedule}
+                    className="ns-primary-btn ns-confirm-slots-btn"
+                    onClick={handleConfirmSlotsAndNext}
                     disabled={isConfirmingSlots}
-                    title="Confirm slot timings for selected students without creating groups yet. Students will immediately see their confirmed slot timing in their portal."
-                    style={{
-                      background: 'linear-gradient(135deg, #0F766E 0%, #0D9488 100%)',
-                      color: '#FFFFFF',
-                      border: '1.5px solid #2DD4BF',
-                      padding: '7px 15px',
-                      fontSize: '12.5px',
-                      fontWeight: 800,
-                      borderRadius: '8px',
-                      cursor: isConfirmingSlots ? 'not-allowed' : 'pointer',
-                      boxShadow: '0 2px 10px rgba(13, 148, 136, 0.35)',
-                      transition: 'all 0.15s ease',
-                      whiteSpace: 'nowrap',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '5px'
-                    }}
-                  >
-                    <span>{isConfirmingSlots ? 'Confirming...' : '✓ Confirm Slot Schedule'}</span>
-                  </button>
-                  <button
-                    className="ns-primary-btn"
-                    onClick={proceedToStep3}
+                    title="Confirm slot timings for selected students and proceed to Step 3 (Group Assignment)"
                     style={{
                       background: '#00D2B4',
                       color: '#0F172A',
@@ -8344,17 +8413,17 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                       fontSize: '12.5px',
                       fontWeight: 800,
                       borderRadius: '8px',
-                      cursor: 'pointer',
+                      cursor: isConfirmingSlots ? 'not-allowed' : 'pointer',
                       boxShadow: '0 2px 10px rgba(0, 210, 180, 0.35)',
                       transition: 'all 0.15s ease',
                       whiteSpace: 'nowrap',
                       display: 'inline-flex',
                       alignItems: 'center',
-                      gap: '4px'
+                      gap: '5px'
                     }}
                   >
-                    <span className="ns-hide-mobile">Import &amp; Next »</span>
-                    <span className="ns-show-mobile">Next →</span>
+                    <span className="ns-hide-mobile">{isConfirmingSlots ? 'Confirming...' : '✓ Confirm & Next »'}</span>
+                    <span className="ns-show-mobile">{isConfirmingSlots ? 'Saving...' : '✓ Confirm →'}</span>
                   </button>
                 </div>
               </div>
@@ -8471,13 +8540,15 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                         <span className="ns-slot-pill-time" style={{ fontWeight: 700 }}>
                           {s.startTime || s.time || `Slot ${idx + 1}`}
                         </span>
-                        <span style={{
+                        <span className="ns-slot-pill-count" style={{
                           fontSize: '11px',
                           fontWeight: 700,
                           padding: '2px 8px',
                           borderRadius: '12px',
                           background: isSelected ? 'rgba(255,255,255,0.2)' : '#F1F5F9',
-                          color: isSelected ? '#FFFFFF' : '#475569'
+                          color: isSelected ? '#FFFFFF' : '#475569',
+                          whiteSpace: 'nowrap',
+                          flexShrink: 0
                         }}>
                           {count} {count === 1 ? 'Student' : 'Students'}
                         </span>
@@ -10580,14 +10651,6 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                                   ? `Assigned (Other slot)`
                                   : 'Available';
 
-                        const badgeTitle = isOnLeave
-                          ? `On Leave on ${formattedSessionDate}${leaveOnDate?.leave_type ? ` (${leaveOnDate.leave_type})` : ''}`
-                          : activeConflict
-                            ? `Already coaching ${activeConflict.conflictingGroup.name} at ${activeConflict.time}`
-                            : isPrevCoachRecommendation
-                              ? `Previous Coach for: ${prevCoachedGroupNames.join(', ')}`
-                              : undefined;
-
                         const badgeClass = isOnLeave
                           ? 'leave'
                           : activeConflict
@@ -10597,6 +10660,16 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                               : isPrevCoachRecommendation
                                 ? 'recommendation'
                                 : 'available';
+
+                        const badgeTitle = isOnLeave
+                          ? `On Leave on ${formattedSessionDate}${leaveOnDate?.leave_type ? ` (${leaveOnDate.leave_type})` : ''}`
+                          : activeConflict
+                            ? `Already coaching ${activeConflict.conflictingGroup.name} at ${activeConflict.time}`
+                            : isAssignedInCurrentSlot
+                              ? 'Already assigned in this time slot'
+                              : isPrevCoachRecommendation
+                                ? 'Recommended previous coach'
+                                : 'Available for assignment';
 
                         return (
                           <div
@@ -10821,7 +10894,8 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                     onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)'}
                     onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255, 255, 255, 0.12)'}
                   >
-                    {editSession ? '← Back to Select Students' : '← Back to Import Students'}
+                    <span className="ns-hide-mobile">{editSession ? '← Back to Select Students' : '← Back to Import Students'}</span>
+                    <span className="ns-show-mobile">← Back</span>
                   </button>
                   <button
                     type="button"
@@ -10869,9 +10943,16 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
                       transition: 'all 0.2s ease'
                     }}
                   >
-                    {isPublishing
-                      ? (isAllDisplayedGroupsPublished ? 'Updating Session...' : 'Publishing Sessions...')
-                      : (isAllDisplayedGroupsPublished ? '✓ Update Published Session' : 'Finalize & Publish')}
+                    <span className="ns-hide-mobile">
+                      {isPublishing
+                        ? (isAllDisplayedGroupsPublished ? 'Updating Session...' : 'Publishing Sessions...')
+                        : (isAllDisplayedGroupsPublished ? '✓ Update Published Session' : 'Finalize & Publish')}
+                    </span>
+                    <span className="ns-show-mobile">
+                      {isPublishing
+                        ? 'Saving...'
+                        : (isAllDisplayedGroupsPublished ? '✓ Update' : '🚀 Publish')}
+                    </span>
                   </button>
                 </div>
               </div>
@@ -13563,73 +13644,67 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           }
           .ns-stepper {
             width: 100% !important;
-            justify-content: center !important;
+            justify-content: flex-start !important;
             overflow-x: auto !important;
             -webkit-overflow-scrolling: touch !important;
             scrollbar-width: none !important;
-            gap: 6px !important;
+            gap: 3px !important;
+            padding: 2px 0 !important;
           }
           .ns-title {
-            font-size: 15px !important;
+            font-size: 13.5px !important;
             white-space: nowrap !important;
             overflow: hidden !important;
             text-overflow: ellipsis !important;
-            max-width: 150px !important;
+            max-width: 125px !important;
           }
           .ns-status-tag {
-            font-size: 9.5px !important;
-            padding: 1px 6px !important;
+            font-size: 9px !important;
+            padding: 1px 5px !important;
           }
           .ns-header-back-btn {
             padding: 3px 6px !important;
-            font-size: 11px !important;
+            font-size: 10.5px !important;
           }
 
           /* Stepper */
-          .ns-stepper {
-            width: 100% !important;
-            overflow-x: auto !important;
-            -webkit-overflow-scrolling: touch !important;
-            scrollbar-width: none !important;
-            gap: 6px !important;
-            padding: 2px 0 !important;
-          }
           .ns-stepper::-webkit-scrollbar {
             display: none !important;
           }
           .ns-step-item {
-            font-size: 11px !important;
+            font-size: 10px !important;
             white-space: nowrap !important;
             flex-shrink: 0 !important;
-            padding: 2px 5px !important;
-            gap: 4px !important;
+            padding: 2px 4px !important;
+            gap: 3px !important;
           }
           .ns-step-circle {
-            width: 18px !important;
-            height: 18px !important;
-            font-size: 9.5px !important;
+            width: 15px !important;
+            height: 15px !important;
+            font-size: 8.5px !important;
           }
 
           /* Step 2 Banner */
           .ns-selected-banner {
-            padding: 6px 10px !important;
-            font-size: 11.5px !important;
-            border-radius: 8px !important;
+            padding: 5px 8px !important;
+            font-size: 10.5px !important;
+            border-radius: 7px !important;
+            margin-bottom: 8px !important;
           }
 
           /* Filters Card: Compact & Simple */
           .ns-filters-card {
-            padding: 10px 10px !important;
+            padding: 8px !important;
             border-radius: 10px !important;
-            gap: 8px !important;
+            gap: 5px !important;
           }
           .ns-filter-row {
             flex-direction: column !important;
             align-items: flex-start !important;
-            gap: 6px !important;
+            gap: 4px !important;
             width: 100% !important;
-            margin-top: 8px !important;
-            padding-top: 8px !important;
+            margin-top: 5px !important;
+            padding-top: 5px !important;
           }
           .ns-filter-row:first-child {
             margin-top: 0 !important;
@@ -13638,47 +13713,70 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           .ns-filter-label {
             min-width: 0 !important;
             width: 100% !important;
-            font-size: 11.5px !important;
+            font-size: 10.5px !important;
             font-weight: 700 !important;
             color: #0F172A !important;
           }
           .ns-slot-pills-wrap {
             width: 100% !important;
-            display: flex !important;
-            flex-wrap: wrap !important;
-            gap: 6px !important;
+            display: grid !important;
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 5px !important;
           }
           .ns-slot-pill-btn {
-            padding: 4px 8px !important;
-            font-size: 11px !important;
+            padding: 5px 7px !important;
+            font-size: 10px !important;
             border-radius: 8px !important;
             gap: 4px !important;
+            width: 100% !important;
+            justify-content: flex-start !important;
+            min-width: 0 !important;
+            overflow: hidden !important;
           }
           .ns-slot-pill-num {
-            width: 18px !important;
-            height: 18px !important;
-            font-size: 10px !important;
+            width: 16px !important;
+            height: 16px !important;
+            font-size: 9px !important;
+            flex-shrink: 0 !important;
           }
           .ns-slot-pill-time {
-            font-size: 11px !important;
+            font-size: 10px !important;
+            white-space: nowrap !important;
+          }
+          .ns-slot-pill-count {
+            font-size: 9px !important;
+            padding: 1px 5px !important;
+            margin-left: auto !important;
+            white-space: nowrap !important;
+            flex-shrink: 0 !important;
           }
           .ns-pill-group {
             width: 100% !important;
             display: flex !important;
-            flex-wrap: wrap !important;
+            flex-wrap: nowrap !important;
+            overflow-x: auto !important;
+            -webkit-overflow-scrolling: touch !important;
+            scrollbar-width: none !important;
             gap: 5px !important;
+            padding-bottom: 2px !important;
+          }
+          .ns-pill-group::-webkit-scrollbar {
+            display: none !important;
           }
           .ns-pill {
-            padding: 4px 8px !important;
-            font-size: 11px !important;
-            border-radius: 14px !important;
+            padding: 3px 8px !important;
+            font-size: 10px !important;
+            border-radius: 12px !important;
+            white-space: nowrap !important;
+            flex-shrink: 0 !important;
           }
           .ns-search-student-input {
             width: 100% !important;
             min-width: 0 !important;
             box-sizing: border-box !important;
-            padding: 6px 10px !important;
-            font-size: 12px !important;
+            padding: 5px 10px !important;
+            font-size: 11.5px !important;
+            height: 32px !important;
           }
 
           /* Collapsible Secondary Filters */
@@ -13835,26 +13933,30 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             width: 100% !important;
             max-width: 100% !important;
             box-sizing: border-box !important;
-            padding: 8px 10px !important;
+            padding: 7px 8px !important;
             border-radius: 10px !important;
             margin: 0 auto !important;
             display: flex !important;
-            flex-direction: row !important;
-            align-items: center !important;
-            justify-content: space-between !important;
+            flex-direction: column !important;
+            align-items: stretch !important;
+            justify-content: center !important;
             background-color: #0A0F1D !important;
             z-index: 50 !important;
-            gap: 8px !important;
+            gap: 6px !important;
             pointer-events: auto !important;
           }
           .ns-sb-left {
             display: flex !important;
             align-items: center !important;
-            gap: 4px !important;
+            justify-content: center !important;
+            flex-wrap: wrap !important;
+            gap: 6px !important;
+            width: 100% !important;
             min-width: 0 !important;
+            font-size: 11px !important;
           }
           .ns-sb-capacity {
-            font-size: 12px !important;
+            font-size: 11px !important;
             font-weight: 700 !important;
             color: #FFFFFF !important;
             white-space: nowrap !important;
@@ -13865,19 +13967,31 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
           .ns-sb-right {
             display: flex !important;
             align-items: center !important;
-            gap: 6px !important;
+            justify-content: space-between !important;
+            width: 100% !important;
+            margin-left: 0 !important;
+            gap: 5px !important;
           }
-          .ns-sb-back-btn {
+          .ns-sb-back-btn,
+          .ns-sb-draft-btn {
+            padding: 6px 8px !important;
+            font-size: 11px !important;
+            border-radius: 6px !important;
+            white-space: nowrap !important;
+            min-width: 0 !important;
+            flex: 1 !important;
+            justify-content: center !important;
+          }
+          .ns-primary-btn,
+          .ns-confirm-slots-btn,
+          .finalize-btn {
             padding: 6px 10px !important;
-            font-size: 11.5px !important;
+            font-size: 11px !important;
             border-radius: 6px !important;
             white-space: nowrap !important;
-          }
-          .ns-primary-btn {
-            padding: 6px 12px !important;
-            font-size: 11.5px !important;
-            border-radius: 6px !important;
-            white-space: nowrap !important;
+            min-width: 0 !important;
+            flex: 1.2 !important;
+            justify-content: center !important;
           }
         }
 

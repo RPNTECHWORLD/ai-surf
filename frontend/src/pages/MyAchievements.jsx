@@ -17,7 +17,7 @@ export default function MyAchievements() {
   
   // Social Share Modal State
   const [shareModalSession, setShareModalSession] = useState(null); // session object or 'overall'
-  const [shareTemplate, setShareTemplate] = useState('spotlight'); // 'spotlight' | 'keepsake' | 'scorecard'
+  const [shareTemplate, setShareTemplate] = useState('spotlight'); // 'spotlight' | 'keepsake'
   const [customPhotoUrl, setCustomPhotoUrl] = useState(null);
   const [selectedCoachOverride, setSelectedCoachOverride] = useState(null);
   const [instructorsList, setInstructorsList] = useState([]);
@@ -69,6 +69,15 @@ export default function MyAchievements() {
     return sch || '';
   }, [studentData, loggedUser]);
 
+  const isCertificateImageUrl = (url, certCfg) => {
+    if (!url || !certCfg || typeof certCfg !== 'object') return false;
+    const certUrls = new Set([
+      certCfg.custom_bg_url,
+      ...Object.values(certCfg.courses || {}).map(c => c?.custom_bg_url)
+    ].filter(Boolean));
+    return certUrls.has(url);
+  };
+
   const [posterBgUrl, setPosterBgUrl] = useState(() => {
     try {
       let sch = '';
@@ -76,10 +85,10 @@ export default function MyAchievements() {
         const act = localStorage.getItem('activeSchool');
         if (act) sch = JSON.parse(act)?.name || '';
       } catch (e) {}
-      const cached = (sch && localStorage.getItem(`athnex_poster_${sch}`)) || localStorage.getItem('athnex_milestone_poster_bg');
-      return (cached && cached !== '/surf-milestone-bg.jpg') ? cached : (localStorage.getItem('athnex_milestone_poster_bg') || '/surf-milestone-bg.jpg');
+      const cached = sch ? localStorage.getItem(`athnex_poster_${sch}`) : localStorage.getItem('athnex_milestone_poster_bg');
+      return (cached && cached !== '/surf-milestone-bg.jpg') ? cached : '/surf-milestone-bg.jpg';
     } catch (e) {
-      return localStorage.getItem('athnex_milestone_poster_bg') || '/surf-milestone-bg.jpg';
+      return '/surf-milestone-bg.jpg';
     }
   });
   const [schoolCertConfig, setSchoolCertConfig] = useState(() => {
@@ -286,25 +295,32 @@ export default function MyAchievements() {
     const fetchPoster = async () => {
       try {
         const sch = effectiveSchool;
-        const cached = (sch && localStorage.getItem(`athnex_poster_${sch}`)) || localStorage.getItem('athnex_milestone_poster_bg');
-        if (cached && cached !== '/surf-milestone-bg.jpg') {
+        const cached = sch ? localStorage.getItem(`athnex_poster_${sch}`) : localStorage.getItem('athnex_milestone_poster_bg');
+        if (cached && cached !== '/surf-milestone-bg.jpg' && !isCertificateImageUrl(cached, schoolCertConfig)) {
           setPosterBgUrl(cached);
+        } else {
+          setPosterBgUrl('/surf-milestone-bg.jpg');
         }
 
         const url = sch ? `${API}/api/schools/poster?school=${encodeURIComponent(sch)}` : `${API}/api/schools/poster`;
         const res = await fetch(url);
         if (res.ok) {
           const data = await res.json();
-          if (data.poster_url && data.poster_url !== '/surf-milestone-bg.jpg') {
-            setPosterBgUrl(data.poster_url);
-            localStorage.setItem('athnex_milestone_poster_bg', data.poster_url);
-            if (sch) localStorage.setItem(`athnex_poster_${sch}`, data.poster_url);
-          } else if (cached && cached !== '/surf-milestone-bg.jpg') {
-            setPosterBgUrl(cached);
-          }
+          const latestCert = (data.certificate && typeof data.certificate === 'object' && Object.keys(data.certificate).length > 0)
+            ? data.certificate
+            : schoolCertConfig;
+
           if (data.certificate && typeof data.certificate === 'object' && Object.keys(data.certificate).length > 0) {
             setSchoolCertConfig(data.certificate);
             if (sch) localStorage.setItem(`athnex_cert_${sch}`, JSON.stringify(data.certificate));
+          }
+
+          if (data.poster_url && data.poster_url !== '/surf-milestone-bg.jpg' && !isCertificateImageUrl(data.poster_url, latestCert)) {
+            setPosterBgUrl(data.poster_url);
+            if (sch) localStorage.setItem(`athnex_poster_${sch}`, data.poster_url);
+            else localStorage.setItem('athnex_milestone_poster_bg', data.poster_url);
+          } else {
+            setPosterBgUrl('/surf-milestone-bg.jpg');
           }
         }
       } catch (err) {
@@ -2877,7 +2893,8 @@ export default function MyAchievements() {
           const displaySchoolName = shareModalSession.school || shareModalSession.student_school || studentData?.school || effectiveSchool || loggedUser?.school || studentSchool || 'Athnex Surf Academy';
           const dateFormatted = getSessionFormattedDate(shareModalSession);
           const quoteText = getCoachQuote(shareModalSession);
-          const previewPhoto = customPhotoUrl || posterBgUrl || '/surf-milestone-bg.jpg';
+          const safePosterBg = (posterBgUrl && !isCertificateImageUrl(posterBgUrl, schoolCertConfig)) ? posterBgUrl : '/surf-milestone-bg.jpg';
+          const previewPhoto = customPhotoUrl || safePosterBg;
           const isDefaultPhoto = !customPhotoUrl;
           const shortDuration = isOverall ? `${stats.totalHours} hrs` : (shareModalSession.duration_mins ? `${Math.round(shareModalSession.duration_mins / 60 * 10) / 10} hrs` : '2.0 hrs');
           const sessionLoc = isOverall ? displaySchoolName : (shareModalSession.location || displaySchoolName || 'Surf Beach');
@@ -2940,8 +2957,8 @@ export default function MyAchievements() {
                       >
                         <img
                           src={previewPhoto}
-                          alt="Surfer spotlight"
-                          crossOrigin={previewPhoto && !previewPhoto.startsWith('data:') && !previewPhoto.startsWith('blob:') ? 'anonymous' : undefined}
+                          alt=""
+                          onError={(e) => { e.currentTarget.style.display = 'none'; }}
                           style={{
                             width: '100%',
                             height: '100%',
@@ -2950,7 +2967,7 @@ export default function MyAchievements() {
                             filter: getFilterCss(photoFilter),
                             opacity: isDefaultPhoto ? 0.38 : 1,
                             transition: 'opacity 0.25s ease',
-                            display: 'block',
+                            display: previewPhoto ? 'block' : 'none',
                           }}
                         />
                         {isDefaultPhoto && (
@@ -3108,7 +3125,6 @@ export default function MyAchievements() {
                                   <img
                                     src={coachPhoto}
                                     alt={coachName}
-                                    crossOrigin={coachPhoto && !coachPhoto.startsWith('data:') && !coachPhoto.startsWith('blob:') ? 'anonymous' : undefined}
                                     style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                                     onError={(e) => { e.currentTarget.style.display = 'none'; }}
                                   />
@@ -3176,8 +3192,8 @@ export default function MyAchievements() {
                         >
                           <img
                             src={previewPhoto}
-                            alt="Surfer keepsake"
-                            crossOrigin={previewPhoto && !previewPhoto.startsWith('data:') && !previewPhoto.startsWith('blob:') ? 'anonymous' : undefined}
+                            alt=""
+                            onError={(e) => { e.currentTarget.style.display = 'none'; }}
                             style={{
                               width: '100%',
                               height: '100%',
@@ -3275,7 +3291,6 @@ export default function MyAchievements() {
                                 <img
                                   src={coachPhoto}
                                   alt={coachName}
-                                  crossOrigin={coachPhoto && !coachPhoto.startsWith('data:') && !coachPhoto.startsWith('blob:') ? 'anonymous' : undefined}
                                   style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                                   onError={(e) => { e.currentTarget.style.display = 'none'; }}
                                 />
@@ -3499,12 +3514,12 @@ export default function MyAchievements() {
                 {/* ── Template Switcher & Dimension Indicator ─────────────────────── */}
                 <div className="ach-template-meta-strip">
                   <span className="ach-template-label-active">
-                    {shareTemplate === 'spotlight' ? 'Photo spotlight' : shareTemplate === 'keepsake' ? 'Ocean keepsake' : 'Personal scorecard'}
+                    {shareTemplate === 'keepsake' ? 'Ocean keepsake' : 'Photo spotlight'}
                   </span>
                   <span className="ach-template-ratio">4:5 portrait • 1080 × 1350</span>
                 </div>
 
-                {/* 3 Template Selection Buttons */}
+                {/* 2 Template Selection Buttons */}
                 <div className="ach-template-selector-pills">
                   <button
                     type="button"
@@ -3519,13 +3534,6 @@ export default function MyAchievements() {
                     onClick={() => setShareTemplate('keepsake')}
                   >
                     Ocean keepsake
-                  </button>
-                  <button
-                    type="button"
-                    className={`ach-tmpl-btn ${shareTemplate === 'scorecard' ? 'active' : ''}`}
-                    onClick={() => setShareTemplate('scorecard')}
-                  >
-                    Personal scorecard
                   </button>
                 </div>
 
@@ -3613,10 +3621,12 @@ export default function MyAchievements() {
                       </>
                     ) : (
                       <>
-                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/>
-                          <polyline points="16 6 12 2 8 6"/>
-                          <line x1="12" y1="2" x2="12" y2="15"/>
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                          <circle cx="18" cy="5" r="3"/>
+                          <circle cx="6" cy="12" r="3"/>
+                          <circle cx="18" cy="19" r="3"/>
+                          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>
+                          <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
                         </svg>
                         <span>Share card</span>
                       </>
@@ -5871,11 +5881,142 @@ export default function MyAchievements() {
 
         @media (max-width: 600px) {
           .ach-main {
-            padding: 14px 12px 60px 12px !important;
-            margin-top: 64px !important;
+            padding: 10px 10px 56px 10px !important;
+            margin-top: 62px !important;
+            gap: 10px !important;
+            overflow-x: hidden !important;
+          }
+          .ach-header {
+            gap: 8px !important;
+            margin-bottom: 2px !important;
+          }
+          .ach-title {
+            font-size: 19px !important;
+            line-height: 1.2 !important;
+          }
+          .ach-badge-verified {
+            font-size: 9.5px !important;
+            padding: 2px 7px !important;
+          }
+          .ach-sub {
+            font-size: 11.5px !important;
+            line-height: 1.4 !important;
+            margin-top: 4px !important;
+          }
+          .ach-header-actions {
+            display: flex !important;
+            flex-direction: row !important;
+            flex-wrap: wrap !important;
+            gap: 6px !important;
+            width: 100% !important;
+          }
+          .ach-header-actions button {
+            flex: 1 1 135px !important;
+            padding: 7px 10px !important;
+            font-size: 11px !important;
+            border-radius: 8px !important;
+            justify-content: center !important;
+            white-space: nowrap !important;
           }
           .ach-stats-grid {
-            grid-template-columns: 1fr !important;
+            grid-template-columns: repeat(2, 1fr) !important;
+            gap: 8px !important;
+          }
+          .ach-stat-card {
+            padding: 10px !important;
+            border-radius: 12px !important;
+            gap: 8px !important;
+            align-items: center !important;
+            min-width: 0 !important;
+          }
+          .ach-stat-icon {
+            width: 34px !important;
+            height: 34px !important;
+            font-size: 16px !important;
+            border-radius: 9px !important;
+            flex-shrink: 0 !important;
+          }
+          .ach-stat-body {
+            min-width: 0 !important;
+          }
+          .ach-stat-num {
+            font-size: 17px !important;
+            line-height: 1.15 !important;
+          }
+          .ach-stat-label {
+            font-size: 10px !important;
+            line-height: 1.2 !important;
+          }
+          .ach-stat-hint {
+            font-size: 9px !important;
+            line-height: 1.2 !important;
+          }
+          .ach-controls-bar {
+            padding: 8px !important;
+            gap: 8px !important;
+            border-radius: 12px !important;
+            width: 100% !important;
+            box-sizing: border-box !important;
+          }
+          .ach-tabs {
+            width: 100% !important;
+            display: grid !important;
+            grid-template-columns: repeat(3, 1fr) !important;
+            gap: 4px !important;
+            box-sizing: border-box !important;
+          }
+          .ach-tab-btn {
+            padding: 5px 4px !important;
+            font-size: 10px !important;
+            line-height: 1.2 !important;
+            text-align: center !important;
+            justify-content: center !important;
+            white-space: normal !important;
+          }
+          .ach-search-wrap {
+            width: 100% !important;
+            padding: 6px 10px !important;
+          }
+          .ach-search-input {
+            font-size: 12px !important;
+          }
+          .ach-session-card {
+            padding: 12px !important;
+            border-radius: 12px !important;
+            gap: 8px !important;
+            width: 100% !important;
+            box-sizing: border-box !important;
+          }
+          .ach-session-title {
+            font-size: 14px !important;
+          }
+          .ach-session-actions-col {
+            flex-direction: column !important;
+            align-items: stretch !important;
+            gap: 8px !important;
+            width: 100% !important;
+          }
+          .ach-metric-pills {
+            display: flex !important;
+            flex-wrap: wrap !important;
+            gap: 5px !important;
+            width: 100% !important;
+          }
+          .ach-pill {
+            white-space: nowrap !important;
+            font-size: 10.5px !important;
+            padding: 3px 8px !important;
+          }
+          .ach-btn-row {
+            width: 100% !important;
+          }
+          .ach-btn-share {
+            width: 100% !important;
+            justify-content: center !important;
+            font-size: 11.5px !important;
+            padding: 7px 10px !important;
+            border-radius: 8px !important;
+            box-sizing: border-box !important;
           }
           .ach-modal-channels-list {
             grid-template-columns: 1fr !important;
@@ -5883,8 +6024,212 @@ export default function MyAchievements() {
           .btn-whatsapp {
             grid-column: span 1 !important;
           }
-          .ach-search-wrap {
+          .ach-modal-backdrop {
+            align-items: center !important;
+            justify-content: center !important;
+            padding: 10px 8px !important;
+            height: 100dvh !important;
+            overflow: hidden !important;
+          }
+          .ach-share-studio-box {
             width: 100% !important;
+            max-width: 100% !important;
+            max-height: calc(100dvh - 20px) !important;
+            overflow-y: auto !important;
+            -webkit-overflow-scrolling: touch !important;
+            overscroll-behavior: contain !important;
+            padding: 14px 12px !important;
+            border-radius: 16px !important;
+            gap: 10px !important;
+            box-sizing: border-box !important;
+          }
+          .ach-modal-title {
+            font-size: 16px !important;
+          }
+          .ach-modal-sub {
+            font-size: 11px !important;
+          }
+          .ach-coach-switcher-strip {
+            padding: 6px 8px !important;
+            gap: 5px !important;
+          }
+          .ach-coach-pill-btn {
+            font-size: 10.5px !important;
+            padding: 3px 9px !important;
+          }
+          .ach-story-card-wrapper {
+            height: auto !important;
+            aspect-ratio: auto !important;
+            border-radius: 14px !important;
+          }
+          .ach-card-spotlight,
+          .ach-card-keepsake,
+          .ach-card-scorecard {
+            height: auto !important;
+            border-radius: 14px !important;
+          }
+          .ach-spotlight-photo {
+            height: 195px !important;
+          }
+          .ach-spotlight-slate {
+            padding: 10px 12px 8px 12px !important;
+            gap: 6px !important;
+          }
+          .ach-spotlight-title {
+            font-size: 16px !important;
+            line-height: 1.2 !important;
+          }
+          .ach-spotlight-meta-line,
+          .ach-spotlight-sub-line {
+            font-size: 10.5px !important;
+          }
+          .ach-spotlight-score-block {
+            min-width: 64px !important;
+          }
+          .ach-spotlight-score-val {
+            font-size: 24px !important;
+          }
+          .ach-spotlight-score-lbl {
+            font-size: 7.5px !important;
+            white-space: nowrap !important;
+          }
+          .ach-spotlight-metric-trio {
+            gap: 5px !important;
+          }
+          .ach-spot-metric-pill {
+            padding: 5px 4px !important;
+            border-radius: 7px !important;
+          }
+          .ach-spot-metric-val {
+            font-size: 10.5px !important;
+            line-height: 1.2 !important;
+          }
+          .ach-spot-metric-sub {
+            font-size: 7px !important;
+          }
+          .ach-spotlight-quote-box {
+            padding: 7px 9px !important;
+          }
+          .ach-spotlight-quote {
+            font-size: 10.5px !important;
+            line-height: 1.3 !important;
+          }
+          .ach-spotlight-coach {
+            font-size: 9.5px !important;
+          }
+          .ach-cta-share-btn,
+          .ach-cta-save-btn {
+            padding: 9px 10px !important;
+            font-size: 12px !important;
+            white-space: nowrap !important;
+          }
+          /* Template 2: Ocean keepsake mobile */
+          .ach-card-keepsake {
+            padding: 14px 12px 10px 12px !important;
+            gap: 6px !important;
+          }
+          .ach-keepsake-tag {
+            font-size: 8px !important;
+            letter-spacing: 0.04em !important;
+            display: block !important;
+            padding-right: 68px !important;
+            line-height: 1.25 !important;
+          }
+          .ach-keepsake-title {
+            font-size: 16px !important;
+          }
+          .ach-keepsake-photo {
+            height: 165px !important;
+          }
+          .ach-keepsake-gold-badge {
+            width: 56px !important;
+            height: 56px !important;
+            bottom: -10px !important;
+            right: 10px !important;
+          }
+          .ach-gold-top-lbl {
+            font-size: 6.5px !important;
+            margin-bottom: 1px !important;
+          }
+          .ach-gold-score {
+            font-size: 18px !important;
+          }
+          .ach-gold-den {
+            font-size: 8px !important;
+            margin-top: 1px !important;
+          }
+          .ach-keepsake-quote-box {
+            padding: 7px 10px !important;
+          }
+          .ach-keepsake-quote {
+            font-size: 11px !important;
+          }
+          .ach-keepsake-footer-row {
+            font-size: 9.5px !important;
+            gap: 6px 10px !important;
+            flex-wrap: wrap !important;
+            justify-content: center !important;
+            text-align: center !important;
+          }
+          .ach-keepsake-footer-row > span {
+            white-space: nowrap !important;
+          }
+          /* Template 3: Personal scorecard mobile */
+          .ach-card-scorecard {
+            padding: 14px 12px 12px 12px !important;
+          }
+          .ach-sc-top-section {
+            gap: 10px !important;
+            align-items: center !important;
+          }
+          .ach-sc-arch-photo {
+            width: 118px !important;
+            height: 175px !important;
+            border-radius: 60px 60px 14px 14px !important;
+          }
+          .ach-sc-tag {
+            font-size: 8.5px !important;
+          }
+          .ach-sc-title {
+            font-size: 16px !important;
+            margin: 4px 0 6px 0 !important;
+          }
+          .ach-sc-pill {
+            font-size: 8px !important;
+            padding: 2.5px 8px !important;
+            margin-bottom: 6px !important;
+            white-space: nowrap !important;
+          }
+          .ach-sc-score-num {
+            font-size: 32px !important;
+          }
+          .ach-sc-score-lbl {
+            font-size: 7.5px !important;
+          }
+          .ach-sc-ath-name-highlight {
+            font-size: 13px !important;
+          }
+          .ach-sc-ath-sub {
+            font-size: 9.5px !important;
+            line-height: 1.3 !important;
+          }
+          .ach-sc-divider {
+            margin: 10px 0 8px 0 !important;
+          }
+          .ach-sc-metric-val {
+            font-size: 16px !important;
+          }
+          .ach-sc-metric-lbl {
+            font-size: 7.5px !important;
+          }
+          .ach-sc-quote-box {
+            padding: 8px 10px !important;
+          }
+          .ach-sc-quote-msg {
+            font-size: 11px !important;
+          }
+          .ach-sc-quote-by {
+            font-size: 9.5px !important;
           }
         }
       `}</style>

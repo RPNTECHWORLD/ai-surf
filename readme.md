@@ -3981,6 +3981,64 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
   - Verified frontend build (`npm --prefix frontend run build`).
 
 
+### Changes on 26-11-2026
+
+#### 24. Remove Duplicate `"to"` Separator in Date Range Filter Bar (`DateRangeFilterBar.jsx`)
+- **Problem**:
+  - Date range picker displayed `"From: [date] to To: [date]"` due to a redundant `<span className="drfb-separator">to</span>` next to the `To:` label.
+- **Resolution**:
+  - Removed the duplicate `"to"` separator in `frontend/src/components/DateRangeFilterBar.jsx` so it cleanly reads `From: [date] To: [date]`.
+  - Verified frontend production build (`npm --prefix frontend run build`).
+
+
+#### 25. Combine "Confirm Slot Schedule" & "Import & Next »" into Single Button (`NewSession.jsx`)
+- **Requirement**:
+  - User requested: `"ithu reduthaum orey betton ah vai"` to merge the two Step 2 action buttons (`✓ Confirm Slot Schedule` and `Import & Next »`) into one streamlined button.
+- **Resolution**:
+  - Added `handleConfirmSlotsAndNext` in `frontend/src/pages/NewSession.jsx` which validates slot capacities, automatically confirms allocated student slots via `POST /api/sessions/confirm-slots` (in create mode), saves draft progress, and proceeds directly to Step 3.
+  - Replaced the two separate buttons in the Step 2 bottom bar with a single **`✓ Confirm & Next »`** button.
+  - Verified frontend production build (`npm --prefix frontend run build`).
+
+
+#### 27. Mobile UI Responsive Overhaul (`NewSession.jsx`, `SessionConfigure.jsx`, `UserProfileMenu.jsx`, `InstructorManagement.jsx`, `StudentsManagement.jsx`, `DateRangeFilterBar.jsx`)
+- **Problem & User Feedback**:
+  - User reported multiple mobile viewport issues across screens (`"itha paru mobile ui ki yelathaum chinnatha aki olunga vai"`, `"ithu yelathaum chinna chinnatha aku crt ah vai"`, `"ITHA INNom kojom better ah vai user patha onum puriyala olunga nalla responsible ah vai"`).
+- **Resolution**:
+  1. **`NewSession.jsx`**:
+     - Stacked `.ns-sticky-bar` into 2 compact rows on mobile and removed `.finalize-btn` `min-width: 200px` so Step 1 (`Save & Next »`), Step 2 (`✓ Confirm →`), and Step 3 (`🚀 Publish`) fit inside the dark bar without right-edge clipping.
+     - Made Step 2 time slots a compact 2-column grid with single-line student count badges and converted filter pills into single-row horizontal scrollable strips.
+  2. **`SessionConfigure.jsx`**:
+     - Converted the 6-column Time Slots table into responsive 2-column mobile cards with all 7 weekday buttons (`Mon–Sun`) fitting in a single 7-column row.
+  3. **`UserProfileMenu.jsx` / `index.css`**:
+     - Anchored `.db-profile-dropdown` with `position: fixed; left: 12px; right: 12px;` on mobile so it never clips off the left edge.
+  4. **`InstructorManagement.jsx`**:
+     - Wrapped header action buttons (`Leave Requests`, `Join Requests`) and scaled down `.im-card` avatars, typography, and buttons for mobile.
+  5. **`DateRangeFilterBar.jsx` & `StudentsManagement.jsx`**:
+     - Prevented date picker calendar icon overlap in `DateRangeFilterBar.jsx` on narrow mobile screens.
+     - Replaced the horizontal-scroll Students table on mobile (`<= 768px`) with a clean, zero-scroll **Mobile Student Card List** (`.sm-mobile-cards`) showing identity, badges, course progress, contact, editable dates/expected time, invite/joined status, and actions at a glance.
+  6. Verified frontend production build (`npm --prefix frontend run build`).
+
+
+#### 28. Lock Student Profile Editing Strictly to Student Self Only (`StudentProfile.jsx`)
+- **Problem & User Feedback**:
+  - User reported: `"lusu onu nalla purijika yetha coach or admin nalaum student profile ah edit pana mudiya kudathu"` with screenshot showing the Edit (`📝`) button visible on a student's profile when viewed by an Admin/Head Coach.
+- **Root Cause**:
+  - `StudentProfile.jsx` rendered the avatar upload overlay and name-side Edit button using `(isOwnProfile || isSchoolAdmin)`, allowing School Admins / Head Coaches / Super Admins to open the student profile edit modal.
+- **Resolution**:
+  - Restricted the avatar overlay, Edit Profile button, and `handleEditClick` strictly to `isOwnProfile` (only the student themselves), completely blocking all coaches and admins from editing student profiles.
+  - Verified frontend production build (`npm --prefix frontend run build`).
+
+
+
+
+#### 26. Mobile UI Compactness & Sticky Bar Overflow Fix (`NewSession.jsx`)
+- **Problem & User Feedback**:
+  - User reported: `"itha paru mobile ui ki yelathaum chinnatha aki olunga vai"` with mobile screenshot showing Step 2 header/stepper clipping, oversized vertical time slot & filter pills, and the bottom sticky action bar overflowing off the right edge (`Save Draft` and `✓ Confirm →` cut off).
+- **Resolution**:
+  - Updated `@media (max-width: 768px)` styles in `frontend/src/pages/NewSession.jsx`:
+    - Made `.ns-sticky-bar` stack cleanly into 2 compact full-width rows (Row 1: centered `Total / Selected / Remaining`; Row 2: full-width equal-spaced `← Back`, `Save Draft`, and `✓ Confirm →` buttons) so nothing overflows off-screen.
+    - Converted `.ns-slot-pills-wrap` into a compact 2-column grid (`repeat(2, minmax(0, 1fr))`) and scaled down `.ns-pill`, `.ns-filter-row`, `.ns-title`, and `.ns-step-item` sizes for clean mobile viewing.
+  - Verified frontend production build (`npm --prefix frontend run build`).
 
 
 
@@ -3998,3 +4056,30 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
 
 
 
+
+
+
+
+
+
+
+#### 29. Mobile UI Polish, Student Removal Fix, Certificate Save State, Share Card Isolation & Active Breakdown (`2026-11-26`)
+- **Summary of Changes**:
+  1. **Student Profile Mobile Hero & `isOwnProfile` TDZ Fix (`frontend/src/pages/StudentProfile.jsx`)**:
+     - Redesigned the mobile (`<= 768px`) hero card into a compact CSS grid with left-aligned `46px` avatar, name/badges beside it, and a full-width `.sp-hero-coach-actions` strip (`Coach` pill + `Change Password`) below.
+     - Fixed `ReferenceError: Cannot access 'isOwnProfile' before initialization` in `fetchStudent` by computing `isOwn` directly from `savedUser` and `id`.
+  2. **Our Services Mobile Responsiveness & Certificate Save State (`frontend/src/pages/OurServices.jsx`)**:
+     - Added `@media (max-width: 768px)` and `@media (max-width: 900px)` responsive rules so the header, school badge, menu cards, course grid, poster grid, and certificate studio stack cleanly without horizontal overflow.
+     - Added `savedCertSnapshot` tracking so the Certificate Save button displays `✓ Saved` when unchanged and switches back to `💾 Save Template` / `💾 Save Certificate Template` when edited.
+  3. **Coach Profile Mobile Hero Compactness (`frontend/src/pages/InstructorProfile.jsx`)**:
+     - Updated `@media (max-width: 768px)` hero, badge pills, action buttons (`flex-wrap: wrap`, compact `28px` min-height), and Personal Details cards for clean mobile sizing without button clipping.
+  4. **Achievements & Share Card Mobile UI, CORS & Image Isolation (`frontend/src/pages/MyAchievements.jsx`)**:
+     - Compacted mobile (`<= 600px`) header, 2×2 stats grid, 3-column filter tabs, and session card action bars; updated the `Share card` button icon to a standard share icon.
+     - Fixed Share modal scrolling (`max-height: calc(100dvh - 20px)`), story card height (`height: auto`), and `Ocean keepsake` mobile tag/footer spacing; removed the `Personal scorecard` template option per user request.
+     - Removed `crossOrigin="anonymous"` from S3 preview `<img>` elements to eliminate CORS blocking, and added `isCertificateImageUrl` + school-scoped poster caching so certificate template images never leak into Share Card previews.
+  5. **Preserve Students Removed from Published Groups (`frontend/src/pages/NewSession.jsx`)**:
+     - Updated `removeStudentFromGroup` to preserve removed student IDs in `slotStudentMap` and `unassignedPoolIds` (included in `importedStudents`) so students removed from a published group return to the Available/Unassigned Students list instead of disappearing.
+  6. **Active Students Scheduled / Not Scheduled Breakdown (`frontend/src/pages/StudentsManagement.jsx`)**:
+     - Added `activeScheduledCount` and `activeNotScheduledCount` (computed for `targetEvaluationDate` across active students and guests, excluding `Slot Confirmed` and `cancelled`/`rejected` entries) and displayed them inside the `ACTIVE` stat card.
+- **Verification**:
+  - Verified frontend production build (`npm --prefix frontend run build`) passes with 0 errors.

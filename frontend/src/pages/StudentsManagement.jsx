@@ -1154,6 +1154,68 @@ const StudentsManagement = () => {
       .reduce((sum, s) => sum + 1 + getStudentGuestCount(s), 0);
   }, [approvedStudents, targetEvaluationDate]);
 
+  const { activeScheduledCount, activeNotScheduledCount } = React.useMemo(() => {
+    const evalDate = targetEvaluationDate || new Date();
+    const targetDateStr = `${evalDate.getFullYear()}-${String(evalDate.getMonth() + 1).padStart(2, '0')}-${String(evalDate.getDate()).padStart(2, '0')}`;
+
+    const scheduledIds = new Set();
+    const scheduledNames = new Set();
+    (allSessions || []).forEach(sess => {
+      if (!sess || sess.date !== targetDateStr) return;
+      const st = (sess.status || '').toLowerCase().trim();
+      if (st === 'cancelled' || st === 'rejected') return;
+      if ((sess.group_name || '').trim() === 'Slot Confirmed') return;
+      if (sess.student_id != null && sess.student_id !== '') scheduledIds.add(String(sess.student_id));
+      if (Array.isArray(sess.student_ids)) {
+        sess.student_ids.forEach(sid => {
+          if (sid != null && sid !== '') scheduledIds.add(String(sid));
+        });
+      }
+      if (sess.student) scheduledNames.add(String(sess.student).toLowerCase().trim());
+    });
+
+    let scheduled = 0;
+    let notScheduled = 0;
+
+    approvedStudents
+      .filter(s => isStudentActive(s, targetEvaluationDate))
+      .forEach(s => {
+        const sName = (s.name || '').toLowerCase().trim();
+        const isMainScheduled = Boolean(
+          (s.id != null && scheduledIds.has(String(s.id))) ||
+          (sName && scheduledNames.has(sName)) ||
+          (Array.isArray(s.sessions) && s.sessions.some(ss =>
+            ss && ss.date === targetDateStr &&
+            !['cancelled', 'rejected'].includes((ss.status || '').toLowerCase().trim()) &&
+            (ss.group_name || '').trim() !== 'Slot Confirmed'
+          ))
+        );
+        if (isMainScheduled) scheduled += 1;
+        else notScheduled += 1;
+
+        const guests = getStudentGuestsDetails(s) || [];
+        if (guests.length > 0) {
+          guests.forEach(g => {
+            const gName = (g?.name || '').toLowerCase().trim();
+            const isGuestScheduled = Boolean(
+              (g?.id != null && scheduledIds.has(String(g.id))) ||
+              (gName && scheduledNames.has(gName))
+            );
+            if (isGuestScheduled) scheduled += 1;
+            else notScheduled += 1;
+          });
+        } else {
+          const extraGuests = getStudentGuestCount(s);
+          if (extraGuests > 0) {
+            if (isMainScheduled) scheduled += extraGuests;
+            else notScheduled += extraGuests;
+          }
+        }
+      });
+
+    return { activeScheduledCount: scheduled, activeNotScheduledCount: notScheduled };
+  }, [approvedStudents, allSessions, targetEvaluationDate]);
+
   const upcomingStudentsCount = React.useMemo(() => {
     return approvedStudents
       .filter(s => isStudentUpcoming(s, targetEvaluationDate))
@@ -1207,7 +1269,9 @@ const StudentsManagement = () => {
       label: 'ACTIVE',
       shortLabel: 'ACTIVE',
       color: '#0D9488',
-      active: activeStatFilter === 'ACTIVE'
+      active: activeStatFilter === 'ACTIVE',
+      scheduledCount: activeScheduledCount,
+      notScheduledCount: activeNotScheduledCount
     },
     {
       value: upcomingStudentsCount,
@@ -3443,6 +3507,19 @@ const StudentsManagement = () => {
                 <span className="sm-label-full">{s.label}</span>
                 <span className="sm-label-short">{s.shortLabel || s.label}</span>
               </span>
+              {s.scheduledCount !== undefined && (
+                <div className="sm-stat-breakdown">
+                  <span className="sm-bd-sch">
+                    <span className="sm-label-full">Scheduled: {s.scheduledCount}</span>
+                    <span className="sm-label-short">Sch: {s.scheduledCount}</span>
+                  </span>
+                  <span className="sm-bd-sep">•</span>
+                  <span className="sm-bd-ns">
+                    <span className="sm-label-full">Not Scheduled: {s.notScheduledCount}</span>
+                    <span className="sm-label-short">Not: {s.notScheduledCount}</span>
+                  </span>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -4147,6 +4224,198 @@ const StudentsManagement = () => {
                   ))}
                 </tbody>
               </table>
+
+              {/* Mobile-Friendly Card List (Zero Horizontal Scroll) */}
+              <div className="sm-mobile-cards">
+                {filtered.map((s) => {
+                  const prog = calculateCurrentCourseDay(s, targetEvaluationDate);
+                  const calculatedEndDate = getStudentEndDate(s);
+                  const genderVal = s.gender || (s.division && /women|girl/i.test(s.division) ? 'Female' : 'Male');
+                  const isFemale = genderVal && genderVal.toLowerCase() === 'female';
+                  const ageVal = (s.age !== undefined && s.age !== null && s.age !== '') ? Number(s.age) : (s.dob ? Number(calculateAge(s.dob)) : null);
+                  const normLvl = normalizeLevel(s.level);
+                  const isNonSwimmer = s.swimming_ability?.toLowerCase() === 'non-swimmer';
+                  const hasImg = s.image && !s.image.includes('unsplash.com') && !s.image.includes('1500648767791');
+
+                  return (
+                    <div
+                      key={`mob-${s.id}`}
+                      className="sm-mobile-card"
+                      onClick={() => {
+                        if (s && s.id && s.id !== 'undefined') navigate(`/students/${s.id}`);
+                      }}
+                    >
+                      {/* Top Row: Avatar + Name + Course Progress */}
+                      <div className="sm-mc-top">
+                        <div className="sm-mc-identity">
+                          {hasImg ? (
+                            <img src={s.image} alt={s.name} className="sm-mc-avatar" />
+                          ) : (
+                            <div className="sm-mc-avatar-fallback">
+                              {s.name ? s.name.charAt(0).toUpperCase() : 'S'}
+                            </div>
+                          )}
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div className="sm-mc-name">{s.name}</div>
+                            <div className="sm-mc-badges">
+                              {genderVal && (
+                                <span style={{
+                                  fontSize: '10px', fontWeight: 700, padding: '1px 5px', borderRadius: '4px',
+                                  color: isFemale ? '#DB2777' : '#0284C7',
+                                  background: isFemale ? '#FDF2F8' : '#F0F9FF',
+                                  border: `1px solid ${isFemale ? '#FBCFE8' : '#BAE6FD'}`
+                                }}>
+                                  {isFemale ? '♀ Female' : '♂ Male'}
+                                </span>
+                              )}
+                              {ageVal !== null && !isNaN(ageVal) && ageVal > 0 && ageVal < 16 && (
+                                <span style={{ fontSize: '10px', fontWeight: 800, padding: '1px 5px', borderRadius: '4px', color: '#7C3AED', background: '#F5F3FF', border: '1px solid #DDD6FE' }}>
+                                  🧒 Kids
+                                </span>
+                              )}
+                              <span style={{
+                                fontSize: '10px', fontWeight: 700, padding: '1px 5px', borderRadius: '4px',
+                                color: isNonSwimmer ? '#D97706' : '#0D9488',
+                                background: isNonSwimmer ? '#FEF3C7' : '#ECFDF5',
+                                border: `1px solid ${isNonSwimmer ? '#FDE68A' : '#A7F3D0'}`
+                              }}>
+                                {isNonSwimmer ? '🤿 Non-Swimmer' : '🏊 Swimmer'}
+                              </span>
+                              {normLvl && (
+                                <span style={{ fontSize: '10px', fontWeight: 700, padding: '1px 5px', borderRadius: '4px', color: '#334155', background: '#F1F5F9', border: '1px solid #CBD5E1' }}>
+                                  {normLvl}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="sm-mc-progress">
+                          <span style={{
+                            fontSize: '10px', fontWeight: 800, padding: '2px 6px', borderRadius: '5px', whiteSpace: 'nowrap',
+                            background: prog.completed ? '#F1F5F9' : prog.status === 'upcoming' ? '#FEF3C7' : '#ECFDF5',
+                            color: prog.completed ? '#64748B' : prog.status === 'upcoming' ? '#D97706' : '#059669',
+                            border: `1px solid ${prog.completed ? '#CBD5E1' : prog.status === 'upcoming' ? '#FDE68A' : '#A7F3D0'}`
+                          }}>
+                            {prog.completed ? `Done (${prog.total_days}d)` : prog.status === 'upcoming' ? `Upcoming` : `Day ${prog.which_day}/${prog.total_days}`}
+                          </span>
+                          <span style={{ fontSize: '10px', color: '#64748B', fontWeight: 600 }}>
+                            {s.course_duration || `${prog.total_days} Days`}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Middle Row: Contact + Dates & Expected Time */}
+                      <div className="sm-mc-meta">
+                        {!isSchoolCoach && (s.whatsapp_number || s.email) && (
+                          <div className="sm-mc-contact">
+                            {s.whatsapp_number && (
+                              <a href={`tel:${s.whatsapp_number}`} onClick={e => e.stopPropagation()} style={{ color: '#0D9488', fontWeight: 700, textDecoration: 'none', fontSize: '11.5px' }}>
+                                📱 {s.whatsapp_number}
+                              </a>
+                            )}
+                            {s.email && (
+                              <span style={{ color: '#64748B', fontSize: '11px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                • {s.email}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        <div className="sm-mc-schedule">
+                          <span
+                            onClick={(e) => {
+                              if (!canEditStudentDatesAndTime) return;
+                              e.stopPropagation();
+                              setEditingStudentDates({
+                                id: s.id, name: s.name, course_duration: s.course_duration || '',
+                                start_date: s.start_date || '', end_date: s.end_date || calculatedEndDate || ''
+                              });
+                            }}
+                            style={{ fontSize: '11px', color: '#334155', fontWeight: 600, background: '#F8FAFC', border: '1px solid #E2E8F0', padding: '3px 7px', borderRadius: '6px' }}
+                          >
+                            📅 {s.start_date || '—'}{calculatedEndDate ? ` → ${calculatedEndDate}` : ''}
+                            {canEditStudentDatesAndTime && <span style={{ color: '#0D9488', marginLeft: '4px', fontWeight: 800 }}>✎</span>}
+                          </span>
+                          <span
+                            onClick={(e) => {
+                              if (!canEditStudentDatesAndTime) return;
+                              e.stopPropagation();
+                              setEditingStudentTime({
+                                id: s.id, name: s.name, session_time: formatSlotDisplayTime(s.session_time) || s.session_time || ''
+                              });
+                            }}
+                            style={{ fontSize: '11px', color: '#0F766E', fontWeight: 700, background: '#F0FDFA', border: '1px solid #99F6E4', padding: '3px 7px', borderRadius: '6px' }}
+                          >
+                            ⏰ {s.session_time ? formatSlotDisplayTime(s.session_time) : 'No Time'}
+                            {canEditStudentDatesAndTime && <span style={{ marginLeft: '4px', fontWeight: 800 }}>✎</span>}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Bottom Row: Actions */}
+                      <div className="sm-mc-actions">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (s && s.id && s.id !== 'undefined') navigate(`/students/${s.id}`);
+                          }}
+                          style={{ flex: 1, height: '30px', borderRadius: '7px', border: '1px solid #CBD5E1', background: '#FFFFFF', color: '#0F172A', fontSize: '11.5px', fontWeight: 700, cursor: 'pointer' }}
+                        >
+                          View Profile →
+                        </button>
+                        {!isViewAdmin && !s.has_password && (
+                          <button
+                            type="button"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              try {
+                                const invRes = await fetch(`${API}/api/students/${s.id}/generate-invite`, { method: 'POST' });
+                                if (invRes.ok) {
+                                  const invData = await invRes.json();
+                                  const inviteUrl = `${window.location.origin}/student-portal?token=${invData.token}`;
+                                  if (navigator.clipboard) await navigator.clipboard.writeText(inviteUrl);
+                                  setCopiedInviteId(s.id);
+                                  setTimeout(() => setCopiedInviteId(null), 3000);
+                                  setInviteModalData({
+                                    id: s.id, name: s.name,
+                                    email: isSchoolCoach ? '' : s.email,
+                                    phone: isSchoolCoach ? '' : s.whatsapp_number,
+                                    link: inviteUrl
+                                  });
+                                }
+                              } catch (err) {}
+                            }}
+                            style={{
+                              height: '30px', padding: '0 10px', borderRadius: '7px', fontSize: '11.5px', fontWeight: 700, cursor: 'pointer',
+                              background: copiedInviteId === s.id ? '#ECFDF5' : '#EEF2FF',
+                              color: copiedInviteId === s.id ? '#059669' : '#4F46E5',
+                              border: `1px solid ${copiedInviteId === s.id ? '#A7F3D0' : '#C7D2FE'}`
+                            }}
+                          >
+                            {copiedInviteId === s.id ? '✓ Copied' : '🔗 Invite'}
+                          </button>
+                        )}
+                        {s.has_password && (
+                          <span style={{ height: '30px', display: 'inline-flex', alignItems: 'center', padding: '0 8px', borderRadius: '7px', fontSize: '11px', fontWeight: 700, background: '#ECFDF5', color: '#059669', border: '1px solid #A7F3D0' }}>
+                            ✓ Joined
+                          </span>
+                        )}
+                        {canDeleteStudent && (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); handleDeleteStudent(s.id, s.name, s.email); }}
+                            title="Delete Student"
+                            style={{ width: '30px', height: '30px', borderRadius: '7px', border: '1px solid #FECACA', background: '#FEF2F2', color: '#EF4444', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}
+                          >
+                            🗑️
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </>
           )}
         </div>
@@ -7791,6 +8060,13 @@ const StudentsManagement = () => {
         }
         .sm-stat-value { font-family: 'Outfit', sans-serif; font-size: 26px; font-weight: 800; line-height: 1.2; }
         .sm-stat-label { font-size: 12px; font-weight: 700; text-transform: uppercase; color: #64748B; letter-spacing: 0.5px; }
+        .sm-stat-breakdown {
+          display: flex; align-items: center; justify-content: center; gap: 5px; flex-wrap: wrap;
+          font-size: 10px; font-weight: 700; line-height: 1.2; padding: 0 6px; margin-top: 2px;
+        }
+        .sm-bd-sch { color: #059669; white-space: nowrap; }
+        .sm-bd-ns { color: #D97706; white-space: nowrap; }
+        .sm-bd-sep { color: #CBD5E1; }
 
         .sm-table-container { background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 16px; overflow: hidden; }
         .sm-table { width: 100%; border-collapse: collapse; }
@@ -8148,6 +8424,7 @@ const StudentsManagement = () => {
         .sm-label-short { display: none; }
         .sm-label-full { display: inline; }
         .sm-mobile-scroll-hint { display: none; }
+        .sm-mobile-cards { display: none; }
         .sm-empty-state-card {
           text-align: center;
           padding: 44px 20px;
@@ -8159,19 +8436,106 @@ const StudentsManagement = () => {
         @media (max-width: 768px) {
           .sm-label-full { display: none !important; }
           .sm-label-short { display: inline !important; }
-          .sm-mobile-scroll-hint {
+          .sm-mobile-scroll-hint { display: none !important; }
+          .sm-table { display: none !important; }
+          .sm-table-card {
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+            padding: 0 !important;
+            overflow: visible !important;
+          }
+          .sm-mobile-cards {
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 10px !important;
+            width: 100% !important;
+          }
+          .sm-mobile-card {
+            background: #FFFFFF !important;
+            border: 1px solid #E2E8F0 !important;
+            border-radius: 12px !important;
+            padding: 12px !important;
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 8px !important;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
+            cursor: pointer !important;
+          }
+          .sm-mc-top {
+            display: flex !important;
+            align-items: flex-start !important;
+            justify-content: space-between !important;
+            gap: 8px !important;
+          }
+          .sm-mc-identity {
+            display: flex !important;
+            align-items: flex-start !important;
+            gap: 9px !important;
+            min-width: 0 !important;
+            flex: 1 !important;
+          }
+          .sm-mc-avatar,
+          .sm-mc-avatar-fallback {
+            width: 36px !important;
+            height: 36px !important;
+            border-radius: 50% !important;
+            object-fit: cover !important;
+            flex-shrink: 0 !important;
+          }
+          .sm-mc-avatar-fallback {
             display: flex !important;
             align-items: center !important;
             justify-content: center !important;
+            background: linear-gradient(135deg, #0D9488 0%, #0284C7 100%) !important;
+            color: #FFFFFF !important;
+            font-weight: 800 !important;
+            font-size: 14px !important;
+          }
+          .sm-mc-name {
+            font-size: 14px !important;
+            font-weight: 800 !important;
+            color: #0F172A !important;
+            line-height: 1.25 !important;
+            margin-bottom: 4px !important;
+          }
+          .sm-mc-badges {
+            display: flex !important;
+            flex-wrap: wrap !important;
+            gap: 4px !important;
+          }
+          .sm-mc-progress {
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: flex-end !important;
+            gap: 2px !important;
+            flex-shrink: 0 !important;
+          }
+          .sm-mc-meta {
+            display: flex !important;
+            flex-direction: column !important;
             gap: 6px !important;
-            background: #F0FDFA !important;
-            border-bottom: 1px solid #CCFBF1 !important;
-            padding: 8px 10px !important;
-            font-size: 11px !important;
-            font-weight: 600 !important;
-            color: #0F766E !important;
-            text-align: center !important;
-            box-sizing: border-box !important;
+            padding-top: 6px !important;
+            border-top: 1px dashed #E2E8F0 !important;
+          }
+          .sm-mc-contact {
+            display: flex !important;
+            align-items: center !important;
+            gap: 6px !important;
+            flex-wrap: wrap !important;
+          }
+          .sm-mc-schedule {
+            display: flex !important;
+            align-items: center !important;
+            gap: 6px !important;
+            flex-wrap: wrap !important;
+          }
+          .sm-mc-actions {
+            display: flex !important;
+            align-items: center !important;
+            gap: 6px !important;
+            padding-top: 6px !important;
+            border-top: 1px solid #F1F5F9 !important;
           }
           .sm-page {
             width: 100% !important;
@@ -8306,7 +8670,8 @@ const StudentsManagement = () => {
             box-sizing: border-box !important;
           }
           .sm-stat-card {
-            height: 50px !important;
+            min-height: 50px !important;
+            height: auto !important;
             min-width: 0 !important;
             border-radius: 8px !important;
             border: 1.5px solid #E2E8F0 !important;
@@ -8318,6 +8683,15 @@ const StudentsManagement = () => {
             gap: 2px !important;
             background: #FFFFFF !important;
             box-sizing: border-box !important;
+          }
+          .sm-stat-breakdown {
+            font-size: 7.5px !important;
+            gap: 3px !important;
+            padding: 0 2px !important;
+            margin-top: 1px !important;
+          }
+          .sm-bd-sep {
+            display: none !important;
           }
           .sm-stat-value {
             font-size: 16px !important;

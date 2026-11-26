@@ -834,17 +834,22 @@ const StudentProfile = () => {
           if (sessRes.ok) {
             const allSess = await sessRes.json();
             if (Array.isArray(allSess) && allSess.length > 0) {
+              const isOwn = Boolean(
+                savedUser &&
+                savedUser.role === 'athlete' &&
+                (id === 'me' || savedUser.student_id === parseInt(id) || savedUser.id === parseInt(id) || (savedUser.email && fallback?.email && savedUser.email.toLowerCase().trim() === fallback.email.toLowerCase().trim()))
+              );
               const targetNames = new Set([
                 (fallback.name || '').toLowerCase().trim(),
-                (isOwnProfile && savedUser?.name ? savedUser.name : '').toLowerCase().trim(),
+                (isOwn && savedUser?.name ? savedUser.name : '').toLowerCase().trim(),
               ].filter(Boolean));
 
               const studentCandidateIds = new Set([
                 fallback.id ? String(fallback.id) : null,
-                (isOwnProfile && savedUser?.student_id) ? String(savedUser.student_id) : null,
+                (isOwn && savedUser?.student_id) ? String(savedUser.student_id) : null,
               ].filter(Boolean));
 
-              const studentSchool = (fallback.school || (isOwnProfile && savedUser?.school ? savedUser.school : '') || '').toLowerCase().trim();
+              const studentSchool = (fallback.school || (isOwn && savedUser?.school ? savedUser.school : '') || '').toLowerCase().trim();
               const isGenericSchool = (sch) => !sch || ['surf academy', 'no school selected', 'your selected surf school', 'athnex', 'athnex live', 'all'].includes(sch);
 
               const mySess = allSess.filter(s => {
@@ -947,7 +952,11 @@ const StudentProfile = () => {
         if (sessRes.ok) {
           const allSess = await sessRes.json();
           if (Array.isArray(allSess) && allSess.length > 0) {
-            const isOwn = isOwnProfile;
+            const isOwn = Boolean(
+              savedUser &&
+              savedUser.role === 'athlete' &&
+              (id === 'me' || savedUser.student_id === parseInt(id) || savedUser.id === parseInt(id) || (savedUser.email && data?.email && savedUser.email.toLowerCase().trim() === data.email.toLowerCase().trim()))
+            );
             const targetNames = new Set([
               (data.name || '').toLowerCase().trim(),
               (isOwn && savedUser?.name ? savedUser.name : '').toLowerCase().trim(),
@@ -1158,6 +1167,7 @@ const StudentProfile = () => {
   };
 
   const handleEditClick = () => {
+    if (!isOwnProfile) return;
     setEditForm({
       name: student.name || '',
       bio: student.bio || '',
@@ -1943,7 +1953,7 @@ const StudentProfile = () => {
               >
                 {student.name ? student.name.charAt(0).toUpperCase() : 'S'}
               </div>
-              {(isOwnProfile || isSchoolAdmin) && (
+              {isOwnProfile && (
                 <div className="sp-avatar-overlay">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
@@ -1954,14 +1964,14 @@ const StudentProfile = () => {
             </div>
 
             <div className="sp-hero-info">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div className="sp-name-row" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <h1 className="sp-name">{student.name}</h1>
-                {(isOwnProfile || isSchoolAdmin) && (
+                {isOwnProfile && (
                   <button
                     type="button"
                     onClick={handleEditClick}
                     style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', color: '#94A3B8', display: 'flex', alignItems: 'center' }}
-                    title={isSchoolAdmin ? "Edit Student Profile (School Admin)" : "Edit Profile"}
+                    title="Edit Profile"
                   >
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
@@ -1971,7 +1981,7 @@ const StudentProfile = () => {
                 )}
               </div>
               <div className="sp-hero-meta">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                <div className="sp-hero-badges-row" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                   <span className="sp-level-badge">
                     {(student.level || 'INTERMEDIATE').toUpperCase()}
                   </span>
@@ -2034,6 +2044,7 @@ const StudentProfile = () => {
                     {badgeDisplayName}
                   </span>
                 </div>
+                <div className="sp-hero-coach-actions" style={{ display: 'inline-flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                 {currentUser?.role === 'coach' ? (
                   <div style={{
                     display: 'inline-flex',
@@ -2149,6 +2160,7 @@ const StudentProfile = () => {
                   </div>
                 ) : (
                   <div
+                    className="sp-coach-pill"
                     style={{
                       display: 'inline-flex',
                       alignItems: 'center',
@@ -2161,25 +2173,28 @@ const StudentProfile = () => {
                       borderRadius: '20px',
                       fontWeight: 700,
                       cursor: 'pointer',
-                      transition: 'all 0.15s ease'
+                      transition: 'all 0.15s ease',
+                      flexWrap: 'wrap',
+                      justifyContent: 'center'
                     }}
                     onClick={() => {
                       handleOpenCoachModal(assignedCoaches[0]?.name || assignedCoachName, assignedCoaches[0]?.id || assignedCoachId);
                     }}
                     title="Click to view coach profile & submit a review"
                   >
-                    <span>🏄‍♂️ Coach:</span>
-                    <span style={{ color: '#0F172A', fontWeight: 800, textDecoration: 'underline' }}>
+                    <span style={{ whiteSpace: 'nowrap' }}>🏄‍♂️ Coach:</span>
+                    <span style={{ color: '#0F172A', fontWeight: 800, textDecoration: 'underline', whiteSpace: 'nowrap' }}>
                       {assignedCoaches[0]?.name || assignedCoachName}
                     </span>
                     {(assignedCoaches.length > 0 || (assignedCoachName && assignedCoachName !== 'Not Assigned Yet')) && (
-                      <span style={{ fontSize: '11px', color: '#0D9488', fontWeight: 800 }}>★ Review</span>
+                      <span style={{ fontSize: '11px', color: '#0D9488', fontWeight: 800, whiteSpace: 'nowrap' }}>★ Review</span>
                     )}
                   </div>
                 )}
                 {isStudentSelf && (
                   <button
                     type="button"
+                    className="sp-password-btn"
                     onClick={() => {
                       setPassError('');
                       setPassSuccess('');
@@ -2205,6 +2220,7 @@ const StudentProfile = () => {
                     <span>{student.has_password ? 'Change Password' : 'Set Permanent Password'}</span>
                   </button>
                 )}
+                </div>
               </div>
             </div>
           </div>
@@ -4030,7 +4046,7 @@ const StudentProfile = () => {
             flex-direction: column !important;
             align-items: stretch !important;
             text-align: left !important;
-            padding: 12px 14px !important;
+            padding: 14px 14px !important;
             border-radius: 14px !important;
             gap: 10px !important;
             box-sizing: border-box !important;
@@ -4038,43 +4054,59 @@ const StudentProfile = () => {
             max-width: 100% !important;
           }
           .sp-hero-left {
-            flex-direction: row !important;
+            display: grid !important;
+            grid-template-columns: 46px 1fr !important;
+            column-gap: 12px !important;
+            row-gap: 4px !important;
             align-items: center !important;
-            gap: 10px !important;
             width: 100% !important;
             text-align: left !important;
           }
           .sp-avatar-wrapper {
-            width: 48px !important;
-            height: 48px !important;
-            border-radius: 24px !important;
+            grid-column: 1 !important;
+            grid-row: 1 / span 2 !important;
+            width: 46px !important;
+            height: 46px !important;
+            border-radius: 23px !important;
             flex-shrink: 0 !important;
+            margin-top: 0 !important;
           }
           .sp-avatar-fallback {
             font-size: 18px !important;
           }
-          .sp-hero-info {
-            align-items: flex-start !important;
-            text-align: left !important;
-            gap: 2px !important;
-            flex: 1 !important;
-            min-width: 0 !important;
+          .sp-hero-info,
+          .sp-hero-meta {
+            display: contents !important;
+          }
+          .sp-name-row {
+            grid-column: 2 !important;
+            grid-row: 1 !important;
+            justify-content: flex-start !important;
+            flex-wrap: wrap !important;
+            width: 100% !important;
           }
           .sp-name {
             font-size: 17px !important;
             font-weight: 800 !important;
             line-height: 1.2 !important;
             margin: 0 !important;
+            text-align: left !important;
             word-break: break-word !important;
           }
-          .sp-hero-meta {
-            flex-direction: row !important;
-            flex-wrap: wrap !important;
-            align-items: center !important;
+          .sp-hero-badges-row {
+            grid-column: 2 !important;
+            grid-row: 2 !important;
             justify-content: flex-start !important;
-            gap: 4px 6px !important;
+            gap: 4px !important;
             width: 100% !important;
-            margin-top: 2px !important;
+          }
+          .sp-hero-badges-row > span {
+            font-size: 9.5px !important;
+            padding: 2px 7px !important;
+            line-height: 1.3 !important;
+          }
+          .sp-hero-meta span {
+            font-size: 9.5px !important;
           }
           .sp-level-badge {
             font-size: 9px !important;
@@ -4082,24 +4114,49 @@ const StudentProfile = () => {
             border-radius: 4px !important;
           }
           .sp-badge-dot-label {
-            font-size: 10.5px !important;
+            font-size: 10px !important;
             gap: 4px !important;
+            padding: 2px 6px !important;
           }
           .sp-color-dot {
             width: 7px !important;
             height: 7px !important;
           }
+          .sp-hero-coach-actions {
+            grid-column: 1 / -1 !important;
+            grid-row: 3 !important;
+            width: 100% !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: flex-start !important;
+            flex-wrap: wrap !important;
+            gap: 6px !important;
+            margin-top: 6px !important;
+            padding-top: 8px !important;
+            border-top: 1px solid #F1F5F9 !important;
+          }
+          .sp-coach-pill {
+            font-size: 11px !important;
+            padding: 4px 10px !important;
+            gap: 5px !important;
+            max-width: 100% !important;
+          }
+          .sp-password-btn {
+            font-size: 11px !important;
+            padding: 4px 10px !important;
+            white-space: nowrap !important;
+          }
           .sp-hero-right {
             width: 100% !important;
-            margin-top: 2px !important;
+            margin-top: 0 !important;
           }
           .sp-next-session-box {
             width: 100% !important;
             min-width: unset !important;
             box-sizing: border-box !important;
-            padding: 8px 12px !important;
+            padding: 10px 12px !important;
             border-radius: 10px !important;
-            gap: 2px !important;
+            gap: 3px !important;
             text-align: left !important;
             align-items: flex-start !important;
           }

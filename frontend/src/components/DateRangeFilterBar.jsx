@@ -223,30 +223,34 @@ export default function DateRangeFilterBar({
             justify-content: space-between !important;
             align-items: center !important;
             gap: 6px !important;
-            padding: 4px 8px !important;
+            padding: 4px 6px !important;
             min-width: 0 !important;
             height: 34px !important;
             border-radius: 8px !important;
             box-sizing: border-box !important;
           }
+          .drfb-custom-box > svg {
+            display: none !important;
+          }
           .drfb-date-group {
             display: flex !important;
             align-items: center !important;
-            gap: 4px !important;
+            gap: 3px !important;
             flex: 1 1 0 !important;
             min-width: 0 !important;
+            overflow: hidden !important;
             box-sizing: border-box !important;
           }
           .drfb-date-group span {
-            font-size: 10.5px !important;
+            font-size: 9.5px !important;
             font-weight: 700 !important;
             flex-shrink: 0 !important;
           }
           .drfb-custom-box input[type="date"] {
             width: 100% !important;
             min-width: 0 !important;
-            font-size: 11px !important;
-            padding: 0 4px !important;
+            font-size: 10.5px !important;
+            padding: 0 3px !important;
             height: 24px !important;
             border-radius: 4px !important;
             box-sizing: border-box !important;
@@ -351,8 +355,6 @@ export default function DateRangeFilterBar({
             }}
           />
         </div>
-
-        <span className="drfb-separator" style={{ color: '#94A3B8', fontWeight: 700, fontSize: '11px', userSelect: 'none', flexShrink: 0 }}>to</span>
 
         {/* To Date Input with visible field */}
         <div className="drfb-date-group">
