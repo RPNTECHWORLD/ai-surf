@@ -403,20 +403,20 @@ export default function MyAchievements() {
     if (!sess) return null;
     
     // 1. Direct explicit score field
-    const direct = parseInt(sess.score || sess.technique_score || sess.coach_rating, 10);
-    if (!isNaN(direct) && direct > 0) return Math.min(100, direct);
+    const direct = parseFloat(sess.score || sess.technique_score || sess.coach_rating);
+    if (!isNaN(direct) && direct > 0) return direct <= 10 ? Math.round(direct * 10) : Math.min(100, Math.round(direct));
 
     // 2. Extract score or points from notes
     if (sess.notes) {
       const notes = String(sess.notes);
 
-      // A. Direct score out of 100 in notes (e.g. "Coach Rating: 85/100", "[85 out of 100]", "Score: 82")
+      // A. Direct score out of 10 or 100 in notes (e.g. "Coach Rating: 8/10", "Coach Rating: 85/100")
       const sm100 = notes.match(/(?:Coach (?:Rating|Score)|Technique Score|Score):\s*(\d+(?:\.\d+)?)/i)
         || notes.match(/\[\s*(\d+(?:\.\d+)?)\s*(?:out of|\/)\s*100\s*\]/i)
         || notes.match(/\(\s*(\d+(?:\.\d+)?)\s*(?:out of|\/)\s*100\s*\)/i);
       if (sm100) {
         const val = parseFloat(sm100[1]);
-        if (!isNaN(val) && val > 0) return Math.min(100, Math.round(val));
+        if (!isNaN(val) && val > 0) return val <= 10 ? Math.round(val * 10) : Math.min(100, Math.round(val));
       }
 
       // B. Points out of 10 in "What You did Well" / "What to Improve" / general notes
@@ -544,12 +544,8 @@ export default function MyAchievements() {
   }, [studentData, loggedUser]);
 
   const isCertificateUnlocked = useMemo(() => {
-    if (stats.completed >= requiredSessions) return true;
-    const stdStatus = String(studentData?.status || loggedUser?.status || '').toLowerCase().trim();
-    if (stdStatus === 'completed' || stdStatus === 'finished') return true;
-    if (stats.completed > 0) return true;
-    return false;
-  }, [stats.completed, requiredSessions, studentData, loggedUser]);
+    return requiredSessions > 0 && stats.completed >= requiredSessions;
+  }, [stats.completed, requiredSessions]);
 
   // Filtered sessions based on active tab and search query
   const displayedSessions = useMemo(() => {
@@ -573,7 +569,7 @@ export default function MyAchievements() {
 
   // Derive ocean training time / duration
   const getSessionDuration = (sess) => {
-    if (!sess) return '2 Hours (120m)';
+    if (!sess) return '--';
     if (sess.duration_mins) {
       const mins = parseInt(sess.duration_mins, 10);
       if (!isNaN(mins) && mins > 0) {
@@ -614,7 +610,7 @@ export default function MyAchievements() {
         }
       }
     }
-    return '2 Hours (120m)';
+    return '--';
   };
 
   // Helper to construct share text for a specific session
@@ -627,7 +623,7 @@ export default function MyAchievements() {
         `✅ Sessions Completed: *${stats.completed} Sessions*\n` +
         `🌊 Waves Ridden: *${stats.totalWaves > 0 ? `${stats.totalWaves} Waves` : 'In Training'}*\n` +
         `⏱️ Ocean Training: *${stats.totalHours} hrs*\n` +
-        (stats.avgScore !== null ? `⭐ Coach Score: *${stats.avgScore}/100*\n` : '') +
+        (stats.avgScore !== null ? `⭐ Coach Score: *${getScoreOutOfTen(stats.avgScore)}/10*\n` : '') +
         `📍 Academy: *${studentSchool}*\n\n` +
         `Track verified surf progress & AI video analysis on https://athnexlive.com 🤙`
       );
@@ -643,7 +639,7 @@ export default function MyAchievements() {
       `📅 Date: *${sess.date}* (${sess.time || 'Morning Session'})\n` +
       `⏱️ Training Time: *${duration}*\n` +
       (waves !== null ? `🌊 Waves Caught: *${waves} Waves*\n` : '') +
-      (scoreVal !== null ? `⭐ Technique Score: *${scoreVal}/100*\n` : '') +
+      (scoreVal !== null ? `⭐ Technique Score: *${getScoreOutOfTen(scoreVal)}/10*\n` : '') +
       `📍 Spot: *${loc}*\n` +
       `🏄 Coach: *${coachName}*\n` +
       `🔥 Level: *${sess.level || sess.type || studentLevel}*\n` +
@@ -811,7 +807,7 @@ export default function MyAchievements() {
     const spot = sess?.location || studentSchool || 'Athnex Surf Academy';
     
     const wavesPart = wavesVal !== null ? `🌊 ${wavesVal} Waves Caught` : '🌊 Ocean Training Complete';
-    const scorePart = scoreVal !== null ? ` | ⭐ ${scoreVal}/100 Coach Technique Score` : '';
+    const scorePart = scoreVal !== null ? ` | ⭐ ${getScoreOutOfTen(scoreVal)}/10 Coach Technique Score` : '';
     const caption = `Pushing limits in the ocean! 🏄‍♂️✨\n` +
       `${wavesPart}${scorePart}\n` +
       `📍 ${spot} • Coached by ${coach}\n\n` +
@@ -833,7 +829,7 @@ export default function MyAchievements() {
 
   const getSessionFormattedDate = (sess) => {
     if (!sess || sess === 'overall') return new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
-    if (!sess.date) return 'Wed, Nov 4, 2026';
+    if (!sess.date) return '--';
     try {
       const d = new Date(sess.date);
       if (!isNaN(d.getTime())) {
@@ -1837,6 +1833,10 @@ export default function MyAchievements() {
 
   // ── Certificate Generator (HTML5 Canvas, A4 Landscape) ───────────────────
   const handleDownloadCertificate = async () => {
+    if (!isCertificateUnlocked) {
+      setCertLockModal(true);
+      return;
+    }
     try {
       setDownloadingCert(true);
       const W = 1754, H = 1240; // A4 landscape @150dpi
@@ -1945,20 +1945,28 @@ export default function MyAchievements() {
         }
       })();
 
-      // Resolve course-specific certificate dynamically for ANY number of days (1, 2, 3, 5, 7, 10, 14, 30, etc.)
+      // Resolve course-specific certificate dynamically using tiered bracket matching:
+      // e.g. with 3-Day, 5-Day, 10-Day templates: 1-4 -> 3-Day, 5-9 -> 5-Day, 10+ -> 10-Day
       const targetCourseKey = (() => {
         if (!rawCertConfig?.courses) return null;
-        // 1. Direct key match (e.g. '7days', '10days', '3days')
-        const directKey = `${requiredSessions}days`;
-        if (rawCertConfig.courses[directKey]) return directKey;
+        const entries = Object.entries(rawCertConfig.courses)
+          .filter(([_, c]) => Boolean(c))
+          .map(([key, c]) => {
+            const parsedDays = parseInt(c.days, 10) || (String(key).match(/\d+/) ? parseInt(String(key).match(/\d+/)[0], 10) : 0);
+            return { key, days: parsedDays };
+          })
+          .filter(item => item.days > 0)
+          .sort((a, b) => a.days - b.days);
 
-        // 2. Match by course.days property
-        const matchedEntry = Object.entries(rawCertConfig.courses).find(
-          ([_, c]) => c && (c.days === requiredSessions || c.stats?.completed === requiredSessions)
-        );
-        if (matchedEntry) return matchedEntry[0];
+        if (entries.length > 0) {
+          // Largest configured template with days <= requiredSessions; if enrolled days < smallest template, use smallest
+          const eligible = entries.filter(item => item.days <= requiredSessions);
+          if (eligible.length > 0) {
+            return eligible[eligible.length - 1].key;
+          }
+          return entries[0].key;
+        }
 
-        // 3. Fallback to active course key or first configured course
         return rawCertConfig.activeCourseKey || Object.keys(rawCertConfig.courses)[0] || null;
       })();
 
@@ -2536,7 +2544,7 @@ export default function MyAchievements() {
           <div className="ach-stat-card card-purple">
             <div className="ach-stat-icon">⭐</div>
             <div className="ach-stat-body">
-              <span className="ach-stat-num">{stats.avgScore !== null ? `${stats.avgScore}/100` : 'Unrated'}</span>
+              <span className="ach-stat-num">{stats.avgScore !== null ? `${getScoreOutOfTen(stats.avgScore)}/10` : 'Unrated'}</span>
               <span className="ach-stat-label">Coach Technique Score</span>
               <span className="ach-stat-hint">{stats.avgScore !== null ? `${studentLevel} Level` : 'Awaiting coach review'}</span>
             </div>
@@ -2714,7 +2722,7 @@ export default function MyAchievements() {
                         {getSessionScore(sess) !== null ? (
                           <div className="ach-pill" title="Verified technique assessment score">
                             <span className="ach-pill-icon">⭐</span>
-                            <span className="ach-pill-val">{getSessionScore(sess)}/100</span>
+                            <span className="ach-pill-val">{getScoreOutOfTen(getSessionScore(sess))}/10</span>
                           </div>
                         ) : (
                           <div className="ach-pill ach-pill-unrated" title="Technique score pending coach evaluation">
@@ -2830,26 +2838,6 @@ export default function MyAchievements() {
                 </p>
 
                 <div style={{ display: 'flex', gap: '10px' }}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCertLockModal(false);
-                      handleDownloadCertificate();
-                    }}
-                    style={{
-                      flex: 1,
-                      padding: '10px 16px',
-                      borderRadius: '10px',
-                      border: 'none',
-                      background: 'linear-gradient(135deg, #0D9488 0%, #0284C7 100%)',
-                      color: '#FFFFFF',
-                      fontSize: '13.5px',
-                      fontWeight: 700,
-                      cursor: 'pointer'
-                    }}
-                  >
-                    Download Certificate
-                  </button>
                   <button
                     type="button"
                     onClick={() => setCertLockModal(false)}

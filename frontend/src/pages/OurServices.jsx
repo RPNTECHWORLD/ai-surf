@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
+import { computePosterCoachAnalytics } from '../utils/posterAnalytics';
 
 const API = import.meta.env.VITE_API_URL || '';
 
@@ -551,6 +552,7 @@ const OurServices = () => {
     : (school?.name?.name || user?.school_name || user?.school || 'Surf Academy');
 
   const schoolId = school?.id || user?.school_id || null;
+  const [posterAnalytics, setPosterAnalytics] = useState(() => computePosterCoachAnalytics([]));
 
   const [savedCertSnapshot, setSavedCertSnapshot] = useState('');
   const getCertSnapshot = (cfg) => {
@@ -660,6 +662,18 @@ const OurServices = () => {
             localStorage.setItem(`athnex_cert_${schoolName}`, JSON.stringify(sanitizedBackendCert));
           }
         }
+
+        const sessUrl = schoolName
+          ? `${API}/api/sessions?school=${encodeURIComponent(schoolName)}`
+          : `${API}/api/sessions`;
+        fetch(sessUrl)
+          .then(r => (r.ok ? r.json() : []))
+          .then(sessData => {
+            if (Array.isArray(sessData)) {
+              setPosterAnalytics(computePosterCoachAnalytics(sessData));
+            }
+          })
+          .catch(() => {});
       } catch (err) {
         console.warn('Failed to load school poster/certificate', err);
       } finally {
@@ -4900,24 +4914,32 @@ const OurServices = () => {
                     {schoolName}
                   </div>
                   <div style={{ fontSize: '24px', fontWeight: 950, color: '#FFFFFF', letterSpacing: '-0.02em', margin: '4px 0 2px' }}>
-                    Student Surfer Name
+                    {posterAnalytics.studentName}
                   </div>
                   <div style={{ fontSize: '12px', color: '#CBD5E1' }}>
-                    Intermediate Surfer • Nov 4, 2026
+                    {posterAnalytics.level} • {posterAnalytics.dateLabel}
                   </div>
 
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px', margin: '14px 0' }}>
                     <div style={{ background: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(6px)', borderRadius: '10px', padding: '8px 4px', textAlign: 'center', border: '1px solid rgba(255,255,255,0.12)' }}>
-                      <div style={{ fontSize: '18px', fontWeight: 900, color: '#FCD34D' }}>⭐ 85/100</div>
-                      <div style={{ fontSize: '8px', fontWeight: 800, color: '#FCD34D', marginTop: '2px' }}>COACH SCORE</div>
+                      <div style={{ fontSize: '18px', fontWeight: 900, color: '#FCD34D' }}>
+                        ⭐ {posterAnalytics.avgScore !== null ? `${posterAnalytics.avgScore}/10` : '--/10'}
+                      </div>
+                      <div style={{ fontSize: '8px', fontWeight: 800, color: '#FCD34D', marginTop: '2px' }}>
+                        {posterAnalytics.ratedCount > 0 ? `COACH AVG (${posterAnalytics.ratedCount})` : 'COACH SCORE'}
+                      </div>
                     </div>
                     <div style={{ background: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(6px)', borderRadius: '10px', padding: '8px 4px', textAlign: 'center', border: '1px solid rgba(255,255,255,0.12)' }}>
-                      <div style={{ fontSize: '18px', fontWeight: 900, color: '#FFFFFF' }}>⚡ 8/10</div>
+                      <div style={{ fontSize: '18px', fontWeight: 900, color: '#FFFFFF' }}>
+                        ⚡ {posterAnalytics.avgPopUp !== null ? `${posterAnalytics.avgPopUp}/10` : '--/10'}
+                      </div>
                       <div style={{ fontSize: '8px', fontWeight: 800, color: '#A7F3D0', marginTop: '2px' }}>POP-UP SPEED</div>
                     </div>
                     <div style={{ background: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(6px)', borderRadius: '10px', padding: '8px 4px', textAlign: 'center', border: '1px solid rgba(255,255,255,0.12)' }}>
-                      <div style={{ fontSize: '18px', fontWeight: 900, color: '#FFFFFF' }}>🌊 8</div>
-                      <div style={{ fontSize: '8px', fontWeight: 800, color: '#A7F3D0', marginTop: '2px' }}>WAVES CAUGHT</div>
+                      <div style={{ fontSize: '18px', fontWeight: 900, color: '#FFFFFF' }}>
+                        🌊 {posterAnalytics.avgWaves !== null ? posterAnalytics.avgWaves : '--'}
+                      </div>
+                      <div style={{ fontSize: '8px', fontWeight: 800, color: '#A7F3D0', marginTop: '2px' }}>AVG WAVES</div>
                     </div>
                   </div>
 
@@ -4940,13 +4962,13 @@ const OurServices = () => {
                           overflow: 'hidden',
                           flexShrink: 0
                         }}>
-                          A
+                          {posterAnalytics.coachInitial}
                         </div>
-                        <span style={{ fontSize: '9px', fontWeight: 700, color: '#FCD34D' }}>Coach Anbumani</span>
+                        <span style={{ fontSize: '9px', fontWeight: 700, color: '#FCD34D' }}>{posterAnalytics.coachName}</span>
                       </div>
                     </div>
-                    <div style={{ fontSize: '11px', color: '#F0FDF4', fontStyle: 'italic', marginTop: '2px' }}>
-                      “Solid pop-up stance, balanced weight distribution & clean wave face riding.”
+                    <div style={{ fontSize: '10.5px', color: '#E2E8F0', fontStyle: 'italic', marginTop: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      "{posterAnalytics.verdict}"
                     </div>
                   </div>
                 </div>

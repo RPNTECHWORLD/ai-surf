@@ -3335,6 +3335,55 @@ const SuperAdminDashboard = () => {
         .animate-spin {
           animation: sa-spin 1s linear infinite;
         }
+        @media (max-width: 768px) {
+          .sa-wrapper {
+            overflow-x: hidden !important;
+          }
+          .sa-nav {
+            height: auto !important;
+            padding: 10px 12px !important;
+            flex-wrap: wrap !important;
+            gap: 8px !important;
+          }
+          .sa-nav-tabs {
+            width: 100% !important;
+            overflow-x: auto !important;
+            -webkit-overflow-scrolling: touch !important;
+            padding-bottom: 2px !important;
+          }
+          .sa-tab-btn {
+            white-space: nowrap !important;
+            font-size: 12px !important;
+            padding: 6px 10px !important;
+          }
+          .sa-container {
+            padding: 14px 10px !important;
+          }
+          .sa-section-header {
+            flex-direction: column !important;
+            align-items: stretch !important;
+            gap: 10px !important;
+          }
+          .sa-listings-grid {
+            grid-template-columns: 1fr !important;
+            gap: 12px !important;
+          }
+          .sa-form-row {
+            grid-template-columns: 1fr !important;
+            gap: 10px !important;
+          }
+          .sa-modal-overlay {
+            padding: 10px 8px !important;
+          }
+          .sa-modal-card {
+            width: 100% !important;
+            max-width: calc(100vw - 16px) !important;
+            max-height: 92dvh !important;
+            overflow-y: auto !important;
+            padding: 16px 14px !important;
+            box-sizing: border-box !important;
+          }
+        }
       `}</style>
     </div>
   );

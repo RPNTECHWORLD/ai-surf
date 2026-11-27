@@ -1185,7 +1185,12 @@ const Sessions = () => {
 
     let score = '';
     const scoreMatch = raw.match(/(?:Coach (?:Rating|Score)|Technique Score|Score):\s*(\d+)/i) || raw.match(/\[\s*(\d+)\s*(?:out of|\/)\s*100\s*\]/i);
-    if (scoreMatch) score = scoreMatch[1];
+    if (scoreMatch) {
+      const parsedSc = parseInt(scoreMatch[1], 10);
+      if (!isNaN(parsedSc)) {
+        score = String(parsedSc > 10 ? Math.min(10, Math.max(1, Math.round(parsedSc / 10))) : Math.min(10, Math.max(1, parsedSc)));
+      }
+    }
 
     let whatDidWell = '';
     let whatDidWellScore = '';
@@ -1222,13 +1227,13 @@ const Sessions = () => {
       if (whatToImproveScore !== '') pts.push(parseFloat(whatToImproveScore));
       if (pts.length > 0) {
         const avg = pts.reduce((a, b) => a + b, 0) / pts.length;
-        score = String(Math.round(avg * 10));
+        score = String(Math.min(10, Math.max(1, Math.round(avg))));
       } else {
         const any10 = [...raw.matchAll(/(?:\[|\()?\s*(\d+(?:\.\d+)?)\s*(?:out of|\/)\s*10\s*(?:\]|\))?/gi)];
         if (any10.length > 0) {
           const rawPts = any10.map(m => parseFloat(m[1])).filter(v => !isNaN(v) && v >= 0 && v <= 10);
           if (rawPts.length > 0) {
-            score = String(Math.round((rawPts.reduce((a, b) => a + b, 0) / rawPts.length) * 10));
+            score = String(Math.min(10, Math.max(1, Math.round(rawPts.reduce((a, b) => a + b, 0) / rawPts.length))));
           }
         }
       }
@@ -1243,7 +1248,7 @@ const Sessions = () => {
       parts.push(`Wave Count: ${wc}`);
     }
     if (score !== '' && score !== null && score !== undefined) {
-      parts.push(`Coach Rating: ${score}/100`);
+      parts.push(`Coach Rating: ${score}/10`);
     }
     if (well) {
       parts.push(`What You did Well:\n - ${well}`);
@@ -1818,6 +1823,16 @@ const Sessions = () => {
         } : {})
       };
 
+      // Check if all athletes in this session/group have been evaluated -> auto-complete status on save
+      const allEvaluated = sessionList.length > 0 && sessionList.every(s => {
+        const obj = currentMap[s.id];
+        return Boolean(obj && (obj.score || obj.waveCount || obj.whatDidWell || obj.whatToImprove));
+      });
+      const effectiveStatus = allEvaluated ? 'Completed' : hubStatus;
+      if (allEvaluated && hubStatus !== 'Completed') {
+        setHubStatus('Completed');
+      }
+
       await Promise.all(
         sessionList.map(async s => {
           const sObj = currentMap[s.id];
@@ -1833,7 +1848,7 @@ const Sessions = () => {
           const newLevel = hubStudentLevelMap[s.id] || s.level || s.type || 'Beginner';
 
           const payload = {
-            status: hubStatus,
+            status: effectiveStatus,
             notes: sNotesFormatted,
             video_url: serializedVideoUrl || primaryVideoUrl,
             image_url: serializedImageUrl || primaryImageUrl,
@@ -1873,7 +1888,7 @@ const Sessions = () => {
               : s.notes;
             return {
               ...s,
-              status: hubStatus,
+              status: effectiveStatus,
               notes: sNotesFormatted,
               video_url: serializedVideoUrl || primaryVideoUrl,
               video_urls: hubVideos,
@@ -3791,35 +3806,6 @@ const Sessions = () => {
                           </td>
                           <td style={{ textAlign: 'right', paddingRight: '20px' }}>
                             <div className="ses-actions-row" style={{ justifyContent: 'flex-end', gap: '6px', flexWrap: 'nowrap' }}>
-                              {/* Beach Grouping Button for Slot Confirmed Groups */}
-                              {groupObj.isSlotConfirmed && canManageSessions && (
-                                <button
-                                  className="ses-btn-beach-grouping"
-                                  title="Open Beach Grouping to assign coaches and split into groups on the beach"
-                                  style={{
-                                    padding: '5px 11px',
-                                    fontWeight: 700,
-                                    fontSize: '11.5px',
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '5px',
-                                    background: 'linear-gradient(135deg, #0F766E 0%, #0D9488 100%)',
-                                    color: '#FFFFFF',
-                                    border: '1.5px solid #2DD4BF',
-                                    borderRadius: '6px',
-                                    whiteSpace: 'nowrap',
-                                    cursor: 'pointer',
-                                    boxShadow: '0 2px 8px rgba(13, 148, 136, 0.28)'
-                                  }}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    navigate(`/sessions/new?editDate=${encodeURIComponent(groupObj.date)}&slotTime=${encodeURIComponent(groupObj.time)}&step=2`);
-                                  }}
-                                >
-                                  <span>🏄</span>
-                                  <span>Beach Grouping</span>
-                                </button>
-                              )}
                               {/* Analysis Button for Group (When Video is Attached) */}
                               {hasGroupMedia && (
                                 <button
@@ -5639,7 +5625,7 @@ const Sessions = () => {
                             {dedupedSessions.map((s, idx) => {
                               const isSelected = s.id === activeStudentId;
                               const sObj = hubStudentNotesMap[s.id];
-                              const hasFeedback = Boolean(sObj && (sObj.waveCount || sObj.whatDidWell || sObj.whatToImprove));
+                              const hasFeedback = Boolean(sObj && (sObj.score || sObj.waveCount || sObj.whatDidWell || sObj.whatToImprove));
 
                               const prevGuestOcc = dedupedSessions
                                 .slice(0, idx)
@@ -5943,7 +5929,7 @@ const Sessions = () => {
                                   Coach Score
                                 </div>
                                 <div style={{ fontSize: '20px', fontWeight: 900, color: '#FCD34D', fontFamily: 'Outfit, sans-serif' }}>
-                                  {hubScore ? `${hubScore} / 100` : '85 / 100 Verified'}
+                                  {hubScore ? `${hubScore} / 10` : 'Not Rated'}
                                 </div>
                               </div>
                             </div>
@@ -6231,21 +6217,21 @@ const Sessions = () => {
                           );
                         })()}
 
-                        {/* CARD 1: Coach Technique Score (0 to 100) */}
+                        {/* CARD 1: Coach Technique Score (1 to 10) */}
                         <div style={{ background: '#FFFFFF', border: '1.5px solid #E2E8F0', borderRadius: '14px', padding: '16px 18px', boxShadow: '0 1px 3px rgba(0,0,0,0.02)' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '4px' }}>
                             <span style={{ fontSize: '13.5px', fontWeight: 700, color: '#0F172A', display: 'flex', alignItems: 'center', gap: '6px' }}>
                               <span style={{ fontSize: '16px' }}>⭐</span> Coach Technique Score:
                             </span>
-                            <span style={{ fontSize: '12px', color: '#64748B' }}>Score out of 100 (Reflects directly in milestone story share)</span>
+                            <span style={{ fontSize: '12px', color: '#64748B' }}>Score out of 10 (Reflects directly in milestone story share)</span>
                           </div>
 
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                             <button
                               type="button"
                               onClick={() => {
-                                const curr = parseInt(hubScore) || 0;
-                                handleUpdateNotesField({ score: Math.max(0, curr - 5).toString() });
+                                const curr = parseInt(hubScore, 10) || 1;
+                                handleUpdateNotesField({ score: Math.max(1, curr - 1).toString() });
                               }}
                               style={{
                                 width: '36px',
@@ -6262,7 +6248,7 @@ const Sessions = () => {
                                 justifyContent: 'center',
                                 userSelect: 'none'
                               }}
-                              title="Decrease score by 5"
+                              title="Decrease score by 1"
                             >
                               −
                             </button>
@@ -6270,20 +6256,20 @@ const Sessions = () => {
                             <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                               <input
                                 type="number"
-                                min="0"
-                                max="100"
-                                placeholder="85"
+                                min="1"
+                                max="10"
+                                placeholder="8"
                                 value={hubScore}
                                 onChange={(e) => {
                                   let val = e.target.value;
                                   if (val !== '') {
                                     const num = parseInt(val, 10);
-                                    if (!isNaN(num)) val = Math.min(100, Math.max(0, num)).toString();
+                                    if (!isNaN(num)) val = Math.min(10, Math.max(1, num)).toString();
                                   }
                                   handleUpdateNotesField({ score: val });
                                 }}
                                 style={{
-                                  width: '85px',
+                                  width: '72px',
                                   height: '36px',
                                   padding: '0 10px',
                                   border: '1.5px solid #F59E0B',
@@ -6296,14 +6282,14 @@ const Sessions = () => {
                                   boxSizing: 'border-box'
                                 }}
                               />
-                              <span style={{ fontSize: '13px', fontWeight: 800, color: '#94A3B8' }}>/ 100</span>
+                              <span style={{ fontSize: '13px', fontWeight: 800, color: '#94A3B8' }}>/ 10</span>
                             </div>
 
                             <button
                               type="button"
                               onClick={() => {
-                                const curr = parseInt(hubScore) || 0;
-                                handleUpdateNotesField({ score: Math.min(100, curr + 5).toString() });
+                                const curr = parseInt(hubScore, 10) || 0;
+                                handleUpdateNotesField({ score: Math.min(10, curr + 1).toString() });
                               }}
                               style={{
                                 width: '36px',
@@ -6320,13 +6306,13 @@ const Sessions = () => {
                                 justifyContent: 'center',
                                 userSelect: 'none'
                               }}
-                              title="Increase score by 5"
+                              title="Increase score by 1"
                             >
                               +
                             </button>
 
                             <div style={{ display: 'flex', gap: '6px', marginLeft: '6px', flexWrap: 'wrap' }}>
-                              {[60, 70, 75, 80, 85, 90, 95, 100].map(sc => (
+                              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(sc => (
                                 <button
                                   key={sc}
                                   type="button"
@@ -6531,91 +6517,139 @@ const Sessions = () => {
                   gap: '10px'
                 }}
               >
-                <div>
-                  {hubSaveSuccess ? (
-                    <span style={{ color: '#0D9488', fontWeight: 600, fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#F0FDFA', border: '1px solid #99F6E4', padding: '6px 12px', borderRadius: '8px' }}>
-                      ✓ All changes saved successfully!
-                    </span>
-                  ) : canManageSessions ? (
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button
-                        type="button"
-                        className="ses-btn-secondary"
-                        style={{ padding: '6px 14px', fontSize: '12px', background: '#FFFFFF', border: '1px solid #CBD5E1', color: '#475569', borderRadius: '8px' }}
-                        onClick={() => handleOpenEditSession(selectedHubSession)}
-                      >
-                        Edit Session
-                      </button>
-                      <button
-                        type="button"
-                        style={{ padding: '6px 14px', fontSize: '12px', background: '#FEF2F2', border: '1px solid #FECACA', color: '#EF4444', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                        onClick={() => {
-                          if (selectedHubSession.isGroup) {
-                            handleDeleteGroupSessions(selectedHubSession);
-                          } else {
-                            const targetSessionId = selectedHubSession.sessions ? selectedHubSession.sessions[0]?.id : selectedHubSession.id;
-                            handleDeleteSingleSession(targetSessionId, selectedHubSession.student);
-                          }
-                          closeSessionHub();
-                        }}
-                      >
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-                          <polyline points="3 6 5 6 21 6"></polyline>
-                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2 2v2"></path>
-                        </svg>
-                        Delete
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
+                {(() => {
+                  const rawHubList = (selectedHubSession?.isGroup && selectedHubSession?.sessions)
+                    ? selectedHubSession.sessions
+                    : (selectedHubSession ? [selectedHubSession] : []);
+                  const seenIds = new Set();
+                  const uniqueHubList = rawHubList.filter(s => {
+                    if (!s || seenIds.has(s.id)) return false;
+                    seenIds.add(s.id);
+                    return true;
+                  });
+                  let evalCount = 0;
+                  uniqueHubList.forEach(s => {
+                    const obj = (s.id === hubSelectedStudentId)
+                      ? { score: hubScore, waveCount: hubWaveCount, whatDidWell: hubWhatDidWell, whatToImprove: hubWhatToImprove }
+                      : hubStudentNotesMap[s.id];
+                    if (obj && (obj.score || obj.waveCount || obj.whatDidWell || obj.whatToImprove)) {
+                      evalCount += 1;
+                    }
+                  });
+                  const pendCount = Math.max(0, uniqueHubList.length - evalCount);
+                  const canCompleteNow = pendCount === 0 && evalCount > 0 && hubStatus !== 'Completed';
+                  const canSaveNow = hubHasChanges || canCompleteNow;
 
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button
-                    type="button"
-                    style={{ padding: '7px 16px', borderRadius: '8px', border: '1px solid #CBD5E1', background: '#FFFFFF', color: '#475569', fontWeight: 600, fontSize: '13px', cursor: 'pointer' }}
-                    onClick={closeSessionHub}
-                    disabled={hubIsSaving}
-                  >
-                    Close
-                  </button>
+                  return (
+                    <>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        {uniqueHubList.length > 0 && (
+                          <span style={{
+                            fontSize: '12px',
+                            fontWeight: 700,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '5px 11px',
+                            borderRadius: '8px',
+                            background: pendCount === 0 ? '#ECFDF5' : '#FFFBEB',
+                            color: pendCount === 0 ? '#047857' : '#B45309',
+                            border: `1px solid ${pendCount === 0 ? '#A7F3D0' : '#FDE68A'}`
+                          }}>
+                            <span>✓ {evalCount} Evaluated</span>
+                            <span style={{ opacity: 0.45 }}>•</span>
+                            <span>{pendCount === 0 ? 'All Done' : `⏳ ${pendCount} Pending`}</span>
+                          </span>
+                        )}
+                        {hubSaveSuccess ? (
+                          <span style={{ color: '#0D9488', fontWeight: 600, fontSize: '13px', display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#F0FDFA', border: '1px solid #99F6E4', padding: '6px 12px', borderRadius: '8px' }}>
+                            ✓ All changes saved successfully!
+                          </span>
+                        ) : canManageSessions ? (
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button
+                              type="button"
+                              className="ses-btn-secondary"
+                              style={{ padding: '6px 14px', fontSize: '12px', background: '#FFFFFF', border: '1px solid #CBD5E1', color: '#475569', borderRadius: '8px' }}
+                              onClick={() => handleOpenEditSession(selectedHubSession)}
+                            >
+                              Edit Session
+                            </button>
+                            <button
+                              type="button"
+                              style={{ padding: '6px 14px', fontSize: '12px', background: '#FEF2F2', border: '1px solid #FECACA', color: '#EF4444', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                              onClick={() => {
+                                if (selectedHubSession.isGroup) {
+                                  handleDeleteGroupSessions(selectedHubSession);
+                                } else {
+                                  const targetSessionId = selectedHubSession.sessions ? selectedHubSession.sessions[0]?.id : selectedHubSession.id;
+                                  handleDeleteSingleSession(targetSessionId, selectedHubSession.student);
+                                }
+                                closeSessionHub();
+                              }}
+                            >
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                                <polyline points="3 6 5 6 21 6"></polyline>
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2 2v2"></path>
+                              </svg>
+                              Delete
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
 
-                  {!isStudent && !isViewAdmin && (
-                    <button
-                      type="button"
-                      style={{
-                        padding: '8px 20px',
-                        borderRadius: '8px',
-                        border: 'none',
-                        background: (hubSaveSuccess && !hubHasChanges) ? '#10B981' : (hubHasChanges ? '#0D9488' : '#CBD5E1'),
-                        color: (hubSaveSuccess || hubHasChanges) ? '#FFFFFF' : '#64748B',
-                        fontWeight: 700,
-                        fontSize: '13px',
-                        cursor: hubHasChanges ? 'pointer' : 'default',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        transition: 'all 0.25s ease',
-                        boxShadow: (hubSaveSuccess && !hubHasChanges) ? '0 2px 10px rgba(16, 185, 129, 0.35)' : (hubHasChanges ? '0 2px 10px rgba(13, 148, 136, 0.3)' : 'none')
-                      }}
-                      onClick={hubHasChanges ? handleSaveHubChanges : undefined}
-                      disabled={hubIsSaving || (!hubHasChanges && !hubSaveSuccess)}
-                    >
-                      {hubIsSaving ? (
-                        <>
-                          <span className="ses-spinner" style={{ width: '13px', height: '13px', borderWidth: '2px', display: 'inline-block' }} />
-                          Saving…
-                        </>
-                      ) : (hubSaveSuccess && !hubHasChanges) ? (
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
-                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
-                          Auto-Saved
-                        </span>
-                      ) : (
-                        'Save Changes'
-                      )}
-                    </button>
-                  )}
-                </div>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button
+                          type="button"
+                          style={{ padding: '7px 16px', borderRadius: '8px', border: '1px solid #CBD5E1', background: '#FFFFFF', color: '#475569', fontWeight: 600, fontSize: '13px', cursor: 'pointer' }}
+                          onClick={closeSessionHub}
+                          disabled={hubIsSaving}
+                        >
+                          Close
+                        </button>
+
+                        {!isStudent && !isViewAdmin && (
+                          <button
+                            type="button"
+                            style={{
+                              padding: '8px 20px',
+                              borderRadius: '8px',
+                              border: 'none',
+                              background: (hubSaveSuccess && !canSaveNow) ? '#10B981' : (canSaveNow ? '#0D9488' : '#CBD5E1'),
+                              color: (hubSaveSuccess || canSaveNow) ? '#FFFFFF' : '#64748B',
+                              fontWeight: 700,
+                              fontSize: '13px',
+                              cursor: canSaveNow ? 'pointer' : 'default',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              transition: 'all 0.25s ease',
+                              boxShadow: (hubSaveSuccess && !canSaveNow) ? '0 2px 10px rgba(16, 185, 129, 0.35)' : (canSaveNow ? '0 2px 10px rgba(13, 148, 136, 0.3)' : 'none')
+                            }}
+                            onClick={canSaveNow ? handleSaveHubChanges : undefined}
+                            disabled={hubIsSaving || (!canSaveNow && !hubSaveSuccess)}
+                          >
+                            {hubIsSaving ? (
+                              <>
+                                <span className="ses-spinner" style={{ width: '13px', height: '13px', borderWidth: '2px', display: 'inline-block' }} />
+                                Saving…
+                              </>
+                            ) : (hubSaveSuccess && !canSaveNow) ? (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                                Auto-Saved
+                              </span>
+                            ) : canCompleteNow ? (
+                              'Save & Complete'
+                            ) : (
+                              'Save Changes'
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             </div>
           </div>
@@ -9433,7 +9467,7 @@ const Sessions = () => {
           width: 100%; box-sizing: border-box; background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 16px; 
           box-shadow: 0 1px 3px rgba(0,0,0,0.03); overflow-x: auto;
         }
-        .ses-table { width: 100%; min-width: 1020px; border-collapse: collapse; text-align: left; table-layout: fixed; }
+        .ses-table { width: 100%; min-width: 1120px; border-collapse: collapse; text-align: left; table-layout: auto; }
         .ses-table th {
           padding: 14px 16px; font-size: 11px; font-weight: 700;
           color: #64748B; text-transform: uppercase; background: #F8FAFC;
@@ -9633,11 +9667,17 @@ const Sessions = () => {
         @media (max-width: 768px) {
           .ses-metrics-row {
             grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
           }
         }
         @media (max-width: 500px) {
           .ses-metrics-row {
-            grid-template-columns: 1fr;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+          }
+          .ses-status-metric-card {
+            padding: 12px 10px !important;
+            border-radius: 10px !important;
           }
         }
         
@@ -10289,7 +10329,36 @@ const Sessions = () => {
             font-size: 13px !important;
             font-weight: 700 !important;
           }
+          .ses-modal-content {
+            width: calc(100vw - 12px) !important;
+            max-width: calc(100vw - 12px) !important;
+            max-height: 94dvh !important;
+            border-radius: 14px !important;
+          }
+          .ses-modal-header {
+            padding: 12px 14px !important;
+          }
+          .ses-modal-tabs {
+            overflow-x: auto !important;
+            flex-wrap: nowrap !important;
+            padding: 0 10px !important;
+            -webkit-overflow-scrolling: touch !important;
+          }
+          .ses-modal-tabs button {
+            white-space: nowrap !important;
+            padding: 10px 10px !important;
+            font-size: 12px !important;
+          }
+          .ses-modal-body {
+            padding: 12px 10px !important;
+          }
+          .ses-modal-footer {
+            flex-wrap: wrap !important;
+            gap: 8px !important;
+            padding: 10px 12px !important;
+          }
         }
+      
       `}</style>
     </div>
   );

@@ -287,6 +287,13 @@ const JudgeScoring = () => {
           </div>
         )}
       </div>
+      <style>{`
+        @media (max-width: 600px) {
+          .judge-scoring-wrap {
+            padding: 14px 10px 40px 10px !important;
+          }
+        }
+      `}</style>
     </div>
   );
 };

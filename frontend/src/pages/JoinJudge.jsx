@@ -312,6 +312,14 @@ const JoinJudge = () => {
                     Already have an account? <Link to="/judge/login" style={{ color: '#0f172a', fontWeight: '700', textDecoration: 'none' }}>Login here</Link>
                 </div>
             </div>
+            <style>{`
+                @media (max-width: 600px) {
+                    .join-judge-card {
+                        padding: 24px 16px !important;
+                        border-radius: 16px !important;
+                    }
+                }
+            `}</style>
         </div>
     );
 };

@@ -2087,77 +2087,6 @@ const StudentProfile = () => {
                       </>
                     )}
                   </div>
-                ) : assignedCoaches.length > 1 ? (
-                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                    <span style={{
-                      fontSize: '12px',
-                      color: '#0F766E',
-                      fontWeight: 800,
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '4px'
-                    }}>
-                      <span>🏄‍♂️</span> Coaches:
-                    </span>
-                    {(showAllCoaches ? assignedCoaches : assignedCoaches.slice(0, 2)).map((c, cIdx) => (
-                      <div
-                        key={cIdx}
-                        onClick={() => handleOpenCoachModal(c.name, c.id)}
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          fontSize: '12px',
-                          color: '#0F766E',
-                          background: '#CCFBF1',
-                          border: '1px solid #99F6E4',
-                          padding: '4px 10px',
-                          borderRadius: '20px',
-                          fontWeight: 700,
-                          cursor: 'pointer',
-                          transition: 'all 0.15s ease'
-                        }}
-                        title={`Click to view coach ${c.name}'s profile & submit a review`}
-                        onMouseEnter={e => { e.currentTarget.style.background = '#99F6E4'; e.currentTarget.style.borderColor = '#0D9488'; }}
-                        onMouseLeave={e => { e.currentTarget.style.background = '#CCFBF1'; e.currentTarget.style.borderColor = '#99F6E4'; }}
-                      >
-                        <span style={{ color: '#0F172A', fontWeight: 800, textDecoration: 'underline' }}>
-                          {c.name}
-                        </span>
-                        <span style={{ fontSize: '11px', color: '#0D9488', fontWeight: 800 }}>★ Review</span>
-                      </div>
-                    ))}
-
-                    {assignedCoaches.length > 2 && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setShowAllCoaches(!showAllCoaches);
-                        }}
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '3px',
-                          fontSize: '11px',
-                          color: '#0F766E',
-                          background: '#E6FFFA',
-                          border: '1.5px solid #0D9488',
-                          padding: '3px 9px',
-                          borderRadius: '20px',
-                          fontWeight: 800,
-                          cursor: 'pointer',
-                          boxShadow: '0 1px 3px rgba(13, 148, 136, 0.12)',
-                          transition: 'all 0.15s ease'
-                        }}
-                        title={showAllCoaches ? 'Collapse coaches list' : `Click to view ${assignedCoaches.length - 2} more: ${assignedCoaches.slice(2).map(c => c.name).join(', ')}`}
-                        onMouseEnter={e => { e.currentTarget.style.background = '#99F6E4'; }}
-                        onMouseLeave={e => { e.currentTarget.style.background = '#E6FFFA'; }}
-                      >
-                        {showAllCoaches ? '▴ Less' : `+${assignedCoaches.length - 2}`}
-                      </button>
-                    )}
-                  </div>
                 ) : (
                   <div
                     className="sp-coach-pill"
@@ -2547,15 +2476,15 @@ const StudentProfile = () => {
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                     {guestsList.map((g, gIdx) => (
-                      <div key={gIdx} style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                      <div key={gIdx} className="sp-guest-row" style={{ display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
                         {/* ↳ indent arrow */}
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: '16px', flexShrink: 0 }}>
+                        <div className="sp-guest-arrow" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: '16px', flexShrink: 0 }}>
                           <span style={{ fontSize: '16px', color: '#94A3B8', lineHeight: 1 }}>↳</span>
                         </div>
 
                         {/* Guest card */}
-                        <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '14px', padding: '12px 14px', background: '#F0F9FF', borderRadius: '12px', border: '1px solid #BAE6FD', borderLeft: '3px solid #0284C7' }}>
-                          <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'linear-gradient(135deg, #0EA5E9, #2563EB)', color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '15px', flexShrink: 0 }}>
+                        <div className="sp-guest-card" style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '12px', padding: '12px 14px', background: '#F0F9FF', borderRadius: '12px', border: '1px solid #BAE6FD', borderLeft: '3px solid #0284C7', boxSizing: 'border-box' }}>
+                          <div className="sp-guest-avatar" style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'linear-gradient(135deg, #0EA5E9, #2563EB)', color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '15px', flexShrink: 0 }}>
                             {g.name ? g.name.charAt(0).toUpperCase() : `G${gIdx + 1}`}
                           </div>
                           <div style={{ flex: 1, minWidth: 0 }}>
@@ -2581,7 +2510,7 @@ const StudentProfile = () => {
                                 </span>
                               )}
                             </div>
-                            <div style={{ fontSize: '12px', color: '#64748B', display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '4px', alignItems: 'center' }}>
+                            <div className="sp-guest-meta" style={{ fontSize: '12px', color: '#64748B', display: 'flex', flexWrap: 'wrap', gap: '6px 10px', marginTop: '4px', alignItems: 'center' }}>
                               {g.age && <span>🎂 Age: {g.age} yrs</span>}
                               {(() => {
                                 const numGAge = g.age ? Number(g.age) : (g.dob ? Number(calculateAge(g.dob)) : null);
@@ -2612,6 +2541,7 @@ const StudentProfile = () => {
                           {(isOwnProfile || isCoach || currentUser?.role === 'admin') && (
                             <button
                               id={`swap-primary-guest-${gIdx}`}
+                              className="sp-guest-swap-btn"
                               title={`Make ${g.name || 'this guest'} the primary athlete`}
                               onClick={() => setSwapModalGuest(g)}
                               style={{
@@ -2889,12 +2819,16 @@ const StudentProfile = () => {
                                 display: 'flex',
                                 alignItems: 'center',
                                 justifyContent: 'space-between',
-                                padding: '8px 12px',
+                                flexWrap: 'wrap',
+                                gap: '8px',
+                                padding: '8px 10px',
                                 background: 'linear-gradient(135deg, #F0FDF4 0%, #ECFDF5 100%)',
                                 border: '1.5px solid #A7F3D0',
                                 borderRadius: '8px',
                                 cursor: 'pointer',
                                 margin: '2px 0',
+                                boxSizing: 'border-box',
+                                width: '100%',
                                 transition: 'all 0.15s ease'
                               }}
                               onMouseEnter={e => {
@@ -2909,21 +2843,21 @@ const StudentProfile = () => {
                               }}
                               title="Click to view your remarks in My Achievements"
                             >
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <span style={{ fontSize: '15px' }}>💬</span>
-                                <div>
-                                  <div style={{ fontSize: '12px', fontWeight: 800, color: '#065F46', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', flex: '1 1 200px', minWidth: 0 }}>
+                                <span style={{ fontSize: '15px', flexShrink: 0 }}>💬</span>
+                                <div style={{ minWidth: 0 }}>
+                                  <div style={{ fontSize: '12px', fontWeight: 800, color: '#065F46', display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
                                     <span>See your remarks</span>
-                                    <span style={{ fontSize: '9px', background: '#059669', color: '#FFFFFF', padding: '1px 5px', borderRadius: '4px', fontWeight: 800 }}>
+                                    <span style={{ fontSize: '9px', background: '#059669', color: '#FFFFFF', padding: '1px 6px', borderRadius: '4px', fontWeight: 800, whiteSpace: 'nowrap' }}>
                                       Feedback Ready
                                     </span>
                                   </div>
-                                  <div style={{ fontSize: '11px', color: '#047857', marginTop: '1px' }}>
+                                  <div style={{ fontSize: '11px', color: '#047857', marginTop: '2px', lineHeight: 1.35 }}>
                                     Coach {coachName} added evaluation scores & feedback. Click to view in My Achievements.
                                   </div>
                                 </div>
                               </div>
-                              <span style={{ fontSize: '11.5px', fontWeight: 800, color: '#059669', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                              <span style={{ fontSize: '11.5px', fontWeight: 800, color: '#059669', display: 'inline-flex', alignItems: 'center', gap: '3px', whiteSpace: 'nowrap', flexShrink: 0 }}>
                                 View in Achievements &rarr;
                               </span>
                             </div>
@@ -2949,7 +2883,7 @@ const StudentProfile = () => {
                                 title="Click to view coach profile & submit a review"
                               >
                                 <span>🏄‍♂️ Coach: {coachName}</span>
-                                <span style={{ fontSize: '9.5px', background: '#0D9488', color: '#FFFFFF', padding: '1px 5px', borderRadius: '4px', fontWeight: 800 }}>
+                                <span style={{ fontSize: '9.5px', background: '#0D9488', color: '#FFFFFF', padding: '2px 6px', borderRadius: '4px', fontWeight: 800, whiteSpace: 'nowrap', flexShrink: 0 }}>
                                   ★ Review
                                 </span>
                               </span>
@@ -4238,6 +4172,35 @@ const StudentProfile = () => {
           .sp-guest-grid {
             grid-template-columns: 1fr !important;
             gap: 8px !important;
+          }
+          .sp-guest-arrow {
+            display: none !important;
+          }
+          .sp-guest-card {
+            padding: 10px 10px !important;
+            gap: 8px 10px !important;
+            border-radius: 10px !important;
+            width: 100% !important;
+          }
+          .sp-guest-avatar {
+            width: 34px !important;
+            height: 34px !important;
+            font-size: 13px !important;
+          }
+          .sp-guest-meta {
+            font-size: 11px !important;
+            gap: 4px 8px !important;
+          }
+          .sp-guest-meta span {
+            word-break: break-word !important;
+            max-width: 100% !important;
+          }
+          .sp-guest-swap-btn {
+            width: 100% !important;
+            justify-content: center !important;
+            padding: 6px 10px !important;
+            font-size: 11.5px !important;
+            margin-top: 2px !important;
           }
           .sp-radar-container {
             overflow-x: auto !important;

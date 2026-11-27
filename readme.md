@@ -4040,29 +4040,6 @@ To support advanced computer vision tracking, real-time sync, and multi-coach wo
     - Converted `.ns-slot-pills-wrap` into a compact 2-column grid (`repeat(2, minmax(0, 1fr))`) and scaled down `.ns-pill`, `.ns-filter-row`, `.ns-title`, and `.ns-step-item` sizes for clean mobile viewing.
   - Verified frontend production build (`npm --prefix frontend run build`).
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #### 29. Mobile UI Polish, Student Removal Fix, Certificate Save State, Share Card Isolation & Active Breakdown (`2026-11-26`)
 - **Summary of Changes**:
   1. **Student Profile Mobile Hero & `isOwnProfile` TDZ Fix (`frontend/src/pages/StudentProfile.jsx`)**:

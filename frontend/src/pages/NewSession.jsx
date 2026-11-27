@@ -461,7 +461,7 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
 
   // ─── Step 1 State: Initial Date Resolution ───
   const targetInitialDate = useMemo(() => {
-    const targetDateStr = initialDate || searchParams.get('date');
+    const targetDateStr = initialDate || searchParams.get('editDate') || searchParams.get('date');
     if (targetDateStr) {
       const parts = targetDateStr.split('-');
       if (parts.length === 3) {
@@ -496,7 +496,11 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const initialDraft = null;
 
   // Wizard Step State: 1 | 2 | 3
-  const [currentStep, setCurrentStep] = useState(1);
+  const [currentStep, setCurrentStep] = useState(() => {
+    const urlStep = parseInt(searchParams.get('step'), 10);
+    if (!isNaN(urlStep) && urlStep >= 1 && urlStep <= 3) return urlStep;
+    return 1;
+  });
 
   // ─── Step 1 State: Session Setup ───
   const [currentCalendarDate, setCurrentCalendarDate] = useState(() => targetInitialDate.calDate);
@@ -1008,8 +1012,18 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
   const [step3SwimmingFilter, setStep3SwimmingFilter] = useState(() => initialDraft?.step3SwimmingFilter || 'all');
   const [step3CoachGenderFilter, setStep3CoachGenderFilter] = useState(() => initialDraft?.step3CoachGenderFilter || 'all');
   const [step3SlotFilter, setStep3SlotFilter] = useState(() => {
-    if (initialDraft?.step3SlotFilter) return initialDraft.step3SlotFilter;
     const initialSlots = loadConfiguredSlots();
+    const urlSlotTime = (searchParams.get('slotTime') || '').trim().toLowerCase();
+    if (urlSlotTime && Array.isArray(initialSlots)) {
+      const urlStart = urlSlotTime.split('-')[0].trim();
+      const matched = initialSlots.find(sl => {
+        const sTime = (sl.time || '').trim().toLowerCase();
+        const sStart = (sl.startTime || sTime.split('-')[0] || '').trim().toLowerCase();
+        return sTime === urlSlotTime || sStart === urlStart || (urlStart && sTime.startsWith(urlStart));
+      });
+      if (matched) return matched.id;
+    }
+    if (initialDraft?.step3SlotFilter) return initialDraft.step3SlotFilter;
     return initialSlots[0]?.id || 1;
   });
   const [studentSearch, setStudentSearch] = useState('');
@@ -1117,7 +1131,12 @@ const NewSession = ({ isModal = false, onClose, initialDate, onSessionCreated, e
             draftLoadedForDateRef.current = selectedSessionDateYYYYMMDD;
             lastSyncedDateRef.current = formattedSessionDate;
 
-            if (draft.currentStep && draft.currentStep > 1) setCurrentStep(draft.currentStep);
+            const urlStep = parseInt(searchParams.get('step'), 10);
+            if (!isNaN(urlStep) && urlStep >= 1 && urlStep <= 3) {
+              setCurrentStep(urlStep);
+            } else if (draft.currentStep && draft.currentStep > 1) {
+              setCurrentStep(draft.currentStep);
+            }
             if (draft.capacity !== undefined) setCapacity(draft.capacity);
             if (draft.slotCapacityMap) setSlotCapacityMap(draft.slotCapacityMap);
             const mergedSlotMap = (draft.slotStudentMap && typeof draft.slotStudentMap === 'object') ? { ...draft.slotStudentMap } : {};

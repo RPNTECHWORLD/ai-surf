@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { computePosterCoachAnalytics } from '../utils/posterAnalytics';
 
 const API = import.meta.env.VITE_API_URL || '';
 
@@ -20,6 +21,7 @@ export default function UserProfileMenu({ user, school, onLogout }) {
   const [showDeleteAccountModal, setShowDeleteAccountModal] = useState(false);
   const [showServicesModal, setShowServicesModal] = useState(false);
   const [posterUrl, setPosterUrl] = useState(() => localStorage.getItem('athnex_milestone_poster_bg') || '/surf-milestone-bg.jpg');
+  const [posterAnalytics, setPosterAnalytics] = useState(() => computePosterCoachAnalytics([]));
   const [posterUploading, setPosterUploading] = useState(false);
   const [servicesList, setServicesList] = useState([]);
   const [servicesSaving, setServicesSaving] = useState(false);
@@ -550,6 +552,14 @@ export default function UserProfileMenu({ user, school, onLogout }) {
       if (cached) setPosterUrl(cached);
 
       const res = await fetch(`${API}/api/schools/poster?school=${encodeURIComponent(schName)}`);
+      fetch(schName ? `${API}/api/sessions?school=${encodeURIComponent(schName)}` : `${API}/api/sessions`)
+        .then(r => (r.ok ? r.json() : []))
+        .then(sessData => {
+          if (Array.isArray(sessData)) {
+            setPosterAnalytics(computePosterCoachAnalytics(sessData));
+          }
+        })
+        .catch(() => {});
       if (res.ok) {
         const data = await res.json();
         if (data.poster_url) {
@@ -4012,27 +4022,27 @@ export default function UserProfileMenu({ user, school, onLogout }) {
 
                 <div>
                   <div style={{ fontSize: '18px', fontWeight: 900, color: '#FFFFFF', letterSpacing: '-0.01em' }}>
-                    STUDENT SURFER NAME
+                    {posterAnalytics.studentName.toUpperCase()}
                   </div>
                   <div style={{ fontSize: '11px', color: '#E2E8F0', marginTop: '2px' }}>
-                    {school?.name || effectiveUser?.school_name || 'Surf Academy'} • Intermediate Surfer
+                    {school?.name || effectiveUser?.school_name || 'Surf Academy'} • {posterAnalytics.level}
                   </div>
-                  <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
+                  <div style={{ display: 'flex', gap: '10px', marginTop: '8px', flexWrap: 'wrap' }}>
                     <span style={{ background: 'rgba(15,23,42,0.85)', padding: '3px 8px', borderRadius: '6px', fontSize: '10.5px', fontWeight: 700, color: '#2DD4BF', border: '1px solid rgba(45,212,191,0.3)' }}>
-                      🌊 8 Waves Caught
+                      🌊 {posterAnalytics.avgWaves !== null ? `${posterAnalytics.avgWaves} Avg Waves` : '-- Waves'}
                     </span>
                     <span style={{ background: 'rgba(15,23,42,0.85)', padding: '3px 8px', borderRadius: '6px', fontSize: '10.5px', fontWeight: 700, color: '#38BDF8', border: '1px solid rgba(56,189,248,0.3)' }}>
-                      ⏱️ 2 Hours (120m)
+                      ⏱️ {posterAnalytics.durationLabel}
                     </span>
                     <span style={{ background: 'rgba(15,23,42,0.85)', padding: '3px 8px', borderRadius: '6px', fontSize: '10.5px', fontWeight: 700, color: '#FCD34D', border: '1px solid rgba(252,211,77,0.3)' }}>
-                      ⭐ 85/100
+                      ⭐ {posterAnalytics.avgScore !== null ? `${posterAnalytics.avgScore}/10` : '--/10'}
                     </span>
                   </div>
                 </div>
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '9px', color: '#94A3B8', borderTop: '1px solid rgba(255,255,255,0.15)', paddingTop: '6px' }}>
-                  <span>📍 Kovalam / Chennai Beach</span>
-                  <span>Official Verified Record</span>
+                  <span>📍 {posterAnalytics.location}</span>
+                  <span>{posterAnalytics.ratedCount > 0 ? `${posterAnalytics.ratedCount} Rated Sessions` : 'Official Verified Record'}</span>
                 </div>
               </div>
 
@@ -4194,6 +4204,15 @@ export default function UserProfileMenu({ user, school, onLogout }) {
           </div>
         </div>
       )}
+      <style>{`
+        @media (max-width: 768px) {
+          .upm-modal-card,
+          div[style*="position: fixed"][style*="z-index: 9999"] > div {
+            max-width: calc(100vw - 16px) !important;
+            max-height: 92dvh !important;
+          }
+        }
+      `}</style>
     </div>
   );
 }

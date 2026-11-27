@@ -606,6 +606,15 @@ export default function CoachProfileModal({ isOpen, onClose, coachId, coachName,
           </button>
         </div>
       </div>
+      <style>{`
+        @media (max-width: 768px) {
+          .coach-modal-container {
+            max-width: calc(100vw - 16px) !important;
+            max-height: 92dvh !important;
+            border-radius: 14px !important;
+          }
+        }
+      `}</style>
     </div>
   );
 }
